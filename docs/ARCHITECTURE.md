@@ -33,26 +33,12 @@ Adapted from Terraform (desired/actual/state) and chezmoi (source/target/destina
 
 ```mermaid
 graph LR
-    subgraph Desired["DESIRED STATE<br/><i>shard author owns</i>"]
-        T["templates/ + values"]
-    end
-    subgraph Target["TARGET STATE<br/><i>computed in memory</i>"]
-        R["render(templates, values)"]
-    end
-    subgraph Actual["ACTUAL STATE<br/><i>user owns</i>"]
-        F["files on disk"]
-    end
-    T -->|"render"| R
-    R -->|"write"| F
+    D["🔴 DESIRED STATE\ntemplates/ + values\n\nShard author owns.\nReplaced on update.\nUser never touches."]
+    T["🟡 TARGET STATE\nrender templates, values\n\nComputed in memory.\nNever persisted.\nExists only during\ninstall/update."]
+    A["🟢 ACTUAL STATE\nfiles on disk\n\nUser owns.\nEdits freely.\nThat's the whole\npoint of Obsidian."]
 
-    style Desired fill:#1a1a2e,stroke:#e94560,color:#fff
-    style Target fill:#1a1a2e,stroke:#f5a623,color:#fff
-    style Actual fill:#1a1a2e,stroke:#0f9d58,color:#fff
+    D -->|render| T -->|write| A
 ```
-
-- **Desired**: Replaced on update. User never touches.
-- **Target**: Never persisted. Exists only during install/update.
-- **Actual**: User edits freely. That's the whole point of Obsidian.
 
 The **state file** (`.shardmind/state.json`) records what was rendered and when, enabling drift detection without restricting the user.
 
