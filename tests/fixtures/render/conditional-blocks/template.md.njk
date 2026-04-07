@@ -1,0 +1,13 @@
+# {{ user_name }}'s Vault
+
+{% if qmd_enabled %}
+## Semantic Search
+
+QMD is enabled.
+{% endif %}
+
+## Modules
+
+{% for module in included_modules %}
+- {{ module }}
+{% endfor %}
