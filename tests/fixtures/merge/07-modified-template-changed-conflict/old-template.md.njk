@@ -1,0 +1,16 @@
+---
+date: {{ install_date }}
+description: "North Star for {{ user_name }}"
+tags:
+  - brain
+---
+
+# North Star
+
+Goals for {{ user_name }} at {{ org_name }}.
+
+{% if qmd_enabled %}
+## Semantic Search
+
+Run `qmd update && qmd embed` after adding notes.
+{% endif %}

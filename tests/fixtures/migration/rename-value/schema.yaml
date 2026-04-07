@@ -1,0 +1,9 @@
+migrations:
+  - from_version: "0.1.0"
+    changes:
+      - type: rename
+        old: organization
+        new: org_name
+      - type: added
+        key: vault_purpose
+        default: "general"

@@ -1,0 +1,16 @@
+{
+  "extends": "@sindresorhus/tsconfig",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "source",
+    "jsx": "react-jsx",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["source/**/*.ts", "source/**/*.tsx"],
+  "exclude": ["node_modules", "dist", "tests"]
+}

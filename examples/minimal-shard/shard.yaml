@@ -1,0 +1,14 @@
+apiVersion: v1
+name: minimal
+namespace: shardmind
+version: 0.1.0
+description: "Minimal shard for development and testing"
+persona: "Developers testing ShardMind"
+license: MIT
+homepage: https://github.com/breferrari/shardmind
+
+requires:
+  node: ">=18.0.0"
+
+hooks:
+  post-install: hooks/post-install.ts

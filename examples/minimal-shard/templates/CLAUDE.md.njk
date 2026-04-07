@@ -1,0 +1,9 @@
+# {{ org_name }} Vault
+
+Managed by ShardMind. Owner: {{ user_name }}.
+
+{% include "claude/_core.md.njk" %}
+
+{% for module in included_modules %}
+{% include "claude/_" + module + ".md.njk" ignore missing %}
+{% endfor %}

@@ -1,0 +1,17 @@
+---
+date: {{ install_date }}
+description: "North Star for {{ user_name }}"
+tags:
+  - brain
+---
+
+# North Star
+
+Goals for {{ user_name }} at {{ org_name }}.
+
+{% if qmd_enabled %}
+## Semantic Search
+
+QMD v2 is now the default. Run `qmd collection add .` to initialize, then `qmd embed` to generate vectors.
+See https://github.com/tobi/qmd for full documentation.
+{% endif %}

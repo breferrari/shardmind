@@ -1,0 +1,17 @@
+name: "Template and user both edited the same section"
+description: >
+  The shard author rewrote the QMD setup instructions.
+  The user also edited those same instructions to add a custom alias.
+  This is a true conflict — cannot auto-merge.
+
+ownership_before: managed
+user_edited: true
+template_changed: true
+values_changed: false
+conflict_expected: true
+expected_action: prompt_user
+expected_conflict_count: 1
+
+values:
+  old: { user_name: "Alice", org_name: "Acme Corp", qmd_enabled: true }
+  new: { user_name: "Alice", org_name: "Acme Corp", qmd_enabled: true }

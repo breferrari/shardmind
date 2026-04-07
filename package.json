@@ -1,0 +1,69 @@
+{
+  "name": "shardmind",
+  "version": "0.1.0",
+  "description": "Package manager for Obsidian vault templates",
+  "type": "module",
+  "bin": {
+    "shardmind": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/cli.js",
+    "./runtime": "./dist/runtime/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "test:merge": "vitest run tests/unit/drift.test.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit && vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "pastel": "^3.0.0",
+    "ink": "^5.0.0",
+    "@inkjs/ui": "^2.0.0",
+    "react": "^18.0.0",
+    "nunjucks": "^3.2.4",
+    "yaml": "^2.4.0",
+    "tar": "^7.0.0",
+    "semver": "^7.6.0",
+    "zod": "^3.23.0",
+    "diff": "^7.0.0",
+    "node-diff3": "^3.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@sindresorhus/tsconfig": "^6.0.0",
+    "tsup": "^8.0.0",
+    "vitest": "^2.0.0",
+    "@types/nunjucks": "^3.2.6",
+    "@types/tar": "^6.1.0",
+    "@types/diff": "^6.0.0",
+    "@types/semver": "^7.5.0",
+    "@types/react": "^18.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT",
+  "author": "Brenno Ferrari <brenno@brennoferrari.com>",
+  "homepage": "https://github.com/breferrari/shardmind",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/breferrari/shardmind.git"
+  },
+  "keywords": [
+    "obsidian",
+    "vault",
+    "template",
+    "package-manager",
+    "claude-code",
+    "ai-agent",
+    "markdown"
+  ]
+}

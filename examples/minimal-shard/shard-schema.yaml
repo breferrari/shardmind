@@ -1,0 +1,66 @@
+schema_version: 1
+
+values:
+  user_name:
+    type: string
+    required: true
+    message: "Your name"
+    group: setup
+
+  org_name:
+    type: string
+    message: "Organization (or 'Independent')"
+    default: "Independent"
+    group: setup
+
+  vault_purpose:
+    type: select
+    required: true
+    message: "How will you use this vault?"
+    options:
+      - { value: engineering, label: "Engineering" }
+      - { value: research, label: "Research" }
+      - { value: general, label: "General" }
+    group: setup
+
+  qmd_enabled:
+    type: boolean
+    message: "Enable QMD semantic search?"
+    default: false
+    group: setup
+
+groups:
+  - id: setup
+    label: "Quick Setup"
+
+modules:
+  brain:
+    label: "Goals, memories, patterns"
+    paths: ["brain/"]
+    removable: false
+
+  extras:
+    label: "Extra features (for testing module exclusion)"
+    paths: ["extras/"]
+    partials: ["claude/_extras.md.njk"]
+    commands: ["example-command"]
+    removable: true
+
+signals:
+  - id: DECISION
+    description: "A choice was made"
+    routes_to: "brain/"
+    core: true
+
+  - id: EXTRA_SIGNAL
+    description: "Testing module-gated signal"
+    routes_to: "extras/"
+    module: extras
+
+frontmatter:
+  global: [date, description, tags]
+  brain-note:
+    required: [date, description]
+    path_match: "brain/*.md"
+
+migrations: []

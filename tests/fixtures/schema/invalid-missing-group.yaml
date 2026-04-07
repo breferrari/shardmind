@@ -1,0 +1,16 @@
+schema_version: 1
+
+values:
+  user_name:
+    type: string
+    required: true
+    message: "Your name"
+    group: nonexistent_group
+
+groups:
+  - id: setup
+    label: "Setup"
+
+modules: {}
+frontmatter: {}
+migrations: []
