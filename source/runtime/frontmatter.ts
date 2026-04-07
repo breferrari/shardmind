@@ -29,8 +29,9 @@ export function validateFrontmatter(
   let noteType: string | null = null;
   let rule: FrontmatterRule | undefined;
 
-  for (const [key, fm] of Object.entries(schema.frontmatter)) {
+  for (const [key, entry] of Object.entries(schema.frontmatter)) {
     if (key === 'global') continue;
+    const fm: FrontmatterRule = Array.isArray(entry) ? { required: entry as string[] } : entry;
     if (fm.path_match && filePath.match(globToRegex(fm.path_match))) {
       noteType = key;
       rule = fm;
@@ -43,7 +44,10 @@ export function validateFrontmatter(
   if (rule?.required) {
     for (const field of rule.required) required.add(field);
   }
-  const globalRule = schema.frontmatter['global'];
+  const globalEntry = schema.frontmatter['global'];
+  const globalRule: FrontmatterRule | undefined = globalEntry
+    ? (Array.isArray(globalEntry) ? { required: globalEntry as string[] } : globalEntry)
+    : undefined;
   if (globalRule?.required) {
     for (const field of globalRule.required) required.add(field);
   }

@@ -30,11 +30,27 @@ export async function loadState(): Promise<ShardState | null> {
   const vaultRoot = resolveVaultRoot();
   const filePath = path.join(vaultRoot, '.shardmind', 'state.json');
 
+  let raw: string;
   try {
-    const raw = await fsp.readFile(filePath, 'utf-8');
+    raw = await fsp.readFile(filePath, 'utf-8');
+  } catch (err) {
+    const fsCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
+    if (fsCode === 'ENOENT') return null;
+    throw new ShardMindError(
+      `Cannot read state.json: ${filePath}`,
+      'STATE_READ_FAILED',
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  try {
     return JSON.parse(raw) as ShardState;
-  } catch {
-    return null;
+  } catch (err) {
+    throw new ShardMindError(
+      `Corrupt state.json: ${filePath}`,
+      'STATE_CORRUPT',
+      'Delete .shardmind/ and reinstall, or fix the JSON manually.',
+    );
   }
 }
 

@@ -13,15 +13,32 @@ export async function loadValues(): Promise<Record<string, unknown>> {
   let raw: string;
   try {
     raw = await fs.readFile(filePath, 'utf-8');
-  } catch {
+  } catch (err) {
+    const fsCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
+    if (fsCode === 'ENOENT') {
+      throw new ShardMindError(
+        `Cannot read shard-values.yaml: ${filePath}`,
+        'VALUES_NOT_FOUND',
+        'Ensure this vault has been initialized with shardmind install.',
+      );
+    }
     throw new ShardMindError(
-      `Cannot read shard-values.yaml: ${filePath}`,
-      'VALUES_NOT_FOUND',
-      'Ensure this vault has been initialized with shardmind install.',
+      `Cannot read shard-values.yaml: ${filePath} (${fsCode ?? 'unknown'})`,
+      'VALUES_READ_FAILED',
+      err instanceof Error ? err.message : String(err),
     );
   }
 
-  return parseYaml(raw) as Record<string, unknown>;
+  const parsed = parseYaml(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ShardMindError(
+      `shard-values.yaml must be a YAML mapping, got ${parsed === null ? 'null' : typeof parsed}`,
+      'VALUES_INVALID',
+      'Ensure shard-values.yaml contains key-value pairs.',
+    );
+  }
+
+  return parsed as Record<string, unknown>;
 }
 
 function isComputedDefault(value: unknown): boolean {
