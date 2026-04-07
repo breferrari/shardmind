@@ -44,6 +44,24 @@ ehthumbs.db
 *.sublime-project
 *.sublime-workspace
 
-# Temp
+# Lock file alternatives (we use package-lock.json)
+pnpm-lock.yaml
+bun.lock
+bun.lockb
+yarn.lock
+
+# npm pack output
+*.tgz
+
+# Agent memory/credentials (never commit)
+.claude/
+.agent/
+memory/
+IDENTITY.md
+USER.md
+
+# Local scratch
 tmp/
 .tmp/
+.local/
+.artifacts/
