@@ -56,6 +56,21 @@ ShardMind takes a third path: templates upgrade cleanly, users edit output freel
 
 **Cached templates for three-way merge.** The `.shardmind/templates/` directory stores the templates that produced the current rendered files. This is the base in the three-way merge during update. Without it, you can't compute a proper diff for modified files. This is the implementation detail that makes upgrades work — and the piece every other tool is missing.
 
+## Agent-Agnostic Engine, Agent-Specific Shards
+
+ShardMind the engine knows nothing about Claude Code, Codex, or Gemini CLI. It renders templates, tracks file state, manages modules, and runs the merge engine. The agent choice belongs to the shard, not the engine.
+
+A shard can ship `CLAUDE.md` only (Claude Code-first), all three operating manuals (`CLAUDE.md` + `AGENTS.md` + `GEMINI.md`), or any combination. The vault's markdown notes, frontmatter, folder structure, and bases are completely agent-agnostic — any AI can read them.
+
+The operational layer is where agent specificity lives:
+- **Claude Code**: `.claude/commands/`, `.claude/agents/`, `.claude/settings.json` (5-hook lifecycle), `.claude/skills/`
+- **Codex**: `AGENTS.md`, `.codex/prompts/`
+- **Gemini**: `GEMINI.md`, `save_memory` / `/memory` commands
+
+Claude Code is first-class in obsidian-mind because it has the richest hook system — five lifecycle hooks with external interception points that neither Codex nor Gemini CLI offers. That's an architectural advantage of Claude Code, not a limitation of ShardMind.
+
+The `shardmind/runtime` module is used by hook scripts, and hooks are a Claude Code concept. Other agents that add hook systems in the future can use the same runtime module. It's TypeScript — any Node.js-based agent can import it.
+
 ## What ShardMind Is Not
 
 **Not a registry first.** The registry is a single JSON file on GitHub. Versions come from git tags. No database, no server. Distribution is GitHub tarballs. The value is the engine, not the platform.

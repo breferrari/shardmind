@@ -346,15 +346,20 @@ interface FileEntry {
 **Output path mapping**:
 ```
 templates/CLAUDE.md.njk              → CLAUDE.md
+templates/AGENTS.md.njk              → AGENTS.md                    (if present)
+templates/GEMINI.md.njk              → GEMINI.md                    (if present)
 templates/brain/North Star.md.njk    → brain/North Star.md
 templates/bases/incidents.base.njk   → bases/incidents.base
 templates/settings.json.njk          → .claude/settings.json
 commands/review-brief.md             → .claude/commands/review-brief.md
 agents/brag-spotter.md               → .claude/agents/brag-spotter.md
+codex/standup.md                     → .codex/prompts/standup.md    (if present)
 scripts/session_start.ts             → .claude/scripts/session_start.ts
 utilities/charcount.sh               → .claude/utilities/charcount.sh
 skills/obsidian-markdown/SKILL.md    → .claude/skills/obsidian-markdown/SKILL.md
 ```
+
+The engine maps all files it finds — it doesn't enforce which agent configs a shard includes.
 
 **Dependencies**: `node:fs`, `node:path`.
 

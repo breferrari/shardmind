@@ -115,23 +115,26 @@ import { loadValues, loadState, validateFrontmatter } from 'shardmind/runtime';
 
 ## Shard Anatomy
 
-A shard is a packaged vault template. It includes folder structures, markdown templates, hooks, commands, agents, and a values schema that drives the install wizard.
+A shard is a packaged vault template. It includes folder structures, markdown templates, agent configurations, and a values schema that drives the install wizard. ShardMind the engine is agent-agnostic — it renders templates and tracks state regardless of which AI reads the output. The shard content is where agent choice lives.
 
 ```
 my-shard/
   shard.yaml              # Package identity (name, version, deps)
   shard-schema.yaml       # Values + modules + signals + frontmatter + migrations
   templates/              # Nunjucks templates (.njk)
-    CLAUDE.md.njk         # Assembled from per-module partials
-    claude/               # CLAUDE.md partials (one per module)
+    CLAUDE.md.njk         # Claude Code operating manual (partials per module)
+    AGENTS.md.njk         # Codex operating manual (optional)
+    GEMINI.md.njk         # Gemini CLI operating manual (optional)
     brain/
     work/
     perf/
   commands/               # Slash commands (conditionally installed by module)
   agents/                 # Subagents (conditionally installed by module)
-  scripts/                # TypeScript hook scripts
-  skills/                 # Agent skills
+  scripts/                # TypeScript hook scripts (Claude Code lifecycle)
+  skills/                 # Agent skills (Agent Skills spec — multi-agent compatible)
 ```
+
+Shard authors choose which agents to support. A shard can ship `CLAUDE.md` only, or all three, or any combination. The vault's markdown notes, frontmatter, and folder structure work with any AI — the operational layer (hooks, commands, agent configs) is where specificity lives.
 
 ---
 
@@ -151,8 +154,19 @@ Full documentation in `docs/`:
 - [Node.js](https://nodejs.org) 18+
 - [Git](https://git-scm.com)
 - [Obsidian](https://obsidian.md) 1.12+ (for CLI support)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (for hook-powered vaults)
 - [QMD](https://github.com/tobi/qmd) (optional, for semantic search)
+
+### AI Agent Support
+
+ShardMind installs vault templates. Which AI agent you use with the vault is up to the shard:
+
+| Agent | Config File | Hooks | Status |
+|-------|-----------|-------|--------|
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | `CLAUDE.md` | 5-hook lifecycle via `.claude/settings.json` | First-class (richest hook system) |
+| [Codex CLI](https://github.com/openai/codex) | `AGENTS.md` | `.codex/prompts/` | Supported (shard-defined) |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `GEMINI.md` | `save_memory` / `/memory` | Supported (shard-defined) |
+
+The `shardmind/runtime` module is available to any TypeScript hook script. Claude Code's hook system is the most extensible — it's why obsidian-mind is Claude Code-first. But the vault content (notes, frontmatter, folders, bases) is fully agent-agnostic.
 
 ---
 

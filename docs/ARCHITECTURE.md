@@ -23,7 +23,9 @@ ShardMind is the engine that turns vault templates into packages — installable
 
 ### 2.1 Shard
 
-A **shard** is a packaged vault template. It includes folder structures, markdown templates, CLAUDE.md partials, hooks, slash commands, subagents, frontmatter schemas, and a values schema. Each shard is identified by `namespace/name@version`.
+A **shard** is a packaged vault template. It includes folder structures, markdown templates, agent operating manuals, hooks, slash commands, subagents, frontmatter schemas, and a values schema. Each shard is identified by `namespace/name@version`.
+
+ShardMind the engine is agent-agnostic — it renders templates and tracks state regardless of which AI reads the output. The shard content determines agent support: a shard can ship `CLAUDE.md` (Claude Code), `AGENTS.md` (Codex), `GEMINI.md` (Gemini CLI), or any combination. The vault's markdown notes, frontmatter, and folder structure work with any AI. The operational layer (hooks, commands, agent configs) is where agent specificity lives. Claude Code is first-class in obsidian-mind because it has the richest hook system — five lifecycle hooks with external interception points.
 
 ### 2.2 Three-State Model
 
@@ -97,9 +99,11 @@ Multiple vaults on one machine are independent:
 ```
 my-shard/
 ├── shard.yaml                 # Package identity (name, version, deps, hooks)
-├── shard-schema.yaml          # Values + modules + frontmatter + migrations
+├── shard-schema.yaml          # Values + modules + signals + frontmatter + migrations
 ├── templates/
-│   ├── CLAUDE.md.njk          # Root assembler — includes partials
+│   ├── CLAUDE.md.njk          # Claude Code operating manual (partials per module)
+│   ├── AGENTS.md.njk          # Codex operating manual (optional)
+│   ├── GEMINI.md.njk          # Gemini CLI operating manual (optional)
 │   ├── claude/                # CLAUDE.md partials (one per module)
 │   │   ├── _core.md.njk
 │   │   ├── _perf.md.njk
@@ -118,19 +122,22 @@ my-shard/
 │   │   └── *.base.njk
 │   └── work/
 │       └── Index.md.njk
-├── commands/                  # Slash commands (conditionally copied by module)
-├── agents/                    # Subagents (conditionally copied by module)
+├── commands/                  # Slash commands — Claude Code (.claude/commands/)
+├── agents/                    # Subagents — Claude Code (.claude/agents/)
+├── codex/                     # Codex prompts (.codex/prompts/) — optional
 ├── hooks/
-│   ├── post-install.ts
+│   ├── post-install.ts        # ShardMind lifecycle hooks
 │   └── post-update.ts
-├── scripts/                   # Runtime hook scripts (TypeScript)
+├── scripts/                   # Runtime hook scripts — Claude Code lifecycle
 │   ├── session_start.ts
 │   ├── classify.ts
 │   ├── validate_note.ts
 │   ├── backup_transcript.ts
 │   └── session_end.ts
-└── skills/                    # Agent skills (copied as-is)
+└── skills/                    # Agent skills (Agent Skills spec — multi-agent)
 ```
+
+Shard authors choose which agents to support. The engine renders all templates regardless — it doesn't know which AI reads the output.
 
 ---
 

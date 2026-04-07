@@ -1,6 +1,6 @@
 # ShardMind
 
-Package manager for Obsidian vault templates. TypeScript, Pastel + Ink TUI, spec-driven development.
+Package manager for Obsidian vault templates. TypeScript, Pastel + Ink TUI, spec-driven development. The engine is agent-agnostic — shard content determines which AI agents are supported (Claude Code, Codex, Gemini CLI).
 
 ## How This Repo Works
 
