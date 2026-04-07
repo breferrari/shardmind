@@ -101,9 +101,26 @@ function computeTemplateOutput(relPath: string): string {
 
 function findModule(relPath: string, schema: ShardSchema): string | null {
   for (const [moduleId, mod] of Object.entries(schema.modules)) {
+    // Check paths (directory prefixes)
     for (const modPath of mod.paths) {
       if (relPath.startsWith(modPath)) {
         return moduleId;
+      }
+    }
+    // Check partials (exact path matches against template-relative paths)
+    if (mod.partials) {
+      for (const partial of mod.partials) {
+        if (relPath === partial) {
+          return moduleId;
+        }
+      }
+    }
+    // Check bases (match templates/bases/<id>.base.njk against bases[] IDs)
+    if (mod.bases) {
+      for (const baseId of mod.bases) {
+        if (relPath === `bases/${baseId}.base.njk`) {
+          return moduleId;
+        }
       }
     }
   }
@@ -139,8 +156,8 @@ async function detectVolatile(filePath: string): Promise<boolean> {
   try {
     const buf = Buffer.alloc(256);
     const { bytesRead } = await handle.read(buf, 0, 256, 0);
-    const firstLine = buf.toString('utf-8', 0, bytesRead).split(/\r?\n/)[0] ?? '';
-    return firstLine.trim() === VOLATILE_MARKER;
+    const content = buf.toString('utf-8', 0, bytesRead);
+    return content.trimStart().startsWith(VOLATILE_MARKER);
   } finally {
     await handle.close();
   }

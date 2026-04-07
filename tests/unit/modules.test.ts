@@ -34,20 +34,34 @@ describe('resolveModules', () => {
     expect(copyPaths).toContain('.claude/commands/example-command.md');
   });
 
-  it('skips excluded module files', async () => {
-    const schema = await loadSchema();
-    const selections = { brain: 'included' as const, extras: 'excluded' as const };
-    const result = await resolveModules(schema, selections, EXAMPLE_SHARD);
+  it('skips excluded module files (commands, templates, and partials)', async () => {
+    // Copy fixture and add a template under extras/ path to exercise template gating
+    const tmpShard = path.join(os.tmpdir(), `modules-test-${crypto.randomUUID()}`);
+    await fs.cp(EXAMPLE_SHARD, tmpShard, { recursive: true });
+    await fs.mkdir(path.join(tmpShard, 'templates', 'extras'), { recursive: true });
+    await fs.writeFile(path.join(tmpShard, 'templates', 'extras', 'Feature.md.njk'), '# Extra Feature\n');
 
-    const skipPaths = result.skip.map(f => f.outputPath);
-    // extras module partial should be skipped
-    // Note: claude/_extras.md is not in extras.paths (["extras/"]) but the command is
-    expect(skipPaths).toContain('.claude/commands/example-command.md');
+    try {
+      const schema = await parseSchema(path.join(tmpShard, 'shard-schema.yaml'));
+      const selections = { brain: 'included' as const, extras: 'excluded' as const };
+      const result = await resolveModules(schema, selections, tmpShard);
 
-    // Brain files should still render
-    const renderPaths = result.render.map(f => f.outputPath);
-    expect(renderPaths).toContain('brain/North Star.md');
-    expect(renderPaths).toContain('CLAUDE.md');
+      const skipPaths = result.skip.map(f => f.outputPath);
+      // Command gated by extras module
+      expect(skipPaths).toContain('.claude/commands/example-command.md');
+      // Template under extras/ path
+      expect(skipPaths).toContain('extras/Feature.md');
+      // Partial declared in extras.partials
+      expect(skipPaths).toContain('claude/_extras.md');
+
+      // Brain files should still render
+      const renderPaths = result.render.map(f => f.outputPath);
+      expect(renderPaths).toContain('brain/North Star.md');
+      expect(renderPaths).toContain('CLAUDE.md');
+      expect(renderPaths).not.toContain('extras/Feature.md');
+    } finally {
+      await fs.rm(tmpShard, { recursive: true, force: true });
+    }
   });
 
   it('assigns correct module IDs to files', async () => {
