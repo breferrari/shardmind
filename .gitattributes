@@ -1,0 +1,15 @@
+# Normalize line endings
+* text=auto eol=lf
+
+# Ensure these are always LF
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.njk text eol=lf
+
+# Binary files
+*.png binary
+*.gif binary

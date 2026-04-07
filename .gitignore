@@ -3,3 +3,19 @@ dist/
 *.tsbuildinfo
 .DS_Store
 Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Test coverage
+coverage/
+
+# OS files
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+*.code-workspace
