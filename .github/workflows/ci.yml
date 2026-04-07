@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - run: npm install
+      - run: rm package-lock.json && npm install
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
