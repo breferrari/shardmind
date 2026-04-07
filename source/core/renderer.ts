@@ -57,8 +57,9 @@ function renderEach(
   }
 
   return list.map((item: Record<string, unknown>) => {
-    const itemContext = { ...context, ...context.values, item };
-    const slug = String(item['slug'] ?? item['name'] ?? 'unknown');
+    const itemContext = { ...context.values, ...context, item };
+    const rawSlug = String(item['slug'] ?? item['name'] ?? 'unknown');
+    const slug = sanitizeSlug(rawSlug);
     const outputPath = entry.outputPath.replace('_each', slug);
     const content = renderContent(source, itemContext, env, outputPath);
     return buildRenderedFile(outputPath, content, volatile);
@@ -71,7 +72,8 @@ function renderContent(
   env: nunjucks.Environment,
   filePath: string,
 ): string {
-  const flatContext = { ...context, ...context.values };
+  // Spread values first so built-in context keys (install_date, year, shard, etc.) win
+  const flatContext = { ...context.values, ...context };
   const match = source.match(FRONTMATTER_REGEX);
 
   if (match) {
@@ -127,6 +129,14 @@ function renderTemplate(
       'Check the template for Nunjucks syntax errors.',
     );
   }
+}
+
+function sanitizeSlug(slug: string): string {
+  return slug
+    .replace(/[/\\]/g, '-')
+    .replace(/\.\./g, '-')
+    .replace(/[<>:"|?*\x00-\x1f]/g, '-')
+    .trim();
 }
 
 function buildRenderedFile(outputPath: string, content: string, volatile: boolean): RenderedFile {
