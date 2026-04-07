@@ -1,21 +1,49 @@
+# Dependencies
 node_modules/
+
+# Build output (tsup)
 dist/
 *.tsbuildinfo
-.DS_Store
-Thumbs.db
+
+# Pastel generated
+source/commands/*.js
+source/commands/*.d.ts
+source/commands/*.map
+
+# TypeScript cache
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Test
+coverage/
+.vitest/
 
 # Environment
 .env
 .env.local
+.env.*.local
 
-# Test coverage
-coverage/
+# npm
+*.tgz
+.npm/
+npm-debug.log*
 
-# OS files
+# OS
+.DS_Store
+Thumbs.db
 *.swp
 *.swo
 *~
+Desktop.ini
+ehthumbs.db
 
 # IDE
 .idea/
+.vscode/
 *.code-workspace
+*.sublime-project
+*.sublime-workspace
+
+# Temp
+tmp/
+.tmp/
