@@ -1,0 +1,105 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import * as tar from 'tar';
+import type { TempShard } from '../runtime/types.js';
+import { ShardMindError } from '../runtime/types.js';
+
+export async function downloadShard(tarballUrl: string): Promise<TempShard> {
+  const tempDir = path.join(os.tmpdir(), `shardmind-${crypto.randomUUID()}`);
+  await fs.mkdir(tempDir, { recursive: true });
+
+  // Fetch tarball
+  const headers: Record<string, string> = {
+    'Accept': 'application/vnd.github+json',
+  };
+  if (process.env['GITHUB_TOKEN']) {
+    headers['Authorization'] = `Bearer ${process.env['GITHUB_TOKEN']}`;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(tarballUrl, { headers });
+  } catch (err) {
+    await cleanup(tempDir);
+    const message = err instanceof Error ? err.message : String(err);
+    throw new ShardMindError(
+      `Failed to download: ${message}`,
+      'DOWNLOAD_HTTP_ERROR',
+      'Check the tarball URL and your internet connection.',
+    );
+  }
+
+  if (!response.ok) {
+    await cleanup(tempDir);
+    throw new ShardMindError(
+      `Failed to download: HTTP ${response.status}`,
+      'DOWNLOAD_HTTP_ERROR',
+      'Check the tarball URL and your internet connection.',
+    );
+  }
+
+  if (!response.body) {
+    await cleanup(tempDir);
+    throw new ShardMindError(
+      'Failed to download: empty response body',
+      'DOWNLOAD_HTTP_ERROR',
+      'The server returned an empty response.',
+    );
+  }
+
+  // Extract tarball
+  try {
+    const nodeStream = Readable.fromWeb(response.body as import('node:stream/web').ReadableStream);
+    const extractor = tar.x({ strip: 1, C: tempDir });
+    await pipeline(nodeStream, extractor);
+  } catch (err) {
+    await cleanup(tempDir);
+    const message = err instanceof Error ? err.message : String(err);
+    throw new ShardMindError(
+      `Downloaded archive is not a valid tarball: ${message}`,
+      'DOWNLOAD_INVALID_TARBALL',
+      'The downloaded file is not a valid tar archive.',
+    );
+  }
+
+  // Verify required files
+  const manifestPath = path.join(tempDir, 'shard.yaml');
+  const schemaPath = path.join(tempDir, 'shard-schema.yaml');
+
+  try {
+    await fs.access(manifestPath);
+  } catch {
+    await cleanup(tempDir);
+    throw new ShardMindError(
+      'Not a valid shard: shard.yaml not found',
+      'DOWNLOAD_MISSING_MANIFEST',
+      'Ensure the shard repository includes shard.yaml in its root.',
+    );
+  }
+
+  try {
+    await fs.access(schemaPath);
+  } catch {
+    await cleanup(tempDir);
+    throw new ShardMindError(
+      'Not a valid shard: shard-schema.yaml not found',
+      'DOWNLOAD_MISSING_SCHEMA',
+      'Ensure the shard repository includes shard-schema.yaml in its root.',
+    );
+  }
+
+  return {
+    tempDir,
+    manifest: manifestPath,
+    schema: schemaPath,
+    cleanup: () => cleanup(tempDir),
+  };
+}
+
+async function cleanup(dir: string): Promise<void> {
+  await fs.rm(dir, { recursive: true, force: true });
+}
