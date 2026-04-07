@@ -116,7 +116,51 @@ describe('downloadShard', () => {
     }
   });
 
-  it('includes Authorization header when GITHUB_TOKEN is set', async () => {
+  it('throws DOWNLOAD_MISSING_SCHEMA when shard-schema.yaml is missing', async () => {
+    const os = await import('node:os');
+    const tar = await import('tar');
+    const crypto = await import('node:crypto');
+    const tmpTarball = path.join(os.tmpdir(), `test-tarball-${crypto.randomUUID()}.tar.gz`);
+    const tmpSrc = path.join(os.tmpdir(), `test-src-${crypto.randomUUID()}`);
+    const innerDir = path.join(tmpSrc, 'owner-repo-abc');
+    await fs.mkdir(innerDir, { recursive: true });
+    await fs.writeFile(path.join(innerDir, 'shard.yaml'), 'apiVersion: v1');
+    await tar.c({ gzip: true, file: tmpTarball, cwd: tmpSrc }, ['owner-repo-abc']);
+
+    try {
+      globalThis.fetch = vi.fn().mockResolvedValue(createMockResponse(tmpTarball));
+      const err = await downloadShard('https://example.com/tarball').catch(e => e);
+      expect(err.code).toBe('DOWNLOAD_MISSING_SCHEMA');
+    } finally {
+      await fs.rm(tmpTarball, { force: true });
+      await fs.rm(tmpSrc, { recursive: true, force: true });
+    }
+  });
+
+  it('includes Authorization header for GitHub URLs when GITHUB_TOKEN is set', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(createMockResponse(FIXTURE_TARBALL));
+    globalThis.fetch = mockFetch;
+
+    const originalToken = process.env['GITHUB_TOKEN'];
+    process.env['GITHUB_TOKEN'] = 'test-token-123';
+
+    try {
+      const result = await downloadShard('https://api.github.com/repos/owner/repo/tarball/v1.0.0');
+      cleanupFns.push(result.cleanup);
+
+      const callArgs = mockFetch.mock.calls[0]!;
+      const headers = callArgs[1]?.headers as Record<string, string>;
+      expect(headers['Authorization']).toBe('Bearer test-token-123');
+    } finally {
+      if (originalToken === undefined) {
+        delete process.env['GITHUB_TOKEN'];
+      } else {
+        process.env['GITHUB_TOKEN'] = originalToken;
+      }
+    }
+  });
+
+  it('does not include Authorization header for non-GitHub URLs', async () => {
     const mockFetch = vi.fn().mockResolvedValue(createMockResponse(FIXTURE_TARBALL));
     globalThis.fetch = mockFetch;
 
@@ -129,7 +173,7 @@ describe('downloadShard', () => {
 
       const callArgs = mockFetch.mock.calls[0]!;
       const headers = callArgs[1]?.headers as Record<string, string>;
-      expect(headers['Authorization']).toBe('Bearer test-token-123');
+      expect(headers['Authorization']).toBeUndefined();
     } finally {
       if (originalToken === undefined) {
         delete process.env['GITHUB_TOKEN'];

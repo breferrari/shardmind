@@ -16,7 +16,7 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
   const headers: Record<string, string> = {
     'Accept': 'application/vnd.github+json',
   };
-  if (process.env['GITHUB_TOKEN']) {
+  if (process.env['GITHUB_TOKEN'] && isGitHubUrl(tarballUrl)) {
     headers['Authorization'] = `Bearer ${process.env['GITHUB_TOKEN']}`;
   }
 
@@ -24,7 +24,7 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
   try {
     response = await fetch(tarballUrl, { headers });
   } catch (err) {
-    await cleanup(tempDir);
+    await safeCleanup(tempDir);
     const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(
       `Failed to download: ${message}`,
@@ -34,7 +34,7 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
   }
 
   if (!response.ok) {
-    await cleanup(tempDir);
+    await safeCleanup(tempDir);
     throw new ShardMindError(
       `Failed to download: HTTP ${response.status}`,
       'DOWNLOAD_HTTP_ERROR',
@@ -43,7 +43,7 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
   }
 
   if (!response.body) {
-    await cleanup(tempDir);
+    await safeCleanup(tempDir);
     throw new ShardMindError(
       'Failed to download: empty response body',
       'DOWNLOAD_HTTP_ERROR',
@@ -57,7 +57,7 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
     const extractor = tar.x({ strip: 1, C: tempDir });
     await pipeline(nodeStream, extractor);
   } catch (err) {
-    await cleanup(tempDir);
+    await safeCleanup(tempDir);
     const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(
       `Downloaded archive is not a valid tarball: ${message}`,
@@ -73,7 +73,7 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
   try {
     await fs.access(manifestPath);
   } catch {
-    await cleanup(tempDir);
+    await safeCleanup(tempDir);
     throw new ShardMindError(
       'Not a valid shard: shard.yaml not found',
       'DOWNLOAD_MISSING_MANIFEST',
@@ -84,7 +84,7 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
   try {
     await fs.access(schemaPath);
   } catch {
-    await cleanup(tempDir);
+    await safeCleanup(tempDir);
     throw new ShardMindError(
       'Not a valid shard: shard-schema.yaml not found',
       'DOWNLOAD_MISSING_SCHEMA',
@@ -100,6 +100,23 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
   };
 }
 
+function isGitHubUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === 'api.github.com' || host === 'codeload.github.com';
+  } catch {
+    return false;
+  }
+}
+
 async function cleanup(dir: string): Promise<void> {
   await fs.rm(dir, { recursive: true, force: true });
+}
+
+async function safeCleanup(dir: string): Promise<void> {
+  try {
+    await cleanup(dir);
+  } catch {
+    // Best-effort — don't mask the original error
+  }
 }
