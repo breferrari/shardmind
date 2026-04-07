@@ -21,6 +21,21 @@ const ValueDefinitionSchema = z.object({
   group: z.string(),
   hint: z.string().optional(),
   placeholder: z.string().optional(),
+}).superRefine((val, ctx) => {
+  if ((val.type === 'select' || val.type === 'multiselect') && (!val.options || val.options.length === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['options'],
+      message: `"options" is required and must be non-empty for type "${val.type}"`,
+    });
+  }
+  if (val.min !== undefined && val.max !== undefined && val.min > val.max) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['min'],
+      message: '`min` must be less than or equal to `max`',
+    });
+  }
 });
 
 const GroupDefinitionSchema = z.object({
