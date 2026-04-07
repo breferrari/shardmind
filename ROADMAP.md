@@ -10,71 +10,46 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 
 ### Milestone 1: Foundation (Day 1)
 
-- [ ] Scaffold with `create-pastel-app`
-- [ ] Configure tsup dual entry (cli + runtime)
-- [ ] Set up vitest
-- [ ] `source/core/manifest.ts` — parse + validate shard.yaml with zod
-- [ ] `source/core/schema.ts` — parse shard-schema.yaml, generate dynamic zod validator
-- [ ] `source/core/download.ts` — fetch GitHub tarball, extract to temp dir
-- [ ] `source/core/renderer.ts` — Nunjucks engine, frontmatter-aware split/render/recombine
-- [ ] `source/core/modules.ts` — walk template dir, classify by module, resolve file lists
-- [ ] `source/runtime/types.ts` — all shared types (ShardState, ShardSchema, etc.)
-- [ ] `source/runtime/index.ts` — loadValues, loadSchema, loadState, validateFrontmatter exports
+- [ ] Scaffold with `create-pastel-app` ([#1](https://github.com/breferrari/shardmind/issues/1))
+- [ ] `source/core/manifest.ts` — parse + validate shard.yaml with zod ([#2](https://github.com/breferrari/shardmind/issues/2))
+- [ ] `source/core/schema.ts` — parse shard-schema.yaml, generate dynamic zod validator ([#3](https://github.com/breferrari/shardmind/issues/3))
+- [ ] `source/core/download.ts` — fetch GitHub tarball, extract to temp dir ([#4](https://github.com/breferrari/shardmind/issues/4))
+- [ ] `source/core/renderer.ts` — Nunjucks engine, frontmatter-aware split/render/recombine ([#5](https://github.com/breferrari/shardmind/issues/5))
+- [ ] `source/core/modules.ts` — walk template dir, classify by module, resolve file lists ([#6](https://github.com/breferrari/shardmind/issues/6))
+- [ ] `source/runtime/types.ts` + `runtime/index.ts` — shared types and exports ([#7](https://github.com/breferrari/shardmind/issues/7))
 - [ ] Unit tests: manifest, schema, renderer (5 fixture scenarios), modules
 - [ ] `shardmind --version` works
 
 ### Milestone 2: Install Command (Day 2)
 
-- [ ] `source/core/state.ts` — read/write state.json, init .shardmind/, cache templates
-- [ ] `source/core/registry.ts` — resolve shard ref → GitHub URL + version
-- [ ] `source/components/Header.tsx` — branded header
-- [ ] `source/components/InstallWizard.tsx` — value prompts from schema groups
-- [ ] `source/components/ModuleReview.tsx` — multiselect for removable modules
-- [ ] `source/commands/install.tsx` — full flow: resolve → download → prompt → render → write
+- [ ] `source/core/state.ts` + `core/registry.ts` ([#9](https://github.com/breferrari/shardmind/issues/9))
+- [ ] `commands/install.tsx` — full install flow with Ink wizard ([#8](https://github.com/breferrari/shardmind/issues/8))
 - [ ] Integration test: install pipeline against real obsidian-mind shard (temp dir)
 - [ ] Verify: `shardmind install breferrari/obsidian-mind` works end to end
 
 ### Milestone 3: Merge Engine (Day 3)
 
-- [ ] Write all 17 merge fixture directories (scenarios 01–17)
-- [ ] Write test runner that auto-discovers fixtures
-- [ ] Run tests → all 17 fail (TDD)
-- [ ] `source/core/drift.ts` — ownership detection, hash comparison, drift classification
-- [ ] `source/core/differ.ts` — three-way merge via node-diff3, conflict markers
+- [ ] Write all 17 merge fixture directories — fixtures before code ([#10](https://github.com/breferrari/shardmind/issues/10))
+- [ ] `core/drift.ts` + `core/differ.ts` — three-way merge engine ([#11](https://github.com/breferrari/shardmind/issues/11))
 - [ ] Iterate until all 17 scenarios pass
 - [ ] Add edge case fixtures: frontmatter merge, empty file, binary-identical, encoding
 
 ### Milestone 4: Update Command + Status (Day 4)
 
-- [ ] `source/core/migrator.ts` — apply schema migrations to values
-- [ ] `source/components/DiffView.tsx` — three-way diff display with action buttons
-- [ ] `source/commands/update.tsx` — full flow: fetch → migrate → drift → merge → write
-- [ ] `source/components/StatusView.tsx` — quick vault health
-- [ ] `source/components/VerboseView.tsx` — detailed diagnostics
-- [ ] `source/commands/index.tsx` — root status command + --verbose flag
+- [ ] `commands/update.tsx` — upgrade flow with drift detection + DiffView ([#12](https://github.com/breferrari/shardmind/issues/12))
+- [ ] `commands/index.tsx` — status display + --verbose diagnostics ([#13](https://github.com/breferrari/shardmind/issues/13))
 - [ ] Integration test: install → modify files → update → verify merge behavior
 - [ ] E2E test: all 3 commands via CLI invocation
 
 ### Milestone 5: Flagship Shard (Day 5)
 
-- [ ] Add `shard.yaml` to obsidian-mind repo
-- [ ] Add `shard-schema.yaml` (4 values, 8 modules, signals, frontmatter rules)
-- [ ] Convert all note templates to `.njk`
-- [ ] Break CLAUDE.md into partials (`claude/_core.md.njk`, `_perf.md.njk`, etc.)
-- [ ] Add `AGENTS.md.njk` and `GEMINI.md.njk` stubs for multi-agent support
-- [ ] Rewrite 5 hook scripts from Python/shell to TypeScript (importing `shardmind/runtime`)
-- [ ] Mark volatile files: Memories.md, Index files
-- [ ] Add `templates/settings.json.njk` for hook configuration
+- [ ] obsidian-mind v4 — convert to shard format ([#14](https://github.com/breferrari/shardmind/issues/14))
 - [ ] Verify: `shardmind install breferrari/obsidian-mind` produces identical vault to git clone
 
 ### Milestone 6: Ship (Day 6)
 
-- [ ] Create research-wiki shard (Karpathy pattern): shard.yaml, schema, templates, commands, agents
-- [ ] Test: `shardmind install breferrari/research-wiki`
-- [ ] Full E2E test suite passing
-- [ ] `npm publish shardmind`
+- [ ] Research-wiki shard + E2E tests + npm publish ([#15](https://github.com/breferrari/shardmind/issues/15))
 - [ ] Create `shardmind/registry` repo with index.json (2 shards)
-- [ ] README finalized
 - [ ] Final test: fresh machine → `npm install -g shardmind` → `shardmind install breferrari/obsidian-mind`
 
 ---
