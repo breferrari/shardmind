@@ -1,11 +1,16 @@
-# ShardMind
+<p align="center">
+  <img src="assets/logo.png" alt="ShardMind" width="300">
+</p>
 
-[![TypeScript](https://img.shields.io/badge/typescript-5.0%2B-3178C6)](https://www.typescriptlang.org)
-[![Node](https://img.shields.io/badge/node-18%2B-339933)](https://nodejs.org)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<h1 align="center">ShardMind</h1>
 
-> **A package manager for Obsidian vault templates.**
-> Install, configure, upgrade, and diagnose AI-augmented vaults.
+<p align="center">
+  <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/typescript-5.0%2B-3178C6" alt="TypeScript"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-18%2B-339933" alt="Node"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+</p>
+
+<p align="center"><b>A package manager for Obsidian vault templates.</b><br>Install, configure, upgrade, and diagnose AI-augmented vaults.</p>
 
 ---
 
