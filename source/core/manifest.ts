@@ -33,11 +33,20 @@ export async function parseManifest(filePath: string): Promise<ShardManifest> {
   let raw: string;
   try {
     raw = await fs.readFile(filePath, 'utf-8');
-  } catch {
+  } catch (err) {
+    const fsCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
+    if (fsCode === 'ENOENT') {
+      throw new ShardMindError(
+        `Cannot read shard.yaml: ${filePath}`,
+        'MANIFEST_NOT_FOUND',
+        'Check the file path and ensure shard.yaml exists.',
+      );
+    }
+    const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(
-      `Cannot read shard.yaml: ${filePath}`,
-      'MANIFEST_NOT_FOUND',
-      'Check the file path and ensure shard.yaml exists.',
+      `Cannot read shard.yaml: ${filePath} (${fsCode ?? 'unknown'})`,
+      'MANIFEST_READ_FAILED',
+      message,
     );
   }
 
@@ -56,7 +65,7 @@ export async function parseManifest(filePath: string): Promise<ShardManifest> {
   const result = ShardManifestSchema.safeParse(parsed);
   if (!result.success) {
     const details = result.error.issues
-      .map(i => `${i.path.join('.')}: ${i.message}`)
+      .map(i => `${i.path.length === 0 ? '(root)' : i.path.join('.')}: ${i.message}`)
       .join('; ');
     throw new ShardMindError(
       `shard.yaml validation failed: ${details}`,
