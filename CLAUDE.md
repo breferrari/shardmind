@@ -249,6 +249,23 @@ export default {
 }
 ```
 
+## Release Process
+
+```bash
+# 1. Update CHANGELOG.md: move [Unreleased] items to a new version section
+# 2. Bump version + tag + push:
+npm run release:patch    # 0.1.0 → 0.1.1
+npm run release:minor    # 0.1.0 → 0.2.0
+npm run release:major    # 0.1.0 → 1.0.0
+```
+
+This triggers `.github/workflows/release.yml`:
+- Runs typecheck + test + build
+- Publishes to npm with provenance
+- Creates GitHub Release with changelog from commits since last tag
+
+**Do not** publish manually with `npm publish`. Always tag and let CI handle it.
+
 ## What NOT to Do
 
 - Don't add features not in the spec. If something seems missing, check the spec first — it might be intentionally deferred (see §21 Deferred Items).

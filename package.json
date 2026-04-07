@@ -21,7 +21,10 @@
     "test:merge": "vitest run tests/unit/drift.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit && vitest run",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "release:patch": "npm version patch && git push && git push --tags",
+    "release:minor": "npm version minor && git push && git push --tags",
+    "release:major": "npm version major && git push && git push --tags"
   },
   "dependencies": {
     "pastel": "^3.0.0",
