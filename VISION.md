@@ -4,8 +4,11 @@ ShardMind is a package manager for Obsidian vault templates.
 It installs, configures, upgrades, and diagnoses AI-augmented vaults.
 
 This document explains where the project came from, why it exists, and where it's going.
-Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-Implementation: [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)
+
+- Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Implementation: [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)
+- Roadmap: [`ROADMAP.md`](ROADMAP.md)
+- Development guide: [`CLAUDE.md`](CLAUDE.md)
 
 ## Origin
 

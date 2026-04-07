@@ -10,8 +10,11 @@ This project is **spec-driven**. The architecture and implementation are fully d
 
 | Document | What | When to Read |
 |----------|------|-------------|
+| `VISION.md` | Origin story, architectural bets, scope guardrails, non-goals. | Before proposing features or scope changes. |
+| `ROADMAP.md` | v0.1 milestones linked to GitHub issues. Build order. | Before starting a new milestone. |
 | `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. | Before making any architectural decision. |
 | `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, 10 module specs with TypeScript signatures, algorithms as numbered steps, error cases, 17 merge test fixtures, 6-day build plan. | Before implementing any module. |
+| `examples/minimal-shard/` | Minimal test shard for development. 4 values, 2 modules (core + removable), signals, CLAUDE.md partials. | Use this for testing during Days 1-4 before the obsidian-mind shard conversion on Day 5. |
 
 **Read the relevant spec section before writing code.** The specs define inputs, outputs, algorithms, error cases, and test expectations for every module. Don't improvise — implement what the spec says.
 

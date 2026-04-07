@@ -1032,4 +1032,8 @@ shardmind/
 ## Related
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — companion doc: the what and why (22 sections)
+- [VISION.md](../VISION.md) — origin story, architectural bets, scope guardrails
+- [ROADMAP.md](../ROADMAP.md) — milestones linked to GitHub issues
+- [CLAUDE.md](../CLAUDE.md) — spec-driven development guide
+- [examples/minimal-shard/](../examples/minimal-shard/) — test shard for development
 - [README.md](../README.md) — project overview

@@ -1293,4 +1293,8 @@ ShardMind's update engine — hash-based drift detection, cached templates for t
 ## Related
 
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) — companion doc: the how, exactly
+- [VISION.md](../VISION.md) — origin story, architectural bets, scope guardrails
+- [ROADMAP.md](../ROADMAP.md) — milestones linked to GitHub issues
+- [CLAUDE.md](../CLAUDE.md) — spec-driven development guide
+- [examples/minimal-shard/](../examples/minimal-shard/) — test shard for development
 - [README.md](../README.md) — project overview

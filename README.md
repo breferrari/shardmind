@@ -138,14 +138,16 @@ Shard authors choose which agents to support. A shard can ship `CLAUDE.md` only,
 
 ---
 
-## Architecture
-
-Full documentation in `docs/`:
+## Documentation
 
 | Document | What |
 |----------|------|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, operations, competitive moat. |
-| [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) | The how, exactly. 10 sections. System diagram, data flows, module specs with TypeScript signatures, testing strategy with 17 merge fixtures. |
+| [`VISION.md`](VISION.md) | Origin story, architectural bets, scope guardrails, competitive moat |
+| [`ROADMAP.md`](ROADMAP.md) | v0.1 milestones (linked to issues), v0.2 deferred, v1.0 ecosystem |
+| [`CLAUDE.md`](CLAUDE.md) | Spec-driven development guide for building ShardMind with AI agents |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The what and why. 22 sections. Ownership model, values layer, modules, signals. |
+| [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) | The how, exactly. 10 modules with TypeScript signatures, 17 merge fixtures, 6-day build plan. |
+| [`examples/minimal-shard/`](examples/minimal-shard/) | Minimal test shard for development — 4 values, 2 modules, partials, signals. |
 
 ---
 

@@ -1,6 +1,8 @@
 # ShardMind Roadmap
 
 > Living document. Updated as priorities shift and milestones land.
+>
+> Context: [`VISION.md`](VISION.md) | Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Implementation: [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) | Dev guide: [`CLAUDE.md`](CLAUDE.md)
 
 ---
 
