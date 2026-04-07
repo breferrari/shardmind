@@ -102,29 +102,101 @@ shardmind/
 └── vitest.config.ts
 ```
 
+## Build, Test, and Development Commands
+
+```bash
+npm install           # Install deps
+npm run build         # tsup build (cli + runtime)
+npm run dev           # tsup watch mode
+npm test              # vitest run (all tests)
+npm run test:watch    # vitest watch
+npm run test:merge    # just the merge engine fixtures
+npm run typecheck     # tsc --noEmit
+```
+
+- If deps are missing or a command fails with "module not found", run `npm install` first, then retry.
+- Before pushing: `npm run typecheck && npm test` must both pass.
+- Before publishing: `npm run build` must produce clean output in `dist/`.
+
+## Coding Style
+
+- **Language**: TypeScript, ESM, strict mode.
+- **Formatting**: follow the existing style in the codebase. No formatter configured yet — consistency by convention.
+- **No `any`** except in `schema.ts` zod dynamic generation (documented in spec). Prefer `unknown` + type narrowing.
+- **No `@ts-ignore` or `@ts-nocheck`**. Fix root causes. If a suppression is truly needed, comment why.
+- **Prefer `zod`** for validation at external boundaries: shard.yaml parsing, values validation, CLI arg parsing (Pastel handles this).
+- **Error handling**: throw `ShardMindError(message, code, hint)`. Commands catch and render via Ink `StatusMessage`. User errors get a message + hint. Engine errors get a full stack trace + "This is a bug, please report." See spec §7.
+- **Imports**: use `.js` extension for local imports (ESM requirement). `import { foo } from './bar.js'`.
+- **File references** in conversation: always repo-root relative (e.g., `source/core/renderer.ts:45`), never absolute paths.
+
+## Module Boundaries
+
+- `source/core/` — pure logic. No Ink, no React, no TUI. These modules are testable without rendering anything.
+- `source/components/` — Ink/React components. Import from `core/` for logic.
+- `source/commands/` — Pastel command files (.tsx). Thin orchestration: read args, call core, render components.
+- `source/runtime/` — exported for hook scripts. **Zero dependency on Ink, React, or Pastel.** If you import from `ink` or `react` here, the build is broken.
+- `source/types/` — re-exports from `runtime/types.ts`. Both CLI and runtime import from here.
+
+Do not cross these boundaries:
+- Core must not import from components or commands.
+- Runtime must not import from core, components, or commands.
+- Components can import from core but not from commands.
+
+## Naming
+
+- **Files**: `kebab-case.ts` for core modules, `PascalCase.tsx` for React components.
+- **Types/Interfaces**: `PascalCase` (e.g., `ShardManifest`, `DriftReport`).
+- **Functions**: `camelCase` (e.g., `parseManifest`, `detectDrift`).
+- **Constants**: `SCREAMING_SNAKE_CASE` only for true constants (e.g., `DEFAULT_REGISTRY_URL`).
+- **Zod schemas**: `PascalCase` + `Schema` suffix (e.g., `ShardManifestSchema`).
+
 ## Conventions
 
-### Code
+### Pastel/Ink Specific
 
-- **TypeScript strict mode.** No `any` except in zod dynamic schema generation (documented in spec).
-- **Pastel conventions**: `source/` not `src/`. `.tsx` for commands and components. Follow `@sindresorhus/tsconfig`.
-- **One file per module** in `source/core/`. Each maps 1:1 to a spec section in `docs/IMPLEMENTATION.md`.
-- **Exported types** live in `source/runtime/types.ts`. Both CLI and runtime import from there.
-- **Error handling**: throw `ShardMindError` with code + hint. Commands catch and render via Ink `StatusMessage`. See spec §7.
+- **`source/` not `src/`**. Pastel convention. Don't fight it.
+- **`.tsx` for commands and components**. `.ts` for everything else.
+- **Follow `@sindresorhus/tsconfig`**. It's configured in `tsconfig.json`.
+- **One file per command** in `source/commands/`. File name = CLI command name. `index.tsx` = root command (no args).
+- **Export `args` and `options` as zod schemas** from command files. Pastel uses them for arg parsing + help generation.
+- **React hooks** are fine in components. Keep state minimal — most logic should be in core modules.
+- **`<Static>` for completed items**, `<Box>` for live content. See Ink docs for the distinction.
+
+### One File Per Core Module
+
+Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
+
+| File | Spec Section | Purpose |
+|------|-------------|---------|
+| `manifest.ts` | §4.3 | Parse + validate shard.yaml |
+| `schema.ts` | §4.4 | Parse shard-schema.yaml → zod validator |
+| `download.ts` | §4.2 | Fetch + extract GitHub tarball |
+| `renderer.ts` | §4.6 | Nunjucks + frontmatter-aware rendering |
+| `modules.ts` | §4.5 | Module resolution + file gating |
+| `state.ts` | §4.7 | Read/write .shardmind/state.json |
+| `registry.ts` | §4.1 | Resolve shard ref → GitHub URL |
+| `drift.ts` | §4.8 | Ownership detection + drift analysis |
+| `differ.ts` | §4.9 | Three-way merge via node-diff3 |
+| `migrator.ts` | §4.10 | Apply schema migrations to values |
+
+Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
 
 ### Testing
 
-- **Fixtures before code** for the merge engine. Write all 17 fixture directories (see spec §17.2), then implement until they pass.
-- **Unit tests** for pure functions: renderer, schema parser, drift detector, migrator, modules resolver.
+- **Fixtures before code** for the merge engine. Write all 17 fixture directories (see spec §17.2), then implement until they pass. TDD is mandatory for `drift.ts` and `differ.ts`.
+- **Unit tests** for pure functions in `source/core/`. Test files: `tests/unit/<module>.test.ts`.
 - **Integration tests** for pipelines: install (temp dir → full vault), update (install → modify → update → verify).
-- **E2E tests** for CLI: invoke binary, check output and file state.
-- Each fixture is a self-contained directory with `scenario.yaml`, template files, values files, actual file, and expected output.
+- **E2E tests** for CLI: invoke binary via `execa`, check output and file state.
+- Each merge fixture is a self-contained directory with `scenario.yaml`, template files, values files, actual file, and expected output. See `tests/fixtures/merge/01-managed-no-change/` for the pattern.
+- **Clean up after tests**: remove temp dirs, don't leak state between tests.
+- Run `npm test` before committing. It must be green.
 
 ### Commits
 
 - Conventional commits: `feat:`, `fix:`, `test:`, `docs:`, `refactor:`.
 - One module per commit when building. Don't batch unrelated changes.
-- Tests pass before committing. `npx vitest run` must be green.
+- Reference the GitHub issue: `feat: core/manifest.ts — parse + validate shard.yaml (#2)`.
+- Tests pass before committing.
 
 ## Key Architectural Decisions
 
