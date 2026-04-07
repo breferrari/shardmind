@@ -53,8 +53,12 @@ yarn.lock
 # npm pack output
 *.tgz
 
-# Agent memory/credentials (never commit)
-.claude/
+# Agent auto-generated memory (never commit)
+# NOTE: .claude/ as a whole is NOT ignored — it contains managed files
+# (commands, agents, scripts, skills, settings.json) that ShardMind installs.
+# Only ignore the auto-memory subdirectories that agents generate at runtime.
+.claude/memory/
+.claude/projects/
 .agent/
 memory/
 IDENTITY.md
