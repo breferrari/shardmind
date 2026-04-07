@@ -12,7 +12,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 
 ### Milestone 1: Foundation (Day 1)
 
-- [ ] Scaffold with `create-pastel-app` ([#1](https://github.com/breferrari/shardmind/issues/1))
+- [x] Scaffold with `create-pastel-app` ([#1](https://github.com/breferrari/shardmind/issues/1))
 - [ ] `source/core/manifest.ts` — parse + validate shard.yaml with zod ([#2](https://github.com/breferrari/shardmind/issues/2))
 - [ ] `source/core/schema.ts` — parse shard-schema.yaml, generate dynamic zod validator ([#3](https://github.com/breferrari/shardmind/issues/3))
 - [ ] `source/core/download.ts` — fetch GitHub tarball, extract to temp dir ([#4](https://github.com/breferrari/shardmind/issues/4))
