@@ -9,5 +9,6 @@ export default defineConfig({
       'tests/e2e/**/*.test.ts',
     ],
     testTimeout: 30000, // integration/e2e tests may download tarballs
+    passWithNoTests: true,
   },
 });
