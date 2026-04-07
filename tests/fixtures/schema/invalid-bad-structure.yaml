@@ -1,0 +1,5 @@
+values:
+  user_name:
+    type: string
+    message: "Name"
+    group: setup

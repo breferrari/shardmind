@@ -1,0 +1,25 @@
+schema_version: 1
+
+values:
+  vault_purpose:
+    type: select
+    required: true
+    message: "Vault purpose"
+    options:
+      - { value: engineering, label: "Engineering" }
+      - { value: research, label: "Research" }
+    group: setup
+
+  is_engineering:
+    type: boolean
+    message: "Engineering mode?"
+    default: "{{ vault_purpose == 'engineering' }}"
+    group: setup
+
+groups:
+  - id: setup
+    label: "Setup"
+
+modules: {}
+frontmatter: {}
+migrations: []

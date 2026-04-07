@@ -1,0 +1,54 @@
+schema_version: 1
+
+values:
+  user_name:
+    type: string
+    required: true
+    message: "Your name"
+    group: setup
+
+  dark_mode:
+    type: boolean
+    message: "Enable dark mode?"
+    default: true
+    group: setup
+
+  max_notes:
+    type: number
+    message: "Maximum notes per day"
+    default: 10
+    min: 1
+    max: 100
+    group: setup
+
+  vault_purpose:
+    type: select
+    required: true
+    message: "Vault purpose"
+    options:
+      - { value: engineering, label: "Engineering" }
+      - { value: research, label: "Research" }
+    group: setup
+
+  plugins:
+    type: multiselect
+    message: "Select plugins"
+    options:
+      - { value: dataview, label: "Dataview" }
+      - { value: templater, label: "Templater" }
+      - { value: excalidraw, label: "Excalidraw" }
+    group: setup
+
+  tags:
+    type: list
+    message: "Default tags"
+    default: ["notes", "vault"]
+    group: setup
+
+groups:
+  - id: setup
+    label: "Setup"
+
+modules: {}
+frontmatter: {}
+migrations: []
