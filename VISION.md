@@ -126,6 +126,17 @@ The `shardmind/runtime` module is a separately bundled export (~30KB) with zero 
 This list is a scope guardrail, not permanent.
 Strong user demand and strong technical rationale can change it.
 
+## Design Influences
+
+- [Helm](https://helm.sh) — Chart.yaml manifest model, values.yaml separation, Chart.lock pinning
+- [chezmoi](https://chezmoi.io) — source/target/destination model, promptStringOnce, OS-aware conditionals
+- [Terraform](https://www.terraform.io) — desired/actual/state model, hash-based drift detection
+- [degit](https://github.com/Rich-Harris/degit) — tarball-first distribution, `user/repo#tag` addressing
+- [Cookiecutter](https://github.com/cookiecutter/cookiecutter) — variable prompts model (but we solved the upgrade problem they couldn't)
+- [Hygen](https://github.com/jondot/hygen) — frontmatter-in-template pattern
+- [kepano/obsidian-skills](https://github.com/kepano/obsidian-skills) — Agent Skills specification, Obsidian-specific skills
+- [Karpathy's LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — three-layer architecture for LLM-maintained knowledge bases, validated the market timing
+
 ## The Moat
 
 ShardMind's update engine — hash-based drift detection, cached templates for three-way merge, declarative migrations, ownership-aware file handling — solves a problem that the biggest scaffolding platforms haven't solved in years. That's the moat. Not the registry. Not the TUI. The update engine.
