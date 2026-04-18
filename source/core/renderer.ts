@@ -2,7 +2,13 @@ import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import nunjucks from 'nunjucks';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import type { FileEntry, RenderedFile, RenderContext } from '../runtime/types.js';
+import type {
+  FileEntry,
+  RenderedFile,
+  RenderContext,
+  ShardManifest,
+  ModuleSelections,
+} from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 
 const VOLATILE_MARKER = '{# shardmind: volatile #}';
@@ -14,6 +20,30 @@ export function createRenderer(templateDir: string): nunjucks.Environment {
     trimBlocks: true,
     lstripBlocks: true,
   });
+}
+
+/**
+ * Build the Nunjucks render context for an install or update operation.
+ * Centralizes the shape so the two commands can't drift apart on what's
+ * available to templates.
+ */
+export function buildRenderContext(
+  manifest: ShardManifest,
+  values: Record<string, unknown>,
+  selections: ModuleSelections,
+  now: Date = new Date(),
+): RenderContext {
+  const included_modules = Object.entries(selections)
+    .filter(([, s]) => s === 'included')
+    .map(([id]) => id);
+
+  return {
+    values,
+    included_modules,
+    shard: { name: manifest.name, version: manifest.version },
+    install_date: now.toISOString(),
+    year: now.getUTCFullYear().toString(),
+  };
 }
 
 export async function renderFile(

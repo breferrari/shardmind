@@ -6,13 +6,12 @@ import type {
   ShardSchema,
   ShardState,
   FileState,
-  RenderContext,
   ResolvedShard,
   ModuleSelections,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { resolveModules } from './modules.js';
-import { createRenderer, renderFile } from './renderer.js';
+import { createRenderer, renderFile, buildRenderContext } from './renderer.js';
 import {
   initShardDir,
   cacheTemplates,
@@ -21,7 +20,7 @@ import {
 } from './state.js';
 import { restoreBackups, type BackupRecord } from './install-plan.js';
 import { sha256, toPosix } from './fs-utils.js';
-import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
+import { SHARDMIND_DIR, VALUES_FILE, SHARD_TEMPLATES_DIR } from '../runtime/vault-paths.js';
 
 export interface PlannedOutput {
   outputPath: string;
@@ -106,17 +105,8 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
 
   onProgress?.({ kind: 'start', total: totalFiles });
 
-  const env = createRenderer(path.join(tempDir, 'templates'));
-  const includedModules = Object.entries(selections)
-    .filter(([, s]) => s === 'included')
-    .map(([id]) => id);
-  const context: RenderContext = {
-    values,
-    included_modules: includedModules,
-    shard: { name: manifest.name, version: manifest.version },
-    install_date: new Date().toISOString(),
-    year: new Date().getUTCFullYear().toString(),
-  };
+  const env = createRenderer(path.join(tempDir, SHARD_TEMPLATES_DIR));
+  const context = buildRenderContext(manifest, values, selections);
 
   let index = 0;
 
