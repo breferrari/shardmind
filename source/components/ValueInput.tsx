@@ -119,9 +119,9 @@ function renderInput(
       );
     }
     case 'multiselect': {
-      // @inkjs/ui MultiSelect not yet imported here; fall through to a
-      // textual comma-separated input for v0.1 if multiselect is used
-      // (minimal-shard and obsidian-mind don't use multiselect).
+      // Textual comma-separated fallback. Swapping in @inkjs/ui's
+      // MultiSelect widget is v0.2 UX polish; no v0.1 shard uses
+      // multiselect values, so this path is rarely exercised.
       const initial = Array.isArray(initialValue) ? (initialValue as string[]).join(', ') : '';
       return (
         <TextInput
