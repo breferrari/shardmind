@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { ProgressBar, Spinner } from '@inkjs/ui';
+import { ProgressBar, Spinner } from './ui.js';
 
 interface InstallProgressProps {
   current: number;

@@ -5,6 +5,7 @@ export default defineConfig({
     globals: true,
     include: [
       'tests/unit/**/*.test.ts',
+      'tests/component/**/*.test.tsx',
       'tests/integration/**/*.test.ts',
       'tests/e2e/**/*.test.ts',
     ],

@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { Select, Alert } from '@inkjs/ui';
+import { Select, Alert } from './ui.js';
 import type { Collision } from '../core/install-planner.js';
 
 export type CollisionAction = 'backup' | 'overwrite' | 'cancel';

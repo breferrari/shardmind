@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Box, Text } from 'ink';
-import { Select, TextInput, Alert, StatusMessage } from '@inkjs/ui';
+import { Select, TextInput, Alert, StatusMessage } from './ui.js';
 import type { ShardState, ModuleSelections } from '../runtime/types.js';
 
 export type GateChoice = 'update' | 'reinstall' | 'cancel';
@@ -15,6 +15,7 @@ type Screen = 'choose' | 'confirm-reinstall';
 export default function ExistingInstallGate({ state, onChoice }: ExistingInstallGateProps) {
   const [screen, setScreen] = useState<Screen>('choose');
   const [error, setError] = useState<string | null>(null);
+  const lastSubmittedValue = useRef<string | null>(null);
 
   if (screen === 'confirm-reinstall') {
     return (
@@ -30,13 +31,22 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
           <Text bold>Type REINSTALL to proceed:</Text>
           <TextInput
             placeholder="REINSTALL"
-            onChange={() => {
-              if (error) setError(null);
+            onChange={(v) => {
+              // @inkjs/ui fires onChange on parent re-renders, which
+              // would clear the error the same tick it's set. Compare
+              // against lastSubmittedValue so we only clear once the
+              // user actually types something new.
+              // Upstream: vadimdemedes/ink-ui#26 (fix in PR #27).
+              if (lastSubmittedValue.current !== null && v !== lastSubmittedValue.current) {
+                lastSubmittedValue.current = null;
+                setError(null);
+              }
             }}
             onSubmit={(v) => {
-              if (v.trim() === 'REINSTALL') {
+              if (v === 'REINSTALL') {
                 onChoice('reinstall');
               } else {
+                lastSubmittedValue.current = v;
                 setError('Exact text required. Press Esc or Ctrl+C to cancel.');
               }
             }}
