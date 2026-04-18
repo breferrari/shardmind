@@ -7,7 +7,7 @@ import { Box, Text } from 'ink';
 // fork the component in source/components/ui.ts. Do not route through
 // the shim.
 import { TextInput } from '@inkjs/ui';
-import { ENTER, tick, typeText } from './helpers.js';
+import { ENTER, tick, typeText, waitFor } from './helpers.js';
 
 afterEach(() => {
   cleanup();
@@ -61,7 +61,15 @@ describe('@inkjs/ui TextInput onChange quirk (regression)', () => {
     await tick(30);
     await typeText(stdin, 'abc');
     stdin.write(ENTER);
-    await tick(200);
+
+    // Poll for the spurious fire rather than sleeping a fixed amount.
+    // If upstream ever fixes the bug, this times out (fails the test)
+    // instead of passing from a lucky-fast tick or flaking under load.
+    await waitFor(
+      () => (onChangeValues.length > 3 ? 'ok' : ''),
+      (f) => f === 'ok',
+      500,
+    );
 
     expect(submitValues).toEqual(['abc']);
 
