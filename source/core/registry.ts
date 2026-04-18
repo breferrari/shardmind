@@ -4,6 +4,9 @@ import { ShardMindError } from '../runtime/types.js';
 const REGISTRY_INDEX_URL =
   'https://raw.githubusercontent.com/shardmind/registry/main/index.json';
 
+// Provisional index.json shape. Not yet ratified in IMPLEMENTATION.md §4.1 —
+// the registry repo is created at Milestone 6 and the format will be finalized
+// then. See #29 for the open questions and the "what to do" checklist.
 interface RegistryEntry {
   repo: string;
   latest: string;

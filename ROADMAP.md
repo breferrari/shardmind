@@ -52,7 +52,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 ### Milestone 6: Ship (Day 6)
 
 - [ ] Research-wiki shard + E2E tests + npm publish ([#15](https://github.com/breferrari/shardmind/issues/15))
-- [ ] Create `shardmind/registry` repo with index.json (2 shards)
+- [ ] Create `shardmind/registry` repo with index.json (2 shards) — finalize schema per [#29](https://github.com/breferrari/shardmind/issues/29)
 - [ ] Final test: fresh machine → `npm install -g shardmind` → `shardmind install breferrari/obsidian-mind`
 
 ---
