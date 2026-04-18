@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { ShardSchema, ModuleResolution, FileEntry } from '../runtime/types.js';
+import type { ShardSchema, ModuleResolution, FileEntry, ModuleSelections } from '../runtime/types.js';
 
 const VOLATILE_MARKER = '{# shardmind: volatile #}';
 
@@ -9,7 +9,7 @@ const ALWAYS_COPY_DIRS = ['scripts', 'utilities', 'skills'] as const;
 
 export async function resolveModules(
   schema: ShardSchema,
-  selections: Record<string, 'included' | 'excluded'>,
+  selections: ModuleSelections,
   tempDir: string,
 ): Promise<ModuleResolution> {
   const render: FileEntry[] = [];

@@ -93,6 +93,8 @@ export type MigrationChange =
   | { type: 'removed'; key: string }
   | { type: 'type_changed'; key: string; from: string; to: string; transform: string };
 
+export type ModuleSelections = Record<string, 'included' | 'excluded'>;
+
 export interface ShardState {
   schema_version: number;
   shard: string;
@@ -101,7 +103,7 @@ export interface ShardState {
   installed_at: string;
   updated_at: string;
   values_hash: string;
-  modules: Record<string, 'included' | 'excluded'>;
+  modules: ModuleSelections;
   files: Record<string, FileState>;
 }
 
@@ -223,7 +225,7 @@ export interface MigrationResult {
 export interface HookContext {
   vaultRoot: string;
   values: Record<string, unknown>;
-  modules: Record<string, 'included' | 'excluded'>;
+  modules: ModuleSelections;
   shard: { name: string; version: string };
   previousVersion?: string;
 }
@@ -237,4 +239,13 @@ export class ShardMindError extends Error {
     super(message);
     this.name = 'ShardMindError';
   }
+}
+
+/**
+ * Compile-time exhaustiveness helper. Placing this in a `default` branch
+ * of a discriminated-union switch forces TypeScript to fail the build
+ * if a new variant is added without a corresponding case.
+ */
+export function assertNever(value: never): never {
+  throw new Error(`Unhandled variant: ${JSON.stringify(value)}`);
 }

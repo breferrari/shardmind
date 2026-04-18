@@ -69,3 +69,4 @@ tmp/
 .tmp/
 .local/
 .artifacts/
+/.smoke/

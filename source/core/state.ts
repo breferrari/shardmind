@@ -84,19 +84,21 @@ export async function cacheTemplates(vaultRoot: string, tempDir: string): Promis
   const src = path.join(tempDir, 'templates');
   const dest = path.join(vaultRoot, '.shardmind', 'templates');
 
-  try {
-    await fsp.access(src);
-  } catch {
-    throw new ShardMindError(
-      `Missing templates/ directory in shard source: ${src}`,
-      'STATE_CACHE_MISSING_TEMPLATES',
-      'The downloaded shard does not contain a templates/ directory.',
-    );
-  }
-
   await fsp.rm(dest, { recursive: true, force: true });
   await fsp.mkdir(dest, { recursive: true });
-  await fsp.cp(src, dest, { recursive: true });
+  try {
+    await fsp.cp(src, dest, { recursive: true });
+  } catch (err) {
+    const code = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
+    if (code === 'ENOENT') {
+      throw new ShardMindError(
+        `Missing templates/ directory in shard source: ${src}`,
+        'STATE_CACHE_MISSING_TEMPLATES',
+        'The downloaded shard does not contain a templates/ directory.',
+      );
+    }
+    throw err;
+  }
 }
 
 export async function cacheManifest(

@@ -26,8 +26,8 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 ### Milestone 2: Install Command (Day 2)
 
 - [x] `source/core/state.ts` + `source/core/registry.ts` ([#9](https://github.com/breferrari/shardmind/issues/9))
-- [ ] `commands/install.tsx` — full install flow with Ink wizard ([#8](https://github.com/breferrari/shardmind/issues/8))
-- [ ] Integration test: install pipeline against real obsidian-mind shard (temp dir)
+- [x] `commands/install.tsx` — full install flow with Ink wizard ([#8](https://github.com/breferrari/shardmind/issues/8))
+- [x] Integration test: install pipeline against `examples/minimal-shard` (real obsidian-mind shard verified at Milestone 5)
 - [ ] Verify: `shardmind install breferrari/obsidian-mind` works end to end
 
 ### Milestone 3: Merge Engine (Day 3)
@@ -47,6 +47,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 ### Milestone 5: Flagship Shard (Day 5)
 
 - [ ] obsidian-mind v4 — convert to shard format ([#14](https://github.com/breferrari/shardmind/issues/14))
+- [ ] Finalize post-install hook runtime ([#30](https://github.com/breferrari/shardmind/issues/30)) — first real hook arrives with obsidian-mind
 - [ ] Verify: `shardmind install github:breferrari/obsidian-mind` (direct mode) produces identical vault to git clone — the registry repo isn't created until Milestone 6
 
 ### Milestone 6: Ship (Day 6)
