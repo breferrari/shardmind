@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/breferrari/shardmind/main/schemas/shard.schema.json",
+  "title": "Shard manifest (shard.yaml)",
+  "description": "The top-level manifest for a ShardMind shard. Lives at the root of the shard repository and declares identity, versioning, hooks, and dependencies. Validated on every install/update.",
+  "type": "object",
+  "required": ["apiVersion", "name", "namespace", "version"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "description": "Schema version of shard.yaml. v1 is the only accepted value in v0.x.",
+      "const": "v1"
+    },
+    "name": {
+      "description": "Package name within its namespace. Lowercase alphanumeric and hyphens only. Example: \"obsidian-mind\".",
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "namespace": {
+      "description": "Owner namespace. Typically your GitHub username or organization. Lowercase alphanumeric and hyphens only.",
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "version": {
+      "description": "Semver-valid version string. See https://semver.org.",
+      "type": "string"
+    },
+    "description": {
+      "description": "Short human-readable summary of the shard. Shown in the install wizard.",
+      "type": "string"
+    },
+    "persona": {
+      "description": "Who this shard is for. Displayed in the install header (e.g., \"AI-augmented research vaults\").",
+      "type": "string"
+    },
+    "license": {
+      "description": "SPDX license identifier (e.g., \"MIT\", \"Apache-2.0\").",
+      "type": "string"
+    },
+    "homepage": {
+      "description": "URL to the shard's project page or documentation.",
+      "type": "string",
+      "format": "uri"
+    },
+    "requires": {
+      "description": "Environment requirements. ShardMind does not enforce these in v0.1 but tooling may warn.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obsidian": {
+          "description": "Minimum Obsidian version required (semver range).",
+          "type": "string"
+        },
+        "node": {
+          "description": "Minimum Node.js version required for hook execution (semver range).",
+          "type": "string"
+        }
+      }
+    },
+    "dependencies": {
+      "description": "Other shards this shard depends on. Vendored in v0.1 (must be pre-installed in the vault); auto-fetched in v0.2+.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": ["name", "namespace", "version"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "namespace": { "type": "string" },
+          "version": { "type": "string" }
+        }
+      }
+    },
+    "hooks": {
+      "description": "Lifecycle hook file paths (relative to the shard root).",
+      "type": "object",
+      "default": {},
+      "additionalProperties": false,
+      "properties": {
+        "post-install": {
+          "description": "Path to a TypeScript file whose default export runs after `shardmind install`.",
+          "type": "string"
+        },
+        "post-update": {
+          "description": "Path to a TypeScript file whose default export runs after `shardmind update`.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}
