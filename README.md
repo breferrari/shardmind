@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/typescript-5.0%2B-3178C6" alt="TypeScript"></a>
-  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-18%2B-339933" alt="Node"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22%2B-339933" alt="Node"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
 </p>
 
@@ -169,7 +169,7 @@ Shard authors choose which agents to support. A shard can ship `CLAUDE.md` only,
 
 ## Requirements
 
-- [Node.js](https://nodejs.org) 18+
+- [Node.js](https://nodejs.org) 22+ (matches obsidian-mind's hook runtime requirement)
 - [Git](https://git-scm.com)
 - [Obsidian](https://obsidian.md) 1.12+ (for CLI support)
 - [QMD](https://github.com/tobi/qmd) (optional, for semantic search)

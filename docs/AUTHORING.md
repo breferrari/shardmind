@@ -55,7 +55,7 @@ license: MIT
 homepage: https://github.com/breferrari/obsidian-mind
 
 requires:
-  node: ">=18.0.0"
+  node: ">=22.0.0"
 
 hooks:
   post-install: hooks/post-install.ts
