@@ -12,7 +12,10 @@ export default defineConfig([
   },
   // Pastel commands — file-system routing requires separate files in dist/commands/
   {
-    entry: { 'commands/index': 'source/commands/index.tsx' },
+    entry: {
+      'commands/index': 'source/commands/index.tsx',
+      'commands/install': 'source/commands/install.tsx',
+    },
     format: ['esm'],
     dts: true,
     target: 'node18',

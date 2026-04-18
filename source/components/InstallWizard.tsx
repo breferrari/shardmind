@@ -1,0 +1,330 @@
+import { useState, useMemo } from 'react';
+import { Box, Text, useInput } from 'ink';
+import { Select } from '@inkjs/ui';
+import type { ShardManifest, ShardSchema, ValueDefinition } from '../runtime/types.js';
+import Header from './Header.js';
+import ValueInput from './ValueInput.js';
+import ModuleReview from './ModuleReview.js';
+import {
+  missingValueKeys,
+  resolveComputedDefaults,
+  defaultModuleSelections,
+} from '../core/install-plan.js';
+import { isComputedDefault } from '../core/schema.js';
+
+export interface WizardResult {
+  values: Record<string, unknown>;
+  selections: Record<string, 'included' | 'excluded'>;
+}
+
+interface InstallWizardProps {
+  manifest: ShardManifest;
+  schema: ShardSchema;
+  prefillValues: Record<string, unknown>;
+  moduleFileCounts: Record<string, number>;
+  onComplete: (result: WizardResult) => void;
+  onCancel: () => void;
+}
+
+type Step =
+  | { kind: 'header' }
+  | { kind: 'value'; index: number }
+  | { kind: 'computed-preview' }
+  | { kind: 'modules' }
+  | { kind: 'confirm' };
+
+export default function InstallWizard({
+  manifest,
+  schema,
+  prefillValues,
+  moduleFileCounts,
+  onComplete,
+  onCancel,
+}: InstallWizardProps) {
+  const valueKeys = useMemo(
+    () => missingValueKeys(schema, prefillValues),
+    [schema, prefillValues],
+  );
+
+  const [step, setStep] = useState<Step>(() =>
+    valueKeys.length > 0 ? { kind: 'header' } : { kind: 'modules' },
+  );
+  const [values, setValues] = useState<Record<string, unknown>>(prefillValues);
+  const [selections, setSelections] = useState<Record<string, 'included' | 'excluded'>>(
+    () => defaultModuleSelections(schema),
+  );
+  const [resolvedValues, setResolvedValues] = useState<Record<string, unknown>>(prefillValues);
+
+  useInput((_input, key) => {
+    if (key.escape) {
+      goBack();
+    }
+  });
+
+  function goBack() {
+    setStep((s) => {
+      switch (s.kind) {
+        case 'header':
+          return s;
+        case 'value':
+          if (s.index === 0) return { kind: 'header' };
+          return { kind: 'value', index: s.index - 1 };
+        case 'computed-preview':
+          if (valueKeys.length === 0) return { kind: 'header' };
+          return { kind: 'value', index: valueKeys.length - 1 };
+        case 'modules':
+          if (hasComputedDefaults(schema)) return { kind: 'computed-preview' };
+          if (valueKeys.length === 0) return { kind: 'header' };
+          return { kind: 'value', index: valueKeys.length - 1 };
+        case 'confirm':
+          return { kind: 'modules' };
+      }
+    });
+  }
+
+  function submitValue(key: string, value: unknown) {
+    const nextValues = { ...values, [key]: value };
+    setValues(nextValues);
+    setStep((s) => {
+      if (s.kind !== 'value') return s;
+      if (s.index + 1 < valueKeys.length) {
+        return { kind: 'value', index: s.index + 1 };
+      }
+      // All values collected → resolve computed + advance
+      try {
+        const resolved = resolveComputedDefaults(schema, nextValues);
+        setResolvedValues(resolved);
+        if (hasComputedDefaults(schema)) return { kind: 'computed-preview' };
+      } catch {
+        // Fall through — computed-preview will re-throw on render and
+        // the wizard caller sees the error.
+        setResolvedValues(nextValues);
+      }
+      return { kind: 'modules' };
+    });
+  }
+
+  function submitSelections(next: Record<string, 'included' | 'excluded'>) {
+    setSelections(next);
+    setStep({ kind: 'confirm' });
+  }
+
+  function submitConfirm(choice: 'install' | 'back' | 'cancel') {
+    if (choice === 'install') {
+      onComplete({ values: resolvedValues, selections });
+    } else if (choice === 'back') {
+      setStep({ kind: 'modules' });
+    } else {
+      onCancel();
+    }
+  }
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Header manifest={manifest} />
+
+      {step.kind === 'header' && (
+        <HeaderStep
+          missingValueCount={valueKeys.length}
+          onContinue={() => {
+            if (valueKeys.length > 0) {
+              setStep({ kind: 'value', index: 0 });
+            } else if (hasComputedDefaults(schema)) {
+              const resolved = resolveComputedDefaults(schema, values);
+              setResolvedValues(resolved);
+              setStep({ kind: 'computed-preview' });
+            } else {
+              setStep({ kind: 'modules' });
+            }
+          }}
+        />
+      )}
+
+      {step.kind === 'value' && (() => {
+        const key = valueKeys[step.index]!;
+        const def = schema.values[key]!;
+        return (
+          <Box flexDirection="column">
+            <Text dimColor>
+              Step {step.index + 1} of {valueKeys.length}
+              {def.group && schema.groups.find((g) => g.id === def.group)
+                ? ` · ${schema.groups.find((g) => g.id === def.group)!.label}`
+                : ''}
+            </Text>
+            <ValueInput
+              id={key}
+              def={def}
+              initialValue={values[key]}
+              onSubmit={(v) => submitValue(key, v)}
+            />
+          </Box>
+        );
+      })()}
+
+      {step.kind === 'computed-preview' && (
+        <ComputedPreview
+          schema={schema}
+          resolved={resolvedValues}
+          onContinue={() => setStep({ kind: 'modules' })}
+        />
+      )}
+
+      {step.kind === 'modules' && (
+        <ModuleReview
+          modules={schema.modules}
+          moduleFileCounts={moduleFileCounts}
+          initialSelections={selections}
+          onSubmit={submitSelections}
+        />
+      )}
+
+      {step.kind === 'confirm' && (
+        <ConfirmStep
+          manifest={manifest}
+          values={resolvedValues}
+          selections={selections}
+          schemaValues={schema.values}
+          onChoice={submitConfirm}
+        />
+      )}
+
+      <KeyboardLegend />
+    </Box>
+  );
+}
+
+function hasComputedDefaults(schema: ShardSchema): boolean {
+  return Object.values(schema.values).some(
+    (def) => def.default !== undefined && isComputedDefault(def.default),
+  );
+}
+
+function HeaderStep({
+  missingValueCount,
+  onContinue,
+}: {
+  missingValueCount: number;
+  onContinue: () => void;
+}) {
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text>
+        {missingValueCount === 0
+          ? 'Pre-fill complete. Ready to review modules.'
+          : `${missingValueCount} question${missingValueCount === 1 ? '' : 's'} to answer, then module review.`}
+      </Text>
+      <Select
+        options={[{ label: 'Start', value: 'start' }]}
+        onChange={() => onContinue()}
+      />
+    </Box>
+  );
+}
+
+function ComputedPreview({
+  schema,
+  resolved,
+  onContinue,
+}: {
+  schema: ShardSchema;
+  resolved: Record<string, unknown>;
+  onContinue: () => void;
+}) {
+  const computed = Object.entries(schema.values).filter(
+    ([, def]) => def.default !== undefined && isComputedDefault(def.default),
+  );
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Auto-filled values</Text>
+      {computed.map(([key, def]) => (
+        <Box key={key} flexDirection="column">
+          <Text>
+            <Text bold>{key}</Text>
+            <Text>: </Text>
+            <Text color="cyan">{formatValue(resolved[key])}</Text>
+          </Text>
+          <Text dimColor>  expression: {String(def.default)}</Text>
+        </Box>
+      ))}
+      <Select options={[{ label: 'Continue', value: 'continue' }]} onChange={() => onContinue()} />
+    </Box>
+  );
+}
+
+function ConfirmStep({
+  manifest,
+  values,
+  selections,
+  schemaValues,
+  onChoice,
+}: {
+  manifest: ShardManifest;
+  values: Record<string, unknown>;
+  selections: Record<string, 'included' | 'excluded'>;
+  schemaValues: Record<string, ValueDefinition>;
+  onChoice: (c: 'install' | 'back' | 'cancel') => void;
+}) {
+  const included = Object.entries(selections).filter(([, s]) => s === 'included').map(([id]) => id);
+  const excluded = Object.entries(selections).filter(([, s]) => s === 'excluded').map(([id]) => id);
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Ready to install</Text>
+
+      <Box flexDirection="column">
+        <Text dimColor>Shard:</Text>
+        <Text>  {manifest.namespace}/{manifest.name}@{manifest.version}</Text>
+      </Box>
+
+      <Box flexDirection="column">
+        <Text dimColor>Values:</Text>
+        {Object.keys(schemaValues).map((key) => (
+          <Text key={key}>
+            <Text>  {key}: </Text>
+            <Text color="cyan">{formatValue(values[key])}</Text>
+          </Text>
+        ))}
+      </Box>
+
+      <Box flexDirection="column">
+        <Text dimColor>Modules included ({included.length}):</Text>
+        <Text>  {included.join(', ') || '(none)'}</Text>
+        {excluded.length > 0 && (
+          <>
+            <Text dimColor>Modules excluded ({excluded.length}):</Text>
+            <Text>  {excluded.join(', ')}</Text>
+          </>
+        )}
+      </Box>
+
+      <Select
+        options={[
+          { label: 'Install', value: 'install' },
+          { label: 'Back to module review', value: 'back' },
+          { label: 'Cancel', value: 'cancel' },
+        ]}
+        onChange={(v) => onChoice(v as 'install' | 'back' | 'cancel')}
+      />
+    </Box>
+  );
+}
+
+function KeyboardLegend() {
+  return (
+    <Box marginTop={1}>
+      <Text dimColor>
+        ↑↓ navigate · Space select (multi) · Enter confirm · Esc back · Ctrl+C cancel
+      </Text>
+    </Box>
+  );
+}
+
+function formatValue(value: unknown): string {
+  if (value === undefined) return '(unset)';
+  if (value === null) return 'null';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (Array.isArray(value)) return value.length === 0 ? '(empty)' : value.map(String).join(', ');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
