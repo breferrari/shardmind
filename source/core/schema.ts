@@ -99,6 +99,19 @@ export function isComputedDefault(value: unknown): boolean {
   return typeof value === 'string' && value.trimStart().startsWith('{{');
 }
 
+/**
+ * Keys provided by the render context. Shard authors cannot declare
+ * schema values with these names because they would silently shadow
+ * the engine-provided context at render time.
+ */
+export const RESERVED_VALUE_KEYS = new Set([
+  'shard',
+  'install_date',
+  'year',
+  'included_modules',
+  'values',
+]);
+
 export async function parseSchema(filePath: string): Promise<ShardSchema> {
   let raw: string;
   try {
@@ -145,6 +158,17 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
   }
 
   const data = result.data;
+
+  // Reserved-name guard: reject schema values whose key collides with
+  // a render-context field (shard, install_date, year, etc.).
+  const reserved = Object.keys(data.values).filter(k => RESERVED_VALUE_KEYS.has(k));
+  if (reserved.length > 0) {
+    throw new ShardMindError(
+      `shard-schema.yaml uses reserved value name${reserved.length === 1 ? '' : 's'}: ${reserved.join(', ')}`,
+      'SCHEMA_RESERVED_NAME',
+      `Rename to avoid collision with the render context. Reserved: ${[...RESERVED_VALUE_KEYS].join(', ')}`,
+    );
+  }
 
   // Cross-validate: every value's group must exist
   const groupIds = new Set(data.groups.map(g => g.id));

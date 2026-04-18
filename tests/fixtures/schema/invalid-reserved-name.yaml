@@ -1,0 +1,17 @@
+schema_version: 1
+
+values:
+  shard:
+    type: string
+    required: true
+    message: "Which shard?"
+    group: setup
+
+groups:
+  - id: setup
+    label: "Setup"
+
+modules: {}
+signals: []
+frontmatter: {}
+migrations: []

@@ -80,6 +80,57 @@ describe('parseSchema', () => {
     const err = await parseSchema(path.join(FIXTURES, 'invalid-bad-structure.yaml')).catch(e => e);
     expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
   });
+
+  it('rejects schema value keys that collide with render context (reserved names)', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-reserved-name.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_RESERVED_NAME');
+    expect(err.message).toContain('shard');
+  });
+
+  it('reports every reserved-name collision when multiple', async () => {
+    const os = await import('node:os');
+    const fs = await import('node:fs/promises');
+    const tmp = path.join(os.tmpdir(), `schema-reserved-${Date.now()}.yaml`);
+    await fs.writeFile(tmp, [
+      'schema_version: 1',
+      'values:',
+      '  shard:',
+      '    type: string',
+      '    required: true',
+      '    message: "x"',
+      '    group: setup',
+      '  install_date:',
+      '    type: string',
+      '    required: true',
+      '    message: "y"',
+      '    group: setup',
+      'groups:',
+      '  - { id: setup, label: "Setup" }',
+      'modules: {}',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n'));
+
+    try {
+      const err = await parseSchema(tmp).catch(e => e);
+      expect(err.code).toBe('SCHEMA_RESERVED_NAME');
+      expect(err.message).toContain('shard');
+      expect(err.message).toContain('install_date');
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
+  it('exposes the full reserved-name list in the hint so authors can self-serve', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-reserved-name.yaml')).catch(e => e);
+    expect(err.hint).toContain('shard');
+    expect(err.hint).toContain('install_date');
+    expect(err.hint).toContain('year');
+    expect(err.hint).toContain('included_modules');
+    expect(err.hint).toContain('values');
+  });
 });
 
 describe('buildValuesValidator', () => {
