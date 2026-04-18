@@ -28,6 +28,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 - [x] `source/core/state.ts` + `source/core/registry.ts` ([#9](https://github.com/breferrari/shardmind/issues/9))
 - [x] `commands/install.tsx` — full install flow with Ink wizard ([#8](https://github.com/breferrari/shardmind/issues/8))
 - [x] Integration test: install pipeline against `examples/minimal-shard` (real obsidian-mind shard verified at Milestone 5)
+- [x] `ink-testing-library` component tests for ValueInput, ModuleReview, ExistingInstallGate, InstallWizard ([#38](https://github.com/breferrari/shardmind/issues/38) — pulled forward from v0.2)
 - [ ] Verify: `shardmind install breferrari/obsidian-mind` works end to end
 
 ### Milestone 3: Merge Engine (Day 3)
@@ -108,7 +109,6 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] Pre-install template syntax lint ([#35](https://github.com/breferrari/shardmind/issues/35))
 - [ ] Debug logging (`SHARDMIND_DEBUG` env var) ([#36](https://github.com/breferrari/shardmind/issues/36))
 - [ ] `NO_COLOR` / `FORCE_COLOR` respect across Ink components ([#37](https://github.com/breferrari/shardmind/issues/37))
-- [ ] `ink-testing-library` integration for TUI unit tests ([#38](https://github.com/breferrari/shardmind/issues/38))
 - [ ] Alternate registry configurability (GHE, private, custom URL) ([#39](https://github.com/breferrari/shardmind/issues/39))
 - [ ] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
 

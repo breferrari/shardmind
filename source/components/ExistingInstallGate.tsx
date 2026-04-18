@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Box, Text } from 'ink';
 import { Select, TextInput, Alert, StatusMessage } from '@inkjs/ui';
 import type { ShardState, ModuleSelections } from '../runtime/types.js';
@@ -15,6 +15,7 @@ type Screen = 'choose' | 'confirm-reinstall';
 export default function ExistingInstallGate({ state, onChoice }: ExistingInstallGateProps) {
   const [screen, setScreen] = useState<Screen>('choose');
   const [error, setError] = useState<string | null>(null);
+  const lastSubmittedValue = useRef<string | null>(null);
 
   if (screen === 'confirm-reinstall') {
     return (
@@ -30,13 +31,22 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
           <Text bold>Type REINSTALL to proceed:</Text>
           <TextInput
             placeholder="REINSTALL"
-            onChange={() => {
-              if (error) setError(null);
+            onChange={(v) => {
+              // Clear a stale error only when the user types something
+              // different from the value that caused it. @inkjs/ui's
+              // TextInput fires onChange on parent re-renders too, so
+              // the value-comparison guard prevents the error from
+              // being cleared the same tick it's set.
+              if (lastSubmittedValue.current !== null && v !== lastSubmittedValue.current) {
+                lastSubmittedValue.current = null;
+                setError(null);
+              }
             }}
             onSubmit={(v) => {
               if (v.trim() === 'REINSTALL') {
                 onChoice('reinstall');
               } else {
+                lastSubmittedValue.current = v;
                 setError('Exact text required. Press Esc or Ctrl+C to cancel.');
               }
             }}
