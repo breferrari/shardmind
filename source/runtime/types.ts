@@ -238,3 +238,12 @@ export class ShardMindError extends Error {
     this.name = 'ShardMindError';
   }
 }
+
+/**
+ * Compile-time exhaustiveness helper. Placing this in a `default` branch
+ * of a discriminated-union switch forces TypeScript to fail the build
+ * if a new variant is added without a corresponding case.
+ */
+export function assertNever(value: never): never {
+  throw new Error(`Unhandled variant: ${JSON.stringify(value)}`);
+}

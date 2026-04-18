@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { Box, Text, useApp } from 'ink';
@@ -72,6 +72,7 @@ interface PreparedContext {
   cleanup: () => Promise<void>;
   prefillValues: Record<string, unknown>;
   moduleFileCounts: Record<string, number>;
+  alwaysIncludedFileCount: number;
 }
 
 interface HookSummary {
@@ -88,6 +89,13 @@ export default function Install({ args, options }: Props) {
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
 
+  // Refs tracked during runInstall so a SIGINT handler can roll back
+  // any files written so far and restore any backups created during
+  // collision handling.
+  const writtenPathsRef = useRef<string[]>([]);
+  const backupsRef = useRef<BackupRecord[]>([]);
+  const installingRef = useRef(false);
+
   const finish = useCallback(
     (next: Phase) => {
       setPhase(next);
@@ -97,6 +105,26 @@ export default function Install({ args, options }: Props) {
     },
     [exit],
   );
+
+  // SIGINT handler: if a render is in progress when the user hits Ctrl+C,
+  // roll back partial writes and restore backups before exiting. Default
+  // Ink behavior exits without knowing about our bookkeeping.
+  useEffect(() => {
+    const handler = () => {
+      if (installingRef.current && !dryRun) {
+        // Fire-and-forget; process is about to exit anyway.
+        rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current)
+          .catch(() => {})
+          .finally(() => process.exit(130));
+      } else {
+        process.exit(130);
+      }
+    };
+    process.on('SIGINT', handler);
+    return () => {
+      process.off('SIGINT', handler);
+    };
+  }, [dryRun, vaultRoot]);
 
   // Boot → preparation
   useEffect(() => {
@@ -121,7 +149,7 @@ export default function Install({ args, options }: Props) {
 
         // Precompute module file counts for the wizard preview (requires
         // scanning the temp directory with current default selections).
-        const { moduleFileCounts } = await planOutputs(
+        const { moduleFileCounts, alwaysIncludedFileCount } = await planOutputs(
           schema,
           temp.tempDir,
           defaultModuleSelections(schema),
@@ -135,6 +163,7 @@ export default function Install({ args, options }: Props) {
           cleanup: temp.cleanup,
           prefillValues: merged,
           moduleFileCounts,
+          alwaysIncludedFileCount,
         };
         ctxForCleanup = ctx;
 
@@ -223,6 +252,12 @@ export default function Install({ args, options }: Props) {
       const start = Date.now();
       const history: string[] = [];
 
+      // Register backups with the SIGINT handler before any write starts,
+      // so Ctrl+C between writes still restores them.
+      backupsRef.current = backups;
+      writtenPathsRef.current = [];
+      installingRef.current = true;
+
       setPhase({
         kind: 'installing',
         total: 0,
@@ -245,6 +280,9 @@ export default function Install({ args, options }: Props) {
           values: result.values,
           selections: result.selections,
           dryRun,
+          onFileWritten: (outputPath) => {
+            writtenPathsRef.current.push(outputPath);
+          },
           onProgress: (ev) => {
             if (ev.kind === 'start') {
               setPhase((prev) =>
@@ -278,6 +316,9 @@ export default function Install({ args, options }: Props) {
           : await runPostInstallHook(ctx.tempDir, ctx.manifest);
         const hookSummary = summarizeHook(hookResult);
 
+        // Install completed — SIGINT no longer needs to roll back.
+        installingRef.current = false;
+
         finish({
           kind: 'summary',
           manifest: ctx.manifest,
@@ -292,6 +333,7 @@ export default function Install({ args, options }: Props) {
         if (!dryRun) {
           await rollbackInstall(vaultRoot, written, backups).catch(() => {});
         }
+        installingRef.current = false;
         finish({
           kind: 'error',
           error: err as Error,
@@ -326,7 +368,7 @@ export default function Install({ args, options }: Props) {
       if (choice === 'update') {
         finish({
           kind: 'cancelled',
-          reason: 'Run `shardmind update` instead. (Install declined.)',
+          reason: 'Existing install preserved. `shardmind update` is not yet available (Milestone 4); re-run `install` and pick Reinstall when you want a fresh start.',
         });
         return;
       }
@@ -373,71 +415,91 @@ export default function Install({ args, options }: Props) {
     [phase, vaultRoot, yes, dryRun, finish, handleWizardComplete],
   );
 
-  // Render tree per phase.
+  // Render tree per phase — wrapped in RootFrame so dry-run and the
+  // keyboard legend stay visible across all phases.
   if (phase.kind === 'booting' || phase.kind === 'loading') {
     const msg = phase.kind === 'loading' ? phase.message : 'Starting…';
     return (
-      <Box gap={1}>
-        <Spinner />
-        <Text>{msg}</Text>
-      </Box>
+      <RootFrame dryRun={Boolean(dryRun)} showLegend={false}>
+        <Box gap={1}>
+          <Spinner />
+          <Text>{msg}</Text>
+        </Box>
+      </RootFrame>
     );
   }
 
   if (phase.kind === 'gate') {
-    return <ExistingInstallGate state={phase.state} onChoice={handleGateChoice} />;
+    return (
+      <RootFrame dryRun={Boolean(dryRun)}>
+        <ExistingInstallGate state={phase.state} onChoice={handleGateChoice} />
+      </RootFrame>
+    );
   }
 
   if (phase.kind === 'wizard') {
     return (
-      <InstallWizard
-        manifest={phase.ctx.manifest}
-        schema={phase.ctx.schema}
-        prefillValues={phase.ctx.prefillValues}
-        moduleFileCounts={phase.ctx.moduleFileCounts}
-        onComplete={(result) => handleWizardComplete(result, phase.ctx)}
-        onCancel={() => finish({ kind: 'cancelled', reason: 'User cancelled in wizard.' })}
-        onError={(err) => finish({ kind: 'error', error: err })}
-      />
+      <RootFrame dryRun={Boolean(dryRun)}>
+        <InstallWizard
+          manifest={phase.ctx.manifest}
+          schema={phase.ctx.schema}
+          prefillValues={phase.ctx.prefillValues}
+          moduleFileCounts={phase.ctx.moduleFileCounts}
+          alwaysIncludedFileCount={phase.ctx.alwaysIncludedFileCount}
+          onComplete={(result) => handleWizardComplete(result, phase.ctx)}
+          onCancel={() => finish({ kind: 'cancelled', reason: 'User cancelled in wizard.' })}
+          onError={(err) => finish({ kind: 'error', error: err })}
+        />
+      </RootFrame>
     );
   }
 
   if (phase.kind === 'collision') {
-    return <CollisionReview collisions={phase.collisions} onChoice={handleCollisionChoice} />;
+    return (
+      <RootFrame dryRun={Boolean(dryRun)}>
+        <CollisionReview collisions={phase.collisions} onChoice={handleCollisionChoice} />
+      </RootFrame>
+    );
   }
 
   if (phase.kind === 'installing') {
     return (
-      <InstallProgress
-        current={phase.current}
-        total={phase.total}
-        label={phase.label}
-        verbose={verbose}
-        history={phase.history}
-      />
+      <RootFrame dryRun={Boolean(dryRun)} showLegend={false}>
+        <InstallProgress
+          current={phase.current}
+          total={phase.total}
+          label={phase.label}
+          verbose={verbose}
+          history={phase.history}
+        />
+      </RootFrame>
     );
   }
 
   if (phase.kind === 'summary') {
     return (
-      <Summary
-        manifest={phase.manifest}
-        vaultRoot={phase.vaultRoot}
-        fileCount={phase.fileCount}
-        durationMs={phase.durationMs}
-        backups={phase.backups}
-        hookOutput={phase.hook}
-        dryRun={phase.dryRun}
-      />
+      <RootFrame dryRun={Boolean(dryRun)} showLegend={false}>
+        <Summary
+          manifest={phase.manifest}
+          vaultRoot={phase.vaultRoot}
+          fileCount={phase.fileCount}
+          durationMs={phase.durationMs}
+          backups={phase.backups}
+          hookOutput={phase.hook}
+          dryRun={phase.dryRun}
+        />
+      </RootFrame>
     );
   }
 
   if (phase.kind === 'cancelled') {
     return (
-      <Box flexDirection="column">
-        <Alert variant="info">Cancelled</Alert>
-        <Text dimColor>{phase.reason}</Text>
-      </Box>
+      <RootFrame dryRun={Boolean(dryRun)} showLegend={false}>
+        <Box flexDirection="column">
+          <Alert variant="info">Cancelled</Alert>
+          <Text dimColor>{phase.reason}</Text>
+        </Box>
+      </RootFrame>
     );
   }
 
@@ -446,11 +508,44 @@ export default function Install({ args, options }: Props) {
   const code = err instanceof ShardMindError ? err.code : null;
   const hint = err instanceof ShardMindError ? err.hint : null;
   return (
+    <RootFrame dryRun={Boolean(dryRun)} showLegend={false}>
+      <Box flexDirection="column" gap={1}>
+        <StatusMessage variant="error">{err.message}</StatusMessage>
+        {code && <Text dimColor>code: {code}</Text>}
+        {hint && <Text>{hint}</Text>}
+        {phase.detail && <Text dimColor>{phase.detail}</Text>}
+      </Box>
+    </RootFrame>
+  );
+}
+
+function RootFrame({
+  children,
+  dryRun,
+  showLegend = true,
+}: {
+  children: ReactNode;
+  dryRun: boolean;
+  showLegend?: boolean;
+}) {
+  return (
     <Box flexDirection="column" gap={1}>
-      <StatusMessage variant="error">{err.message}</StatusMessage>
-      {code && <Text dimColor>code: {code}</Text>}
-      {hint && <Text>{hint}</Text>}
-      {phase.detail && <Text dimColor>{phase.detail}</Text>}
+      {dryRun && (
+        <Box>
+          <Text backgroundColor="yellow" color="black">
+            {' DRY RUN '}
+          </Text>
+          <Text dimColor> no files will be written</Text>
+        </Box>
+      )}
+      {children}
+      {showLegend && (
+        <Box marginTop={1}>
+          <Text dimColor>
+            ↑↓ navigate · Space select (multi) · Enter confirm · Esc back · Ctrl+C cancel
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }

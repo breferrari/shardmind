@@ -42,6 +42,11 @@ export interface InstallRunnerOptions {
   values: Record<string, unknown>;
   selections: Record<string, 'included' | 'excluded'>;
   onProgress?: (event: ProgressEvent) => void;
+  /**
+   * Fires after each successful write with the vault-relative output path.
+   * Used by the command layer to maintain a live rollback list for SIGINT.
+   */
+  onFileWritten?: (outputPath: string) => void;
   dryRun?: boolean;
 }
 
@@ -110,7 +115,7 @@ export async function planOutputs(
  * Returns paths written so the caller can roll back on later failure.
  */
 export async function runInstall(opts: InstallRunnerOptions): Promise<InstallResult> {
-  const { vaultRoot, manifest, schema, tempDir, resolved, values, selections, onProgress, dryRun } = opts;
+  const { vaultRoot, manifest, schema, tempDir, resolved, values, selections, onProgress, onFileWritten, dryRun } = opts;
 
   const resolution = await resolveModules(schema, selections, tempDir);
   const totalFiles = resolution.render.length + resolution.copy.length;
@@ -156,6 +161,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
       if (!dryRun) {
         await writeVaultFile(vaultRoot, file.outputPath, file.content);
         writtenPaths.push(file.outputPath);
+        onFileWritten?.(file.outputPath);
       }
       fileStates[file.outputPath] = {
         template: path.relative(tempDir, entry.sourcePath).replace(/\\/g, '/'),
@@ -182,6 +188,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     if (!dryRun) {
       await writeVaultFileBuffer(vaultRoot, entry.outputPath, buffer);
       writtenPaths.push(entry.outputPath);
+      onFileWritten?.(entry.outputPath);
     }
     fileStates[entry.outputPath] = {
       template: path.relative(tempDir, entry.sourcePath).replace(/\\/g, '/'),
@@ -214,7 +221,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
       throw new ShardMindError(
         'shard-values.yaml already exists at the install target',
         'VALUES_FILE_COLLISION',
-        'Run `shardmind update` if this vault already has a shard, or move/remove shard-values.yaml to install fresh.',
+        'Move or remove shard-values.yaml before installing. `shardmind update` (Milestone 4) will handle this automatically once available.',
       );
     }
 
@@ -225,6 +232,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     await writeValuesFile(vaultRoot, values);
     // Track shard-values.yaml in writtenPaths so rollback can clean it up.
     writtenPaths.push('shard-values.yaml');
+    onFileWritten?.('shard-values.yaml');
   }
 
   return { writtenPaths, state, fileCount: totalFiles };

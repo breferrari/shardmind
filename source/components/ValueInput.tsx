@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactElement } from 'react';
 import { Box, Text } from 'ink';
 import { TextInput, Select, ConfirmInput, StatusMessage } from '@inkjs/ui';
 import type { ValueDefinition } from '../runtime/types.js';
+import { assertNever } from '../runtime/types.js';
 
 interface ValueInputProps {
   id: string;
@@ -142,6 +143,8 @@ function renderInput(
         />
       );
     }
+    default:
+      return assertNever(def.type);
   }
 }
 
@@ -210,6 +213,8 @@ function buildValidator(def: ValueDefinition): (raw: unknown) => ValidationOutco
           return { ok: false, message: 'At least one entry required' };
         }
         return { ok: true, value: raw };
+      default:
+        return assertNever(def.type);
     }
   };
 }

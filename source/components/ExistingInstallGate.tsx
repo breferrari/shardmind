@@ -14,7 +14,6 @@ type Screen = 'choose' | 'confirm-reinstall';
 
 export default function ExistingInstallGate({ state, onChoice }: ExistingInstallGateProps) {
   const [screen, setScreen] = useState<Screen>('choose');
-  const [confirmText, setConfirmText] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   if (screen === 'confirm-reinstall') {
@@ -31,12 +30,11 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
           <Text bold>Type REINSTALL to proceed:</Text>
           <TextInput
             placeholder="REINSTALL"
-            onChange={(v) => {
-              setConfirmText(v);
+            onChange={() => {
               if (error) setError(null);
             }}
             onSubmit={(v) => {
-              if (v === 'REINSTALL') {
+              if (v.trim() === 'REINSTALL') {
                 onChoice('reinstall');
               } else {
                 setError('Exact text required. Press Esc or Ctrl+C to cancel.');
@@ -44,7 +42,6 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
             }}
           />
           {error && <StatusMessage variant="error">{error}</StatusMessage>}
-          <Text dimColor>Current input: {confirmText || '(empty)'}</Text>
         </Box>
       </Box>
     );
@@ -75,7 +72,7 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
         <Text bold>What would you like to do?</Text>
         <Select
           options={[
-            { label: 'Run shardmind update instead (recommended)', value: 'update' },
+            { label: 'Keep the existing install (recommended — `shardmind update` arrives in Milestone 4)', value: 'update' },
             { label: 'Reinstall from scratch — destructive', value: 'reinstall' },
             { label: 'Cancel', value: 'cancel' },
           ]}

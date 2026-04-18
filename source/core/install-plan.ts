@@ -2,7 +2,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import nunjucks from 'nunjucks';
 import type { ShardSchema, ValueDefinition } from '../runtime/types.js';
-import { ShardMindError } from '../runtime/types.js';
+import { ShardMindError, assertNever } from '../runtime/types.js';
 import { isComputedDefault } from './schema.js';
 
 export interface Collision {
@@ -95,6 +95,8 @@ function coerceToType(raw: string, def: ValueDefinition, key: string): unknown {
           'Nunjucks expressions for list/multiselect values must evaluate to a JSON array.',
         );
       }
+    default:
+      return assertNever(def.type);
   }
 }
 

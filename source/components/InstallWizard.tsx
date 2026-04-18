@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Select } from '@inkjs/ui';
 import type { ShardManifest, ShardSchema, ValueDefinition } from '../runtime/types.js';
@@ -22,6 +22,7 @@ interface InstallWizardProps {
   schema: ShardSchema;
   prefillValues: Record<string, unknown>;
   moduleFileCounts: Record<string, number>;
+  alwaysIncludedFileCount: number;
   onComplete: (result: WizardResult) => void;
   onCancel: () => void;
   onError: (err: Error) => void;
@@ -39,6 +40,7 @@ export default function InstallWizard({
   schema,
   prefillValues,
   moduleFileCounts,
+  alwaysIncludedFileCount,
   onComplete,
   onCancel,
   onError,
@@ -58,20 +60,22 @@ export default function InstallWizard({
   const [selections, setSelections] = useState<Record<string, 'included' | 'excluded'>>(
     () => defaultModuleSelections(schema),
   );
-  const [resolvedValues, setResolvedValues] = useState<Record<string, unknown>>(() => {
-    // If we're opening straight into computed-preview we need the resolved
-    // values for that screen. Failures here surface immediately to the caller.
+  const [resolvedValues, setResolvedValues] = useState<Record<string, unknown>>(prefillValues);
+
+  // If we're opening directly into computed-preview, resolve on mount.
+  // Using an effect keeps the useState initializer pure (no side effect)
+  // and avoids React 18 strict-mode double-fire of onError.
+  useEffect(() => {
     if (valueKeys.length === 0 && hasComputed) {
       try {
-        return resolveComputedDefaults(schema, prefillValues);
+        setResolvedValues(resolveComputedDefaults(schema, prefillValues));
       } catch (err) {
-        // Defer the onError call to a microtask so we don't call it during render.
-        queueMicrotask(() => onError(err as Error));
-        return prefillValues;
+        onError(err as Error);
       }
     }
-    return prefillValues;
-  });
+    // Mount-only — schema/prefill don't change within a wizard session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useInput((_input, key) => {
     if (key.escape) {
@@ -196,6 +200,7 @@ export default function InstallWizard({
         <ModuleReview
           modules={schema.modules}
           moduleFileCounts={moduleFileCounts}
+          alwaysIncludedFileCount={alwaysIncludedFileCount}
           initialSelections={selections}
           onSubmit={submitSelections}
         />
@@ -210,8 +215,6 @@ export default function InstallWizard({
           onChoice={submitConfirm}
         />
       )}
-
-      <KeyboardLegend />
     </Box>
   );
 }
@@ -329,16 +332,6 @@ function ConfirmStep({
         ]}
         onChange={(v) => onChoice(v as 'install' | 'back' | 'cancel')}
       />
-    </Box>
-  );
-}
-
-function KeyboardLegend() {
-  return (
-    <Box marginTop={1}>
-      <Text dimColor>
-        ↑↓ navigate · Space select (multi) · Enter confirm · Esc back · Ctrl+C cancel
-      </Text>
     </Box>
   );
 }

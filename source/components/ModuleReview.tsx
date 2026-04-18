@@ -6,6 +6,12 @@ import type { ModuleDefinition } from '../runtime/types.js';
 interface ModuleReviewProps {
   modules: Record<string, ModuleDefinition>;
   moduleFileCounts: Record<string, number>;
+  /**
+   * Count of files that are always installed regardless of module
+   * selection (scripts/, utilities/, skills/, codex/). Added into the
+   * live total so the "Will install N files" line reflects reality.
+   */
+  alwaysIncludedFileCount: number;
   initialSelections: Record<string, 'included' | 'excluded'>;
   onSubmit: (selections: Record<string, 'included' | 'excluded'>) => void;
 }
@@ -18,6 +24,7 @@ interface ModuleReviewProps {
 export default function ModuleReview({
   modules,
   moduleFileCounts,
+  alwaysIncludedFileCount,
   initialSelections,
   onSubmit,
 }: ModuleReviewProps) {
@@ -41,11 +48,11 @@ export default function ModuleReview({
   const [currentIncluded, setCurrentIncluded] = useState<string[]>(initiallyIncluded);
 
   const totalFiles = useMemo(() => {
-    let sum = 0;
+    let sum = alwaysIncludedFileCount;
     for (const [id] of locked) sum += moduleFileCounts[id] ?? 0;
     for (const id of currentIncluded) sum += moduleFileCounts[id] ?? 0;
     return sum;
-  }, [locked, currentIncluded, moduleFileCounts]);
+  }, [locked, currentIncluded, moduleFileCounts, alwaysIncludedFileCount]);
 
   const options = removable.map(([id, def]) => ({
     label: formatOption(id, def, moduleFileCounts[id] ?? 0),
@@ -56,7 +63,7 @@ export default function ModuleReview({
     <Box flexDirection="column" gap={1}>
       <Text bold>Choose modules to install</Text>
 
-      {locked.length > 0 && (
+      {(locked.length > 0 || alwaysIncludedFileCount > 0) && (
         <Box flexDirection="column">
           <Text dimColor>Always included:</Text>
           {locked.map(([id, def]) => (
@@ -66,6 +73,13 @@ export default function ModuleReview({
               <Text dimColor> · {moduleFileCounts[id] ?? 0} files</Text>
             </Text>
           ))}
+          {alwaysIncludedFileCount > 0 && (
+            <Text>
+              <Text color="green">✓ </Text>
+              <Text>Framework files</Text>
+              <Text dimColor> · {alwaysIncludedFileCount} files (scripts, utilities, agent config)</Text>
+            </Text>
+          )}
         </Box>
       )}
 
