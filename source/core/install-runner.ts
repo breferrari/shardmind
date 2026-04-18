@@ -262,7 +262,25 @@ export async function rollbackInstall(
 }
 
 export function hashValues(values: Record<string, unknown>): string {
-  return sha256(JSON.stringify(values, Object.keys(values).sort()));
+  return sha256(JSON.stringify(stableJson(values)));
+}
+
+/**
+ * Recursively reorder object keys alphabetically so `JSON.stringify`
+ * produces a deterministic byte sequence. Arrays keep their order;
+ * primitives pass through. Unlike the `replacer` array overload of
+ * JSON.stringify, this does NOT drop nested object keys.
+ */
+function stableJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (value && typeof value === 'object') {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      sorted[key] = stableJson((value as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return value;
 }
 
 async function writeVaultFile(

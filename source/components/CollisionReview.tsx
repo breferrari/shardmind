@@ -10,17 +10,23 @@ interface CollisionReviewProps {
 }
 
 export default function CollisionReview({ collisions, onChoice }: CollisionReviewProps) {
+  const fileCount = collisions.filter((c) => c.kind === 'file').length;
+  const dirCount = collisions.length - fileCount;
+
   return (
     <Box flexDirection="column" gap={1}>
       <Alert variant="warning">
-        {collisions.length} existing file{collisions.length === 1 ? '' : 's'} will be affected
+        {collisions.length} existing path{collisions.length === 1 ? '' : 's'} will be affected
+        {dirCount > 0 && ` (${fileCount} file${fileCount === 1 ? '' : 's'}, ${dirCount} director${dirCount === 1 ? 'y' : 'ies'})`}
       </Alert>
 
       <Box flexDirection="column">
         {collisions.slice(0, 15).map((c) => (
           <Text key={c.absolutePath}>
             <Text>· {c.outputPath}</Text>
-            <Text dimColor>  ({formatSize(c.size)}, modified {formatMtime(c.mtime)})</Text>
+            <Text dimColor>
+              {'  '}[{c.kind}]{c.kind === 'file' ? ` ${formatSize(c.size)},` : ''} modified {formatMtime(c.mtime)}
+            </Text>
           </Text>
         ))}
         {collisions.length > 15 && (
@@ -33,11 +39,14 @@ export default function CollisionReview({ collisions, onChoice }: CollisionRevie
         <Select
           options={[
             {
-              label: 'Back up existing files and install (safest)',
+              label: 'Back up (rename with timestamp) and install — safest',
               value: 'backup',
             },
             {
-              label: 'Overwrite — existing content is lost',
+              label:
+                dirCount > 0
+                  ? 'Overwrite — existing files AND directories will be deleted first'
+                  : 'Overwrite — existing content is lost',
               value: 'overwrite',
             },
             {

@@ -218,39 +218,6 @@ export default function Install({ args, options }: Props) {
     [],
   );
 
-  const handleWizardComplete = useCallback(
-    async (result: WizardResult, ctx: PreparedContext) => {
-      try {
-        const validator = buildValuesValidator(ctx.schema);
-        const validated = validator.parse(result.values) as Record<string, unknown>;
-        const validatedResult: WizardResult = { values: validated, selections: result.selections };
-
-        const { outputs } = await planOutputs(ctx.schema, ctx.tempDir, validatedResult.selections);
-        const collisions = await detectCollisions(vaultRoot, outputs.map((o) => o.outputPath));
-
-        if (collisions.length > 0) {
-          if (yes) {
-            // --yes policy: auto-backup. Dry-run must skip the disk action.
-            const backups = dryRun ? [] : await backupCollisions(collisions);
-            await executeInstall(ctx, validatedResult, backups);
-          } else {
-            setPhase({ kind: 'collision', collisions, result: validatedResult, ctx });
-          }
-          return;
-        }
-
-        await executeInstall(ctx, validatedResult, []);
-      } catch (err) {
-        finish({ kind: 'error', error: err as Error });
-      }
-    },
-    [yes, dryRun, vaultRoot, finish],
-  );
-
-  useEffect(() => {
-    handleWizardCompleteRef.current = handleWizardComplete;
-  }, [handleWizardComplete]);
-
   const executeInstall = useCallback(
     async (ctx: PreparedContext, result: WizardResult, backups: BackupRecord[]) => {
       const start = Date.now();
@@ -346,6 +313,39 @@ export default function Install({ args, options }: Props) {
     },
     [vaultRoot, verbose, dryRun, finish],
   );
+
+  const handleWizardComplete = useCallback(
+    async (result: WizardResult, ctx: PreparedContext) => {
+      try {
+        const validator = buildValuesValidator(ctx.schema);
+        const validated = validator.parse(result.values) as Record<string, unknown>;
+        const validatedResult: WizardResult = { values: validated, selections: result.selections };
+
+        const { outputs } = await planOutputs(ctx.schema, ctx.tempDir, validatedResult.selections);
+        const collisions = await detectCollisions(vaultRoot, outputs.map((o) => o.outputPath));
+
+        if (collisions.length > 0) {
+          if (yes) {
+            // --yes policy: auto-backup. Dry-run must skip the disk action.
+            const backups = dryRun ? [] : await backupCollisions(collisions);
+            await executeInstall(ctx, validatedResult, backups);
+          } else {
+            setPhase({ kind: 'collision', collisions, result: validatedResult, ctx });
+          }
+          return;
+        }
+
+        await executeInstall(ctx, validatedResult, []);
+      } catch (err) {
+        finish({ kind: 'error', error: err as Error });
+      }
+    },
+    [yes, dryRun, vaultRoot, executeInstall, finish],
+  );
+
+  useEffect(() => {
+    handleWizardCompleteRef.current = handleWizardComplete;
+  }, [handleWizardComplete]);
 
   const handleCollisionChoice = useCallback(
     async (action: CollisionAction) => {

@@ -12,6 +12,7 @@ import {
   missingValueKeys,
   defaultModuleSelections,
 } from '../../source/core/install-plan.js';
+import { hashValues } from '../../source/core/install-runner.js';
 import type { ShardSchema } from '../../source/runtime/types.js';
 
 function schema(values: ShardSchema['values'], modules: ShardSchema['modules'] = {}): ShardSchema {
@@ -282,6 +283,35 @@ describe('missingValueKeys', () => {
 
     const missing = missingValueKeys(s, {});
     expect(missing).toEqual(['z', 'a', 'm']);
+  });
+});
+
+describe('hashValues', () => {
+  it('is stable regardless of top-level key order', () => {
+    const a = hashValues({ name: 'alice', org: 'acme' });
+    const b = hashValues({ org: 'acme', name: 'alice' });
+    expect(a).toBe(b);
+  });
+
+  it('is stable regardless of nested key order', () => {
+    const a = hashValues({ opts: { foo: 1, bar: 2 }, list: [{ k: 'x' }] });
+    const b = hashValues({ list: [{ k: 'x' }], opts: { bar: 2, foo: 1 } });
+    expect(a).toBe(b);
+  });
+
+  it('preserves nested object keys (does not whitelist by top-level keys)', () => {
+    // The previous `JSON.stringify(v, Object.keys(v).sort())` approach
+    // applied top-level keys as a whitelist to nested objects too, so
+    // different nested values hashed identically. Guard against regression.
+    const a = hashValues({ outer: { inner_a: 1 } });
+    const b = hashValues({ outer: { inner_b: 2 } });
+    expect(a).not.toBe(b);
+  });
+
+  it('distinguishes arrays of objects by their contents', () => {
+    const a = hashValues({ items: [{ x: 1 }, { x: 2 }] });
+    const b = hashValues({ items: [{ x: 1 }, { x: 3 }] });
+    expect(a).not.toBe(b);
   });
 });
 
