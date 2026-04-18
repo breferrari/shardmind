@@ -5,10 +5,32 @@ import { z } from 'zod';
 import type { ShardSchema, ValidationResult } from './types.js';
 import { ShardMindError } from './types.js';
 import { resolveVaultRoot } from './state.js';
+import { VALUES_FILE } from './vault-paths.js';
 
+/**
+ * Load `shard-values.yaml` from the current vault.
+ *
+ * Resolves the vault root by walking up from `process.cwd()` looking for
+ * a `.shardmind/` directory (see {@link resolveVaultRoot}). Reads the
+ * values file, parses as YAML, and returns the flat map.
+ *
+ * @returns The user's answered values as a plain object.
+ * @throws ShardMindError `VAULT_NOT_FOUND` if no vault is found in the ancestor chain.
+ * @throws ShardMindError `VALUES_NOT_FOUND` if the vault has no values file (vault not installed).
+ * @throws ShardMindError `VALUES_READ_FAILED` on I/O errors.
+ * @throws ShardMindError `VALUES_INVALID` if the file isn't a YAML mapping.
+ *
+ * @example
+ * ```ts
+ * import { loadValues } from 'shardmind/runtime';
+ *
+ * const values = await loadValues();
+ * console.log(`Hello, ${values.user_name}`);
+ * ```
+ */
 export async function loadValues(): Promise<Record<string, unknown>> {
   const vaultRoot = resolveVaultRoot();
-  const filePath = path.join(vaultRoot, 'shard-values.yaml');
+  const filePath = path.join(vaultRoot, VALUES_FILE);
 
   let raw: string;
   try {
@@ -96,6 +118,29 @@ function buildValuesValidator(schema: ShardSchema): z.ZodObject<any> {
   return z.object(shape);
 }
 
+/**
+ * Validate an object of user values against a shard schema.
+ *
+ * Builds a dynamic zod validator from the schema's declared value types
+ * (string, number, boolean, select, multiselect, list) and checks the
+ * supplied values. Returns a result object rather than throwing so hook
+ * authors can branch on validity without a try/catch.
+ *
+ * @param values The values to validate (typically from {@link loadValues}).
+ * @param schema The shard schema (typically from {@link loadSchema}).
+ * @returns `{ valid: boolean, errors: Array<{ path, message }> }`.
+ *
+ * @example
+ * ```ts
+ * import { loadValues, loadSchema, validateValues } from 'shardmind/runtime';
+ *
+ * const [values, schema] = await Promise.all([loadValues(), loadSchema()]);
+ * const result = validateValues(values, schema);
+ * if (!result.valid) {
+ *   for (const err of result.errors) console.error(`${err.path}: ${err.message}`);
+ * }
+ * ```
+ */
 export function validateValues(
   values: Record<string, unknown>,
   schema: ShardSchema,

@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/breferrari/shardmind/main/schemas/shard-schema.schema.json",
+  "title": "Shard schema (shard-schema.yaml)",
+  "description": "Declares the values (prompt questions), groups (prompt grouping), modules (optional feature sets), signals (LLM routing), frontmatter rules, and migrations for a ShardMind shard. Drives the install wizard and the update command.",
+  "type": "object",
+  "required": ["schema_version", "values", "groups", "modules"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "description": "Schema format version. 1 is the only accepted value in v0.x.",
+      "type": "integer",
+      "const": 1
+    },
+    "values": {
+      "description": "Named prompts the user fills in at install time. Stored in shard-values.yaml and available as template context. Reserved keys (shadow render context): shard, install_date, year, included_modules, values.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/valueDefinition" }
+    },
+    "groups": {
+      "description": "Ordered groupings for the wizard. Every value's `group` must reference an id declared here.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "modules": {
+      "description": "Optional feature sets. Users toggle removable modules in the wizard; non-removable modules always install.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/moduleDefinition" }
+    },
+    "signals": {
+      "description": "Declarative LLM routing hints. Surfaced to agents via shardmind/runtime.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": ["id", "description", "routes_to"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "routes_to": { "type": "string" },
+          "core": { "type": "boolean" },
+          "module": {
+            "type": "string",
+            "description": "If set, this signal only activates when the named module is included."
+          }
+        }
+      }
+    },
+    "frontmatter": {
+      "description": "Per-note-type frontmatter rules. Shorthand array form becomes { required: [...] }.",
+      "type": "object",
+      "default": {},
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "array", "items": { "type": "string" } },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "required": { "type": "array", "items": { "type": "string" } },
+              "path_match": { "type": "string" }
+            }
+          }
+        ]
+      }
+    },
+    "migrations": {
+      "description": "Ordered migration rules applied to shard-values.yaml when the shard version moves forward.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": ["from_version", "changes"],
+        "additionalProperties": false,
+        "properties": {
+          "from_version": { "type": "string" },
+          "changes": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["type", "old", "new"],
+                  "properties": {
+                    "type": { "const": "rename" },
+                    "old": { "type": "string" },
+                    "new": { "type": "string" }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": ["type", "key"],
+                  "properties": {
+                    "type": { "const": "added" },
+                    "key": { "type": "string" },
+                    "default": {}
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": ["type", "key"],
+                  "properties": {
+                    "type": { "const": "removed" },
+                    "key": { "type": "string" }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": ["type", "key", "from", "to", "transform"],
+                  "properties": {
+                    "type": { "const": "type_changed" },
+                    "key": { "type": "string" },
+                    "from": { "type": "string" },
+                    "to": { "type": "string" },
+                    "transform": { "type": "string" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "valueDefinition": {
+      "type": "object",
+      "required": ["type", "message", "group"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "Input type. Drives the wizard prompt widget and the generated zod validator.",
+          "enum": ["string", "boolean", "number", "select", "multiselect", "list"]
+        },
+        "required": { "type": "boolean" },
+        "message": {
+          "description": "Prompt text shown to the user in the wizard.",
+          "type": "string"
+        },
+        "default": {
+          "description": "Default value. A string starting with `{{` is a computed expression evaluated via Nunjucks after non-computed values are collected.",
+          "anyOf": [
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "boolean" },
+            { "type": "array" }
+          ]
+        },
+        "options": {
+          "description": "Required for select/multiselect types.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "label"],
+            "additionalProperties": false,
+            "properties": {
+              "value": { "type": "string" },
+              "label": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
+        },
+        "min": {
+          "description": "Minimum (inclusive) for number type.",
+          "type": "number"
+        },
+        "max": {
+          "description": "Maximum (inclusive) for number type.",
+          "type": "number"
+        },
+        "group": {
+          "description": "ID of a group declared in `groups[]`.",
+          "type": "string"
+        },
+        "hint": {
+          "description": "Helper text shown under the prompt in the wizard.",
+          "type": "string"
+        },
+        "placeholder": {
+          "description": "Placeholder shown in empty string/number inputs.",
+          "type": "string"
+        }
+      }
+    },
+    "moduleDefinition": {
+      "type": "object",
+      "required": ["label", "paths", "removable"],
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "description": "Human-readable module name shown in the wizard.",
+          "type": "string"
+        },
+        "paths": {
+          "description": "Template directory prefixes that belong to this module. Matching templates are only rendered when the module is included.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "partials": {
+          "description": "Partial template paths that belong to this module. Included conditionally by the parent templates that reference them.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "commands": {
+          "description": "Command file basenames (from commands/) gated by this module.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "agents": {
+          "description": "Agent file basenames (from agents/) gated by this module.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "bases": {
+          "description": "Base template IDs gated by this module.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "removable": {
+          "description": "If true, users can uncheck this module in the wizard. If false, it always installs.",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

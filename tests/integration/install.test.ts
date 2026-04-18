@@ -10,15 +10,15 @@ import { parseSchema, buildValuesValidator } from '../../source/core/schema.js';
 import { readState } from '../../source/core/state.js';
 import {
   planOutputs,
-  runInstall,
-  rollbackInstall,
-} from '../../source/core/install-runner.js';
-import {
   resolveComputedDefaults,
   defaultModuleSelections,
   detectCollisions,
+} from '../../source/core/install-planner.js';
+import {
+  runInstall,
+  rollbackInstall,
   backupCollisions,
-} from '../../source/core/install-plan.js';
+} from '../../source/core/install-executor.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -66,6 +66,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       schema,
       tempDir: MINIMAL_SHARD,
       resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
       values,
       selections,
     });
@@ -78,6 +79,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     expect(state.schema_version).toBe(1);
     expect(state.shard).toBe('shardmind/minimal');
     expect(state.version).toBe('0.1.0');
+    expect(state.tarball_sha256).toBe('deadbeef');
     expect(state.modules).toEqual(selections);
     expect(Object.keys(state.files).length).toBe(result.fileCount);
 
@@ -123,6 +125,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       schema,
       tempDir: MINIMAL_SHARD,
       resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
       values,
       selections,
     });
@@ -151,6 +154,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       schema,
       tempDir: MINIMAL_SHARD,
       resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
       values,
       selections,
     });
@@ -180,6 +184,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       schema,
       tempDir: MINIMAL_SHARD,
       resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
       values,
       selections,
       dryRun: true,
@@ -242,6 +247,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
         schema,
         tempDir: MINIMAL_SHARD,
         resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
         values,
         selections,
       }),
@@ -275,6 +281,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       schema,
       tempDir: MINIMAL_SHARD,
       resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
       values,
       selections,
     });
@@ -299,6 +306,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       schema,
       tempDir: MINIMAL_SHARD,
       resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
       values,
       selections,
     });

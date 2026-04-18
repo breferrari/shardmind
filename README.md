@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/typescript-5.0%2B-3178C6" alt="TypeScript"></a>
-  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-18%2B-339933" alt="Node"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22%2B-339933" alt="Node"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
 </p>
 
@@ -145,20 +145,31 @@ Shard authors choose which agents to support. A shard can ship `CLAUDE.md` only,
 
 ## Documentation
 
+### For shard authors
+
 | Document | What |
 |----------|------|
-| [`VISION.md`](VISION.md) | Origin story, architectural bets, scope guardrails, competitive moat |
-| [`ROADMAP.md`](ROADMAP.md) | v0.1 milestones (linked to issues), v0.2 deferred, v1.0 ecosystem |
-| [`CLAUDE.md`](CLAUDE.md) | Spec-driven development guide for building ShardMind with AI agents |
+| [`docs/AUTHORING.md`](docs/AUTHORING.md) | **Start here.** Every file and concept a shard author needs. |
+| [`schemas/shard.schema.json`](schemas/shard.schema.json) | JSON Schema for `shard.yaml` — drop into VS Code for autocomplete + validation. |
+| [`schemas/shard-schema.schema.json`](schemas/shard-schema.schema.json) | JSON Schema for `shard-schema.yaml`. |
+| [`examples/minimal-shard/`](examples/minimal-shard/) | Minimal reference shard — 4 values, 2 modules, partials, signals. |
+
+### For users + contributors
+
+| Document | What |
+|----------|------|
+| [`docs/ERRORS.md`](docs/ERRORS.md) | Every `ShardMindError` code: meaning, cause, remedy. |
+| [`VISION.md`](VISION.md) | Origin story, architectural bets, scope guardrails, competitive moat. |
+| [`ROADMAP.md`](ROADMAP.md) | v0.1 milestones (linked to issues), v0.2 deferred, v1.0 ecosystem. |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The what and why. 22 sections. Ownership model, values layer, modules, signals. |
 | [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) | The how, exactly. 10 modules with TypeScript signatures, 17 merge fixtures, 6-day build plan. |
-| [`examples/minimal-shard/`](examples/minimal-shard/) | Minimal test shard for development — 4 values, 2 modules, partials, signals. |
+| [`CLAUDE.md`](CLAUDE.md) | Spec-driven development guide for building ShardMind with AI agents. |
 
 ---
 
 ## Requirements
 
-- [Node.js](https://nodejs.org) 18+
+- [Node.js](https://nodejs.org) 22+ (matches obsidian-mind's hook runtime requirement)
 - [Git](https://git-scm.com)
 - [Obsidian](https://obsidian.md) 1.12+ (for CLI support)
 - [QMD](https://github.com/tobi/qmd) (optional, for semantic search)

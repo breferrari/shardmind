@@ -1,3 +1,11 @@
+/**
+ * Install executor — disk-mutating operations.
+ *
+ * The counterpart to `install-planner.ts`. Functions here write, rename,
+ * or delete files in the vault. Read-only enumeration and planning
+ * stays in the planner.
+ */
+
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { stringify as stringifyYaml } from 'yaml';
@@ -6,25 +14,25 @@ import type {
   ShardSchema,
   ShardState,
   FileState,
-  RenderContext,
   ResolvedShard,
   ModuleSelections,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { resolveModules } from './modules.js';
-import { createRenderer, renderFile } from './renderer.js';
+import { createRenderer, renderFile, buildRenderContext } from './renderer.js';
 import {
   initShardDir,
   cacheTemplates,
   cacheManifest,
   writeState,
 } from './state.js';
-import { restoreBackups, type BackupRecord } from './install-plan.js';
-import { sha256, toPosix } from './fs-utils.js';
+import { sha256, toPosix, pathExists } from './fs-utils.js';
+import { hashValues, type Collision } from './install-planner.js';
+import { SHARDMIND_DIR, VALUES_FILE, SHARD_TEMPLATES_DIR } from '../runtime/vault-paths.js';
 
-export interface PlannedOutput {
-  outputPath: string;
-  source: 'render' | 'copy';
+export interface BackupRecord {
+  originalPath: string;
+  backupPath: string;
 }
 
 export interface InstallRunnerOptions {
@@ -33,6 +41,7 @@ export interface InstallRunnerOptions {
   schema: ShardSchema;
   tempDir: string;
   resolved: ResolvedShard;
+  tarballSha256: string;
   values: Record<string, unknown>;
   selections: ModuleSelections;
   onProgress?: (event: ProgressEvent) => void;
@@ -56,47 +65,84 @@ export type ProgressEvent =
   | { kind: 'done'; total: number };
 
 /**
- * Enumerate every file that would be written given the selected modules.
- * Used for collision detection and module file counting before install.
+ * Rename each colliding path to `<original>.shardmind-backup-<timestamp>`.
+ * Works for both files and directories (fsp.rename handles both).
+ * Unique-suffix-appends when the canonical backup name already exists.
  */
-export async function planOutputs(
-  schema: ShardSchema,
-  tempDir: string,
-  selections: ModuleSelections,
-): Promise<{
-  outputs: PlannedOutput[];
-  moduleFileCounts: Record<string, number>;
-  alwaysIncludedFileCount: number;
-}> {
-  const resolution = await resolveModules(schema, selections, tempDir);
-  const outputs: PlannedOutput[] = [];
-  const moduleFileCounts: Record<string, number> = {};
-  let alwaysIncludedFileCount = 0;
+export async function backupCollisions(
+  collisions: Collision[],
+  timestamp: Date = new Date(),
+): Promise<BackupRecord[]> {
+  const stamp = timestamp.toISOString().replace(/:/g, '-').replace(/\..+$/, '');
+  const records: BackupRecord[] = [];
 
-  for (const id of Object.keys(schema.modules)) {
-    moduleFileCounts[id] = 0;
+  for (const collision of collisions) {
+    const backupPath = await uniqueBackupPath(collision.absolutePath, stamp);
+    try {
+      await fsp.rename(collision.absolutePath, backupPath);
+    } catch (err) {
+      throw new ShardMindError(
+        `Could not back up existing file: ${collision.absolutePath}`,
+        'BACKUP_FAILED',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    records.push({ originalPath: collision.absolutePath, backupPath });
   }
 
-  const tally = (entry: { outputPath: string; module: string | null }, source: 'render' | 'copy') => {
-    outputs.push({ outputPath: entry.outputPath, source });
-    if (entry.module && entry.module in moduleFileCounts) {
-      moduleFileCounts[entry.module]!++;
-    } else if (!entry.module) {
-      alwaysIncludedFileCount++;
-    }
-  };
-  for (const entry of resolution.render) tally(entry, 'render');
-  for (const entry of resolution.copy) tally(entry, 'copy');
+  return records;
+}
 
-  return { outputs, moduleFileCounts, alwaysIncludedFileCount };
+async function uniqueBackupPath(absolutePath: string, stamp: string): Promise<string> {
+  const base = `${absolutePath}.shardmind-backup-${stamp}`;
+  if (!(await pathExists(base))) return base;
+  for (let i = 1; i < 1000; i++) {
+    const candidate = `${base}.${i}`;
+    if (!(await pathExists(candidate))) return candidate;
+  }
+  throw new ShardMindError(
+    `Could not find a unique backup name for ${absolutePath}`,
+    'BACKUP_FAILED',
+    'Too many existing backups with the same timestamp — clean up old .shardmind-backup-* files and retry.',
+  );
+}
+
+/**
+ * Move backup files back to their original paths. Used during rollback
+ * after a failed install so the user's pre-install content comes back
+ * intact. Best-effort per entry — individual failures are reported but
+ * don't abort the rest of the restore.
+ */
+export async function restoreBackups(
+  records: BackupRecord[],
+): Promise<{ restored: BackupRecord[]; failed: Array<BackupRecord & { reason: string }> }> {
+  const restored: BackupRecord[] = [];
+  const failed: Array<BackupRecord & { reason: string }> = [];
+
+  for (const record of records) {
+    try {
+      // Remove whatever the partial install wrote at the original path,
+      // then move the backup back.
+      await fsp.rm(record.originalPath, { recursive: true, force: true });
+      await fsp.rename(record.backupPath, record.originalPath);
+      restored.push(record);
+    } catch (err) {
+      failed.push({
+        ...record,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return { restored, failed };
 }
 
 /**
  * Execute the install pipeline: render + copy + write + cache + state.
- * Returns paths written so the caller can roll back on later failure.
+ * Returns writtenPaths so the caller can roll back on later failure.
  */
 export async function runInstall(opts: InstallRunnerOptions): Promise<InstallResult> {
-  const { vaultRoot, manifest, schema, tempDir, resolved, values, selections, onProgress, onFileWritten, dryRun } = opts;
+  const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, onFileWritten, dryRun } = opts;
 
   const resolution = await resolveModules(schema, selections, tempDir);
   const totalFiles = resolution.render.length + resolution.copy.length;
@@ -105,17 +151,8 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
 
   onProgress?.({ kind: 'start', total: totalFiles });
 
-  const env = createRenderer(path.join(tempDir, 'templates'));
-  const includedModules = Object.entries(selections)
-    .filter(([, s]) => s === 'included')
-    .map(([id]) => id);
-  const context: RenderContext = {
-    values,
-    included_modules: includedModules,
-    shard: { name: manifest.name, version: manifest.version },
-    install_date: new Date().toISOString(),
-    year: new Date().getUTCFullYear().toString(),
-  };
+  const env = createRenderer(path.join(tempDir, SHARD_TEMPLATES_DIR));
+  const context = buildRenderContext(manifest, values, selections);
 
   let index = 0;
 
@@ -183,6 +220,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     shard: `${manifest.namespace}/${manifest.name}`,
     source: resolved.source,
     version: manifest.version,
+    tarball_sha256: tarballSha256,
     installed_at: context.install_date,
     updated_at: context.install_date,
     values_hash: hashValues(values),
@@ -195,23 +233,19 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     await cacheTemplates(vaultRoot, tempDir);
     await cacheManifest(vaultRoot, manifest, schema);
     await writeState(vaultRoot, state);
-    // shard-values.yaml is user-owned; install must create it fresh.
-    // Use `wx` so an existing file races cleanly to EEXIST instead of
-    // being silently overwritten if ExistingInstallGate was bypassed.
     await writeValuesFile(vaultRoot, values);
-    writtenPaths.push('shard-values.yaml');
-    onFileWritten?.('shard-values.yaml');
+    writtenPaths.push(VALUES_FILE);
+    onFileWritten?.(VALUES_FILE);
   }
 
   return { writtenPaths, state, fileCount: totalFiles };
 }
 
 /**
- * Roll back a partial install. Removes all written files, cleans up
- * empty parent directories, deletes .shardmind/ if present, and
- * restores any backups created during collision handling.
- * Best-effort — errors during rollback are swallowed because the
- * primary failure is already being reported.
+ * Roll back a partial install. Removes written files, cleans up empty
+ * parent directories, deletes .shardmind/ if present, and restores any
+ * backups. Best-effort — errors during rollback are swallowed because
+ * the primary failure is already being reported.
  */
 export async function rollbackInstall(
   vaultRoot: string,
@@ -222,9 +256,8 @@ export async function rollbackInstall(
     (a, b) => b.split('/').length - a.split('/').length,
   );
   for (const rel of sortedByDepth) {
-    const abs = path.join(vaultRoot, rel);
     try {
-      await fsp.unlink(abs);
+      await fsp.unlink(path.join(vaultRoot, rel));
     } catch {
       // already gone
     }
@@ -249,7 +282,7 @@ export async function rollbackInstall(
   }
 
   try {
-    await fsp.rm(path.join(vaultRoot, '.shardmind'), { recursive: true, force: true });
+    await fsp.rm(path.join(vaultRoot, SHARDMIND_DIR), { recursive: true, force: true });
   } catch {
     // ignore
   }
@@ -259,28 +292,6 @@ export async function rollbackInstall(
   if (backups.length > 0) {
     await restoreBackups(backups);
   }
-}
-
-export function hashValues(values: Record<string, unknown>): string {
-  return sha256(JSON.stringify(stableJson(values)));
-}
-
-/**
- * Recursively reorder object keys alphabetically so `JSON.stringify`
- * produces a deterministic byte sequence. Arrays keep their order;
- * primitives pass through. Unlike the `replacer` array overload of
- * JSON.stringify, this does NOT drop nested object keys.
- */
-function stableJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableJson);
-  if (value && typeof value === 'object') {
-    const sorted: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      sorted[key] = stableJson((value as Record<string, unknown>)[key]);
-    }
-    return sorted;
-  }
-  return value;
 }
 
 async function writeVaultFile(
@@ -303,11 +314,16 @@ async function writeVaultFileBuffer(
   await fsp.writeFile(abs, content);
 }
 
+/**
+ * `wx` flag: refuse to overwrite an existing file. Catching EEXIST here
+ * is the last defense against a stale values file slipping past
+ * ExistingInstallGate.
+ */
 async function writeValuesFile(
   vaultRoot: string,
   values: Record<string, unknown>,
 ): Promise<void> {
-  const abs = path.join(vaultRoot, 'shard-values.yaml');
+  const abs = path.join(vaultRoot, VALUES_FILE);
   const serialized = stringifyYaml(values, { lineWidth: 0 }).trimEnd() + '\n';
   try {
     await fsp.writeFile(abs, serialized, { encoding: 'utf-8', flag: 'wx' });

@@ -99,6 +99,19 @@ Deferred from v0.1. Build only after v0.1 is stable and adoption signals are rea
 - [ ] Scaffold `shard.yaml`, `shard-schema.yaml`, `templates/` from prompts
 - [ ] Generate starter module structure
 
+### Engine polish (from v0.1 review)
+
+Deferred items surfaced during the v0.1 polish-pass architecture audit. None are blockers for shipping v0.1; all are worth doing before v0.2 marketing.
+
+- [ ] VaultFS abstraction with built-in rollback tracking ([#33](https://github.com/breferrari/shardmind/issues/33))
+- [ ] `shardmind validate <shard>` command ([#34](https://github.com/breferrari/shardmind/issues/34))
+- [ ] Pre-install template syntax lint ([#35](https://github.com/breferrari/shardmind/issues/35))
+- [ ] Debug logging (`SHARDMIND_DEBUG` env var) ([#36](https://github.com/breferrari/shardmind/issues/36))
+- [ ] `NO_COLOR` / `FORCE_COLOR` respect across Ink components ([#37](https://github.com/breferrari/shardmind/issues/37))
+- [ ] `ink-testing-library` integration for TUI unit tests ([#38](https://github.com/breferrari/shardmind/issues/38))
+- [ ] Alternate registry configurability (GHE, private, custom URL) ([#39](https://github.com/breferrari/shardmind/issues/39))
+- [ ] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
+
 ---
 
 ## v1.0.0 — Ecosystem (2026–2027)
@@ -114,7 +127,7 @@ Only after the engine is proven, the flagship shard is stable, and community sha
 
 ### Community
 
-- [ ] Shard authoring guide (docs/AUTHORING.md)
+- [x] Shard authoring guide ([`docs/AUTHORING.md`](docs/AUTHORING.md), shipped in v0.1 polish pass)
 - [ ] Shard validation CI (GitHub Action for shard authors)
 - [ ] Community shard listing
 - [ ] Fork-to-shard conversion guide (for obsidian-mind fork authors)

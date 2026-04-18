@@ -9,7 +9,7 @@ import {
   missingValueKeys,
   resolveComputedDefaults,
   defaultModuleSelections,
-} from '../core/install-plan.js';
+} from '../core/install-planner.js';
 import { isComputedDefault } from '../core/schema.js';
 
 export interface WizardResult {

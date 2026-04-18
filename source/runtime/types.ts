@@ -100,6 +100,11 @@ export interface ShardState {
   shard: string;
   source: string;
   version: string;
+  /**
+   * sha256 of the downloaded tarball this install was built from.
+   * Lets `shardmind update` detect retagged releases / source drift.
+   */
+  tarball_sha256: string;
   installed_at: string;
   updated_at: string;
   values_hash: string;
@@ -138,6 +143,8 @@ export interface TempShard {
   tempDir: string;
   manifest: string;
   schema: string;
+  /** sha256 of the tarball bytes as received, before extraction. */
+  tarball_sha256: string;
   cleanup: () => Promise<void>;
 }
 
