@@ -56,6 +56,15 @@ describe('registry.resolve', () => {
         code: 'REGISTRY_INVALID_REF',
       });
     });
+
+    it('rejects uppercase refs (enforces lowercase identifiers)', async () => {
+      await expect(resolve('Breferrari/obsidian-mind')).rejects.toMatchObject({
+        code: 'REGISTRY_INVALID_REF',
+      });
+      await expect(resolve('github:Acme/Widget')).rejects.toMatchObject({
+        code: 'REGISTRY_INVALID_REF',
+      });
+    });
   });
 
   describe('registry mode', () => {
@@ -115,6 +124,66 @@ describe('registry.resolve', () => {
 
       await expect(resolve('ghost/shard')).rejects.toMatchObject({
         code: 'SHARD_NOT_FOUND',
+      });
+    });
+
+    it('builds tarball URL from entry.repo when it differs from shard key', async () => {
+      const seen: string[] = [];
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        seen.push(u);
+        if (u === REGISTRY_URL) {
+          return indexResponse({
+            shards: {
+              'breferrari/obsidian-mind': {
+                repo: 'other-owner/mirror-repo',
+                latest: '3.5.0',
+                versions: ['3.5.0'],
+              },
+            },
+          });
+        }
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolve('breferrari/obsidian-mind');
+      expect(result.tarballUrl).toBe(
+        'https://api.github.com/repos/other-owner/mirror-repo/tarball/v3.5.0',
+      );
+      expect(result.source).toBe('github:other-owner/mirror-repo');
+      expect(result.namespace).toBe('breferrari');
+      expect(result.name).toBe('obsidian-mind');
+      expect(seen.some((u) => u.includes('/other-owner/mirror-repo/tarball/v3.5.0'))).toBe(true);
+    });
+
+    it('rejects registry entries with malformed repo field', async () => {
+      globalThis.fetch = vi.fn(async () =>
+        indexResponse({
+          shards: {
+            'ns/name': { repo: 'broken', latest: '1.0.0', versions: ['1.0.0'] },
+          },
+        }),
+      ) as typeof fetch;
+
+      await expect(resolve('ns/name')).rejects.toMatchObject({
+        code: 'REGISTRY_NETWORK',
+      });
+    });
+
+    it('rejects registry responses where shards is null', async () => {
+      globalThis.fetch = vi.fn(async () => indexResponse({ shards: null })) as typeof fetch;
+
+      await expect(resolve('ns/name')).rejects.toMatchObject({
+        code: 'REGISTRY_NETWORK',
+      });
+    });
+
+    it('rejects registry responses where shards is an array', async () => {
+      globalThis.fetch = vi.fn(async () => indexResponse({ shards: [] })) as typeof fetch;
+
+      await expect(resolve('ns/name')).rejects.toMatchObject({
+        code: 'REGISTRY_NETWORK',
       });
     });
 

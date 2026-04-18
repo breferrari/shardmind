@@ -21,17 +21,21 @@ interface ParsedRef {
   version: string | null;
 }
 
-const SHARD_REF_RE = /^(github:)?([a-z0-9][a-z0-9-]*)\/([a-z0-9][a-z0-9-]*)(?:@(.+))?$/i;
+const SHARD_REF_RE = /^(github:)?([a-z0-9][a-z0-9-]*)\/([a-z0-9][a-z0-9-]*)(?:@(.+))?$/;
 
 export async function resolve(shardRef: string): Promise<ResolvedShard> {
   const parsed = parseRef(shardRef);
 
   let version: string;
   let source: string;
+  let repoOwner: string;
+  let repoName: string;
 
   if (parsed.direct) {
-    source = `github:${parsed.namespace}/${parsed.name}`;
-    version = parsed.version ?? (await fetchLatestRelease(parsed.namespace, parsed.name));
+    repoOwner = parsed.namespace;
+    repoName = parsed.name;
+    source = `github:${repoOwner}/${repoName}`;
+    version = parsed.version ?? (await fetchLatestRelease(repoOwner, repoName));
   } else {
     const index = await fetchRegistryIndex();
     const key = `${parsed.namespace}/${parsed.name}`;
@@ -53,12 +57,22 @@ export async function resolve(shardRef: string): Promise<ResolvedShard> {
       );
     }
 
+    const repoParts = entry.repo.split('/');
+    if (repoParts.length !== 2 || !repoParts[0] || !repoParts[1]) {
+      throw new ShardMindError(
+        `Registry entry for '${key}' has invalid repo field: '${entry.repo}'`,
+        'REGISTRY_NETWORK',
+        'Expected "owner/name" format.',
+      );
+    }
+    repoOwner = repoParts[0];
+    repoName = repoParts[1];
     version = parsed.version ?? entry.latest;
     source = `github:${entry.repo}`;
   }
 
-  const tarballUrl = `https://api.github.com/repos/${parsed.namespace}/${parsed.name}/tarball/v${version}`;
-  await verifyTag(tarballUrl, parsed.namespace, parsed.name, version);
+  const tarballUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/tarball/v${version}`;
+  await verifyTag(tarballUrl, repoOwner, repoName, version);
 
   return {
     namespace: parsed.namespace,
@@ -111,8 +125,14 @@ async function fetchRegistryIndex(): Promise<RegistryIndex> {
 
   try {
     const parsed = JSON.parse(body) as RegistryIndex;
-    if (!parsed || typeof parsed !== 'object' || typeof parsed.shards !== 'object') {
-      throw new Error('Missing "shards" field');
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      !parsed.shards ||
+      typeof parsed.shards !== 'object' ||
+      Array.isArray(parsed.shards)
+    ) {
+      throw new Error('Missing or invalid "shards" field');
     }
     return parsed;
   } catch (err) {

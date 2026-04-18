@@ -45,6 +45,15 @@ export async function readState(vaultRoot: string): Promise<ShardState | null> {
     );
   }
 
+  const version = (parsed as { schema_version: number }).schema_version;
+  if (version !== STATE_SCHEMA_VERSION) {
+    throw new ShardMindError(
+      `Unsupported state schema_version: ${version}`,
+      'STATE_UNSUPPORTED_VERSION',
+      `This version of shardmind supports schema_version ${STATE_SCHEMA_VERSION}.`,
+    );
+  }
+
   return parsed as ShardState;
 }
 
@@ -98,14 +107,17 @@ export async function cacheManifest(
   const shardDir = path.join(vaultRoot, '.shardmind');
   await fsp.mkdir(shardDir, { recursive: true });
 
+  const serializedManifest = stringifyYaml(manifest, { lineWidth: 0 }).trimEnd() + '\n';
+  const serializedSchema = stringifyYaml(schema, { lineWidth: 0 }).trimEnd() + '\n';
+
   await fsp.writeFile(
     path.join(shardDir, 'shard.yaml'),
-    stringifyYaml(manifest),
+    serializedManifest,
     'utf-8',
   );
   await fsp.writeFile(
     path.join(shardDir, 'shard-schema.yaml'),
-    stringifyYaml(schema),
+    serializedSchema,
     'utf-8',
   );
 }

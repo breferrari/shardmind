@@ -74,6 +74,19 @@ describe('core/state', () => {
         code: 'STATE_CORRUPT',
       });
     });
+
+    it('throws STATE_UNSUPPORTED_VERSION when schema_version differs from supported', async () => {
+      await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
+      await fsp.writeFile(
+        path.join(vault, '.shardmind', 'state.json'),
+        JSON.stringify(makeState({ schema_version: 2 })),
+        'utf-8',
+      );
+
+      await expect(readState(vault)).rejects.toMatchObject({
+        code: 'STATE_UNSUPPORTED_VERSION',
+      });
+    });
   });
 
   describe('writeState', () => {
