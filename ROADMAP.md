@@ -19,9 +19,9 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 - [x] `source/core/renderer.ts` — Nunjucks engine, frontmatter-aware split/render/recombine ([#5](https://github.com/breferrari/shardmind/issues/5))
 - [x] `source/core/modules.ts` — walk template dir, classify by module, resolve file lists ([#6](https://github.com/breferrari/shardmind/issues/6))
 - [x] `source/runtime/types.ts` + `runtime/index.ts` — shared types and exports ([#7](https://github.com/breferrari/shardmind/issues/7))
-- [ ] CI/CD — GitHub Actions for typecheck, test, build, npm publish ([#16](https://github.com/breferrari/shardmind/issues/16))
-- [ ] Unit tests: manifest, schema, renderer (5 fixture scenarios), modules
-- [ ] `shardmind --version` works
+- [x] CI/CD — GitHub Actions for typecheck, test, build, npm publish ([#16](https://github.com/breferrari/shardmind/issues/16))
+- [x] Unit tests: manifest, schema, renderer (5 fixture scenarios), modules
+- [x] `shardmind --version` works
 
 ### Milestone 2: Install Command (Day 2)
 
