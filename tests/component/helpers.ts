@@ -31,3 +31,28 @@ export const ESC = '\x1B';
 export const SPACE = ' ';
 export const ARROW_DOWN = '\x1B[B';
 export const ARROW_UP = '\x1B[A';
+
+interface Writable {
+  write: (data: string) => void;
+}
+
+/**
+ * Type a string one character at a time with a tick between each write.
+ *
+ * Why not write the whole string at once: @inkjs/ui TextInput's submit
+ * callback captures `state.value` in a useCallback closure. Multiple
+ * writes in the same microtask get batched into a single render, which
+ * can leave the submit closure stale relative to the rendered value.
+ * Per-character writes with a tick in between ensure React commits
+ * each insert before the next keystroke arrives.
+ */
+export async function typeText(
+  stdin: Writable,
+  text: string,
+  perCharDelayMs = 30,
+): Promise<void> {
+  for (const ch of text) {
+    stdin.write(ch);
+    await tick(perCharDelayMs);
+  }
+}

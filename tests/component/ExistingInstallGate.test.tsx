@@ -3,7 +3,7 @@ import { render, cleanup } from 'ink-testing-library';
 import React from 'react';
 import ExistingInstallGate from '../../source/components/ExistingInstallGate.js';
 import type { ShardState } from '../../source/runtime/types.js';
-import { ENTER, ARROW_DOWN, tick, waitFor } from './helpers.js';
+import { ENTER, ARROW_DOWN, tick, typeText, waitFor } from './helpers.js';
 
 afterEach(() => {
   cleanup();
@@ -85,12 +85,7 @@ describe('ExistingInstallGate', () => {
     await waitFor(lastFrame, (f) => f.includes('Type REINSTALL to proceed'));
     await tick(50);
 
-    // Type one char at a time so the TextInput's submit closure sees
-    // the latest state.value when Enter fires.
-    for (const ch of 'reinstall') {
-      stdin.write(ch);
-      await tick(60);
-    }
+    await typeText(stdin, 'reinstall');
     await waitFor(lastFrame, (f) => f.includes('reinstall'));
     stdin.write(ENTER);
     await waitFor(lastFrame, (f) => f.includes('Exact text required'));
@@ -109,10 +104,7 @@ describe('ExistingInstallGate', () => {
     await waitFor(lastFrame, (f) => f.includes('Type REINSTALL to proceed'));
     await tick(50);
 
-    for (const ch of 'REINSTALL') {
-      stdin.write(ch);
-      await tick(60);
-    }
+    await typeText(stdin, 'REINSTALL');
     stdin.write(ENTER);
     await waitFor(() => (onChoice.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
 

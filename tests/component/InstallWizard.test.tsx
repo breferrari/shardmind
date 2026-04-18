@@ -7,7 +7,7 @@ import type {
   ShardSchema,
   ModuleSelections,
 } from '../../source/runtime/types.js';
-import { ENTER, ESC, tick, waitFor } from './helpers.js';
+import { ENTER, ESC, tick, typeText, waitFor } from './helpers.js';
 
 afterEach(() => {
   cleanup();
@@ -81,10 +81,7 @@ describe('InstallWizard', () => {
     await waitFor(lastFrame, (f) => f.includes('Your name'));
 
     // Value 1: user_name (required string)
-    for (const ch of 'Alice') {
-      stdin.write(ch);
-      await tick(30);
-    }
+    await typeText(stdin, 'Alice');
     stdin.write(ENTER);
     await waitFor(lastFrame, (f) => f.includes('Organization'));
 
