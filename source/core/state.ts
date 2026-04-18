@@ -1,3 +1,14 @@
+/**
+ * Engine-owned state I/O. Reads AND writes `.shardmind/state.json`,
+ * caches manifest/schema/templates at install time, and gates on
+ * schema_version migrations.
+ *
+ * The read-only counterpart for hook scripts lives at
+ * `source/runtime/state.ts`. Runtime never imports from here; the
+ * duplication of filename is intentional (same concern, different
+ * audience, different permissions).
+ */
+
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { ShardState, ShardManifest, ShardSchema } from '../runtime/types.js';

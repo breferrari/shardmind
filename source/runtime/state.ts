@@ -1,3 +1,13 @@
+/**
+ * Read-only vault-state access for hook scripts and other downstream
+ * tooling that imports from `shardmind/runtime`. Zero dependencies on
+ * Ink, React, or Pastel so the bundled runtime stays tiny.
+ *
+ * The write path (readState/writeState/initShardDir/cacheTemplates/
+ * cacheManifest) lives in `source/core/state.ts`. Keep the split
+ * intentional: hooks must never mutate engine state.
+ */
+
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';

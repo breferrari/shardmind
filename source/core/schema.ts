@@ -1,3 +1,15 @@
+/**
+ * Engine-side schema parsing + validation. Reads `shard-schema.yaml`
+ * from a downloaded shard's temp directory, validates via zod, enforces
+ * cross-references (group/module IDs, reserved names), and normalizes
+ * frontmatter shorthand. Also builds the dynamic zod validator for
+ * user-supplied values.
+ *
+ * `source/runtime/schema.ts` is the thin read-only counterpart used by
+ * hook scripts. That one loads the already-cached copy and skips most
+ * validation — the engine validated it on install.
+ */
+
 import fs from 'node:fs/promises';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';

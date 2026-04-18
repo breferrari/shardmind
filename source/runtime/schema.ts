@@ -1,3 +1,14 @@
+/**
+ * Read-only schema access for hook scripts. Loads the cached
+ * `shard-schema.yaml` that `core/state.cacheManifest` wrote at install
+ * time. Hook authors use this to validate values, drive conditional
+ * logic, or introspect modules.
+ *
+ * The parsing + validation path lives in `source/core/schema.ts`.
+ * Runtime trusts the cached file because the engine validated it on
+ * install; no zod here keeps the runtime bundle small.
+ */
+
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
