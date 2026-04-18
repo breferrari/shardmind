@@ -352,8 +352,24 @@ export default function Install({ args, options }: Props) {
         finish({ kind: 'cancelled', reason: 'User cancelled at collision review.' });
         return;
       }
-      const backups = action === 'backup' ? await backupCollisions(collisions) : [];
-      await executeInstall(ctx, result, backups);
+
+      try {
+        if (action === 'backup') {
+          const backups = await backupCollisions(collisions);
+          await executeInstall(ctx, result, backups);
+          return;
+        }
+        // Overwrite: delete colliding paths (files AND directories) before
+        // install so writeFile doesn't fail with EISDIR when a directory
+        // sits at a planned file path. No backups — user explicitly chose
+        // to discard existing content.
+        for (const collision of collisions) {
+          await fsp.rm(collision.absolutePath, { recursive: true, force: true });
+        }
+        await executeInstall(ctx, result, []);
+      } catch (err) {
+        finish({ kind: 'error', error: err as Error });
+      }
     },
     [phase, finish, executeInstall],
   );
