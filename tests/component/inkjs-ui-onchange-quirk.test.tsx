@@ -2,6 +2,10 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
 import React, { useState } from 'react';
 import { Box, Text } from 'ink';
+// Intentional direct @inkjs/ui import. This file tracks upstream
+// behavior; it must keep hitting @inkjs/ui even if we later vendor or
+// fork the component in source/components/ui.ts. Do not route through
+// the shim.
 import { TextInput } from '@inkjs/ui';
 import { ENTER, tick, typeText } from './helpers.js';
 
