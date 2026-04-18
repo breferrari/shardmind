@@ -238,13 +238,14 @@ export interface HookContext {
 }
 
 export class ShardMindError extends Error {
-  constructor(
-    message: string,
-    public code: string,
-    public hint?: string,
-  ) {
+  code: string;
+  hint?: string;
+
+  constructor(message: string, code: string, hint?: string) {
     super(message);
     this.name = 'ShardMindError';
+    this.code = code;
+    this.hint = hint;
   }
 }
 
