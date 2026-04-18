@@ -10,15 +10,15 @@ import { parseSchema, buildValuesValidator } from '../../source/core/schema.js';
 import { readState } from '../../source/core/state.js';
 import {
   planOutputs,
-  runInstall,
-  rollbackInstall,
-} from '../../source/core/install-runner.js';
-import {
   resolveComputedDefaults,
   defaultModuleSelections,
   detectCollisions,
+} from '../../source/core/install-planner.js';
+import {
+  runInstall,
+  rollbackInstall,
   backupCollisions,
-} from '../../source/core/install-plan.js';
+} from '../../source/core/install-executor.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
 
 const __filename = fileURLToPath(import.meta.url);

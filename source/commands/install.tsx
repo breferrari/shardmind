@@ -16,19 +16,19 @@ import { parseSchema, buildValuesValidator } from '../core/schema.js';
 import { readState } from '../core/state.js';
 import {
   planOutputs,
-  runInstall,
-  rollbackInstall,
-} from '../core/install-runner.js';
-import {
   detectCollisions,
-  backupCollisions,
   mergePrefill,
   resolveComputedDefaults,
   missingValueKeys,
   defaultModuleSelections,
   type Collision,
+} from '../core/install-planner.js';
+import {
+  backupCollisions,
+  runInstall,
+  rollbackInstall,
   type BackupRecord,
-} from '../core/install-plan.js';
+} from '../core/install-executor.js';
 import { runPostInstallHook, type HookResult } from '../core/hook.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
 

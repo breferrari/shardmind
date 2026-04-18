@@ -6,13 +6,15 @@ import crypto from 'node:crypto';
 import {
   resolveComputedDefaults,
   detectCollisions,
-  backupCollisions,
-  restoreBackups,
   mergePrefill,
   missingValueKeys,
   defaultModuleSelections,
-} from '../../source/core/install-plan.js';
-import { hashValues } from '../../source/core/install-runner.js';
+  hashValues,
+} from '../../source/core/install-planner.js';
+import {
+  backupCollisions,
+  restoreBackups,
+} from '../../source/core/install-executor.js';
 import type { ShardSchema } from '../../source/runtime/types.js';
 
 function schema(values: ShardSchema['values'], modules: ShardSchema['modules'] = {}): ShardSchema {

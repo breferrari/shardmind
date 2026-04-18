@@ -2,7 +2,7 @@ import os from 'node:os';
 import { Box, Text } from 'ink';
 import { StatusMessage } from '@inkjs/ui';
 import type { ShardManifest } from '../runtime/types.js';
-import type { BackupRecord } from '../core/install-plan.js';
+import type { BackupRecord } from '../core/install-executor.js';
 
 interface SummaryProps {
   manifest: ShardManifest;

@@ -28,28 +28,28 @@
     "release:major": "npm version major && git push && git push --tags"
   },
   "dependencies": {
-    "pastel": "^3.0.0",
-    "ink": "^5.0.0",
     "@inkjs/ui": "^2.0.0",
-    "react": "^18.0.0",
+    "diff": "9.0.0",
+    "ink": "^5.0.0",
+    "node-diff3": "^3.1.0",
     "nunjucks": "^3.2.4",
-    "yaml": "^2.4.0",
-    "tar": "^7.0.0",
+    "pastel": "^3.0.0",
+    "react": "^18.0.0",
     "semver": "^7.6.0",
-    "zod": "^3.23.0",
-    "diff": "^7.0.0",
-    "node-diff3": "^3.1.0"
+    "tar": "^7.0.0",
+    "yaml": "^2.4.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
     "@sindresorhus/tsconfig": "^6.0.0",
-    "tsup": "^8.0.0",
-    "vitest": "^2.0.0",
-    "@types/nunjucks": "^3.2.6",
-    "@types/tar": "^6.1.0",
     "@types/diff": "^6.0.0",
+    "@types/nunjucks": "^3.2.6",
+    "@types/react": "^18.0.0",
     "@types/semver": "^7.5.0",
-    "@types/react": "^18.0.0"
+    "@types/tar": "^6.1.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "4.1.4"
   },
   "engines": {
     "node": ">=18.0.0"
