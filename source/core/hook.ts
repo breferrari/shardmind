@@ -1,6 +1,6 @@
-import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { ShardManifest } from '../runtime/types.js';
+import { pathExists } from './fs-utils.js';
 
 export type HookResult =
   | { kind: 'absent' }
@@ -28,11 +28,6 @@ export async function runPostInstallHook(
   if (!hookRelPath) return { kind: 'absent' };
 
   const hookPath = path.join(tempDir, hookRelPath);
-  try {
-    await fsp.access(hookPath);
-  } catch {
-    return { kind: 'absent' };
-  }
-
+  if (!(await pathExists(hookPath))) return { kind: 'absent' };
   return { kind: 'deferred', hookPath };
 }

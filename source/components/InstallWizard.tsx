@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { Select } from '@inkjs/ui';
-import type { ShardManifest, ShardSchema, ValueDefinition } from '../runtime/types.js';
+import type { ShardManifest, ShardSchema, ValueDefinition, ModuleSelections } from '../runtime/types.js';
 import Header from './Header.js';
 import ValueInput from './ValueInput.js';
 import ModuleReview from './ModuleReview.js';
@@ -14,7 +14,7 @@ import { isComputedDefault } from '../core/schema.js';
 
 export interface WizardResult {
   values: Record<string, unknown>;
-  selections: Record<string, 'included' | 'excluded'>;
+  selections: ModuleSelections;
 }
 
 interface InstallWizardProps {
@@ -57,7 +57,7 @@ export default function InstallWizard({
     return { kind: 'modules' };
   });
   const [values, setValues] = useState<Record<string, unknown>>(prefillValues);
-  const [selections, setSelections] = useState<Record<string, 'included' | 'excluded'>>(
+  const [selections, setSelections] = useState<ModuleSelections>(
     () => defaultModuleSelections(schema),
   );
   const [resolvedValues, setResolvedValues] = useState<Record<string, unknown>>(prefillValues);
@@ -95,7 +95,7 @@ export default function InstallWizard({
           if (valueKeys.length === 0) return { kind: 'header' };
           return { kind: 'value', index: valueKeys.length - 1 };
         case 'modules':
-          if (hasComputedDefaults(schema)) return { kind: 'computed-preview' };
+          if (hasComputed) return { kind: 'computed-preview' };
           if (valueKeys.length === 0) return { kind: 'header' };
           return { kind: 'value', index: valueKeys.length - 1 };
         case 'confirm':
@@ -108,7 +108,6 @@ export default function InstallWizard({
     const nextValues = { ...values, [key]: value };
     setValues(nextValues);
 
-    // Not the last value? advance within the value screens.
     const currentIndex = step.kind === 'value' ? step.index : -1;
     if (currentIndex === -1) return;
     if (currentIndex + 1 < valueKeys.length) {
@@ -116,7 +115,6 @@ export default function InstallWizard({
       return;
     }
 
-    // Last value → resolve computed defaults, then advance.
     try {
       const resolved = resolveComputedDefaults(schema, nextValues);
       setResolvedValues(resolved);
@@ -126,7 +124,7 @@ export default function InstallWizard({
     }
   }
 
-  function submitSelections(next: Record<string, 'included' | 'excluded'>) {
+  function submitSelections(next: ModuleSelections) {
     setSelections(next);
     setStep({ kind: 'confirm' });
   }
@@ -287,7 +285,7 @@ function ConfirmStep({
 }: {
   manifest: ShardManifest;
   values: Record<string, unknown>;
-  selections: Record<string, 'included' | 'excluded'>;
+  selections: ModuleSelections;
   schemaValues: Record<string, ValueDefinition>;
   onChoice: (c: 'install' | 'back' | 'cancel') => void;
 }) {

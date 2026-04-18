@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { MultiSelect } from '@inkjs/ui';
-import type { ModuleDefinition } from '../runtime/types.js';
+import type { ModuleDefinition, ModuleSelections } from '../runtime/types.js';
 
 interface ModuleReviewProps {
   modules: Record<string, ModuleDefinition>;
@@ -12,8 +12,8 @@ interface ModuleReviewProps {
    * live total so the "Will install N files" line reflects reality.
    */
   alwaysIncludedFileCount: number;
-  initialSelections: Record<string, 'included' | 'excluded'>;
-  onSubmit: (selections: Record<string, 'included' | 'excluded'>) => void;
+  initialSelections: ModuleSelections;
+  onSubmit: (selections: ModuleSelections) => void;
 }
 
 /**
@@ -91,7 +91,7 @@ export default function ModuleReview({
             defaultValue={initiallyIncluded}
             onChange={(selected) => setCurrentIncluded(selected)}
             onSubmit={(selected) => {
-              const next: Record<string, 'included' | 'excluded'> = {};
+              const next: ModuleSelections = {};
               for (const [id] of locked) next[id] = 'included';
               for (const [id] of removable) {
                 next[id] = selected.includes(id) ? 'included' : 'excluded';

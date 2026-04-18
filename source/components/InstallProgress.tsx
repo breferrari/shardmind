@@ -30,7 +30,7 @@ export default function InstallProgress({
       <ProgressBar value={percent} />
       {verbose && history && history.length > 0 && (
         <Box flexDirection="column">
-          {history.slice(-5).map((line, i) => (
+          {history.map((line, i) => (
             <Text key={`${i}-${line}`} dimColor>
               · {line}
             </Text>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Box, Text } from 'ink';
 import { Select, TextInput, Alert, StatusMessage } from '@inkjs/ui';
-import type { ShardState } from '../runtime/types.js';
+import type { ShardState, ModuleSelections } from '../runtime/types.js';
 
 export type GateChoice = 'update' | 'reinstall' | 'cancel';
 
@@ -100,7 +100,7 @@ function formatDate(iso: string): string {
   }
 }
 
-function summarizeModules(modules: Record<string, 'included' | 'excluded'>): string {
+function summarizeModules(modules: ModuleSelections): string {
   const entries = Object.entries(modules);
   const included = entries.filter(([, s]) => s === 'included').length;
   return `${included} of ${entries.length} included`;

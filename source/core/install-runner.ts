@@ -1,15 +1,14 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { stringify as stringifyYaml } from 'yaml';
 import type {
   ShardManifest,
   ShardSchema,
   ShardState,
   FileState,
-  FileEntry,
   RenderContext,
   ResolvedShard,
+  ModuleSelections,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { resolveModules } from './modules.js';
@@ -21,12 +20,7 @@ import {
   writeState,
 } from './state.js';
 import { restoreBackups, type BackupRecord } from './install-plan.js';
-
-export interface RenderPlan {
-  renderEntries: FileEntry[];
-  copyEntries: FileEntry[];
-  totalFiles: number;
-}
+import { sha256, toPosix } from './fs-utils.js';
 
 export interface PlannedOutput {
   outputPath: string;
@@ -40,7 +34,7 @@ export interface InstallRunnerOptions {
   tempDir: string;
   resolved: ResolvedShard;
   values: Record<string, unknown>;
-  selections: Record<string, 'included' | 'excluded'>;
+  selections: ModuleSelections;
   onProgress?: (event: ProgressEvent) => void;
   /**
    * Fires after each successful write with the vault-relative output path.
@@ -68,10 +62,9 @@ export type ProgressEvent =
 export async function planOutputs(
   schema: ShardSchema,
   tempDir: string,
-  selections: Record<string, 'included' | 'excluded'>,
+  selections: ModuleSelections,
 ): Promise<{
   outputs: PlannedOutput[];
-  plan: RenderPlan;
   moduleFileCounts: Record<string, number>;
   alwaysIncludedFileCount: number;
 }> {
@@ -84,30 +77,18 @@ export async function planOutputs(
     moduleFileCounts[id] = 0;
   }
 
-  for (const entry of resolution.render) {
-    outputs.push({ outputPath: entry.outputPath, source: 'render' });
+  const tally = (entry: { outputPath: string; module: string | null }, source: 'render' | 'copy') => {
+    outputs.push({ outputPath: entry.outputPath, source });
     if (entry.module && entry.module in moduleFileCounts) {
       moduleFileCounts[entry.module]!++;
     } else if (!entry.module) {
       alwaysIncludedFileCount++;
     }
-  }
-  for (const entry of resolution.copy) {
-    outputs.push({ outputPath: entry.outputPath, source: 'copy' });
-    if (entry.module && entry.module in moduleFileCounts) {
-      moduleFileCounts[entry.module]!++;
-    } else if (!entry.module) {
-      alwaysIncludedFileCount++;
-    }
-  }
-
-  const plan: RenderPlan = {
-    renderEntries: resolution.render,
-    copyEntries: resolution.copy,
-    totalFiles: resolution.render.length + resolution.copy.length,
   };
+  for (const entry of resolution.render) tally(entry, 'render');
+  for (const entry of resolution.copy) tally(entry, 'copy');
 
-  return { outputs, plan, moduleFileCounts, alwaysIncludedFileCount };
+  return { outputs, moduleFileCounts, alwaysIncludedFileCount };
 }
 
 /**
@@ -138,7 +119,6 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
 
   let index = 0;
 
-  // Render .njk files
   for (const entry of resolution.render) {
     index++;
     onProgress?.({
@@ -164,7 +144,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
         onFileWritten?.(file.outputPath);
       }
       fileStates[file.outputPath] = {
-        template: path.relative(tempDir, entry.sourcePath).replace(/\\/g, '/'),
+        template: toPosix(tempDir, entry.sourcePath),
         rendered_hash: file.hash,
         ownership: 'managed',
         ...(entry.iterator ? { iterator_key: entry.iterator } : {}),
@@ -172,7 +152,6 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     }
   }
 
-  // Copy verbatim files
   for (const entry of resolution.copy) {
     index++;
     onProgress?.({
@@ -184,14 +163,14 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     });
 
     const buffer = await fsp.readFile(entry.sourcePath);
-    const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+    const hash = sha256(buffer);
     if (!dryRun) {
       await writeVaultFileBuffer(vaultRoot, entry.outputPath, buffer);
       writtenPaths.push(entry.outputPath);
       onFileWritten?.(entry.outputPath);
     }
     fileStates[entry.outputPath] = {
-      template: path.relative(tempDir, entry.sourcePath).replace(/\\/g, '/'),
+      template: toPosix(tempDir, entry.sourcePath),
       rendered_hash: hash,
       ownership: 'managed',
     };
@@ -212,39 +191,19 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   };
 
   if (!dryRun) {
-    // Guard: shard-values.yaml is user-owned. If it already exists we
-    // refuse to overwrite — prior install flow should have routed
-    // through ExistingInstallGate, and without an active install this
-    // file has no engine context to merge against.
-    const valuesAbsPath = path.join(vaultRoot, 'shard-values.yaml');
-    if (await fileExists(valuesAbsPath)) {
-      throw new ShardMindError(
-        'shard-values.yaml already exists at the install target',
-        'VALUES_FILE_COLLISION',
-        'Move or remove shard-values.yaml before installing. `shardmind update` (Milestone 4) will handle this automatically once available.',
-      );
-    }
-
     await initShardDir(vaultRoot);
     await cacheTemplates(vaultRoot, tempDir);
     await cacheManifest(vaultRoot, manifest, schema);
     await writeState(vaultRoot, state);
+    // shard-values.yaml is user-owned; install must create it fresh.
+    // Use `wx` so an existing file races cleanly to EEXIST instead of
+    // being silently overwritten if ExistingInstallGate was bypassed.
     await writeValuesFile(vaultRoot, values);
-    // Track shard-values.yaml in writtenPaths so rollback can clean it up.
     writtenPaths.push('shard-values.yaml');
     onFileWritten?.('shard-values.yaml');
   }
 
   return { writtenPaths, state, fileCount: totalFiles };
-}
-
-async function fileExists(absolutePath: string): Promise<boolean> {
-  try {
-    await fsp.access(absolutePath);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -303,8 +262,7 @@ export async function rollbackInstall(
 }
 
 export function hashValues(values: Record<string, unknown>): string {
-  const serialized = JSON.stringify(values, Object.keys(values).sort());
-  return crypto.createHash('sha256').update(serialized).digest('hex');
+  return sha256(JSON.stringify(values, Object.keys(values).sort()));
 }
 
 async function writeVaultFile(
@@ -333,7 +291,19 @@ async function writeValuesFile(
 ): Promise<void> {
   const abs = path.join(vaultRoot, 'shard-values.yaml');
   const serialized = stringifyYaml(values, { lineWidth: 0 }).trimEnd() + '\n';
-  await fsp.writeFile(abs, serialized, 'utf-8');
+  try {
+    await fsp.writeFile(abs, serialized, { encoding: 'utf-8', flag: 'wx' });
+  } catch (err) {
+    const code = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
+    if (code === 'EEXIST') {
+      throw new ShardMindError(
+        'shard-values.yaml already exists at the install target',
+        'VALUES_FILE_COLLISION',
+        'Move or remove shard-values.yaml before installing. `shardmind update` (Milestone 4) will handle this automatically once available.',
+      );
+    }
+    throw err;
+  }
 }
 
 function wrapRenderError(outputPath: string, err: unknown): ShardMindError {

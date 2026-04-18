@@ -192,9 +192,9 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   it('planOutputs reports per-module file counts', async () => {
     const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
-    const { moduleFileCounts, plan } = await planOutputs(schema, MINIMAL_SHARD, selections);
+    const { moduleFileCounts, outputs } = await planOutputs(schema, MINIMAL_SHARD, selections);
 
-    expect(plan.totalFiles).toBeGreaterThan(0);
+    expect(outputs.length).toBeGreaterThan(0);
     expect(moduleFileCounts['brain']).toBeGreaterThan(0);
     // extras contributes a command and a partial; the partial has no output file on its own
     expect(moduleFileCounts['extras']).toBeGreaterThanOrEqual(1);

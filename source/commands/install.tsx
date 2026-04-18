@@ -95,6 +95,11 @@ export default function Install({ args, options }: Props) {
   const writtenPathsRef = useRef<string[]>([]);
   const backupsRef = useRef<BackupRecord[]>([]);
   const installingRef = useRef(false);
+  // Mutable pointer to the latest handleWizardComplete closure so
+  // runNonInteractive can call it without circular useCallback deps.
+  const handleWizardCompleteRef = useRef<(r: WizardResult, c: PreparedContext) => Promise<void>>(
+    async () => {},
+  );
 
   const finish = useCallback(
     (next: Phase) => {
@@ -126,7 +131,6 @@ export default function Install({ args, options }: Props) {
     };
   }, [dryRun, vaultRoot]);
 
-  // Boot → preparation
   useEffect(() => {
     let disposed = false;
     let ctxForCleanup: PreparedContext | null = null;
@@ -143,12 +147,9 @@ export default function Install({ args, options }: Props) {
         const manifest = await parseManifest(temp.manifest);
         const schema = await parseSchema(temp.schema);
 
-        // Prefill values from --values if given; merge with static defaults.
         const prefill = valuesFile ? await loadValuesFile(valuesFile, schema) : {};
         const merged = mergePrefill(schema, prefill);
 
-        // Precompute module file counts for the wizard preview (requires
-        // scanning the temp directory with current default selections).
         const { moduleFileCounts, alwaysIncludedFileCount } = await planOutputs(
           schema,
           temp.tempDir,
@@ -167,7 +168,6 @@ export default function Install({ args, options }: Props) {
         };
         ctxForCleanup = ctx;
 
-        // Check for existing install.
         const existing = await readState(vaultRoot);
         if (existing) {
           if (disposed) return;
@@ -176,34 +176,16 @@ export default function Install({ args, options }: Props) {
         }
 
         if (disposed) return;
-        await proceedToWizardOrYes(ctx);
+        if (yes) {
+          await runNonInteractive(ctx);
+        } else {
+          setPhase({ kind: 'wizard', ctx });
+        }
       } catch (err) {
         if (disposed) return;
         finish({ kind: 'error', error: err as Error });
       }
     })();
-
-    async function proceedToWizardOrYes(ctx: PreparedContext) {
-      if (yes) {
-        // Non-interactive: resolve computed defaults, use default module selections,
-        // run straight into collision/install phases.
-        const missing = missingValueKeys(ctx.schema, ctx.prefillValues);
-        if (missing.length > 0) {
-          throw new ShardMindError(
-            `Missing required values for --yes: ${missing.join(', ')}`,
-            'VALUES_MISSING',
-            'Provide them via --values <file> or drop --yes to prompt interactively.',
-          );
-        }
-        const validator = buildValuesValidator(ctx.schema);
-        const resolvedValues = resolveComputedDefaults(ctx.schema, ctx.prefillValues);
-        const validated = validator.parse(resolvedValues);
-        const selections = defaultModuleSelections(ctx.schema);
-        await handleWizardComplete({ values: validated, selections }, ctx);
-        return;
-      }
-      setPhase({ kind: 'wizard', ctx });
-    }
 
     return () => {
       disposed = true;
@@ -214,23 +196,41 @@ export default function Install({ args, options }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shardRef, valuesFile, yes]);
 
+  const runNonInteractive = useCallback(
+    async (ctx: PreparedContext) => {
+      const missing = missingValueKeys(ctx.schema, ctx.prefillValues);
+      if (missing.length > 0) {
+        throw new ShardMindError(
+          `Missing required values for --yes: ${missing.join(', ')}`,
+          'VALUES_MISSING',
+          'Provide them via --values <file> or drop --yes to prompt interactively.',
+        );
+      }
+      const validator = buildValuesValidator(ctx.schema);
+      const validated = validator.parse(
+        resolveComputedDefaults(ctx.schema, ctx.prefillValues),
+      ) as Record<string, unknown>;
+      await handleWizardCompleteRef.current(
+        { values: validated, selections: defaultModuleSelections(ctx.schema) },
+        ctx,
+      );
+    },
+    [],
+  );
+
   const handleWizardComplete = useCallback(
     async (result: WizardResult, ctx: PreparedContext) => {
       try {
-        // Validate values against generated zod validator.
         const validator = buildValuesValidator(ctx.schema);
         const validated = validator.parse(result.values) as Record<string, unknown>;
         const validatedResult: WizardResult = { values: validated, selections: result.selections };
 
-        // Enumerate planned outputs under the chosen selections.
         const { outputs } = await planOutputs(ctx.schema, ctx.tempDir, validatedResult.selections);
-        const paths = outputs.map((o) => o.outputPath);
-        const collisions = await detectCollisions(vaultRoot, paths);
+        const collisions = await detectCollisions(vaultRoot, outputs.map((o) => o.outputPath));
 
         if (collisions.length > 0) {
           if (yes) {
-            // Non-interactive policy: back up and continue — unless dry-run,
-            // which must not touch disk.
+            // --yes policy: auto-backup. Dry-run must skip the disk action.
             const backups = dryRun ? [] : await backupCollisions(collisions);
             await executeInstall(ctx, validatedResult, backups);
           } else {
@@ -244,16 +244,20 @@ export default function Install({ args, options }: Props) {
         finish({ kind: 'error', error: err as Error });
       }
     },
-    [yes, vaultRoot, finish],
+    [yes, dryRun, vaultRoot, finish],
   );
+
+  useEffect(() => {
+    handleWizardCompleteRef.current = handleWizardComplete;
+  }, [handleWizardComplete]);
 
   const executeInstall = useCallback(
     async (ctx: PreparedContext, result: WizardResult, backups: BackupRecord[]) => {
       const start = Date.now();
       const history: string[] = [];
 
-      // Register backups with the SIGINT handler before any write starts,
-      // so Ctrl+C between writes still restores them.
+      // Register backups + reset writtenPaths so the SIGINT handler sees
+      // live state from the first byte written.
       backupsRef.current = backups;
       writtenPathsRef.current = [];
       installingRef.current = true;
@@ -286,26 +290,26 @@ export default function Install({ args, options }: Props) {
           onProgress: (ev) => {
             if (ev.kind === 'start') {
               setPhase((prev) =>
-                prev.kind === 'installing'
+                prev.kind === 'installing' && (prev.total !== ev.total || prev.current !== 0)
                   ? { ...prev, total: ev.total, current: 0, label: 'Starting…' }
                   : prev,
               );
             } else if (ev.kind === 'file') {
-              if (verbose) history.push(ev.outputPath);
-              // Cap the visible history slice at 5 so we don't copy
-              // an ever-growing array on every file event.
-              const visibleHistory = verbose ? history.slice(-5) : [];
-              setPhase((prev) =>
-                prev.kind === 'installing'
-                  ? {
-                      ...prev,
-                      current: ev.index,
-                      total: ev.total,
-                      label: ev.label,
-                      history: visibleHistory,
-                    }
-                  : prev,
-              );
+              if (verbose) {
+                history.push(ev.outputPath);
+                if (history.length > 5) history.shift();
+              }
+              setPhase((prev) => {
+                if (prev.kind !== 'installing') return prev;
+                if (prev.current === ev.index && prev.label === ev.label) return prev;
+                return {
+                  ...prev,
+                  current: ev.index,
+                  total: ev.total,
+                  label: ev.label,
+                  history: verbose ? [...history] : prev.history,
+                };
+              });
             }
           },
         });
@@ -316,7 +320,6 @@ export default function Install({ args, options }: Props) {
           : await runPostInstallHook(ctx.tempDir, ctx.manifest);
         const hookSummary = summarizeHook(hookResult);
 
-        // Install completed — SIGINT no longer needs to roll back.
         installingRef.current = false;
 
         finish({
@@ -359,13 +362,11 @@ export default function Install({ args, options }: Props) {
           await executeInstall(ctx, result, backups);
           return;
         }
-        // Overwrite: delete colliding paths (files AND directories) before
-        // install so writeFile doesn't fail with EISDIR when a directory
-        // sits at a planned file path. No backups — user explicitly chose
-        // to discard existing content.
-        for (const collision of collisions) {
-          await fsp.rm(collision.absolutePath, { recursive: true, force: true });
-        }
+        // Overwrite: remove colliding paths so writeFile doesn't hit EISDIR
+        // when a directory sits at a planned file path. User authorized the loss.
+        await Promise.all(
+          collisions.map((c) => fsp.rm(c.absolutePath, { recursive: true, force: true })),
+        );
         await executeInstall(ctx, result, []);
       } catch (err) {
         finish({ kind: 'error', error: err as Error });
@@ -389,8 +390,6 @@ export default function Install({ args, options }: Props) {
         return;
       }
       if (choice === 'reinstall') {
-        // --dry-run must never touch disk, and reinstall unavoidably
-        // deletes state. Refuse explicitly rather than silently.
         if (dryRun) {
           finish({
             kind: 'cancelled',
@@ -398,27 +397,14 @@ export default function Install({ args, options }: Props) {
           });
           return;
         }
-        // Delete existing state + values, then fall through to wizard.
         (async () => {
           try {
-            await fsp.rm(path.join(vaultRoot, '.shardmind'), { recursive: true, force: true });
-            await fsp.rm(path.join(vaultRoot, 'shard-values.yaml'), { force: true });
+            await Promise.all([
+              fsp.rm(path.join(vaultRoot, '.shardmind'), { recursive: true, force: true }),
+              fsp.rm(path.join(vaultRoot, 'shard-values.yaml'), { force: true }),
+            ]);
             if (yes) {
-              const missing = missingValueKeys(phase.ctx.schema, phase.ctx.prefillValues);
-              if (missing.length > 0) {
-                throw new ShardMindError(
-                  `Missing required values for --yes: ${missing.join(', ')}`,
-                  'VALUES_MISSING',
-                  'Provide them via --values <file> or drop --yes to prompt interactively.',
-                );
-              }
-              const validator = buildValuesValidator(phase.ctx.schema);
-              const resolvedValues = resolveComputedDefaults(phase.ctx.schema, phase.ctx.prefillValues);
-              const validated = validator.parse(resolvedValues);
-              await handleWizardComplete(
-                { values: validated, selections: defaultModuleSelections(phase.ctx.schema) },
-                phase.ctx,
-              );
+              await runNonInteractive(phase.ctx);
             } else {
               setPhase({ kind: 'wizard', ctx: phase.ctx });
             }
@@ -428,11 +414,9 @@ export default function Install({ args, options }: Props) {
         })();
       }
     },
-    [phase, vaultRoot, yes, dryRun, finish, handleWizardComplete],
+    [phase, vaultRoot, yes, dryRun, finish, runNonInteractive],
   );
 
-  // Render tree per phase — wrapped in RootFrame so dry-run and the
-  // keyboard legend stay visible across all phases.
   if (phase.kind === 'booting' || phase.kind === 'loading') {
     const msg = phase.kind === 'loading' ? phase.message : 'Starting…';
     return (
@@ -519,7 +503,6 @@ export default function Install({ args, options }: Props) {
     );
   }
 
-  // error
   const err = phase.error;
   const code = err instanceof ShardMindError ? err.code : null;
   const hint = err instanceof ShardMindError ? err.hint : null;
@@ -600,8 +583,8 @@ async function loadValuesFile(
     );
   }
 
-  // Filter to known schema keys only — unknown keys are ignored silently
-  // so the file can be reused across shard versions.
+  // Unknown keys are silently ignored so a values file can be reused
+  // across shard versions that have added or removed entries.
   const filtered: Record<string, unknown> = {};
   for (const key of Object.keys(schema.values)) {
     if (key in (parsed as Record<string, unknown>)) {

@@ -1,9 +1,10 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import nunjucks from 'nunjucks';
-import type { ShardSchema, ValueDefinition } from '../runtime/types.js';
+import type { ShardSchema, ValueDefinition, ModuleSelections } from '../runtime/types.js';
 import { ShardMindError, assertNever } from '../runtime/types.js';
 import { isComputedDefault } from './schema.js';
+import { pathExists } from './fs-utils.js';
 
 export interface Collision {
   outputPath: string;
@@ -188,15 +189,6 @@ async function uniqueBackupPath(absolutePath: string, stamp: string): Promise<st
   );
 }
 
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await fsp.access(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Restore backups to their original paths. Used during rollback after
  * a failed install so the user's pre-install content comes back intact.
@@ -277,8 +269,8 @@ export function missingValueKeys(
  */
 export function defaultModuleSelections(
   schema: ShardSchema,
-): Record<string, 'included' | 'excluded'> {
-  const selections: Record<string, 'included' | 'excluded'> = {};
+): ModuleSelections {
+  const selections: ModuleSelections = {};
   for (const id of Object.keys(schema.modules)) {
     selections[id] = 'included';
   }
