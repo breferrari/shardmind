@@ -185,7 +185,23 @@ function buildValidator(def: ValueDefinition): (raw: unknown) => ValidationOutco
         }
         return { ok: true, value: raw };
       }
-      case 'multiselect':
+      case 'multiselect': {
+        if (!Array.isArray(raw)) {
+          return { ok: false, message: 'Must be a list' };
+        }
+        if (def.required && raw.length === 0) {
+          return { ok: false, message: 'At least one entry required' };
+        }
+        const allowed = new Set((def.options ?? []).map((o) => o.value));
+        const invalid = raw.filter((v) => typeof v !== 'string' || !allowed.has(v));
+        if (invalid.length > 0) {
+          return {
+            ok: false,
+            message: `Unknown option${invalid.length === 1 ? '' : 's'}: ${invalid.map(String).join(', ')}`,
+          };
+        }
+        return { ok: true, value: raw };
+      }
       case 'list':
         if (!Array.isArray(raw)) {
           return { ok: false, message: 'Must be a list' };

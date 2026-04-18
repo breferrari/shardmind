@@ -226,6 +226,66 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     await expect(fsp.access(backups[0]!.backupPath)).resolves.toBeUndefined();
   });
 
+  it('refuses to install when shard-values.yaml already exists', async () => {
+    await fsp.writeFile(path.join(vault, 'shard-values.yaml'), 'user_name: Old\n', 'utf-8');
+
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const selections = defaultModuleSelections(schema);
+    const validator = buildValuesValidator(schema);
+    const values = validator.parse(resolveComputedDefaults(schema, VALUES));
+
+    await expect(
+      runInstall({
+        vaultRoot: vault,
+        manifest,
+        schema,
+        tempDir: MINIMAL_SHARD,
+        resolved: RESOLVED,
+        values,
+        selections,
+      }),
+    ).rejects.toMatchObject({ code: 'VALUES_FILE_COLLISION' });
+  });
+
+  it('planOutputs reports alwaysIncludedFileCount for module-null files', async () => {
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const selections = defaultModuleSelections(schema);
+    const { alwaysIncludedFileCount } = await planOutputs(schema, MINIMAL_SHARD, selections);
+    // minimal-shard: CLAUDE.md.njk and Home.md.njk have no module (no paths match)
+    expect(alwaysIncludedFileCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('rollback restores backed-up files', async () => {
+    const original = path.join(vault, 'Home.md');
+    await fsp.writeFile(original, 'user content', 'utf-8');
+
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const selections = defaultModuleSelections(schema);
+    const validator = buildValuesValidator(schema);
+    const values = validator.parse(resolveComputedDefaults(schema, VALUES));
+    const { outputs } = await planOutputs(schema, MINIMAL_SHARD, selections);
+    const collisions = await detectCollisions(vault, outputs.map((o) => o.outputPath));
+    const backups = await backupCollisions(collisions);
+
+    const result = await runInstall({
+      vaultRoot: vault,
+      manifest,
+      schema,
+      tempDir: MINIMAL_SHARD,
+      resolved: RESOLVED,
+      values,
+      selections,
+    });
+
+    // Simulate a post-install failure and roll back
+    await rollbackInstall(vault, result.writtenPaths, backups);
+
+    const restored = await fsp.readFile(original, 'utf-8');
+    expect(restored).toBe('user content');
+  });
+
   it('rollback removes all written files and the .shardmind directory', async () => {
     const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
     const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));

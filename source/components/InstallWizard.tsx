@@ -24,6 +24,7 @@ interface InstallWizardProps {
   moduleFileCounts: Record<string, number>;
   onComplete: (result: WizardResult) => void;
   onCancel: () => void;
+  onError: (err: Error) => void;
 }
 
 type Step =
@@ -40,20 +41,37 @@ export default function InstallWizard({
   moduleFileCounts,
   onComplete,
   onCancel,
+  onError,
 }: InstallWizardProps) {
   const valueKeys = useMemo(
     () => missingValueKeys(schema, prefillValues),
     [schema, prefillValues],
   );
+  const hasComputed = useMemo(() => hasComputedDefaults(schema), [schema]);
 
-  const [step, setStep] = useState<Step>(() =>
-    valueKeys.length > 0 ? { kind: 'header' } : { kind: 'modules' },
-  );
+  const [step, setStep] = useState<Step>(() => {
+    if (valueKeys.length > 0) return { kind: 'header' };
+    if (hasComputed) return { kind: 'computed-preview' };
+    return { kind: 'modules' };
+  });
   const [values, setValues] = useState<Record<string, unknown>>(prefillValues);
   const [selections, setSelections] = useState<Record<string, 'included' | 'excluded'>>(
     () => defaultModuleSelections(schema),
   );
-  const [resolvedValues, setResolvedValues] = useState<Record<string, unknown>>(prefillValues);
+  const [resolvedValues, setResolvedValues] = useState<Record<string, unknown>>(() => {
+    // If we're opening straight into computed-preview we need the resolved
+    // values for that screen. Failures here surface immediately to the caller.
+    if (valueKeys.length === 0 && hasComputed) {
+      try {
+        return resolveComputedDefaults(schema, prefillValues);
+      } catch (err) {
+        // Defer the onError call to a microtask so we don't call it during render.
+        queueMicrotask(() => onError(err as Error));
+        return prefillValues;
+      }
+    }
+    return prefillValues;
+  });
 
   useInput((_input, key) => {
     if (key.escape) {
@@ -85,23 +103,23 @@ export default function InstallWizard({
   function submitValue(key: string, value: unknown) {
     const nextValues = { ...values, [key]: value };
     setValues(nextValues);
-    setStep((s) => {
-      if (s.kind !== 'value') return s;
-      if (s.index + 1 < valueKeys.length) {
-        return { kind: 'value', index: s.index + 1 };
-      }
-      // All values collected → resolve computed + advance
-      try {
-        const resolved = resolveComputedDefaults(schema, nextValues);
-        setResolvedValues(resolved);
-        if (hasComputedDefaults(schema)) return { kind: 'computed-preview' };
-      } catch {
-        // Fall through — computed-preview will re-throw on render and
-        // the wizard caller sees the error.
-        setResolvedValues(nextValues);
-      }
-      return { kind: 'modules' };
-    });
+
+    // Not the last value? advance within the value screens.
+    const currentIndex = step.kind === 'value' ? step.index : -1;
+    if (currentIndex === -1) return;
+    if (currentIndex + 1 < valueKeys.length) {
+      setStep({ kind: 'value', index: currentIndex + 1 });
+      return;
+    }
+
+    // Last value → resolve computed defaults, then advance.
+    try {
+      const resolved = resolveComputedDefaults(schema, nextValues);
+      setResolvedValues(resolved);
+      setStep(hasComputed ? { kind: 'computed-preview' } : { kind: 'modules' });
+    } catch (err) {
+      onError(err as Error);
+    }
   }
 
   function submitSelections(next: Record<string, 'included' | 'excluded'>) {
@@ -129,13 +147,18 @@ export default function InstallWizard({
           onContinue={() => {
             if (valueKeys.length > 0) {
               setStep({ kind: 'value', index: 0 });
-            } else if (hasComputedDefaults(schema)) {
-              const resolved = resolveComputedDefaults(schema, values);
-              setResolvedValues(resolved);
-              setStep({ kind: 'computed-preview' });
-            } else {
-              setStep({ kind: 'modules' });
+              return;
             }
+            if (hasComputed) {
+              try {
+                setResolvedValues(resolveComputedDefaults(schema, values));
+                setStep({ kind: 'computed-preview' });
+              } catch (err) {
+                onError(err as Error);
+              }
+              return;
+            }
+            setStep({ kind: 'modules' });
           }}
         />
       )}

@@ -7,6 +7,7 @@ import {
   resolveComputedDefaults,
   detectCollisions,
   backupCollisions,
+  restoreBackups,
   mergePrefill,
   missingValueKeys,
   defaultModuleSelections,
@@ -113,11 +114,12 @@ describe('detectCollisions', () => {
     expect(result[0]?.mtime).toBeInstanceOf(Date);
   });
 
-  it('ignores directories that exist at planned paths', async () => {
+  it('flags existing directories at planned paths (would cause EISDIR on write)', async () => {
     await fsp.mkdir(path.join(vault, 'Home.md'), { recursive: true });
 
     const result = await detectCollisions(vault, ['Home.md']);
-    expect(result).toEqual([]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.kind).toBe('directory');
   });
 });
 
@@ -138,7 +140,7 @@ describe('backupCollisions', () => {
     await fsp.writeFile(original, 'user content', 'utf-8');
 
     const records = await backupCollisions(
-      [{ outputPath: 'Home.md', absolutePath: original, size: 12, mtime: new Date() }],
+      [{ outputPath: 'Home.md', absolutePath: original, size: 12, mtime: new Date(), kind: 'file' }],
       new Date('2026-04-18T10:30:00.123Z'),
     );
 
@@ -148,6 +150,71 @@ describe('backupCollisions', () => {
     await expect(fsp.access(original)).rejects.toThrow();
     const backup = await fsp.readFile(records[0]!.backupPath, 'utf-8');
     expect(backup).toBe('user content');
+  });
+
+  it('appends a counter when a backup path already exists (same-second collisions)', async () => {
+    const original = path.join(vault, 'Home.md');
+    const stamp = '2026-04-18T10-30-00';
+    // Pre-seed a stale backup at the canonical name
+    await fsp.writeFile(`${original}.shardmind-backup-${stamp}`, 'stale', 'utf-8');
+    await fsp.writeFile(original, 'new user content', 'utf-8');
+
+    const records = await backupCollisions(
+      [{ outputPath: 'Home.md', absolutePath: original, size: 16, mtime: new Date(), kind: 'file' }],
+      new Date('2026-04-18T10:30:00.000Z'),
+    );
+
+    expect(records[0]?.backupPath).toBe(`${original}.shardmind-backup-${stamp}.1`);
+    const stale = await fsp.readFile(`${original}.shardmind-backup-${stamp}`, 'utf-8');
+    expect(stale).toBe('stale'); // untouched
+  });
+});
+
+describe('restoreBackups', () => {
+  let vault: string;
+
+  beforeEach(async () => {
+    vault = path.join(os.tmpdir(), `shardmind-restore-${crypto.randomUUID()}`);
+    await fsp.mkdir(vault, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsp.rm(vault, { recursive: true, force: true });
+  });
+
+  it('moves backup files back to their original paths', async () => {
+    const original = path.join(vault, 'Home.md');
+    const backup = `${original}.shardmind-backup-2026-04-18T10-30-00`;
+    await fsp.writeFile(backup, 'original content', 'utf-8');
+    // Simulate a post-install artifact at the original path
+    await fsp.writeFile(original, 'new install content', 'utf-8');
+
+    const { restored, failed } = await restoreBackups([
+      { originalPath: original, backupPath: backup },
+    ]);
+
+    expect(restored).toHaveLength(1);
+    expect(failed).toHaveLength(0);
+    const restoredContent = await fsp.readFile(original, 'utf-8');
+    expect(restoredContent).toBe('original content');
+    await expect(fsp.access(backup)).rejects.toThrow();
+  });
+
+  it('continues past individual failures and reports them', async () => {
+    const goodOriginal = path.join(vault, 'good.md');
+    const goodBackup = `${goodOriginal}.shardmind-backup-stamp`;
+    await fsp.writeFile(goodBackup, 'good', 'utf-8');
+
+    const missingBackup = path.join(vault, 'missing.md.shardmind-backup-stamp');
+
+    const { restored, failed } = await restoreBackups([
+      { originalPath: goodOriginal, backupPath: goodBackup },
+      { originalPath: path.join(vault, 'missing.md'), backupPath: missingBackup },
+    ]);
+
+    expect(restored).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.originalPath).toContain('missing.md');
   });
 });
 

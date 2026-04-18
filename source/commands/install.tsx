@@ -200,8 +200,9 @@ export default function Install({ args, options }: Props) {
 
         if (collisions.length > 0) {
           if (yes) {
-            // Non-interactive policy: back up and continue.
-            const backups = await backupCollisions(collisions);
+            // Non-interactive policy: back up and continue — unless dry-run,
+            // which must not touch disk.
+            const backups = dryRun ? [] : await backupCollisions(collisions);
             await executeInstall(ctx, validatedResult, backups);
           } else {
             setPhase({ kind: 'collision', collisions, result: validatedResult, ctx });
@@ -253,6 +254,9 @@ export default function Install({ args, options }: Props) {
               );
             } else if (ev.kind === 'file') {
               if (verbose) history.push(ev.outputPath);
+              // Cap the visible history slice at 5 so we don't copy
+              // an ever-growing array on every file event.
+              const visibleHistory = verbose ? history.slice(-5) : [];
               setPhase((prev) =>
                 prev.kind === 'installing'
                   ? {
@@ -260,7 +264,7 @@ export default function Install({ args, options }: Props) {
                       current: ev.index,
                       total: ev.total,
                       label: ev.label,
-                      history: [...history],
+                      history: visibleHistory,
                     }
                   : prev,
               );
@@ -286,9 +290,13 @@ export default function Install({ args, options }: Props) {
         });
       } catch (err) {
         if (!dryRun) {
-          await rollbackInstall(vaultRoot, written).catch(() => {});
+          await rollbackInstall(vaultRoot, written, backups).catch(() => {});
         }
-        finish({ kind: 'error', error: err as Error, detail: 'Rolled back partial install.' });
+        finish({
+          kind: 'error',
+          error: err as Error,
+          detail: dryRun ? undefined : 'Rolled back partial install (including any pre-install backups).',
+        });
       }
     },
     [vaultRoot, verbose, dryRun, finish],
@@ -323,6 +331,15 @@ export default function Install({ args, options }: Props) {
         return;
       }
       if (choice === 'reinstall') {
+        // --dry-run must never touch disk, and reinstall unavoidably
+        // deletes state. Refuse explicitly rather than silently.
+        if (dryRun) {
+          finish({
+            kind: 'cancelled',
+            reason: 'Reinstall is destructive and cannot run under --dry-run. Drop --dry-run to reinstall.',
+          });
+          return;
+        }
         // Delete existing state + values, then fall through to wizard.
         (async () => {
           try {
@@ -353,7 +370,7 @@ export default function Install({ args, options }: Props) {
         })();
       }
     },
-    [phase, vaultRoot, yes, finish, handleWizardComplete],
+    [phase, vaultRoot, yes, dryRun, finish, handleWizardComplete],
   );
 
   // Render tree per phase.
@@ -380,6 +397,7 @@ export default function Install({ args, options }: Props) {
         moduleFileCounts={phase.ctx.moduleFileCounts}
         onComplete={(result) => handleWizardComplete(result, phase.ctx)}
         onCancel={() => finish({ kind: 'cancelled', reason: 'User cancelled in wizard.' })}
+        onError={(err) => finish({ kind: 'error', error: err })}
       />
     );
   }
@@ -452,7 +470,17 @@ async function loadValuesFile(
     );
   }
 
-  const parsed = parseYaml(raw);
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(raw);
+  } catch (err) {
+    throw new ShardMindError(
+      `--values file is not valid YAML: ${filePath}`,
+      'VALUES_FILE_INVALID',
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new ShardMindError(
       `--values file must be a YAML mapping: ${filePath}`,

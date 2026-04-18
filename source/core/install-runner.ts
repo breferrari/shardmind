@@ -20,6 +20,7 @@ import {
   cacheManifest,
   writeState,
 } from './state.js';
+import { restoreBackups, type BackupRecord } from './install-plan.js';
 
 export interface RenderPlan {
   renderEntries: FileEntry[];
@@ -63,10 +64,16 @@ export async function planOutputs(
   schema: ShardSchema,
   tempDir: string,
   selections: Record<string, 'included' | 'excluded'>,
-): Promise<{ outputs: PlannedOutput[]; plan: RenderPlan; moduleFileCounts: Record<string, number> }> {
+): Promise<{
+  outputs: PlannedOutput[];
+  plan: RenderPlan;
+  moduleFileCounts: Record<string, number>;
+  alwaysIncludedFileCount: number;
+}> {
   const resolution = await resolveModules(schema, selections, tempDir);
   const outputs: PlannedOutput[] = [];
   const moduleFileCounts: Record<string, number> = {};
+  let alwaysIncludedFileCount = 0;
 
   for (const id of Object.keys(schema.modules)) {
     moduleFileCounts[id] = 0;
@@ -76,12 +83,16 @@ export async function planOutputs(
     outputs.push({ outputPath: entry.outputPath, source: 'render' });
     if (entry.module && entry.module in moduleFileCounts) {
       moduleFileCounts[entry.module]!++;
+    } else if (!entry.module) {
+      alwaysIncludedFileCount++;
     }
   }
   for (const entry of resolution.copy) {
     outputs.push({ outputPath: entry.outputPath, source: 'copy' });
     if (entry.module && entry.module in moduleFileCounts) {
       moduleFileCounts[entry.module]!++;
+    } else if (!entry.module) {
+      alwaysIncludedFileCount++;
     }
   }
 
@@ -91,7 +102,7 @@ export async function planOutputs(
     totalFiles: resolution.render.length + resolution.copy.length,
   };
 
-  return { outputs, plan, moduleFileCounts };
+  return { outputs, plan, moduleFileCounts, alwaysIncludedFileCount };
 }
 
 /**
@@ -194,25 +205,51 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   };
 
   if (!dryRun) {
+    // Guard: shard-values.yaml is user-owned. If it already exists we
+    // refuse to overwrite — prior install flow should have routed
+    // through ExistingInstallGate, and without an active install this
+    // file has no engine context to merge against.
+    const valuesAbsPath = path.join(vaultRoot, 'shard-values.yaml');
+    if (await fileExists(valuesAbsPath)) {
+      throw new ShardMindError(
+        'shard-values.yaml already exists at the install target',
+        'VALUES_FILE_COLLISION',
+        'Run `shardmind update` if this vault already has a shard, or move/remove shard-values.yaml to install fresh.',
+      );
+    }
+
     await initShardDir(vaultRoot);
     await cacheTemplates(vaultRoot, tempDir);
     await cacheManifest(vaultRoot, manifest, schema);
     await writeState(vaultRoot, state);
     await writeValuesFile(vaultRoot, values);
+    // Track shard-values.yaml in writtenPaths so rollback can clean it up.
+    writtenPaths.push('shard-values.yaml');
   }
 
   return { writtenPaths, state, fileCount: totalFiles };
 }
 
+async function fileExists(absolutePath: string): Promise<boolean> {
+  try {
+    await fsp.access(absolutePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Roll back a partial install. Removes all written files, cleans up
- * empty parent directories, and deletes .shardmind/ if present.
+ * empty parent directories, deletes .shardmind/ if present, and
+ * restores any backups created during collision handling.
  * Best-effort — errors during rollback are swallowed because the
  * primary failure is already being reported.
  */
 export async function rollbackInstall(
   vaultRoot: string,
   writtenPaths: string[],
+  backups: BackupRecord[] = [],
 ): Promise<void> {
   const sortedByDepth = [...writtenPaths].sort(
     (a, b) => b.split('/').length - a.split('/').length,
@@ -248,6 +285,12 @@ export async function rollbackInstall(
     await fsp.rm(path.join(vaultRoot, '.shardmind'), { recursive: true, force: true });
   } catch {
     // ignore
+  }
+
+  // Restore any backups last, so they land on paths that have been
+  // freed by the file removal above.
+  if (backups.length > 0) {
+    await restoreBackups(backups);
   }
 }
 

@@ -10,6 +10,7 @@ export interface Collision {
   absolutePath: string;
   size: number;
   mtime: Date;
+  kind: 'file' | 'directory';
 }
 
 export interface BackupRecord {
@@ -112,12 +113,16 @@ export async function detectCollisions(
     const absolutePath = path.join(vaultRoot, outputPath);
     try {
       const stat = await fsp.stat(absolutePath);
-      if (stat.isFile()) {
+      // Flag both files and directories — a directory at a planned file
+      // path would cause EISDIR during write. The UI shows both with
+      // clear labels so the user sees the real blocker.
+      if (stat.isFile() || stat.isDirectory()) {
         collisions.push({
           outputPath,
           absolutePath,
           size: stat.size,
           mtime: stat.mtime,
+          kind: stat.isDirectory() ? 'directory' : 'file',
         });
       }
     } catch (err) {
@@ -138,7 +143,10 @@ export async function detectCollisions(
 /**
  * Rename each colliding file to `<original>.shardmind-backup-<timestamp>`.
  * Timestamp is ISO-8601 compact (no colons) so the name is filesystem-safe.
- * Returns a record for each backup so callers can surface them in the summary.
+ * If multiple collisions share the same timestamp suffix (same second,
+ * or an earlier backup still on disk), we increment a counter to keep
+ * backup names unique. Returns a record per backup so callers can
+ * surface them in the summary and the rollback path can restore them.
  */
 export async function backupCollisions(
   collisions: Collision[],
@@ -148,7 +156,7 @@ export async function backupCollisions(
   const records: BackupRecord[] = [];
 
   for (const collision of collisions) {
-    const backupPath = `${collision.absolutePath}.shardmind-backup-${stamp}`;
+    const backupPath = await uniqueBackupPath(collision.absolutePath, stamp);
     try {
       await fsp.rename(collision.absolutePath, backupPath);
     } catch (err) {
@@ -162,6 +170,59 @@ export async function backupCollisions(
   }
 
   return records;
+}
+
+async function uniqueBackupPath(absolutePath: string, stamp: string): Promise<string> {
+  const base = `${absolutePath}.shardmind-backup-${stamp}`;
+  if (!(await pathExists(base))) return base;
+  for (let i = 1; i < 1000; i++) {
+    const candidate = `${base}.${i}`;
+    if (!(await pathExists(candidate))) return candidate;
+  }
+  throw new ShardMindError(
+    `Could not find a unique backup name for ${absolutePath}`,
+    'BACKUP_FAILED',
+    'Too many existing backups with the same timestamp — clean up old .shardmind-backup-* files and retry.',
+  );
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fsp.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Restore backups to their original paths. Used during rollback after
+ * a failed install so the user's pre-install content comes back intact.
+ * Best-effort per entry — individual failures are logged via the return
+ * value but don't abort the rest of the restore.
+ */
+export async function restoreBackups(
+  records: BackupRecord[],
+): Promise<{ restored: BackupRecord[]; failed: Array<BackupRecord & { reason: string }> }> {
+  const restored: BackupRecord[] = [];
+  const failed: Array<BackupRecord & { reason: string }> = [];
+
+  for (const record of records) {
+    try {
+      // Remove whatever the partial install wrote at the original path,
+      // then move the backup back.
+      await fsp.rm(record.originalPath, { recursive: true, force: true });
+      await fsp.rename(record.backupPath, record.originalPath);
+      restored.push(record);
+    } catch (err) {
+      failed.push({
+        ...record,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return { restored, failed };
 }
 
 /**
