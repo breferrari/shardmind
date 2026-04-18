@@ -70,6 +70,7 @@ interface PreparedContext {
   manifest: ShardManifest;
   schema: ShardSchema;
   tempDir: string;
+  tarballSha256: string;
   cleanup: () => Promise<void>;
   prefillValues: Record<string, unknown>;
   moduleFileCounts: Record<string, number>;
@@ -162,6 +163,7 @@ export default function Install({ args, options }: Props) {
           manifest,
           schema,
           tempDir: temp.tempDir,
+          tarballSha256: temp.tarball_sha256,
           cleanup: temp.cleanup,
           prefillValues: merged,
           moduleFileCounts,
@@ -249,6 +251,7 @@ export default function Install({ args, options }: Props) {
           schema: ctx.schema,
           tempDir: ctx.tempDir,
           resolved: ctx.resolved,
+          tarballSha256: ctx.tarballSha256,
           values: result.values,
           selections: result.selections,
           dryRun,

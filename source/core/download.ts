@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import * as tar from 'tar';
 import type { TempShard } from '../runtime/types.js';
@@ -51,11 +51,18 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
     );
   }
 
-  // Extract tarball
+  // Extract tarball and hash the bytes in the same pass.
+  const hasher = crypto.createHash('sha256');
   try {
     const nodeStream = Readable.fromWeb(response.body as import('node:stream/web').ReadableStream);
+    const hashTap = new Transform({
+      transform(chunk, _enc, cb) {
+        hasher.update(chunk);
+        cb(null, chunk);
+      },
+    });
     const extractor = tar.x({ strip: 1, C: tempDir });
-    await pipeline(nodeStream, extractor);
+    await pipeline(nodeStream, hashTap, extractor);
   } catch (err) {
     await safeCleanup(tempDir);
     const message = err instanceof Error ? err.message : String(err);
@@ -96,6 +103,7 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
     tempDir,
     manifest: manifestPath,
     schema: schemaPath,
+    tarball_sha256: hasher.digest('hex'),
     cleanup: () => cleanup(tempDir),
   };
 }

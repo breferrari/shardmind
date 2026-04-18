@@ -11,6 +11,7 @@ import {
   CACHED_TEMPLATES,
   SHARD_TEMPLATES_DIR,
 } from '../runtime/vault-paths.js';
+import { migrateState } from './state-migrator.js';
 
 const STATE_SCHEMA_VERSION = 1;
 
@@ -54,15 +55,18 @@ export async function readState(vaultRoot: string): Promise<ShardState | null> {
   }
 
   const version = (parsed as { schema_version: number }).schema_version;
-  if (version !== STATE_SCHEMA_VERSION) {
-    throw new ShardMindError(
-      `Unsupported state schema_version: ${version}`,
-      'STATE_UNSUPPORTED_VERSION',
-      `This version of shardmind supports schema_version ${STATE_SCHEMA_VERSION}.`,
-    );
+  if (version === STATE_SCHEMA_VERSION) {
+    return parsed as ShardState;
   }
 
-  return parsed as ShardState;
+  const migrated = migrateState(parsed, version, STATE_SCHEMA_VERSION);
+  if (migrated) return migrated;
+
+  throw new ShardMindError(
+    `Unsupported state schema_version: ${version}`,
+    'STATE_UNSUPPORTED_VERSION',
+    `This version of shardmind supports schema_version ${STATE_SCHEMA_VERSION}. No migration rule is registered for ${version} → ${STATE_SCHEMA_VERSION}.`,
+  );
 }
 
 export async function writeState(vaultRoot: string, state: ShardState): Promise<void> {

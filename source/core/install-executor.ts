@@ -41,6 +41,7 @@ export interface InstallRunnerOptions {
   schema: ShardSchema;
   tempDir: string;
   resolved: ResolvedShard;
+  tarballSha256: string;
   values: Record<string, unknown>;
   selections: ModuleSelections;
   onProgress?: (event: ProgressEvent) => void;
@@ -141,7 +142,7 @@ export async function restoreBackups(
  * Returns writtenPaths so the caller can roll back on later failure.
  */
 export async function runInstall(opts: InstallRunnerOptions): Promise<InstallResult> {
-  const { vaultRoot, manifest, schema, tempDir, resolved, values, selections, onProgress, onFileWritten, dryRun } = opts;
+  const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, onFileWritten, dryRun } = opts;
 
   const resolution = await resolveModules(schema, selections, tempDir);
   const totalFiles = resolution.render.length + resolution.copy.length;
@@ -219,6 +220,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     shard: `${manifest.namespace}/${manifest.name}`,
     source: resolved.source,
     version: manifest.version,
+    tarball_sha256: tarballSha256,
     installed_at: context.install_date,
     updated_at: context.install_date,
     values_hash: hashValues(values),
