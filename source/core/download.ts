@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import * as tar from 'tar';
 import type { TempShard } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
+import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE } from '../runtime/vault-paths.js';
 
 export async function downloadShard(tarballUrl: string): Promise<TempShard> {
   const tempDir = path.join(os.tmpdir(), `shardmind-${crypto.randomUUID()}`);
@@ -74,8 +75,8 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
   }
 
   // Verify required files
-  const manifestPath = path.join(tempDir, 'shard.yaml');
-  const schemaPath = path.join(tempDir, 'shard-schema.yaml');
+  const manifestPath = path.join(tempDir, SHARD_MANIFEST_FILE);
+  const schemaPath = path.join(tempDir, SHARD_SCHEMA_FILE);
 
   try {
     await fs.access(manifestPath);

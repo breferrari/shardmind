@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ShardSchema, ModuleResolution, FileEntry, ModuleSelections } from '../runtime/types.js';
+import { SHARD_TEMPLATES_DIR } from '../runtime/vault-paths.js';
 
 const VOLATILE_MARKER = '{# shardmind: volatile #}';
 
@@ -17,7 +18,7 @@ export async function resolveModules(
   const skip: FileEntry[] = [];
 
   // 1. Walk templates/ directory
-  const templatesDir = path.join(tempDir, 'templates');
+  const templatesDir = path.join(tempDir, SHARD_TEMPLATES_DIR);
   if (await dirExists(templatesDir)) {
     const files = await walkDir(templatesDir);
     for (const absPath of files) {
