@@ -51,6 +51,11 @@ export async function typeText(
   text: string,
   perCharDelayMs = 30,
 ): Promise<void> {
+  // Settle first: under Ink 7 / React 19, a TextInput that just
+  // mounted as part of a step transition may not have attached its
+  // useInput handler by the time waitFor sees its text appear. A
+  // small initial tick avoids losing the first keystroke.
+  await tick(perCharDelayMs);
   for (const ch of text) {
     stdin.write(ch);
     await tick(perCharDelayMs);
