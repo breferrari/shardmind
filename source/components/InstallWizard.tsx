@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { Select } from '@inkjs/ui';
+import { Select } from './ui.js';
 import type { ShardManifest, ShardSchema, ValueDefinition, ModuleSelections } from '../runtime/types.js';
 import Header from './Header.js';
 import ValueInput from './ValueInput.js';

@@ -778,6 +778,23 @@ For pinning: `shardmind update --version 3.6.0`.
 | **@sindresorhus/tsconfig** | Pastel's recommended TS config |
 | **vitest** | Test runner |
 
+### 11.4 Dependency Risk: `@inkjs/ui`
+
+**Status (as of April 2026):** frozen upstream. Last release `2.0.0` on 2024-05-22. Last maintainer commit on 2024-05-22. Last maintainer comment on issues: June 2023. Meanwhile the same maintainer actively ships `ink` itself (7.0.0 / 7.0.1 in April 2026). Not archived, but behaviorally abandoned.
+
+**Why we still depend on it.** It covers the full wizard surface in one package: `TextInput`, `Select`, `MultiSelect`, `ConfirmInput`, `Spinner`, `ProgressBar`, `StatusMessage`, `Alert`, `Badge`. No maintained alternative at equivalent breadth exists. The standalone `ink-*` packages (`ink-text-input`, `ink-select-input`) are similarly frozen, and `ink-multi-select` / `ink-progress-bar` are years-dead. `OpenTUI` is a different renderer entirely, not a drop-in swap.
+
+**Hedge: `source/components/ui.ts` shim.** Every TUI file imports components from `./ui.js` rather than `@inkjs/ui` directly. The shim is a one-file re-export. To swap the backend (vendor a component, fork the library, migrate wholesale), only `ui.ts` changes. Callsites are untouched.
+
+**Swap triggers** — any one of:
+1. A second real bug we need to patch locally (the first was the `ExistingInstallGate` `onChange` quirk — see upstream issue [vadimdemedes/ink-ui#26](https://github.com/vadimdemedes/ink-ui/issues/26) and PR [#27](https://github.com/vadimdemedes/ink-ui/pull/27)).
+2. Ink 7 or later breaks compatibility and nobody upstream fixes it.
+3. We need a component `@inkjs/ui` doesn't provide.
+
+**When a trigger fires, vendor the 2–3 components that bit us into `source/components/vendor/*` and route `ui.ts` through the vendored copies. Don't fork the whole package unless the count grows past ~5 components.**
+
+**Revisit cadence.** Re-evaluate at v0.2 scope freeze. Do not pre-emptively migrate.
+
 ---
 
 ## 12. Project Structure

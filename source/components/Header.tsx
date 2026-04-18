@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { Badge } from '@inkjs/ui';
+import { Badge } from './ui.js';
 import type { ShardManifest } from '../runtime/types.js';
 
 interface HeaderProps {

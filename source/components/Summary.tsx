@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { Box, Text } from 'ink';
-import { StatusMessage } from '@inkjs/ui';
+import { StatusMessage } from './ui.js';
 import type { ShardManifest } from '../runtime/types.js';
 import type { BackupRecord } from '../core/install-executor.js';
 

@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react';
 import { Box, Text } from 'ink';
-import { Spinner, StatusMessage, Alert } from '@inkjs/ui';
+import { Spinner, StatusMessage, Alert } from '../components/ui.js';
 import zod from 'zod';
 
 import { ShardMindError } from '../runtime/types.js';

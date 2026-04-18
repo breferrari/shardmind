@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import { Box, Text } from 'ink';
-import { TextInput, Select, ConfirmInput, StatusMessage } from '@inkjs/ui';
+import { TextInput, Select, ConfirmInput, StatusMessage } from './ui.js';
 import type { ValueDefinition } from '../runtime/types.js';
 import { assertNever } from '../runtime/types.js';
 

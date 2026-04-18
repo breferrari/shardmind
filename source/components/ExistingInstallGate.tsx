@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { Box, Text } from 'ink';
-import { Select, TextInput, Alert, StatusMessage } from '@inkjs/ui';
+import { Select, TextInput, Alert, StatusMessage } from './ui.js';
 import type { ShardState, ModuleSelections } from '../runtime/types.js';
 
 export type GateChoice = 'update' | 'reinstall' | 'cancel';
@@ -32,11 +32,11 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
           <TextInput
             placeholder="REINSTALL"
             onChange={(v) => {
-              // Clear a stale error only when the user types something
-              // different from the value that caused it. @inkjs/ui's
-              // TextInput fires onChange on parent re-renders too, so
-              // the value-comparison guard prevents the error from
-              // being cleared the same tick it's set.
+              // @inkjs/ui fires onChange on parent re-renders, which
+              // would clear the error the same tick it's set. Compare
+              // against lastSubmittedValue so we only clear once the
+              // user actually types something new.
+              // Upstream: vadimdemedes/ink-ui#26 (fix in PR #27).
               if (lastSubmittedValue.current !== null && v !== lastSubmittedValue.current) {
                 lastSubmittedValue.current = null;
                 setError(null);

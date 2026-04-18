@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { MultiSelect } from '@inkjs/ui';
+import { MultiSelect } from './ui.js';
 import type { ModuleDefinition, ModuleSelections } from '../runtime/types.js';
 
 interface ModuleReviewProps {

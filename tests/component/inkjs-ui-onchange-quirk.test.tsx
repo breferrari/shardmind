@@ -29,6 +29,9 @@ afterEach(() => {
  *       understand why we did what we did.
  *
  * See ExistingInstallGate.tsx for the workaround.
+ *
+ * Upstream issue: https://github.com/vadimdemedes/ink-ui/issues/26
+ * Upstream fix (pending review): https://github.com/vadimdemedes/ink-ui/pull/27
  */
 describe('@inkjs/ui TextInput onChange quirk (regression)', () => {
   it('fires onChange spuriously after submit when parent re-renders', async () => {
