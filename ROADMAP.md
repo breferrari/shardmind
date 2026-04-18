@@ -25,7 +25,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 
 ### Milestone 2: Install Command (Day 2)
 
-- [ ] `source/core/state.ts` + `core/registry.ts` ([#9](https://github.com/breferrari/shardmind/issues/9))
+- [x] `source/core/state.ts` + `core/registry.ts` ([#9](https://github.com/breferrari/shardmind/issues/9))
 - [ ] `commands/install.tsx` — full install flow with Ink wizard ([#8](https://github.com/breferrari/shardmind/issues/8))
 - [ ] Integration test: install pipeline against real obsidian-mind shard (temp dir)
 - [ ] Verify: `shardmind install breferrari/obsidian-mind` works end to end
