@@ -17,6 +17,26 @@ import { ShardMindError } from './types.js';
 import { resolveVaultRoot } from './state.js';
 import { CACHED_SCHEMA } from './vault-paths.js';
 
+/**
+ * Load the cached `shard-schema.yaml` from the current vault.
+ *
+ * Reads the copy that `shardmind install` wrote to `.shardmind/`.
+ * Normalizes frontmatter shorthand (`key: [a, b]` → `key: { required: [a, b] }`).
+ * Runtime trusts the cached file because the engine validated it on
+ * install; this function is lean intentionally.
+ *
+ * @returns The parsed and normalized `ShardSchema`.
+ * @throws ShardMindError `VAULT_NOT_FOUND` if no vault in the ancestor chain.
+ * @throws ShardMindError `SCHEMA_NOT_FOUND` if the cached file is missing.
+ *
+ * @example
+ * ```ts
+ * import { loadSchema, loadValues, validateValues } from 'shardmind/runtime';
+ *
+ * const [schema, values] = await Promise.all([loadSchema(), loadValues()]);
+ * const result = validateValues(values, schema);
+ * ```
+ */
 export async function loadSchema(): Promise<ShardSchema> {
   const vaultRoot = resolveVaultRoot();
   const filePath = path.join(vaultRoot, CACHED_SCHEMA);

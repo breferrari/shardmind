@@ -1,8 +1,40 @@
+/**
+ * Frontmatter validation for hook scripts. Given a file's content and
+ * the shard schema, report which required frontmatter fields are
+ * present, missing, or unexpected (per the matched note-type rule).
+ *
+ * Files without frontmatter return `valid: true` (no rule to match).
+ */
+
 import { parse as parseYaml } from 'yaml';
 import type { FrontmatterValidationResult, ShardSchema, FrontmatterRule } from './types.js';
 
 const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---/;
 
+/**
+ * Validate the YAML frontmatter of a note against the shard's
+ * frontmatter rules.
+ *
+ * Picks a rule by `path_match` glob against `filePath`; falls back to
+ * the `global` rule's required fields. Returns the missing required
+ * fields and any extra fields not covered by any rule.
+ *
+ * @param filePath The note's vault-relative path (used for `path_match`).
+ * @param content The full file content including frontmatter.
+ * @param schema The shard schema (typically from `loadSchema`).
+ * @returns `{ valid, noteType, missing, extra }`.
+ *
+ * @example
+ * ```ts
+ * import fs from 'node:fs/promises';
+ * import { loadSchema, validateFrontmatter } from 'shardmind/runtime';
+ *
+ * const schema = await loadSchema();
+ * const content = await fs.readFile('brain/Goals.md', 'utf-8');
+ * const { valid, missing } = validateFrontmatter('brain/Goals.md', content, schema);
+ * if (!valid) console.warn(`Missing required fields: ${missing.join(', ')}`);
+ * ```
+ */
 export function validateFrontmatter(
   filePath: string,
   content: string,
