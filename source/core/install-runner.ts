@@ -21,6 +21,7 @@ import {
 } from './state.js';
 import { restoreBackups, type BackupRecord } from './install-plan.js';
 import { sha256, toPosix } from './fs-utils.js';
+import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
 
 export interface PlannedOutput {
   outputPath: string;
@@ -199,8 +200,8 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     // Use `wx` so an existing file races cleanly to EEXIST instead of
     // being silently overwritten if ExistingInstallGate was bypassed.
     await writeValuesFile(vaultRoot, values);
-    writtenPaths.push('shard-values.yaml');
-    onFileWritten?.('shard-values.yaml');
+    writtenPaths.push(VALUES_FILE);
+    onFileWritten?.(VALUES_FILE);
   }
 
   return { writtenPaths, state, fileCount: totalFiles };
@@ -249,7 +250,7 @@ export async function rollbackInstall(
   }
 
   try {
-    await fsp.rm(path.join(vaultRoot, '.shardmind'), { recursive: true, force: true });
+    await fsp.rm(path.join(vaultRoot, SHARDMIND_DIR), { recursive: true, force: true });
   } catch {
     // ignore
   }
@@ -307,7 +308,7 @@ async function writeValuesFile(
   vaultRoot: string,
   values: Record<string, unknown>,
 ): Promise<void> {
-  const abs = path.join(vaultRoot, 'shard-values.yaml');
+  const abs = path.join(vaultRoot, VALUES_FILE);
   const serialized = stringifyYaml(values, { lineWidth: 0 }).trimEnd() + '\n';
   try {
     await fsp.writeFile(abs, serialized, { encoding: 'utf-8', flag: 'wx' });

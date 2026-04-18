@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { ShardState } from './types.js';
 import { ShardMindError } from './types.js';
+import { SHARDMIND_DIR, STATE_FILE } from './vault-paths.js';
 
 const MAX_DEPTH = 20;
 
@@ -10,12 +11,12 @@ export function resolveVaultRoot(): string {
   let dir = process.cwd();
 
   for (let i = 0; i < MAX_DEPTH; i++) {
-    const shardmindDir = path.join(dir, '.shardmind');
+    const shardmindDir = path.join(dir, SHARDMIND_DIR);
     if (fs.existsSync(shardmindDir) && fs.statSync(shardmindDir).isDirectory()) {
       return dir;
     }
     const parent = path.dirname(dir);
-    if (parent === dir) break; // reached filesystem root
+    if (parent === dir) break;
     dir = parent;
   }
 
@@ -28,7 +29,7 @@ export function resolveVaultRoot(): string {
 
 export async function loadState(): Promise<ShardState | null> {
   const vaultRoot = resolveVaultRoot();
-  const filePath = path.join(vaultRoot, '.shardmind', 'state.json');
+  const filePath = path.join(vaultRoot, STATE_FILE);
 
   let raw: string;
   try {

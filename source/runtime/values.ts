@@ -5,10 +5,11 @@ import { z } from 'zod';
 import type { ShardSchema, ValidationResult } from './types.js';
 import { ShardMindError } from './types.js';
 import { resolveVaultRoot } from './state.js';
+import { VALUES_FILE } from './vault-paths.js';
 
 export async function loadValues(): Promise<Record<string, unknown>> {
   const vaultRoot = resolveVaultRoot();
-  const filePath = path.join(vaultRoot, 'shard-values.yaml');
+  const filePath = path.join(vaultRoot, VALUES_FILE);
 
   let raw: string;
   try {

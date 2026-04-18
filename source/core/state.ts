@@ -3,11 +3,19 @@ import path from 'node:path';
 import type { ShardState, ShardManifest, ShardSchema } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { stringify as stringifyYaml } from 'yaml';
+import {
+  SHARDMIND_DIR,
+  STATE_FILE,
+  CACHED_MANIFEST,
+  CACHED_SCHEMA,
+  CACHED_TEMPLATES,
+  SHARD_TEMPLATES_DIR,
+} from '../runtime/vault-paths.js';
 
 const STATE_SCHEMA_VERSION = 1;
 
 export async function readState(vaultRoot: string): Promise<ShardState | null> {
-  const filePath = path.join(vaultRoot, '.shardmind', 'state.json');
+  const filePath = path.join(vaultRoot, STATE_FILE);
 
   let raw: string;
   try {
@@ -58,8 +66,8 @@ export async function readState(vaultRoot: string): Promise<ShardState | null> {
 }
 
 export async function writeState(vaultRoot: string, state: ShardState): Promise<void> {
-  const shardDir = path.join(vaultRoot, '.shardmind');
-  const filePath = path.join(shardDir, 'state.json');
+  const shardDir = path.join(vaultRoot, SHARDMIND_DIR);
+  const filePath = path.join(vaultRoot, STATE_FILE);
 
   await fsp.mkdir(shardDir, { recursive: true });
 
@@ -76,13 +84,12 @@ export async function writeState(vaultRoot: string, state: ShardState): Promise<
 }
 
 export async function initShardDir(vaultRoot: string): Promise<void> {
-  const shardDir = path.join(vaultRoot, '.shardmind');
-  await fsp.mkdir(path.join(shardDir, 'templates'), { recursive: true });
+  await fsp.mkdir(path.join(vaultRoot, CACHED_TEMPLATES), { recursive: true });
 }
 
 export async function cacheTemplates(vaultRoot: string, tempDir: string): Promise<void> {
-  const src = path.join(tempDir, 'templates');
-  const dest = path.join(vaultRoot, '.shardmind', 'templates');
+  const src = path.join(tempDir, SHARD_TEMPLATES_DIR);
+  const dest = path.join(vaultRoot, CACHED_TEMPLATES);
 
   await fsp.rm(dest, { recursive: true, force: true });
   await fsp.mkdir(dest, { recursive: true });
@@ -106,22 +113,13 @@ export async function cacheManifest(
   manifest: ShardManifest,
   schema: ShardSchema,
 ): Promise<void> {
-  const shardDir = path.join(vaultRoot, '.shardmind');
-  await fsp.mkdir(shardDir, { recursive: true });
+  await fsp.mkdir(path.join(vaultRoot, SHARDMIND_DIR), { recursive: true });
 
   const serializedManifest = stringifyYaml(manifest, { lineWidth: 0 }).trimEnd() + '\n';
   const serializedSchema = stringifyYaml(schema, { lineWidth: 0 }).trimEnd() + '\n';
 
-  await fsp.writeFile(
-    path.join(shardDir, 'shard.yaml'),
-    serializedManifest,
-    'utf-8',
-  );
-  await fsp.writeFile(
-    path.join(shardDir, 'shard-schema.yaml'),
-    serializedSchema,
-    'utf-8',
-  );
+  await fsp.writeFile(path.join(vaultRoot, CACHED_MANIFEST), serializedManifest, 'utf-8');
+  await fsp.writeFile(path.join(vaultRoot, CACHED_SCHEMA), serializedSchema, 'utf-8');
 }
 
 function errnoCode(err: unknown): string | undefined {

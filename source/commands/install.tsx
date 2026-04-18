@@ -30,6 +30,7 @@ import {
   type BackupRecord,
 } from '../core/install-plan.js';
 import { runPostInstallHook, type HookResult } from '../core/hook.js';
+import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
 
 import InstallWizard, { type WizardResult } from '../components/InstallWizard.js';
 import CollisionReview, { type CollisionAction } from '../components/CollisionReview.js';
@@ -400,8 +401,8 @@ export default function Install({ args, options }: Props) {
         (async () => {
           try {
             await Promise.all([
-              fsp.rm(path.join(vaultRoot, '.shardmind'), { recursive: true, force: true }),
-              fsp.rm(path.join(vaultRoot, 'shard-values.yaml'), { force: true }),
+              fsp.rm(path.join(vaultRoot, SHARDMIND_DIR), { recursive: true, force: true }),
+              fsp.rm(path.join(vaultRoot, VALUES_FILE), { force: true }),
             ]);
             if (yes) {
               await runNonInteractive(phase.ctx);

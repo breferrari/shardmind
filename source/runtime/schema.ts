@@ -4,10 +4,11 @@ import { parse as parseYaml } from 'yaml';
 import type { ShardSchema, FrontmatterRule } from './types.js';
 import { ShardMindError } from './types.js';
 import { resolveVaultRoot } from './state.js';
+import { CACHED_SCHEMA } from './vault-paths.js';
 
 export async function loadSchema(): Promise<ShardSchema> {
   const vaultRoot = resolveVaultRoot();
-  const filePath = path.join(vaultRoot, '.shardmind', 'shard-schema.yaml');
+  const filePath = path.join(vaultRoot, CACHED_SCHEMA);
 
   let raw: string;
   try {
