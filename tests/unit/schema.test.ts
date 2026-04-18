@@ -87,6 +87,18 @@ describe('parseSchema', () => {
     expect(err.message).toContain('shard');
   });
 
+  it('rejects select value definitions with missing options (.check rule)', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-select-no-options.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('options');
+  });
+
+  it('rejects number value definitions where min > max (.check rule)', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-min-gt-max.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('min');
+  });
+
   it('reports every reserved-name collision when multiple', async () => {
     const os = await import('node:os');
     const fs = await import('node:fs/promises');

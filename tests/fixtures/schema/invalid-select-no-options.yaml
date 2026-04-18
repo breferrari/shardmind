@@ -1,0 +1,18 @@
+schema_version: 1
+
+values:
+  vault_purpose:
+    type: select
+    required: true
+    message: "Purpose?"
+    group: setup
+
+groups:
+  - id: setup
+    label: "Setup"
+
+modules: {}
+
+frontmatter: {}
+
+migrations: []
