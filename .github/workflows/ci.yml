@@ -11,7 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [18, 20, 22]
+        # Node 18 hit EOL April 2025; vitest@4 requires Node 20+.
+        # Runtime engines in package.json still support Node 18+ — this
+        # matrix only constrains where we RUN the dev tooling.
+        node-version: [20, 22, 24]
 
     steps:
       - uses: actions/checkout@v4
