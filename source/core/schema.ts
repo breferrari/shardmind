@@ -33,19 +33,22 @@ const ValueDefinitionSchema = z.object({
   group: z.string(),
   hint: z.string().optional(),
   placeholder: z.string().optional(),
-}).superRefine((val, ctx) => {
+}).check((ctx) => {
+  const val = ctx.value;
   if ((val.type === 'select' || val.type === 'multiselect') && (!val.options || val.options.length === 0)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+    ctx.issues.push({
+      code: 'custom',
       path: ['options'],
       message: `"options" is required and must be non-empty for type "${val.type}"`,
+      input: val,
     });
   }
   if (val.min !== undefined && val.max !== undefined && val.min > val.max) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+    ctx.issues.push({
+      code: 'custom',
       path: ['min'],
       message: '`min` must be less than or equal to `max`',
+      input: val,
     });
   }
 });
@@ -99,11 +102,11 @@ const FrontmatterEntrySchema = z.union([
 
 const ShardSchemaFileSchema = z.object({
   schema_version: z.number(),
-  values: z.record(ValueDefinitionSchema),
+  values: z.record(z.string(), ValueDefinitionSchema),
   groups: z.array(GroupDefinitionSchema),
-  modules: z.record(ModuleDefinitionSchema).default({}),
+  modules: z.record(z.string(), ModuleDefinitionSchema).default({}),
   signals: z.array(SignalDefinitionSchema).default([]),
-  frontmatter: z.record(FrontmatterEntrySchema).default({}),
+  frontmatter: z.record(z.string(), FrontmatterEntrySchema).default({}),
   migrations: z.array(MigrationSchema).default([]),
 });
 

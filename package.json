@@ -30,25 +30,26 @@
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
     "diff": "^9.0.0",
-    "ink": "^5.0.0",
-    "node-diff3": "^3.1.0",
+    "ink": "^7.0.1",
+    "node-diff3": "^3.2.0",
     "nunjucks": "^3.2.4",
-    "pastel": "^3.0.0",
-    "react": "^18.0.0",
-    "semver": "^7.6.0",
-    "tar": "^7.0.0",
-    "yaml": "^2.4.0",
-    "zod": "^3.23.0"
+    "pastel": "^4.0.1",
+    "react": "^19.2.0",
+    "semver": "^7.7.4",
+    "tar": "^7.5.13",
+    "yaml": "^2.8.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@sindresorhus/tsconfig": "^6.0.0",
+    "@sindresorhus/tsconfig": "^8.1.0",
     "@types/diff": "^6.0.0",
+    "@types/node": "25.6.0",
     "@types/nunjucks": "^3.2.6",
-    "@types/react": "^18.0.0",
+    "@types/react": "^19.2.14",
     "@types/semver": "^7.5.0",
     "@types/tar": "^6.1.0",
-    "tsup": "^8.0.0",
-    "typescript": "^5.5.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.4"
   },
   "engines": {

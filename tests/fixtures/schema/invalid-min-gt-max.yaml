@@ -1,0 +1,19 @@
+schema_version: 1
+
+values:
+  max_depth:
+    type: number
+    message: "Maximum depth"
+    min: 10
+    max: 5
+    group: setup
+
+groups:
+  - id: setup
+    label: "Setup"
+
+modules: {}
+
+frontmatter: {}
+
+migrations: []
