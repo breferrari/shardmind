@@ -43,7 +43,7 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
               }
             }}
             onSubmit={(v) => {
-              if (v.trim() === 'REINSTALL') {
+              if (v === 'REINSTALL') {
                 onChoice('reinstall');
               } else {
                 lastSubmittedValue.current = v;

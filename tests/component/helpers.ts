@@ -13,16 +13,24 @@ export async function waitFor(
   timeoutMs = 2000,
 ): Promise<string> {
   const start = Date.now();
+  let lastObservedFrame = '';
   // Yield once so Ink's stdin listener and render scheduler can process
   // any inputs queued just before waitFor was called.
   await tick(30);
   while (Date.now() - start < timeoutMs) {
-    const frame = lastFrame() ?? '';
-    if (predicate(frame)) return frame;
+    lastObservedFrame = lastFrame() ?? '';
+    if (predicate(lastObservedFrame)) {
+      // Post-predicate settle: the frame matches, but any effects
+      // scheduled for after this render (useInput registration for a
+      // just-mounted input, etc.) may not have fired yet. One more
+      // tick lets them run before the caller writes to stdin.
+      await tick(30);
+      return lastObservedFrame;
+    }
     await tick(50);
   }
   throw new Error(
-    `waitFor timed out after ${timeoutMs}ms. Last frame:\n${JSON.stringify(lastFrame())}`,
+    `waitFor timed out after ${timeoutMs}ms. Last frame:\n${lastObservedFrame}`,
   );
 }
 
@@ -51,11 +59,6 @@ export async function typeText(
   text: string,
   perCharDelayMs = 30,
 ): Promise<void> {
-  // Settle first: under Ink 7 / React 19, a TextInput that just
-  // mounted as part of a step transition may not have attached its
-  // useInput handler by the time waitFor sees its text appear. A
-  // small initial tick avoids losing the first keystroke.
-  await tick(perCharDelayMs);
   for (const ch of text) {
     stdin.write(ch);
     await tick(perCharDelayMs);
