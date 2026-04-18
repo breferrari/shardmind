@@ -265,9 +265,9 @@ Thrown by `source/core/install-planner.ts` and `source/core/install-executor.ts`
 
 ### `BACKUP_FAILED`
 
-**Meaning:** `fsp.rename` failed while backing up a colliding file, OR 1000+ backups with the same timestamp already exist (shouldn't happen).
+**Meaning:** `fsp.rename` failed while backing up a colliding path, OR 1000+ backups with the same timestamp already exist (shouldn't happen).
 
-**Remedy:** Check permissions at the file path. Clean up stale `*.shardmind-backup-*` files if you somehow have a thousand of them.
+**Remedy:** Check permissions at the path referenced in the error. Clean up stale `*.shardmind-backup-*` backup paths if you somehow have a thousand of them.
 
 ---
 
