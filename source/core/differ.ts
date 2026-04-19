@@ -25,6 +25,11 @@ const CONFLICT_START = '<<<<<<< yours';
 const CONFLICT_SEPARATOR = '=======';
 const CONFLICT_END = '>>>>>>> shard update';
 
+// Line splitter. LF is the engine's canonical line ending (renderer output
+// is always LF); CR is tolerated so Windows-saved user files don't produce
+// spurious conflicts against LF base/ours.
+const LINE_SPLIT = /\r?\n/;
+
 export interface ComputeMergeActionInput {
   readonly path: string;
   readonly ownership: 'managed' | 'modified';
@@ -113,15 +118,12 @@ export function threeWayMerge(
   theirs: string,
   ours: string,
 ): ThreeWayMergeResult {
-  // Normalize line endings to LF before splitting. `base` and `ours` are
-  // renderer output (always LF), but `theirs` comes from disk and may be
-  // CRLF on Windows. Without this, every line in theirs would trail with
-  // '\r', producing spurious conflicts. Merged output is LF; callers that
-  // need platform-native line endings convert at the write boundary.
+  // Merged output is always LF — callers that need platform-native line
+  // endings convert at the write boundary.
   const regions: IRegion<string>[] = diff3MergeRegions(
-    theirs.split(/\r?\n/),
-    base.split(/\r?\n/),
-    ours.split(/\r?\n/),
+    theirs.split(LINE_SPLIT),
+    base.split(LINE_SPLIT),
+    ours.split(LINE_SPLIT),
   );
 
   const merged: string[] = [];

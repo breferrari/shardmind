@@ -24,6 +24,7 @@ export function makeShardState(overrides: Partial<ShardState> = {}): ShardState 
   };
 }
 
+/** Shorthand for drift/state tests that only care about the files map. */
 export function makeStateWithFiles(files: Record<string, FileState>): ShardState {
   return makeShardState({ files });
 }

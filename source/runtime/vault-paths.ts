@@ -23,6 +23,14 @@ export const CLAUDE_DIR = '.claude';
 /** Codex prompts namespace. */
 export const CODEX_DIR = '.codex/prompts';
 
+/**
+ * Third-party vault metadata directories that ShardMind never claims to
+ * manage. Named here so drift detection and any future scan paths share
+ * one blacklist instead of sprinkling literal strings across modules.
+ */
+export const GIT_DIR = '.git';
+export const OBSIDIAN_DIR = '.obsidian';
+
 /** Source-side filenames inside a downloaded shard's temp directory. */
 export const SHARD_MANIFEST_FILE = 'shard.yaml';
 export const SHARD_SCHEMA_FILE = 'shard-schema.yaml';

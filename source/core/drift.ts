@@ -16,7 +16,7 @@ import path from 'node:path';
 import type { ShardState, DriftReport, DriftEntry, FileState } from '../runtime/types.js';
 import { sha256 } from './fs-utils.js';
 import { isEnoent } from '../runtime/errno.js';
-import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
+import { SHARDMIND_DIR, VALUES_FILE, GIT_DIR, OBSIDIAN_DIR } from '../runtime/vault-paths.js';
 
 type Bucket = 'managed' | 'modified' | 'volatile' | 'missing';
 type Classified = { bucket: Bucket; entry: DriftEntry };
@@ -33,7 +33,7 @@ const ENGINE_RESERVED_FILES: ReadonlySet<string> = new Set([VALUES_FILE]);
  * engine state; `.git/` and `.obsidian/` are third-party metadata the shard
  * never claims to manage.
  */
-const UNSCANNED_DIRS: ReadonlySet<string> = new Set([SHARDMIND_DIR, '.git', '.obsidian']);
+const UNSCANNED_DIRS: ReadonlySet<string> = new Set([SHARDMIND_DIR, GIT_DIR, OBSIDIAN_DIR]);
 
 export async function detectDrift(
   vaultRoot: string,
@@ -141,7 +141,11 @@ async function detectOrphans(
 ): Promise<string[]> {
   const trackedDirs = new Set<string>();
   for (const relPath of trackedPaths) {
-    const dir = path.posix.dirname(toPosixPath(relPath));
+    // Normalize to forward slashes before posix.dirname. State-file keys are
+    // written through `toPosix()` at install time so they should already be
+    // forward-slash, but a defensive normalization costs nothing and guards
+    // against any future caller that writes state with native separators.
+    const dir = path.posix.dirname(relPath.replace(/\\/g, '/'));
     trackedDirs.add(dir === '.' ? '' : dir);
   }
 
@@ -176,8 +180,4 @@ async function scanDirForOrphans(
     orphans.push(rel);
   }
   return orphans;
-}
-
-function toPosixPath(p: string): string {
-  return p.replace(/\\/g, '/');
 }
