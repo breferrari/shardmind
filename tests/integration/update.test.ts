@@ -177,15 +177,14 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     const renderCtx = buildRenderContext(newManifest, migration.values, selections);
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: state,
-      drift,
-      oldValues,
-      newValues: migration.values,
-      newSchema,
-      newSelections: selections,
-      newTempDir: newShard,
-      newRenderContext: renderCtx,
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: migration.values },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: renderCtx,
+      },
       removedFileDecisions: {},
     });
 
@@ -246,15 +245,14 @@ describe('update pipeline (against examples/minimal-shard)', () => {
 
     const renderCtx = buildRenderContext(newManifest, oldValues, selections);
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: state,
-      drift,
-      oldValues,
-      newValues: oldValues,
-      newSchema,
-      newSelections: selections,
-      newTempDir: newShard,
-      newRenderContext: renderCtx,
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: oldValues },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: renderCtx,
+      },
       removedFileDecisions: {},
     });
 
@@ -330,15 +328,14 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     const renderCtx = buildRenderContext(newManifest, oldValues, selections);
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: state,
-      drift,
-      oldValues,
-      newValues: oldValues,
-      newSchema,
-      newSelections: selections,
-      newTempDir: newShard,
-      newRenderContext: renderCtx,
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: oldValues },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: renderCtx,
+      },
       removedFileDecisions: {},
     });
 
@@ -458,15 +455,14 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     const drift = await detectDrift(vault, state);
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: state,
-      drift,
-      oldValues,
-      newValues: oldValues,
-      newSchema,
-      newSelections: selections,
-      newTempDir: newShard,
-      newRenderContext: renderCtx,
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: oldValues },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: renderCtx,
+      },
       removedFileDecisions: { [modifiedPath]: 'keep' },
     });
 

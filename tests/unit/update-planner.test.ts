@@ -260,15 +260,14 @@ describe('planUpdate', () => {
     };
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: state,
-      drift,
-      oldValues: values,
-      newValues: values,
-      newSchema: schema,
-      newSelections: selections,
-      newTempDir: shardDir,
-      newRenderContext: renderCtx(values),
+      vault: { root: vault, state, drift },
+      values: { old: values, new: values },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx(values),
+      },
       removedFileDecisions: {},
     });
 
@@ -312,8 +311,7 @@ describe('planUpdate', () => {
     };
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: makeShardState({
+      vault: { root: vault, state: makeShardState({
         version: '1.0.0',
         modules: selections,
         files: {
@@ -322,14 +320,14 @@ describe('planUpdate', () => {
             rendered_hash: sha256(rendered),
           }),
         },
-      }),
-      drift,
-      oldValues: values,
-      newValues: values,
-      newSchema: schema,
-      newSelections: selections,
-      newTempDir: shardDir,
-      newRenderContext: renderCtx(values),
+      }), drift },
+      values: { old: values, new: values },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx(values),
+      },
       removedFileDecisions: {},
     });
 
@@ -384,8 +382,7 @@ describe('planUpdate', () => {
     };
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: makeShardState({
+      vault: { root: vault, state: makeShardState({
         version: '1.0.0',
         modules: selections,
         files: {
@@ -395,14 +392,14 @@ describe('planUpdate', () => {
             ownership: 'modified',
           }),
         },
-      }),
-      drift,
-      oldValues: {},
-      newValues: {},
-      newSchema: schema,
-      newSelections: selections,
-      newTempDir: shardDir,
-      newRenderContext: renderCtx({}),
+      }), drift },
+      values: { old: {}, new: {} },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx({}),
+      },
       removedFileDecisions: {},
     });
 
@@ -445,8 +442,7 @@ describe('planUpdate', () => {
     };
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: makeShardState({
+      vault: { root: vault, state: makeShardState({
         version: '1.0.0',
         modules: selections,
         files: {
@@ -456,14 +452,14 @@ describe('planUpdate', () => {
             ownership: 'modified',
           }),
         },
-      }),
-      drift,
-      oldValues: {},
-      newValues: {},
-      newSchema: schema,
-      newSelections: selections,
-      newTempDir: shardDir,
-      newRenderContext: renderCtx({}),
+      }), drift },
+      values: { old: {}, new: {} },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx({}),
+      },
       removedFileDecisions: {},
     });
 
@@ -488,15 +484,14 @@ describe('planUpdate', () => {
     };
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: makeShardState({ version: '1.0.0', modules: selections, files: {} }),
-      drift,
-      oldValues: {},
-      newValues: {},
-      newSchema: schema,
-      newSelections: selections,
-      newTempDir: shardDir,
-      newRenderContext: renderCtx({}),
+      vault: { root: vault, state: makeShardState({ version: '1.0.0', modules: selections, files: {} }), drift },
+      values: { old: {}, new: {} },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx({}),
+      },
       removedFileDecisions: {},
     });
 
@@ -530,8 +525,7 @@ describe('planUpdate', () => {
     };
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: makeShardState({
+      vault: { root: vault, state: makeShardState({
         version: '1.0.0',
         modules: selections,
         files: {
@@ -540,14 +534,14 @@ describe('planUpdate', () => {
             rendered_hash: sha256('old content\n'),
           }),
         },
-      }),
-      drift,
-      oldValues: {},
-      newValues: {},
-      newSchema: schema,
-      newSelections: selections,
-      newTempDir: shardDir,
-      newRenderContext: renderCtx({}),
+      }), drift },
+      values: { old: {}, new: {} },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx({}),
+      },
       removedFileDecisions: {},
     });
 
@@ -579,8 +573,7 @@ describe('planUpdate', () => {
     };
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: makeShardState({
+      vault: { root: vault, state: makeShardState({
         version: '1.0.0',
         modules: selections,
         files: {
@@ -590,14 +583,14 @@ describe('planUpdate', () => {
             ownership: 'modified',
           }),
         },
-      }),
-      drift,
-      oldValues: {},
-      newValues: {},
-      newSchema: schema,
-      newSelections: selections,
-      newTempDir: shardDir,
-      newRenderContext: renderCtx({}),
+      }), drift },
+      values: { old: {}, new: {} },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx({}),
+      },
       removedFileDecisions: {},
     });
 
@@ -629,8 +622,7 @@ describe('planUpdate', () => {
     };
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: makeShardState({
+      vault: { root: vault, state: makeShardState({
         version: '1.0.0',
         modules: selections,
         files: {
@@ -640,14 +632,14 @@ describe('planUpdate', () => {
             ownership: 'modified',
           }),
         },
-      }),
-      drift,
-      oldValues: {},
-      newValues: {},
-      newSchema: schema,
-      newSelections: selections,
-      newTempDir: shardDir,
-      newRenderContext: renderCtx({}),
+      }), drift },
+      values: { old: {}, new: {} },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx({}),
+      },
       removedFileDecisions: { 'brain/UserEdited.md': 'delete' },
     });
 
@@ -680,8 +672,7 @@ describe('planUpdate', () => {
     };
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: makeShardState({
+      vault: { root: vault, state: makeShardState({
         version: '1.0.0',
         modules: selections,
         files: {
@@ -690,14 +681,14 @@ describe('planUpdate', () => {
             rendered_hash: sha256(template),
           }),
         },
-      }),
-      drift,
-      oldValues: {},
-      newValues: {},
-      newSchema: schema,
-      newSelections: selections,
-      newTempDir: shardDir,
-      newRenderContext: renderCtx({}),
+      }), drift },
+      values: { old: {}, new: {} },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx({}),
+      },
       removedFileDecisions: {},
     });
 
@@ -731,8 +722,7 @@ describe('planUpdate', () => {
     };
 
     const plan = await planUpdate({
-      vaultRoot: vault,
-      currentState: makeShardState({
+      vault: { root: vault, state: makeShardState({
         version: '1.0.0',
         modules: selections,
         files: {
@@ -742,14 +732,14 @@ describe('planUpdate', () => {
             ownership: 'user',
           }),
         },
-      }),
-      drift,
-      oldValues: {},
-      newValues: {},
-      newSchema: schema,
-      newSelections: selections,
-      newTempDir: shardDir,
-      newRenderContext: renderCtx({}),
+      }), drift },
+      values: { old: {}, new: {} },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx({}),
+      },
       removedFileDecisions: {},
     });
 

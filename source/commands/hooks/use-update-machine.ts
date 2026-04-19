@@ -16,10 +16,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { useApp } from 'ink';
-import { parse as parseYaml } from 'yaml';
+import { loadValuesYaml } from '../../core/values-io.js';
 import type {
   ShardManifest,
   ShardSchema,
@@ -348,16 +347,15 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         const newRenderContext = buildRenderContext(ctx.newManifest, values, selections);
         const drift = precomputed?.drift ?? (await detectDrift(vaultRoot, ctx.state));
         const plan = await planUpdate({
-          vaultRoot,
-          currentState: ctx.state,
-          drift,
-          oldValues: ctx.oldValues,
-          newValues: values,
-          newSchema: ctx.newSchema,
-          newSelections: selections,
-          newTempDir: ctx.newTempDir,
-          newRenderContext,
-          newFilePlan: precomputed?.newFilePlan,
+          vault: { root: vaultRoot, state: ctx.state, drift },
+          values: { old: ctx.oldValues, new: values },
+          newShard: {
+            schema: ctx.newSchema,
+            selections,
+            tempDir: ctx.newTempDir,
+            renderContext: newRenderContext,
+            filePlan: precomputed?.newFilePlan,
+          },
           removedFileDecisions: removedDecisions,
         });
 
@@ -538,27 +536,11 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function loadCurrentValues(vaultRoot: string): Promise<Record<string, unknown>> {
-  const abs = path.join(vaultRoot, VALUES_FILE);
-  let raw: string;
-  try {
-    raw = await fsp.readFile(abs, 'utf-8');
-  } catch (err) {
-    throw new ShardMindError(
-      `Could not read ${VALUES_FILE}`,
-      'VALUES_READ_FAILED',
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-  const parsed = parseYaml(raw);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new ShardMindError(
-      `${VALUES_FILE} is not a YAML mapping`,
-      'VALUES_INVALID',
-      'Top level must be key/value pairs.',
-    );
-  }
-  return parsed as Record<string, unknown>;
+function loadCurrentValues(vaultRoot: string): Promise<Record<string, unknown>> {
+  return loadValuesYaml(path.join(vaultRoot, VALUES_FILE), {
+    label: VALUES_FILE,
+    errors: { readFailed: 'VALUES_READ_FAILED', invalid: 'VALUES_INVALID' },
+  });
 }
 
 async function loadCachedSchema(vaultRoot: string): Promise<ShardSchema> {

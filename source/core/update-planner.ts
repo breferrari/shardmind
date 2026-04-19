@@ -84,27 +84,44 @@ export interface UpdatePlanCounts {
   restored: number;
 }
 
+/**
+ * Everything the planner needs, grouped by origin so call sites can't
+ * accidentally mix fields from two different shards (e.g. a newSchema
+ * from v4 with a newFilePlan from v3). Each group travels together.
+ */
 export interface PlanUpdateInput {
-  vaultRoot: string;
-  currentState: ShardState;
-  drift: DriftReport;
-  oldValues: Record<string, unknown>;
-  newValues: Record<string, unknown>;
-  newSchema: ShardSchema;
-  newSelections: ModuleSelections;
-  newTempDir: string;
-  newRenderContext: RenderContext;
+  /** Vault under update: root path, recorded state, detected drift. */
+  vault: {
+    root: string;
+    state: ShardState;
+    drift: DriftReport;
+  };
   /**
-   * Optional prerendered new-shard plan. The state machine renders
-   * once at the prompt-removed-files phase; passing that result back
-   * here avoids a second full render pass. When omitted, `planUpdate`
-   * renders internally (useful for tests that just want a plan).
+   * Values on each side of the migration. `old` is what the renderer
+   * used at install time; `new` is the migrated + user-answered shape.
    */
-  newFilePlan?: NewFilePlan;
+  values: {
+    old: Record<string, unknown>;
+    new: Record<string, unknown>;
+  };
+  /** Everything about the incoming shard. These fields always travel together. */
+  newShard: {
+    schema: ShardSchema;
+    selections: ModuleSelections;
+    tempDir: string;
+    renderContext: RenderContext;
+    /**
+     * Optional prerendered new-shard plan. The state machine renders
+     * once at the prompt-removed-files phase; passing that result back
+     * here avoids a second full render pass. When omitted, `planUpdate`
+     * renders internally (useful for tests that just want a plan).
+     */
+    filePlan?: NewFilePlan;
+  };
   /**
    * Per-file decisions for removed-and-modified files. Keyed by the
-   * vault-relative path that was in state.files but is no longer produced
-   * by the new shard. Managed removals are handled automatically without
+   * vault-relative path that was in state.files but is no longer
+   * produced by the new shard. Managed removals are handled without
    * a prompt — only modified removals need a user choice.
    */
   removedFileDecisions: Record<string, 'delete' | 'keep'>;
@@ -252,19 +269,16 @@ export async function renderNewShard(
  * never writes.
  */
 export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
+  const { vault, values, newShard, removedFileDecisions } = input;
+  const { root: vaultRoot, state: currentState, drift } = vault;
+  const { old: oldValues, new: newValues } = values;
   const {
-    vaultRoot,
-    currentState,
-    drift,
-    oldValues,
-    newValues,
-    newSchema,
-    newSelections,
-    newTempDir,
-    newRenderContext,
-    newFilePlan,
-    removedFileDecisions,
-  } = input;
+    schema: newSchema,
+    selections: newSelections,
+    tempDir: newTempDir,
+    renderContext: newRenderContext,
+    filePlan: newFilePlan,
+  } = newShard;
 
   const newPlan =
     newFilePlan ?? (await renderNewShard(newSchema, newTempDir, newSelections, newRenderContext));
@@ -359,8 +373,14 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
         loadOldTemplate(vaultRoot, fileState.template),
       ]);
 
-      if (oldTemplate === null || target.entry.sourcePath === null) {
-        return conflictFromDirect(entry.path, target, actualContent, sha256(actualContent));
+      if (oldTemplate === null) {
+        return conflictFromDirect(
+          entry.path,
+          target,
+          actualContent,
+          sha256(actualContent),
+          newTempDir,
+        );
       }
 
       const newTemplate = await fsp.readFile(target.entry.sourcePath, 'utf-8');
@@ -449,6 +469,7 @@ function conflictFromDirect(
   target: NewFilePlan['outputs'][number],
   actualContent: string,
   theirsHash: string,
+  newTempDir: string,
 ): UpdateAction {
   // Synthesize a conflict region covering the whole file when we can't
   // reconstruct a proper three-way base (missing cached template, pre-v0.1
@@ -480,7 +501,7 @@ function conflictFromDirect(
     newContent: target.content,
     newContentHash: target.hash,
     theirsHash,
-    templateKey: toTemplateKey('', target.entry.sourcePath),
+    templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
   };
 }
 

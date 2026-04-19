@@ -12,7 +12,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { useApp } from 'ink';
-import { parse as parseYaml } from 'yaml';
+import { loadValuesYaml } from '../../core/values-io.js';
 
 import type {
   ShardManifest,
@@ -448,44 +448,10 @@ async function loadValuesFile(
   filePath: string,
   schema: ShardSchema,
 ): Promise<Record<string, unknown>> {
-  let raw: string;
-  try {
-    raw = await fsp.readFile(filePath, 'utf-8');
-  } catch (err) {
-    throw new ShardMindError(
-      `Could not read --values file: ${filePath}`,
-      'VALUES_FILE_READ_FAILED',
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = parseYaml(raw);
-  } catch (err) {
-    throw new ShardMindError(
-      `--values file is not valid YAML: ${filePath}`,
-      'VALUES_FILE_INVALID',
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new ShardMindError(
-      `--values file must be a YAML mapping: ${filePath}`,
-      'VALUES_FILE_INVALID',
-      'Top level must be { key: value } entries matching shard schema value IDs.',
-    );
-  }
-
-  // Unknown keys are silently ignored so a values file can be reused
-  // across shard versions that have added or removed entries.
-  const filtered: Record<string, unknown> = {};
-  for (const key of Object.keys(schema.values)) {
-    if (key in (parsed as Record<string, unknown>)) {
-      filtered[key] = (parsed as Record<string, unknown>)[key];
-    }
-  }
-  return filtered;
+  return loadValuesYaml(filePath, {
+    label: '--values file',
+    schemaFilter: schema,
+    errors: { readFailed: 'VALUES_FILE_READ_FAILED', invalid: 'VALUES_FILE_INVALID' },
+  });
 }
 
