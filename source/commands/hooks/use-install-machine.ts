@@ -400,7 +400,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       if (choice === 'update') {
         finish({
           kind: 'cancelled',
-          reason: 'Existing install preserved. `shardmind update` is not yet available (Milestone 4); re-run `install` and pick Reinstall when you want a fresh start.',
+          reason: 'Existing install preserved. Run `shardmind update` to pick up a newer version, or re-run `install` and pick Reinstall for a fresh start.',
         });
         return;
       }
