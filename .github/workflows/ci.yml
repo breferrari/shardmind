@@ -8,9 +8,19 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Full OS × Node matrix: shardmind installs as a global CLI and must
+    # run on whatever the user's vault lives on. Windows coverage caught
+    # the CRLF merge regression Copilot flagged on PR #48; keep it first-class.
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # Use bash on all three runners so the same step commands work
+        # (Windows runners have git-bash pre-installed).
+        shell: bash
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         # Node 22+ matches obsidian-mind's requirement (hook TS strip
         # via --experimental-strip-types, stable in 22.6+). Node 18 hit
         # EOL April 2025; Node 20 EOL April 2026. Keep the matrix
@@ -25,7 +35,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - run: rm package-lock.json && npm install
+      - run: rm -f package-lock.json && npm install
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
