@@ -14,6 +14,3 @@ module_change: newly_excluded
 module: "qmd"
 expected_action: prompt_delete_module
 
-values:
-  old: {}
-  new: {}

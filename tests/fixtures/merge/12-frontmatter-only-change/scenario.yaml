@@ -13,6 +13,3 @@ conflict_expected: false
 frontmatter_only: true
 expected_action: overwrite
 
-values:
-  old: {}
-  new: {}

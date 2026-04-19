@@ -10,6 +10,3 @@ values_changed: true
 conflict_expected: false
 expected_action: overwrite
 
-values:
-  old: { user_name: "Alice" }
-  new: { user_name: "Bob" }

@@ -14,6 +14,3 @@ module_change: newly_included
 module: "social"
 expected_action: create
 
-values:
-  old: { user_name: "Alice" }
-  new: { user_name: "Alice" }

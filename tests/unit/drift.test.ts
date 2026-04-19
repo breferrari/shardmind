@@ -2,26 +2,33 @@
  * Fixture-driven merge engine tests (TDD for drift.ts + differ.ts).
  *
  * Each directory under tests/fixtures/merge/ defines one scenario via
- * scenario.yaml. The runner auto-discovers every fixture and exercises
- * computeMergeAction against it. These tests intentionally fail until
- * source/core/differ.ts is implemented — that is the TDD contract for
- * milestone 3 (issue #10).
+ * scenario.yaml + 6 companion files. The runner auto-discovers every fixture
+ * and exercises computeMergeAction against it. Tests are `it.skip` until
+ * source/core/differ.ts lands (#11); unskip then.
  *
- * scenario.yaml fields consumed here:
- *   - name                        human-readable title (used as test name)
- *   - expected_action             one of:
- *                                   skip | overwrite | auto_merge | conflict
- *                                   create | prompt_delete | prompt_delete_module
- *                                 (the last three are orchestration-level
- *                                 actions; they will require the runner or
- *                                 MergeAction union to be extended when
- *                                 those pipelines land.)
- *   - expected_conflict_count     (optional) assert on conflict region count
- *   - ownership_before            managed | modified | volatile | null
- *   - volatile / new_file /
- *     removed / module_change     (optional) scenario flags for dispatch
- *   - values.old / values.new     inputs fed to the renderer inside
- *                                 computeMergeAction
+ * On-disk layout per fixture:
+ *   scenario.yaml            metadata only — flags + expected_action
+ *   old-template.md.njk      template shipped by the previous shard version
+ *   new-template.md.njk      template shipped by the new shard version
+ *   old-values.yaml          values used when rendering the old template
+ *   new-values.yaml          values used when rendering the new template
+ *   actual-file.md           file currently on disk (theirs)
+ *   expected-output.md       expected post-merge file content
+ *                            (absent for scenarios where the exact content
+ *                            depends on implementation — e.g. conflict
+ *                            markers)
+ *
+ * The values YAMLs are the source of truth for render inputs; scenario.yaml
+ * does not duplicate them.
+ *
+ * Scenarios 10, 11, 13, 14, 15, 17 describe orchestration-level behavior
+ * (create / prompt_delete / prompt_delete_module / volatile skip). These
+ * actions are not in the MergeAction union in IMPLEMENTATION.md §4.9 and the
+ * `ownership: 'managed' | 'modified'` input can't carry the distinction.
+ * When unskipping, the implementer should dispatch in this runner so those
+ * scenarios call the orchestration path (e.g. drift.detectDrift for
+ * volatile, or whatever new-file / removed-file plumbing replaces them) and
+ * leave computeMergeAction for scenarios 01-09, 12, 16 only.
  */
 
 import fs from 'node:fs';
@@ -54,12 +61,13 @@ interface Scenario {
   partial_update?: boolean;
   module_change?: 'newly_included' | 'newly_excluded';
   module?: string;
-  values: { old: Record<string, unknown>; new: Record<string, unknown> };
 }
 
 interface FixtureFiles {
   oldTemplate: string;
   newTemplate: string;
+  oldValues: Record<string, unknown>;
+  newValues: Record<string, unknown>;
   actualContent: string;
   expectedOutput: string | null;
 }
@@ -69,16 +77,18 @@ const fixtureDirs = fs
   .filter(name => fs.statSync(path.join(FIXTURES, name)).isDirectory())
   .sort();
 
-function loadScenario(dir: string): Scenario {
-  const raw = fs.readFileSync(path.join(FIXTURES, dir, 'scenario.yaml'), 'utf-8');
+async function loadScenario(dir: string): Promise<Scenario> {
+  const raw = await fsp.readFile(path.join(FIXTURES, dir, 'scenario.yaml'), 'utf-8');
   return parseYaml(raw) as Scenario;
 }
 
 async function loadFiles(dir: string): Promise<FixtureFiles> {
   const base = path.join(FIXTURES, dir);
-  const [oldTemplate, newTemplate, actualContent] = await Promise.all([
+  const [oldTemplate, newTemplate, oldValuesRaw, newValuesRaw, actualContent] = await Promise.all([
     fsp.readFile(path.join(base, 'old-template.md.njk'), 'utf-8'),
     fsp.readFile(path.join(base, 'new-template.md.njk'), 'utf-8'),
+    fsp.readFile(path.join(base, 'old-values.yaml'), 'utf-8'),
+    fsp.readFile(path.join(base, 'new-values.yaml'), 'utf-8'),
     fsp.readFile(path.join(base, 'actual-file.md'), 'utf-8'),
   ]);
 
@@ -90,7 +100,14 @@ async function loadFiles(dir: string): Promise<FixtureFiles> {
     // because the merge markers depend on implementation details.
   }
 
-  return { oldTemplate, newTemplate, actualContent, expectedOutput };
+  return {
+    oldTemplate,
+    newTemplate,
+    oldValues: (parseYaml(oldValuesRaw) ?? {}) as Record<string, unknown>,
+    newValues: (parseYaml(newValuesRaw) ?? {}) as Record<string, unknown>,
+    actualContent,
+    expectedOutput,
+  };
 }
 
 /**
@@ -109,21 +126,20 @@ describe('merge engine (fixture-driven)', () => {
   });
 
   for (const dir of fixtureDirs) {
-    const scenario = loadScenario(dir);
-
-    // `it.fails` marks these as expected-to-fail until source/core/differ.ts
-    // lands. CI stays green; once the implementer writes differ.ts, these
-    // tests will start passing, which flips `it.fails` to red and signals:
-    // "remove `.fails` now".
-    it.fails(`${dir}: ${scenario.name}`, async () => {
-      // Dynamic import so each scenario fails independently rather than
-      // crashing module load with a single ERR_MODULE_NOT_FOUND.
+    // Scenario is loaded inside the test body so a malformed scenario.yaml
+    // fails that scenario only, not the whole file at collection time.
+    //
+    // Skipped until source/core/differ.ts lands (#11). The fixtures and
+    // runner body are landed now (per issue #10) so the implementer has a
+    // ready target to TDD against — unskip then, not before.
+    it.skip(dir, async () => {
+      const scenario = await loadScenario(dir);
       const { computeMergeAction } = await import('../../source/core/differ.js');
 
       const files = await loadFiles(dir);
 
       const renderContext = {
-        values: scenario.values.new,
+        values: files.newValues,
         included_modules: scenario.module ? [scenario.module] : [],
         shard: { name: 'test-shard', version: '0.1.0' },
         install_date: '2026-04-01',
@@ -135,8 +151,8 @@ describe('merge engine (fixture-driven)', () => {
         ownership: ownershipForMergeInput(scenario),
         oldTemplate: files.oldTemplate,
         newTemplate: files.newTemplate,
-        oldValues: scenario.values.old,
-        newValues: scenario.values.new,
+        oldValues: files.oldValues,
+        newValues: files.newValues,
         actualContent: files.actualContent,
         renderContext,
       });

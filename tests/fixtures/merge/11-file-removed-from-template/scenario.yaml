@@ -13,6 +13,3 @@ conflict_expected: false
 removed: true
 expected_action: prompt_delete
 
-values:
-  old: {}
-  new: {}

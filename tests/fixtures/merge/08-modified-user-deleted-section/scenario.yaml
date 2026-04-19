@@ -12,6 +12,3 @@ values_changed: false
 conflict_expected: false
 expected_action: auto_merge
 
-values:
-  old: { install_date: "2026-04-01" }
-  new: { install_date: "2026-04-01" }

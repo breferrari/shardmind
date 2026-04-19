@@ -16,13 +16,3 @@ iterator_key: "skills"
 new_item_slug: "mentoring"
 expected_action: create
 
-values:
-  old:
-    skills:
-      - { name: "Leadership", slug: "leadership" }
-      - { name: "Coding", slug: "coding" }
-  new:
-    skills:
-      - { name: "Leadership", slug: "leadership" }
-      - { name: "Coding", slug: "coding" }
-      - { name: "Mentoring", slug: "mentoring" }

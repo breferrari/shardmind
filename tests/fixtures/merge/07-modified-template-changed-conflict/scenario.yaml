@@ -12,6 +12,3 @@ conflict_expected: true
 expected_action: conflict
 expected_conflict_count: 1
 
-values:
-  old: { user_name: "Alice", org_name: "Acme Corp", qmd_enabled: true }
-  new: { user_name: "Alice", org_name: "Acme Corp", qmd_enabled: true }
