@@ -62,9 +62,6 @@ yarn.lock
 .claude/projects/
 .agent/
 memory/
-
-# Local clones of other repos (e.g. upstream forks we contributed to)
-/node-diff3/
 IDENTITY.md
 USER.md
 
