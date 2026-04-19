@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { parse as parseYaml } from 'yaml';
 import { describe, it, expect } from 'vitest';
-import { createRenderer, renderFile } from '../../source/core/renderer.js';
+import { createRenderer, renderFile, renderString } from '../../source/core/renderer.js';
 import type { FileEntry, RenderContext } from '../../source/runtime/types.js';
 
 const FIXTURES = path.resolve('tests/fixtures/render');
@@ -207,5 +207,50 @@ describe('renderFile', () => {
         await fs.rm(tmpDir, { recursive: true, force: true });
       }
     });
+  });
+});
+
+describe('renderString', () => {
+  it('renders a plain body template without frontmatter', () => {
+    const ctx = makeContext({ values: { user_name: 'Alice' } });
+    const source = '# Hello\n\nHi {{ user_name }}.\n';
+    expect(renderString(source, ctx, 'hello.md')).toBe('# Hello\n\nHi Alice.\n');
+  });
+
+  it('normalizes frontmatter YAML through parse→stringify', () => {
+    const ctx = makeContext({ values: {} });
+    const source = '---\ntags: [brain, active]\nstatus: current\n---\n\n# Note\n\nBody.\n';
+    const rendered = renderString(source, ctx, 'note.md');
+    expect(rendered).toBe(
+      '---\ntags:\n  - brain\n  - active\nstatus: current\n---\n\n# Note\n\nBody.\n',
+    );
+  });
+
+  it('substitutes context keys (shard, install_date) inside frontmatter', () => {
+    const ctx = makeContext({
+      values: { user_name: 'Alice' },
+      install_date: '2026-04-19',
+    });
+    const source = '---\ndate: {{ install_date }}\nowner: {{ user_name }}\n---\n\nBody.\n';
+    expect(renderString(source, ctx, 'note.md')).toBe(
+      '---\ndate: 2026-04-19\nowner: Alice\n---\n\nBody.\n',
+    );
+  });
+
+  it('throws RENDER_TEMPLATE_ERROR on Nunjucks syntax error', () => {
+    const ctx = makeContext({ values: {} });
+    try {
+      renderString('{% if %}broken{% endif %}', ctx, 'bad.md');
+      expect.fail('renderString should have thrown');
+    } catch (err: unknown) {
+      expect((err as { code: string }).code).toBe('RENDER_TEMPLATE_ERROR');
+    }
+  });
+
+  it('accepts a caller-supplied env', () => {
+    const env = createRenderer(path.resolve('tests/fixtures/render/simple-note'));
+    env.addFilter('shout', (s: string) => s.toUpperCase());
+    const ctx = makeContext({ values: { name: 'alice' } });
+    expect(renderString('Hi {{ name | shout }}!', ctx, 'x.md', env)).toBe('Hi ALICE!');
   });
 });

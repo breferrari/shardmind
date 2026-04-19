@@ -19,6 +19,7 @@ export type {
   ValidationResult,
   FrontmatterValidationResult,
   HookContext,
+  ErrorCode,
 } from './types.js';
 
 export { ShardMindError } from './types.js';

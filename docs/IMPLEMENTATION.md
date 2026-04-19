@@ -487,14 +487,15 @@ interface DriftEntry {
 ```
 
 **Algorithm**:
-1. For each file in `state.files`:
-   a. If `ownership === 'volatile'` → add to `volatile`
-   b. Read file from disk. If not found → add to `missing`
-   c. Compute `sha256(file content)`
-   d. Compare against `state.files[path].rendered_hash`
-   e. If equal → `managed`
-   f. If different → `modified`
-2. Return classified report
+1. For each file in `state.files` (in parallel via `Promise.all`):
+   a. If `FileState.ownership === 'user'` (volatile at install time) → `DriftEntry` with `ownership: 'volatile'` → add to `volatile`. Never hashed; content may diverge by design.
+   b. Read file from disk. If ENOENT → add to `missing` (propagate state ownership).
+   c. Compute `sha256(file content)`.
+   d. Compare against `state.files[path].rendered_hash`. Equal → `managed`. Different → `modified`.
+2. Orphan scan (runs in parallel with the classification): union of parent directories of every tracked path is the set of tracked directories. For each tracked directory, `readdir` non-recursively and report files not in `state.files` as orphans. Excludes engine-reserved files (`VALUES_FILE`) and never-scanned directories (`.shardmind`, `.git`, `.obsidian`). Subdirectories of a tracked directory are not auto-scanned — they only count if they themselves contain a tracked file.
+3. Return classified report.
+
+**Rationale for non-recursive orphan scan**: the shard only claims to manage what it tracks. A user's `brain/daily/2026-04-19.md` under an untracked subdirectory is their territory, not an orphan. But a `skills/my-extra.md` sibling of a tracked `skills/leadership.md` is an orphan because `skills/` is territory the shard already claims.
 
 **Dependencies**: `node:fs`, `node:crypto`.
 
@@ -536,17 +537,23 @@ interface MergeStats {
 4. If `sha256(base) === sha256(ours)` → no upstream change → `{ type: 'skip' }`
 5. If ownership is `managed` (base === theirs) → `{ type: 'overwrite', content: ours }`
 6. If ownership is `modified`:
-   a. Run `diff3Merge(theirs.split('\n'), base.split('\n'), ours.split('\n'))`
-   b. If no conflicts → `{ type: 'auto_merge', content: merged }`
-   c. If conflicts → `{ type: 'conflict', result: { content, hasConflicts, conflicts, stats } }`
+   a. Run `diff3MergeRegions(theirs.split(/\r?\n/), base.split(/\r?\n/), ours.split(/\r?\n/))` — not the flat `diff3Merge`; the regions variant exposes `buffer: 'a' | 'o' | 'b'` on stable regions and `aContent / oContent / bContent` on unstable ones, which is the only way to distinguish stable-unchanged (`buffer === 'o'`) from stable-auto-merged (`buffer === 'a' | 'b'`) lines. The `/\r?\n/` split tolerates CRLF on Windows-saved files; merged output is always LF.
+   b. For each stable region: emit `bufferContent`. For each unstable region: if `aContent === oContent` take `bContent`; if `bContent === oContent` take `aContent`; if `aContent === bContent` take either (false conflict); else emit git-style conflict markers and record a `ConflictRegion`.
+   c. No conflicts → `{ type: 'auto_merge', content, stats }`. Conflicts → `{ type: 'conflict', result: { content, hasConflicts: true, conflicts, stats } }`.
 
 **`MergeResult`** (for conflicts):
 ```typescript
+interface MergeStatsWithConflicts {
+  linesUnchanged: number;
+  linesAutoMerged: number;
+  linesConflicted: number;
+}
+
 interface MergeResult {
   content: string;              // Merged content with conflict markers
   hasConflicts: boolean;
   conflicts: ConflictRegion[];
-  stats: { linesUnchanged: number; linesAutoMerged: number; linesConflicted: number; };
+  stats: MergeStatsWithConflicts;
 }
 
 interface ConflictRegion {

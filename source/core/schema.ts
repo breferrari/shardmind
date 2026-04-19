@@ -15,6 +15,7 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import type { ShardSchema, FrontmatterRule } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
+import { errnoCode } from '../runtime/errno.js';
 
 const OptionSchema = z.object({
   value: z.string(),
@@ -132,7 +133,7 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
   try {
     raw = await fs.readFile(filePath, 'utf-8');
   } catch (err) {
-    const fsCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
+    const fsCode = errnoCode(err);
     if (fsCode === 'ENOENT') {
       throw new ShardMindError(
         `Cannot read shard-schema.yaml: ${filePath}`,

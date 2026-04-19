@@ -14,6 +14,7 @@ import path from 'node:path';
 import type { ShardState } from './types.js';
 import { ShardMindError } from './types.js';
 import { SHARDMIND_DIR, STATE_FILE } from './vault-paths.js';
+import { isEnoent } from './errno.js';
 
 const MAX_DEPTH = 20;
 
@@ -85,8 +86,7 @@ export async function loadState(): Promise<ShardState | null> {
   try {
     raw = await fsp.readFile(filePath, 'utf-8');
   } catch (err) {
-    const fsCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
-    if (fsCode === 'ENOENT') return null;
+    if (isEnoent(err)) return null;
     throw new ShardMindError(
       `Cannot read state.json: ${filePath}`,
       'STATE_READ_FAILED',

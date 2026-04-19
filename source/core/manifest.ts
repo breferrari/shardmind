@@ -4,6 +4,7 @@ import semver from 'semver';
 import { z } from 'zod';
 import type { ShardManifest } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
+import { errnoCode } from '../runtime/errno.js';
 
 export const ShardManifestSchema = z.object({
   apiVersion: z.literal('v1'),
@@ -34,7 +35,7 @@ export async function parseManifest(filePath: string): Promise<ShardManifest> {
   try {
     raw = await fs.readFile(filePath, 'utf-8');
   } catch (err) {
-    const fsCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
+    const fsCode = errnoCode(err);
     if (fsCode === 'ENOENT') {
       throw new ShardMindError(
         `Cannot read shard.yaml: ${filePath}`,

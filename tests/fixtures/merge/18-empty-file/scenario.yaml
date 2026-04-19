@@ -1,0 +1,13 @@
+name: "Empty file scenario — shard adds content to what was a blank slate"
+description: >
+  The old template rendered to an empty file (or an empty placeholder
+  stub that the user never touched). The new template ships actual
+  content. Expected: overwrite — the user has no edits to preserve, so
+  the shard's new content lands silently.
+
+ownership_before: managed
+user_edited: false
+template_changed: true
+values_changed: false
+conflict_expected: false
+expected_action: overwrite
