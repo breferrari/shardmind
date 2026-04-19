@@ -40,6 +40,10 @@ const LINE_SPLIT = /\r?\n/;
 // construction. Tokens are mapped back to original lines on output —
 // callers never see the encoding, and it's robust to any user content
 // including control characters.
+//
+// Upstream: bhousel/node-diff3#86 (issue) + #87 (fix — one-line
+// Object.create(null) patch). Drop the LineInterner once node-diff3
+// ships a version with the fix. See #49.
 
 export interface ComputeMergeActionInput {
   readonly path: string;

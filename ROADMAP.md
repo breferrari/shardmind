@@ -111,6 +111,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] Alternate registry configurability (GHE, private, custom URL) ([#39](https://github.com/breferrari/shardmind/issues/39))
 - [ ] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
 - [ ] Re-evaluate `@inkjs/ui` dependency (upstream frozen; shim at `source/components/ui.ts` keeps swap cheap) ([#43](https://github.com/breferrari/shardmind/issues/43))
+- [ ] Drop `LineInterner` workaround once `node-diff3` releases the prototype-lookup fix ([#49](https://github.com/breferrari/shardmind/issues/49), upstream [bhousel/node-diff3#87](https://github.com/bhousel/node-diff3/pull/87))
 
 ---
 
