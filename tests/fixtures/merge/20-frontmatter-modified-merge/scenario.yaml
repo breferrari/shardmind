@@ -1,0 +1,14 @@
+name: "User edited frontmatter, shard edited body — clean auto-merge"
+description: >
+  Modified ownership. The user added a tag to the frontmatter; the shard
+  updated the body text. diff3 should merge both changes because they
+  touch disjoint line ranges. Covers frontmatter + body interleaving
+  that scenario 12 (managed, frontmatter-only, overwrite) never exercises.
+
+ownership_before: modified
+user_edited: true
+template_changed: true
+values_changed: false
+conflict_expected: false
+frontmatter_only: false
+expected_action: auto_merge

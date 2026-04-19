@@ -35,7 +35,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 - [x] Write all 17 merge fixture directories — fixtures before code ([#10](https://github.com/breferrari/shardmind/issues/10))
 - [x] `core/drift.ts` + `core/differ.ts` — three-way merge engine ([#11](https://github.com/breferrari/shardmind/issues/11))
 - [x] Iterate until all 17 scenarios pass
-- [ ] Add edge case fixtures: frontmatter merge, empty file, binary-identical, encoding
+- [x] Add edge case fixtures: empty file (18), UTF-8 non-ASCII (19), frontmatter merge on modified ownership (20). Hash-identical behavior already covered by scenarios 01 and 05 (both hit the `sha256(base) === sha256(ours)` shortcut)
 
 ### Milestone 4: Update Command + Status (Day 4)
 

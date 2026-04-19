@@ -151,9 +151,11 @@ function makeRenderContext(scenario: Scenario): RenderContext {
   };
 }
 
+const EXPECTED_FIXTURE_COUNT = 20;
+
 describe('merge engine (fixture-driven)', () => {
-  it('discovers all 17 scenarios', () => {
-    expect(fixtureDirs).toHaveLength(17);
+  it(`discovers all ${EXPECTED_FIXTURE_COUNT} scenarios`, () => {
+    expect(fixtureDirs).toHaveLength(EXPECTED_FIXTURE_COUNT);
   });
 
   for (const dir of fixtureDirs) {

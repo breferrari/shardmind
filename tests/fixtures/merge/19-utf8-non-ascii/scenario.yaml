@@ -1,0 +1,13 @@
+name: "UTF-8 non-ASCII content round-trips through merge"
+description: >
+  The template and values contain non-ASCII characters (emoji, accented
+  Latin, CJK, combining marks). An auto-mergeable modification preserves
+  every byte. Regression guard: a Buffer/string conversion that stripped
+  or doubled bytes would corrupt content invisibly in ASCII-only tests.
+
+ownership_before: modified
+user_edited: true
+template_changed: true
+values_changed: false
+conflict_expected: false
+expected_action: auto_merge
