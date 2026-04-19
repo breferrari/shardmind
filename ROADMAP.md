@@ -29,7 +29,6 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 - [x] `commands/install.tsx` — full install flow with Ink wizard ([#8](https://github.com/breferrari/shardmind/issues/8))
 - [x] Integration test: install pipeline against `examples/minimal-shard` (real obsidian-mind shard verified at Milestone 5)
 - [x] `ink-testing-library` component tests for ValueInput, ModuleReview, ExistingInstallGate, InstallWizard ([#38](https://github.com/breferrari/shardmind/issues/38) — pulled forward from v0.2)
-- [ ] Verify: `shardmind install breferrari/obsidian-mind` works end to end
 
 ### Milestone 3: Merge Engine (Day 3)
 
