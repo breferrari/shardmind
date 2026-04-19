@@ -110,9 +110,15 @@ export function threeWayMerge(
   theirs: string,
   ours: string,
 ): ThreeWayMergeResult {
-  const baseLines = base.split('\n');
-  const theirsLines = theirs.split('\n');
-  const oursLines = ours.split('\n');
+  // Normalize line endings to LF before splitting. `base` and `ours` are
+  // renderer output (always LF), but `theirs` comes from disk and may be
+  // CRLF on Windows. Without this, every line in theirs would trail with
+  // '\r', producing spurious conflicts against base/ours. The merged
+  // output is LF; callers that need platform-native line endings should
+  // convert at the write boundary.
+  const baseLines = base.split(/\r?\n/);
+  const theirsLines = theirs.split(/\r?\n/);
+  const oursLines = ours.split(/\r?\n/);
 
   const regions: IRegion<string>[] = diff3MergeRegions(
     theirsLines,
