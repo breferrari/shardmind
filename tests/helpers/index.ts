@@ -4,4 +4,4 @@
  * stays small and discoverable.
  */
 
-export { makeShardState, makeStateWithFiles, makeFileState } from './shard-state.js';
+export { makeShardState, makeFileState } from './shard-state.js';

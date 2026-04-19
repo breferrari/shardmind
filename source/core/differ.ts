@@ -13,7 +13,7 @@
 import { diff3MergeRegions, type IRegion, type IUnstableRegion } from 'node-diff3';
 import type {
   MergeAction,
-  MergeResult,
+  MergeStatsWithConflicts,
   ConflictRegion,
   RenderContext,
 } from '../runtime/types.js';
@@ -44,7 +44,7 @@ export interface ComputeMergeActionInput {
 export interface ThreeWayMergeResult {
   readonly content: string;
   readonly conflicts: ConflictRegion[];
-  readonly stats: MergeResult['stats'];
+  readonly stats: MergeStatsWithConflicts;
 }
 
 export async function computeMergeAction(

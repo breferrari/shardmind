@@ -42,7 +42,7 @@ import { computeMergeAction } from '../../source/core/differ.js';
 import { renderString } from '../../source/core/renderer.js';
 import { assertNever } from '../../source/runtime/types.js';
 import type { RenderContext } from '../../source/runtime/types.js';
-import { makeStateWithFiles } from '../helpers/index.js';
+import { makeShardState } from '../helpers/index.js';
 
 const FIXTURES = path.resolve('tests/fixtures/merge');
 
@@ -258,13 +258,13 @@ async function buildVolatileDriftReport(dir: string, actualContent: string) {
     const relPath = `${dir}.md`;
     await fsp.writeFile(path.join(vaultRoot, relPath), actualContent, 'utf-8');
 
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       [relPath]: {
         template: 'templates/volatile.md.njk',
         rendered_hash: 'stale-hash-that-does-not-match-on-purpose',
         ownership: 'user',
       },
-    });
+    } });
 
     return await detectDrift(vaultRoot, state);
   } finally {

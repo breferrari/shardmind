@@ -12,7 +12,7 @@ import crypto from 'node:crypto';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { detectDrift } from '../../source/core/drift.js';
 import { sha256 } from '../../source/core/fs-utils.js';
-import { makeStateWithFiles } from '../helpers/index.js';
+import { makeShardState } from '../helpers/index.js';
 
 let vaultRoot: string;
 
@@ -35,13 +35,13 @@ describe('detectDrift', () => {
   it('classifies a hash-matching file as managed', async () => {
     const content = '# Managed\n';
     await writeFile('notes/a.md', content);
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       'notes/a.md': {
         template: 't.njk',
         rendered_hash: sha256(content),
         ownership: 'managed',
       },
-    });
+    } });
 
     const report = await detectDrift(vaultRoot, state);
 
@@ -56,13 +56,13 @@ describe('detectDrift', () => {
 
   it('classifies a hash-differing file as modified', async () => {
     await writeFile('notes/b.md', '# Edited by user\n');
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       'notes/b.md': {
         template: 't.njk',
         rendered_hash: sha256('# Original\n'),
         ownership: 'managed',
       },
-    });
+    } });
 
     const report = await detectDrift(vaultRoot, state);
 
@@ -75,13 +75,13 @@ describe('detectDrift', () => {
     // Content intentionally doesn't match the recorded hash — the whole point
     // of volatile is that drift never hashes it.
     await writeFile('inbox.md', '# edits the user is free to make\n');
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       'inbox.md': {
         template: 'inbox.njk',
         rendered_hash: 'stale-hash-on-purpose',
         ownership: 'user',
       },
-    });
+    } });
 
     const report = await detectDrift(vaultRoot, state);
 
@@ -94,13 +94,13 @@ describe('detectDrift', () => {
   });
 
   it('reports a file as missing when absent on disk', async () => {
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       'gone.md': {
         template: 't.njk',
         rendered_hash: sha256('# was here\n'),
         ownership: 'managed',
       },
-    });
+    } });
 
     const report = await detectDrift(vaultRoot, state);
 
@@ -110,13 +110,13 @@ describe('detectDrift', () => {
   });
 
   it('propagates state ownership=modified onto missing entries', async () => {
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       'gone.md': {
         template: 't.njk',
         rendered_hash: sha256('# was here\n'),
         ownership: 'modified',
       },
-    });
+    } });
 
     const report = await detectDrift(vaultRoot, state);
 
@@ -131,12 +131,12 @@ describe('detectDrift', () => {
     await writeFile('x.md', modifiedContent);
     await writeFile('v.md', volatileContent);
 
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       'm.md': { template: 't.njk', rendered_hash: sha256(managedContent), ownership: 'managed' },
       'x.md': { template: 't.njk', rendered_hash: sha256('original\n'), ownership: 'managed' },
       'v.md': { template: 'inbox.njk', rendered_hash: 'stale', ownership: 'user' },
       'missing.md': { template: 't.njk', rendered_hash: sha256('x\n'), ownership: 'managed' },
-    });
+    } });
 
     const report = await detectDrift(vaultRoot, state);
 
@@ -147,7 +147,7 @@ describe('detectDrift', () => {
   });
 
   it('returns empty buckets for a state with no files', async () => {
-    const report = await detectDrift(vaultRoot, makeStateWithFiles({}));
+    const report = await detectDrift(vaultRoot, makeShardState({ files: {} }));
 
     expect(report.managed).toEqual([]);
     expect(report.modified).toEqual([]);
@@ -162,13 +162,13 @@ describe('detectDrift — orphan detection', () => {
     await writeFile('skills/leadership.md', '# Leadership\n');
     await writeFile('skills/my-extra-skill.md', '# My extra skill\n');
 
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       'skills/leadership.md': {
         template: 'skills/_each.md.njk',
         rendered_hash: sha256('# Leadership\n'),
         ownership: 'managed',
       },
-    });
+    } });
 
     const report = await detectDrift(vaultRoot, state);
 
@@ -180,13 +180,13 @@ describe('detectDrift — orphan detection', () => {
     await writeFile('CLAUDE.md', '# shard\n');
     await writeFile('brain/daily/2026-04-19.md', 'user note\n');
 
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       'CLAUDE.md': {
         template: 'CLAUDE.md.njk',
         rendered_hash: sha256('# shard\n'),
         ownership: 'managed',
       },
-    });
+    } });
 
     const report = await detectDrift(vaultRoot, state);
 
@@ -199,13 +199,13 @@ describe('detectDrift — orphan detection', () => {
     await writeFile('CLAUDE.md', '# shard\n');
     await writeFile('shard-values.yaml', 'user_name: "Alice"\n');
 
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       'CLAUDE.md': {
         template: 'CLAUDE.md.njk',
         rendered_hash: sha256('# shard\n'),
         ownership: 'managed',
       },
-    });
+    } });
 
     const report = await detectDrift(vaultRoot, state);
 
@@ -218,13 +218,13 @@ describe('detectDrift — orphan detection', () => {
     await writeFile('.git/HEAD', 'ref: refs/heads/main\n');
     await writeFile('.obsidian/app.json', '{}');
 
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       'CLAUDE.md': {
         template: 'CLAUDE.md.njk',
         rendered_hash: sha256('# shard\n'),
         ownership: 'managed',
       },
-    });
+    } });
 
     const report = await detectDrift(vaultRoot, state);
 
@@ -237,7 +237,7 @@ describe('detectDrift — orphan detection', () => {
     await writeFile('skills/leadership.md', '# L\n');
     await writeFile('skills/my-extra.md', 'user\n');
 
-    const state = makeStateWithFiles({
+    const state = makeShardState({ files: {
       'CLAUDE.md': {
         template: 'CLAUDE.md.njk',
         rendered_hash: sha256('# root\n'),
@@ -248,7 +248,7 @@ describe('detectDrift — orphan detection', () => {
         rendered_hash: sha256('# L\n'),
         ownership: 'managed',
       },
-    });
+    } });
 
     const report = await detectDrift(vaultRoot, state);
 

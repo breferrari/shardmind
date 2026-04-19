@@ -12,6 +12,7 @@
  */
 
 import fsp from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import type { ShardState, DriftReport, DriftEntry, FileState } from '../runtime/types.js';
 import { sha256 } from './fs-utils.js';
@@ -162,7 +163,7 @@ async function scanDirForOrphans(
   trackedPaths: ReadonlySet<string>,
 ): Promise<string[]> {
   const absDir = path.join(vaultRoot, relDir);
-  let entries: import('node:fs').Dirent[];
+  let entries: Dirent[];
   try {
     entries = await fsp.readdir(absDir, { withFileTypes: true });
   } catch (err) {

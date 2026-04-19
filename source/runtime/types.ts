@@ -204,15 +204,16 @@ export interface MergeStats {
   linesAutoMerged: number;
 }
 
+/** Stats for a merge that may include conflicts (superset of MergeStats). */
+export interface MergeStatsWithConflicts extends MergeStats {
+  linesConflicted: number;
+}
+
 export interface MergeResult {
   content: string;
   hasConflicts: boolean;
   conflicts: ConflictRegion[];
-  stats: {
-    linesUnchanged: number;
-    linesAutoMerged: number;
-    linesConflicted: number;
-  };
+  stats: MergeStatsWithConflicts;
 }
 
 export interface ConflictRegion {
