@@ -1,0 +1,18 @@
+name: "File removed from shard on update"
+description: >
+  The old shard shipped this file. The new shard no longer includes it.
+  The file still exists on disk. Expected: prompt user to delete or keep.
+  Orchestration fixture: new-template is an empty placeholder representing
+  the absent file in the new shard.
+
+ownership_before: managed
+user_edited: false
+template_changed: false
+values_changed: false
+conflict_expected: false
+removed: true
+expected_action: prompt_delete
+
+values:
+  old: {}
+  new: {}

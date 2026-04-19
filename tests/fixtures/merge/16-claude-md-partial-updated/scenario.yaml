@@ -1,0 +1,19 @@
+name: "CLAUDE.md partial updated, full file re-rendered"
+description: >
+  CLAUDE.md is assembled from partial templates (e.g., _core, _perf). One
+  partial changed upstream. The user hasn't touched the assembled file.
+  Expected: overwrite the assembled CLAUDE.md with the freshly re-rendered
+  content. (The partial_update flag signals that the change comes from an
+  includeable partial so the implementer can optimize later.)
+
+ownership_before: managed
+user_edited: false
+template_changed: true
+values_changed: false
+conflict_expected: false
+partial_update: true
+expected_action: overwrite
+
+values:
+  old: { vault_purpose: "personal" }
+  new: { vault_purpose: "personal" }

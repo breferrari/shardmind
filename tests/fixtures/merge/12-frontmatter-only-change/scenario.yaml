@@ -1,0 +1,18 @@
+name: "Frontmatter changed, body unchanged"
+description: >
+  The shard author added a tag and a status field to the frontmatter. The
+  markdown body is identical. The user hasn't touched the file.
+  Expected: overwrite with new frontmatter + same body. (Managed ownership —
+  the renderer handles frontmatter-aware merging when the user has edits.)
+
+ownership_before: managed
+user_edited: false
+template_changed: true
+values_changed: false
+conflict_expected: false
+frontmatter_only: true
+expected_action: overwrite
+
+values:
+  old: {}
+  new: {}

@@ -9,7 +9,7 @@ user_edited: true
 template_changed: true
 values_changed: false
 conflict_expected: true
-expected_action: prompt_user
+expected_action: conflict
 expected_conflict_count: 1
 
 values:

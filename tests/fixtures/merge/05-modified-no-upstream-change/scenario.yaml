@@ -1,0 +1,16 @@
+name: "User-modified file, no upstream change"
+description: >
+  The user edited the file. The shard's template and values haven't changed.
+  Expected: skip — there is nothing upstream to apply. User's edits preserved
+  verbatim. (base === ours, so no merge is attempted.)
+
+ownership_before: modified
+user_edited: true
+template_changed: false
+values_changed: false
+conflict_expected: false
+expected_action: skip
+
+values:
+  old: { user_name: "Alice" }
+  new: { user_name: "Alice" }

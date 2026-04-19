@@ -1,0 +1,16 @@
+name: "User-modified section A, template changed section B (non-conflicting)"
+description: >
+  User edited section A. The shard author edited section B. Changes touch
+  disjoint regions, so diff3 merges cleanly — no conflict markers.
+  Expected: auto_merge keeps user's A and applies shard's new B.
+
+ownership_before: modified
+user_edited: true
+template_changed: true
+values_changed: false
+conflict_expected: false
+expected_action: auto_merge
+
+values:
+  old: { user_name: "Alice" }
+  new: { user_name: "Alice" }

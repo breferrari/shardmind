@@ -1,0 +1,15 @@
+name: "Managed file, template and values both changed"
+description: >
+  The template body changed AND the user's values changed. The user hasn't
+  edited the file. Expected: silent re-render with the new template + values.
+
+ownership_before: managed
+user_edited: false
+template_changed: true
+values_changed: true
+conflict_expected: false
+expected_action: overwrite
+
+values:
+  old: { user_name: "Alice" }
+  new: { user_name: "Alice", org_name: "Acme Corp" }

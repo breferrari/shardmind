@@ -1,0 +1,19 @@
+name: "User deselected a module on update"
+description: >
+  The qmd module was included in the previous install. The user toggled it
+  off during this update. Files in that module become orphaned.
+  Expected: prompt user to delete or keep the module's files.
+
+ownership_before: managed
+user_edited: false
+template_changed: false
+values_changed: false
+conflict_expected: false
+removed: true
+module_change: newly_excluded
+module: "qmd"
+expected_action: prompt_delete_module
+
+values:
+  old: {}
+  new: {}

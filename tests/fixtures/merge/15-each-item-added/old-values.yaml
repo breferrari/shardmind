@@ -1,0 +1,3 @@
+skills:
+  - { name: "Leadership", slug: "leadership" }
+  - { name: "Coding", slug: "coding" }

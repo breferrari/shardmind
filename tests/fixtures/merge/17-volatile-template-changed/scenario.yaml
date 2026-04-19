@@ -1,0 +1,19 @@
+name: "Volatile file, template changed"
+description: >
+  The file is marked volatile in the shard (e.g., an inbox or daily note
+  scratch space). The user is expected to edit it freely. Even though the
+  template body has changed, we never re-render a volatile file. The state
+  hash is refreshed so we don't flag it as drifted later.
+  Expected: skip — no write, no prompt; preserve whatever's on disk.
+
+ownership_before: volatile
+user_edited: true
+template_changed: true
+values_changed: false
+conflict_expected: false
+volatile: true
+expected_action: skip
+
+values:
+  old: { install_date: "2026-04-01" }
+  new: { install_date: "2026-04-19" }
