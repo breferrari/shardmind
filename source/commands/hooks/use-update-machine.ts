@@ -28,7 +28,6 @@ import type {
   ModuleSelections,
   ModuleDefinition,
   MigrationChange,
-  RenderContext,
 } from '../../runtime/types.js';
 import { ShardMindError } from '../../runtime/types.js';
 
@@ -47,9 +46,11 @@ import {
   renderNewShard,
   type UpdatePlan,
   type ConflictResolution,
+  type NewFilePlan,
 } from '../../core/update-planner.js';
 import { runUpdate, rollbackUpdate, type UpdateSummary } from '../../core/update-executor.js';
-import { runPostUpdateHook, type HookResult } from '../../core/hook.js';
+import { runPostUpdateHook } from '../../core/hook.js';
+import { summarizeHook, useSigintRollback } from './shared.js';
 import { buildRenderContext } from '../../core/renderer.js';
 import { VALUES_FILE } from '../../runtime/vault-paths.js';
 import type { DiffAction } from '../../components/DiffView.js';
@@ -76,7 +77,6 @@ export interface PreparedContext {
   migrationWarnings: string[];
   newRequiredKeys: string[];
   newOptionalModules: Array<{ id: string; def: ModuleDefinition }>;
-  oldRenderContext: RenderContext;
 }
 
 export type Phase =
@@ -92,6 +92,7 @@ export type Phase =
       values: Record<string, unknown>;
       selections: ModuleSelections;
       paths: string[];
+      newFilePlan: NewFilePlan;
     }
   | {
       kind: 'resolving-conflicts';
@@ -158,22 +159,15 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     [exit],
   );
 
-  // SIGINT: if we're mid-write, use the backup dir to roll back.
-  useEffect(() => {
-    const handler = () => {
-      if (writingRef.current && backupDirRef.current && !dryRun) {
-        rollbackUpdate(vaultRoot, backupDirRef.current, addedPathsRef.current)
-          .catch(() => {})
-          .finally(() => process.exit(130));
-      } else {
-        process.exit(130);
-      }
-    };
-    process.on('SIGINT', handler);
-    return () => {
-      process.off('SIGINT', handler);
-    };
-  }, [vaultRoot, dryRun]);
+  // If we're mid-write, walk the executor's snapshot back before exiting.
+  useSigintRollback({
+    enabled: !dryRun,
+    isActive: () => writingRef.current && backupDirRef.current !== null,
+    rollback: () =>
+      backupDirRef.current
+        ? rollbackUpdate(vaultRoot, backupDirRef.current, addedPathsRef.current)
+        : Promise.resolve(),
+  });
 
   // Boot pipeline: state → resolve → download → parse → migrate → branch.
   useEffect(() => {
@@ -224,7 +218,6 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         );
 
         const additions = computeSchemaAdditions(newSchema, state.modules, migration.values);
-        const oldRenderContext = buildRenderContext(newManifest, oldValues, state.modules);
 
         const ctx: PreparedContext = {
           state,
@@ -241,7 +234,6 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           migrationWarnings: migration.warnings,
           newRequiredKeys: additions.newRequiredKeys,
           newOptionalModules: additions.newOptionalModules,
-          oldRenderContext,
         };
 
         if (disposed) return;
@@ -312,20 +304,19 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       selections: ModuleSelections,
     ) => {
       try {
-        // Drift + compute new file set up-front so we know which removed
-        // files need user input before actually planning.
-        const drift = await detectDrift(vaultRoot, ctx.state);
+        // Render the new shard once and thread the result through to
+        // `runPlanAndResolve`. The planner reuses this plan instead of
+        // rendering a second time.
         const newRenderContext = buildRenderContext(ctx.newManifest, values, selections);
-        // Reach into the planner's NewFilePlan via a quick dry render only
-        // to get the set of paths the new shard would ship — we run the
-        // full plan after decisions are collected. To avoid a second
-        // render, we just skip straight to the decisions phase if there's
-        // nothing modified-and-removed.
-        const newPaths = await listNewShardPaths(ctx, selections, newRenderContext);
+        const [drift, newFilePlan] = await Promise.all([
+          detectDrift(vaultRoot, ctx.state),
+          renderNewShard(ctx.newSchema, ctx.newTempDir, selections, newRenderContext),
+        ]);
+        const newPaths = new Set(newFilePlan.outputs.map((o) => o.outputPath));
         const removedModified = removedFilesNeedingDecision(drift, newPaths);
 
         if (removedModified.length === 0 || yes) {
-          await runPlanAndResolve(ctx, values, selections, {});
+          await runPlanAndResolve(ctx, values, selections, {}, { drift, newFilePlan });
           return;
         }
         setPhase({
@@ -334,6 +325,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           values,
           selections,
           paths: removedModified,
+          newFilePlan,
         });
       } catch (err) {
         finish({ kind: 'error', error: err as Error });
@@ -349,11 +341,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       values: Record<string, unknown>,
       selections: ModuleSelections,
       removedDecisions: Record<string, 'delete' | 'keep'>,
+      precomputed?: { drift?: Awaited<ReturnType<typeof detectDrift>>; newFilePlan?: NewFilePlan },
     ) => {
       try {
         setPhase({ kind: 'loading', message: 'Planning update…' });
-        const drift = await detectDrift(vaultRoot, ctx.state);
         const newRenderContext = buildRenderContext(ctx.newManifest, values, selections);
+        const drift = precomputed?.drift ?? (await detectDrift(vaultRoot, ctx.state));
         const plan = await planUpdate({
           vaultRoot,
           currentState: ctx.state,
@@ -364,7 +357,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           newSelections: selections,
           newTempDir: ctx.newTempDir,
           newRenderContext,
-          oldRenderContext: ctx.oldRenderContext,
+          newFilePlan: precomputed?.newFilePlan,
           removedFileDecisions: removedDecisions,
         });
 
@@ -502,7 +495,9 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     (decisions: Record<string, 'delete' | 'keep'>) => {
       const current = phaseRef.current;
       if (current.kind !== 'prompt-removed-files') return;
-      void runPlanAndResolve(current.ctx, current.values, current.selections, decisions);
+      void runPlanAndResolve(current.ctx, current.values, current.selections, decisions, {
+        newFilePlan: current.newFilePlan,
+      });
     },
     [runPlanAndResolve],
   );
@@ -581,32 +576,6 @@ async function loadCachedSchema(vaultRoot: string): Promise<ShardSchema> {
 function validateValues(schema: ShardSchema, values: Record<string, unknown>): Record<string, unknown> {
   const validator = buildValuesValidator(schema);
   return validator.parse(values) as Record<string, unknown>;
-}
-
-async function listNewShardPaths(
-  ctx: PreparedContext,
-  selections: ModuleSelections,
-  renderContext: RenderContext,
-): Promise<Set<string>> {
-  // One render pass to discover the new file set so we can ask about
-  // removed files before planning. Planning does its own render later;
-  // the cost of rendering twice is minor versus threading a cache
-  // through the machine just for this bootstrap.
-  const result = await renderNewShard(ctx.newSchema, ctx.newTempDir, selections, renderContext);
-  return new Set(result.outputs.map((o) => o.outputPath));
-}
-
-function summarizeHook(result: HookResult) {
-  switch (result.kind) {
-    case 'absent':
-      return null;
-    case 'deferred':
-      return { deferred: true };
-    case 'ran':
-      return { stdout: result.stdout, exitCode: result.exitCode };
-    case 'failed':
-      return { stdout: result.message, exitCode: 1 };
-  }
 }
 
 function labelForAction(kind: string): string {

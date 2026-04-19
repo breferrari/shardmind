@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Box, Text } from 'ink';
 import { Select } from './ui.js';
 
@@ -17,15 +17,9 @@ export default function RemovedFilesReview({ paths, onSubmit }: RemovedFilesRevi
   const [index, setIndex] = useState(0);
   const [decisions, setDecisions] = useState<Record<string, 'delete' | 'keep'>>({});
 
-  const done = index >= paths.length;
-  useEffect(() => {
-    if (done) onSubmit(decisions);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [done]);
+  const filePath = paths[index];
+  if (!filePath) return null;
 
-  if (done) return null;
-
-  const filePath = paths[index]!;
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold color="yellow">Removed by new shard</Text>
@@ -43,8 +37,13 @@ export default function RemovedFilesReview({ paths, onSubmit }: RemovedFilesRevi
           { label: 'Delete', value: 'delete' },
         ]}
         onChange={(choice) => {
-          setDecisions((prev) => ({ ...prev, [filePath]: choice as 'delete' | 'keep' }));
-          setIndex((i) => i + 1);
+          const next = { ...decisions, [filePath]: choice as 'delete' | 'keep' };
+          if (index + 1 >= paths.length) {
+            onSubmit(next);
+            return;
+          }
+          setDecisions(next);
+          setIndex(index + 1);
         }}
       />
     </Box>

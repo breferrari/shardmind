@@ -21,7 +21,7 @@ import type {
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
-import { sha256, pathExists } from './fs-utils.js';
+import { pathExists, mapConcurrent } from './fs-utils.js';
 import { hashValues } from './install-planner.js';
 import {
   cacheTemplates,
@@ -42,6 +42,9 @@ import type {
   UpdateAction,
   ConflictResolution,
 } from './update-planner.js';
+
+/** Cap fan-out when copying snapshot files during rollback preparation. */
+const SNAPSHOT_CONCURRENCY = 16;
 
 export interface UpdateRunnerOptions {
   vaultRoot: string;
@@ -235,9 +238,13 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
   switch (action.kind) {
     case 'noop':
     case 'skip_volatile':
+      // No write. Planner still recorded these for reporting counts.
+      return;
     case 'keep_as_user':
-      // Nothing to write. These are "no-op at the executor level" —
-      // the planner still recorded them so counts are accurate.
+      // User chose "keep my edits (untrack)". The file stays on disk,
+      // but we remove it from state.files so the engine no longer
+      // considers it managed on future updates.
+      delete ctx.nextFiles[action.path];
       return;
     case 'delete':
       // Handled in delete pass.
@@ -254,9 +261,11 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         action: action.kind,
       });
       if (!ctx.dryRun) {
-        const wasExisting = await pathExists(path.join(ctx.vaultRoot, action.path));
         await writeFile(ctx.vaultRoot, action.path, action.content);
-        if (!wasExisting) ctx.addedPaths.push(action.path);
+        // `add` and `restore_missing` introduce a file; `overwrite`
+        // always lands on an existing one. Tracking only the former
+        // drives rollback without a pre-write stat.
+        if (action.kind !== 'overwrite') ctx.addedPaths.push(action.path);
       }
       ctx.nextFiles[action.path] = buildFileState(action, 'managed');
       ctx.summary.wroteFiles.push(action.path);
@@ -300,27 +309,18 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         };
         ctx.summary.wroteFiles.push(action.path);
         ctx.summary.conflictsAcceptedNew++;
-      } else if (resolution === 'keep_mine') {
-        // Leave file on disk. Track as modified so next drift detects
-        // their version, not the new-template version.
-        const currentContent = await readIfExists(path.join(ctx.vaultRoot, action.path));
-        ctx.nextFiles[action.path] = {
-          template: action.templateKey,
-          rendered_hash: currentContent !== null ? sha256(currentContent) : action.newContentHash,
-          ownership: 'modified',
-          ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
-        };
-        ctx.summary.conflictsKeptMine++;
       } else {
-        // 'skip': same on-disk outcome as keep_mine, but reported separately.
-        const currentContent = await readIfExists(path.join(ctx.vaultRoot, action.path));
+        // keep_mine / skip: leave the user's file on disk. `theirsHash`
+        // was captured at plan time so we don't need to re-read + rehash
+        // here. Track as modified so next drift picks up their version.
         ctx.nextFiles[action.path] = {
           template: action.templateKey,
-          rendered_hash: currentContent !== null ? sha256(currentContent) : action.newContentHash,
+          rendered_hash: action.theirsHash,
           ownership: 'modified',
           ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
         };
-        ctx.summary.conflictsSkipped++;
+        if (resolution === 'keep_mine') ctx.summary.conflictsKeptMine++;
+        else ctx.summary.conflictsSkipped++;
       }
       ctx.summary.conflictsResolved++;
       return;
@@ -421,36 +421,42 @@ async function snapshotForRollback(
   }
 
   const filesBackupDir = path.join(backupDir, 'files');
-  await fsp.mkdir(filesBackupDir, { recursive: true });
-  for (const rel of toSnapshot) {
-    const src = path.join(vaultRoot, rel);
-    const dst = path.join(filesBackupDir, rel);
-    try {
-      await fsp.mkdir(path.dirname(dst), { recursive: true });
-      await fsp.copyFile(src, dst);
-    } catch (err) {
-      if (!isEnoent(err)) throw err;
-      // ENOENT is expected for 'missing' entries; skip them.
-    }
-  }
-
-  // Cache + state + values file.
   const cacheBackupDir = path.join(backupDir, 'cache');
-  await fsp.mkdir(cacheBackupDir, { recursive: true });
-  for (const rel of [STATE_FILE, CACHED_MANIFEST, CACHED_SCHEMA, VALUES_FILE]) {
-    const src = path.join(vaultRoot, rel);
-    const dst = path.join(cacheBackupDir, rel);
-    try {
-      await fsp.mkdir(path.dirname(dst), { recursive: true });
-      await fsp.copyFile(src, dst);
-    } catch (err) {
-      if (!isEnoent(err)) throw err;
-    }
-  }
-  const templatesSrc = path.join(vaultRoot, CACHED_TEMPLATES);
-  if (await pathExists(templatesSrc)) {
-    const templatesDst = path.join(cacheBackupDir, CACHED_TEMPLATES);
-    await fsp.cp(templatesSrc, templatesDst, { recursive: true });
+  await Promise.all([
+    fsp.mkdir(filesBackupDir, { recursive: true }),
+    fsp.mkdir(cacheBackupDir, { recursive: true }),
+  ]);
+
+  // Copy snapshots with bounded concurrency. ENOENT is expected for
+  // `missing` entries and any uninitialized cache file — tolerate both.
+  await Promise.all([
+    mapConcurrent([...toSnapshot], SNAPSHOT_CONCURRENCY, (rel) =>
+      copyOptional(path.join(vaultRoot, rel), path.join(filesBackupDir, rel)),
+    ),
+    mapConcurrent(
+      [STATE_FILE, CACHED_MANIFEST, CACHED_SCHEMA, VALUES_FILE],
+      SNAPSHOT_CONCURRENCY,
+      (rel) => copyOptional(path.join(vaultRoot, rel), path.join(cacheBackupDir, rel)),
+    ),
+    (async () => {
+      const templatesSrc = path.join(vaultRoot, CACHED_TEMPLATES);
+      try {
+        await fsp.cp(templatesSrc, path.join(cacheBackupDir, CACHED_TEMPLATES), {
+          recursive: true,
+        });
+      } catch (err) {
+        if (!isEnoent(err)) throw err;
+      }
+    })(),
+  ]);
+}
+
+async function copyOptional(src: string, dst: string): Promise<void> {
+  try {
+    await fsp.mkdir(path.dirname(dst), { recursive: true });
+    await fsp.copyFile(src, dst);
+  } catch (err) {
+    if (!isEnoent(err)) throw err;
   }
 }
 
@@ -512,15 +518,6 @@ async function writeFile(vaultRoot: string, outputPath: string, content: string)
       'UPDATE_WRITE_FAILED',
       err instanceof Error ? err.message : String(err),
     );
-  }
-}
-
-async function readIfExists(absPath: string): Promise<string | null> {
-  try {
-    return await fsp.readFile(absPath, 'utf-8');
-  } catch (err) {
-    if (isEnoent(err)) return null;
-    throw err;
   }
 }
 

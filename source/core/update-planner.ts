@@ -30,17 +30,31 @@ import { isEnoent } from '../runtime/errno.js';
 import { computeMergeAction } from './differ.js';
 import { resolveModules } from './modules.js';
 import { renderFile, createRenderer } from './renderer.js';
-import { sha256 } from './fs-utils.js';
+import { sha256, mapConcurrent } from './fs-utils.js';
 import {
   SHARD_TEMPLATES_DIR,
   CACHED_TEMPLATES,
 } from '../runtime/vault-paths.js';
 
+/** Cap fan-out when reading templates + user files during merge planning. */
+const PLAN_IO_CONCURRENCY = 16;
+
 export type UpdateAction =
   | { kind: 'noop'; path: string; reason: string }
   | { kind: 'overwrite'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string }
   | { kind: 'auto_merge'; path: string; content: string; renderedHash: string; stats: MergeStats; templateKey: string | null; iteratorKey?: string }
-  | { kind: 'conflict'; path: string; result: MergeResult; newContent: string; newContentHash: string; templateKey: string | null; iteratorKey?: string }
+  | {
+      kind: 'conflict';
+      path: string;
+      result: MergeResult;
+      newContent: string;
+      newContentHash: string;
+      /** sha256 of the user's on-disk content at plan time; lets the
+       * executor avoid re-reading + re-hashing on keep_mine / skip. */
+      theirsHash: string;
+      templateKey: string | null;
+      iteratorKey?: string;
+    }
   | { kind: 'skip_volatile'; path: string }
   | { kind: 'add'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string }
   | { kind: 'restore_missing'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string }
@@ -80,7 +94,13 @@ export interface PlanUpdateInput {
   newSelections: ModuleSelections;
   newTempDir: string;
   newRenderContext: RenderContext;
-  oldRenderContext: RenderContext;
+  /**
+   * Optional prerendered new-shard plan. The state machine renders
+   * once at the prompt-removed-files phase; passing that result back
+   * here avoids a second full render pass. When omitted, `planUpdate`
+   * renders internally (useful for tests that just want a plan).
+   */
+  newFilePlan?: NewFilePlan;
   /**
    * Per-file decisions for removed-and-modified files. Keyed by the
    * vault-relative path that was in state.files but is no longer produced
@@ -194,35 +214,35 @@ export async function renderNewShard(
   const resolution = await resolveModules(newSchema, newSelections, newTempDir);
   const env = createRenderer(path.join(newTempDir, SHARD_TEMPLATES_DIR));
 
-  const outputs: NewFilePlan['outputs'] = [];
-  const entriesByPath = new Map<string, FileEntry>();
-
-  for (const entry of resolution.render) {
-    const rendered = await renderFile(entry, newRenderContext, env);
-    const files = Array.isArray(rendered) ? rendered : [rendered];
-    for (const file of files) {
-      outputs.push({
+  // Render and copy in parallel (bounded by PLAN_IO_CONCURRENCY) since
+  // each entry is independent. Output order is stabilized by sorting
+  // the final list so downstream diffing is deterministic across runs.
+  const [renderedPairs, copiedPairs] = await Promise.all([
+    mapConcurrent(resolution.render, PLAN_IO_CONCURRENCY, async (entry) => {
+      const rendered = await renderFile(entry, newRenderContext, env);
+      const files = Array.isArray(rendered) ? rendered : [rendered];
+      return files.map((file) => ({
         outputPath: file.outputPath,
         entry,
         content: file.content,
         hash: file.hash,
-      });
-      entriesByPath.set(file.outputPath, entry);
-    }
-  }
+      }));
+    }),
+    mapConcurrent(resolution.copy, PLAN_IO_CONCURRENCY, async (entry) => {
+      const buffer = await fsp.readFile(entry.sourcePath);
+      return {
+        outputPath: entry.outputPath,
+        entry,
+        content: buffer.toString('utf-8'),
+        hash: sha256(buffer),
+      };
+    }),
+  ]);
 
-  for (const entry of resolution.copy) {
-    const buffer = await fsp.readFile(entry.sourcePath);
-    const content = buffer.toString('utf-8');
-    outputs.push({
-      outputPath: entry.outputPath,
-      entry,
-      content,
-      hash: sha256(buffer),
-    });
-    entriesByPath.set(entry.outputPath, entry);
-  }
-
+  const outputs = [...renderedPairs.flat(), ...copiedPairs];
+  const entriesByPath = new Map<string, FileEntry>(
+    outputs.map((o) => [o.outputPath, o.entry] as const),
+  );
   return { outputs, entriesByPath };
 }
 
@@ -242,11 +262,12 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     newSelections,
     newTempDir,
     newRenderContext,
-    oldRenderContext,
+    newFilePlan,
     removedFileDecisions,
   } = input;
 
-  const newPlan = await renderNewShard(newSchema, newTempDir, newSelections, newRenderContext);
+  const newPlan =
+    newFilePlan ?? (await renderNewShard(newSchema, newTempDir, newSelections, newRenderContext));
   const newByPath = new Map(newPlan.outputs.map((o) => [o.outputPath, o] as const));
 
   const actions: UpdateAction[] = [];
@@ -262,14 +283,11 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     restored: 0,
   };
 
-  // Volatile: never touch. One action each for reporting, but no write.
   for (const entry of drift.volatile) {
     actions.push({ kind: 'skip_volatile', path: entry.path });
     counts.volatile++;
   }
 
-  // Managed: silent overwrite if content changed, noop otherwise. If the
-  // new shard no longer produces this file, delete it.
   for (const entry of drift.managed) {
     const target = newByPath.get(entry.path);
     if (!target) {
@@ -293,8 +311,6 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     counts.silent++;
   }
 
-  // Missing: file recorded in state but gone from disk. If the new shard
-  // still ships it, restore. If it also disappeared upstream, leave alone.
   for (const entry of drift.missing) {
     const target = newByPath.get(entry.path);
     if (!target) {
@@ -313,105 +329,104 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     counts.restored++;
   }
 
-  // Modified: user edits present. Three-way merge (or removed-file branch).
-  for (const entry of drift.modified) {
-    const target = newByPath.get(entry.path);
-    if (!target) {
-      // File no longer produced by new shard. Default: keep user's copy
-      // unless the state machine gathered an explicit "delete" decision.
-      const decision = removedFileDecisions[entry.path] ?? 'keep';
-      if (decision === 'delete') {
-        actions.push({ kind: 'delete', path: entry.path });
-        counts.deleted++;
-      } else {
-        actions.push({ kind: 'keep_as_user', path: entry.path });
-        counts.keptAsUser++;
+  // Modified files: run the three-way merge for each in parallel.
+  // `computeMergeAction` is CPU-bound (diff3 + sha256), but each entry
+  // also does three file reads, so fanning out with bounded concurrency
+  // saves real wall-clock time on vaults with many modified files.
+  const modifiedActions = await mapConcurrent<typeof drift.modified[number], UpdateAction>(
+    drift.modified,
+    PLAN_IO_CONCURRENCY,
+    async (entry) => {
+      const target = newByPath.get(entry.path);
+      if (!target) {
+        const decision = removedFileDecisions[entry.path] ?? 'keep';
+        return decision === 'delete'
+          ? { kind: 'delete', path: entry.path }
+          : { kind: 'keep_as_user', path: entry.path };
       }
-      continue;
-    }
 
-    const fileState = currentState.files[entry.path];
-    if (!fileState) {
-      throw new ShardMindError(
-        `Drift reports '${entry.path}' as modified but it is not in state.files`,
-        'UPDATE_CACHE_MISSING',
-        'State and drift report disagree — re-install the shard to regenerate a coherent state.json.',
-      );
-    }
-
-    const actualContent = await readUtf8(path.join(vaultRoot, entry.path));
-    const oldTemplate = await loadOldTemplate(vaultRoot, fileState.template);
-    if (oldTemplate === null || target.entry.sourcePath === null) {
-      // No cached template (pre-v0.1 install? corrupted cache?). Fall
-      // back to treating the file as a pure conflict between the new
-      // render and the user's edits — we synthesize a "base == ours"
-      // three-way so the merge engine surfaces the full diff.
-      actions.push(conflictFromDirect(entry.path, target, actualContent));
-      continue;
-    }
-    const newTemplate = await fsp.readFile(target.entry.sourcePath, 'utf-8');
-
-    const mergeAction = await computeMergeAction({
-      path: entry.path,
-      ownership: 'modified',
-      oldTemplate,
-      newTemplate,
-      oldValues,
-      newValues,
-      actualContent,
-      renderContext: newRenderContext,
-    });
-
-    switch (mergeAction.type) {
-      case 'skip': {
-        actions.push({ kind: 'noop', path: entry.path, reason: mergeAction.reason });
-        counts.silent++;
-        break;
+      const fileState = currentState.files[entry.path];
+      if (!fileState) {
+        throw new ShardMindError(
+          `Drift reports '${entry.path}' as modified but it is not in state.files`,
+          'UPDATE_CACHE_MISSING',
+          'State and drift report disagree — re-install the shard to regenerate a coherent state.json.',
+        );
       }
-      case 'overwrite': {
-        // Should not happen for ownership 'modified' (differ branches on
-        // ownership). Treat defensively: keep user's file, log no-op.
-        actions.push({ kind: 'noop', path: entry.path, reason: 'modified-ownership differ returned overwrite' });
-        counts.silent++;
-        break;
+
+      const [actualContent, oldTemplate] = await Promise.all([
+        readUtf8(path.join(vaultRoot, entry.path)),
+        loadOldTemplate(vaultRoot, fileState.template),
+      ]);
+
+      if (oldTemplate === null || target.entry.sourcePath === null) {
+        return conflictFromDirect(entry.path, target, actualContent, sha256(actualContent));
       }
-      case 'auto_merge': {
-        const content = mergeAction.content;
-        actions.push({
-          kind: 'auto_merge',
-          path: entry.path,
-          content,
-          renderedHash: sha256(content),
-          stats: mergeAction.stats,
-          templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
-          ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
-        });
-        counts.autoMerged++;
-        break;
+
+      const newTemplate = await fsp.readFile(target.entry.sourcePath, 'utf-8');
+      const mergeAction = await computeMergeAction({
+        path: entry.path,
+        ownership: 'modified',
+        oldTemplate,
+        newTemplate,
+        oldValues,
+        newValues,
+        actualContent,
+        renderContext: newRenderContext,
+      });
+
+      switch (mergeAction.type) {
+        case 'skip':
+          return { kind: 'noop', path: entry.path, reason: mergeAction.reason };
+        case 'overwrite':
+          // Shouldn't reach us for ownership='modified' (differ branches on
+          // ownership before). Defensive no-op: preserve the user's file.
+          return { kind: 'noop', path: entry.path, reason: 'modified-ownership differ returned overwrite' };
+        case 'auto_merge': {
+          const content = mergeAction.content;
+          return {
+            kind: 'auto_merge',
+            path: entry.path,
+            content,
+            renderedHash: sha256(content),
+            stats: mergeAction.stats,
+            templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
+            ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+          };
+        }
+        case 'conflict':
+          return {
+            kind: 'conflict',
+            path: entry.path,
+            result: mergeAction.result,
+            newContent: target.content,
+            newContentHash: target.hash,
+            theirsHash: sha256(actualContent),
+            templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
+            ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+          };
       }
-      case 'conflict': {
-        actions.push({
-          kind: 'conflict',
-          path: entry.path,
-          result: mergeAction.result,
-          newContent: target.content,
-          newContentHash: target.hash,
-          templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
-          ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
-        });
+    },
+  );
+
+  for (const action of modifiedActions) {
+    actions.push(action);
+    switch (action.kind) {
+      case 'delete': counts.deleted++; break;
+      case 'keep_as_user': counts.keptAsUser++; break;
+      case 'noop': counts.silent++; break;
+      case 'auto_merge': counts.autoMerged++; break;
+      case 'conflict':
         pendingConflicts.push({
           index: pendingConflicts.length,
-          path: entry.path,
-          result: mergeAction.result,
+          path: action.path,
+          result: action.result,
         });
         counts.conflicts++;
         break;
-      }
     }
   }
-  void oldRenderContext; // accepted for future use; differ reads values directly
 
-  // Added: files in the new shard that don't exist in state.
   const trackedPaths = new Set(Object.keys(currentState.files));
   for (const output of newPlan.outputs) {
     if (trackedPaths.has(output.outputPath)) continue;
@@ -433,14 +448,14 @@ function conflictFromDirect(
   filePath: string,
   target: NewFilePlan['outputs'][number],
   actualContent: string,
+  theirsHash: string,
 ): UpdateAction {
   // Synthesize a conflict region covering the whole file when we can't
-  // reconstruct a proper three-way base. Better than silently losing
-  // the user's edits.
+  // reconstruct a proper three-way base (missing cached template, pre-v0.1
+  // install, or corrupted cache). Better than silently losing the user's
+  // edits — surface the file to the DiffView so the user decides.
   const theirsLines = actualContent.split(/\r?\n/);
   const oursLines = target.content.split(/\r?\n/);
-  const lineStart = 1;
-  const lineEnd = theirsLines.length + oursLines.length + 3;
   return {
     kind: 'conflict',
     path: filePath,
@@ -449,8 +464,8 @@ function conflictFromDirect(
       hasConflicts: true,
       conflicts: [
         {
-          lineStart,
-          lineEnd,
+          lineStart: 1,
+          lineEnd: theirsLines.length + oursLines.length + 3,
           base: '',
           theirs: actualContent,
           ours: target.content,
@@ -464,6 +479,7 @@ function conflictFromDirect(
     },
     newContent: target.content,
     newContentHash: target.hash,
+    theirsHash,
     templateKey: toTemplateKey('', target.entry.sourcePath),
   };
 }

@@ -1,4 +1,3 @@
-import { type ReactNode } from 'react';
 import { Box, Text } from 'ink';
 import zod from 'zod';
 
@@ -9,8 +8,9 @@ import DiffView from '../components/DiffView.js';
 import NewValuesPrompt from '../components/NewValuesPrompt.js';
 import NewModulesReview from '../components/NewModulesReview.js';
 import RemovedFilesReview from '../components/RemovedFilesReview.js';
-import UpdateProgress from '../components/UpdateProgress.js';
+import CommandProgress from '../components/CommandProgress.js';
 import UpdateSummary from '../components/UpdateSummary.js';
+import CommandFrame from '../components/CommandFrame.js';
 import Header from '../components/Header.js';
 
 import { useUpdateMachine } from './hooks/use-update-machine.js';
@@ -44,18 +44,18 @@ export default function Update({ options }: Props) {
   if (phase.kind === 'booting' || phase.kind === 'loading') {
     const msg = phase.kind === 'loading' ? phase.message : 'Starting…';
     return (
-      <Frame dryRun={dryRun}>
+      <CommandFrame dryRun={dryRun}>
         <Box gap={1}>
           <Spinner />
           <Text>{msg}</Text>
         </Box>
-      </Frame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'no-install') {
     return (
-      <Frame dryRun={dryRun}>
+      <CommandFrame dryRun={dryRun}>
         <Box flexDirection="column" gap={1}>
           <StatusMessage variant="warning">
             No shard installed in this directory.
@@ -64,26 +64,26 @@ export default function Update({ options }: Props) {
             Run <Text bold>shardmind install &lt;shard&gt;</Text> first, then come back to update.
           </Text>
         </Box>
-      </Frame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'up-to-date') {
     return (
-      <Frame dryRun={dryRun}>
+      <CommandFrame dryRun={dryRun}>
         <Box flexDirection="column" gap={1}>
           <Header manifest={phase.manifest} />
           <StatusMessage variant="success">
             Already up to date at v{phase.state.version}.
           </StatusMessage>
         </Box>
-      </Frame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'prompt-new-values') {
     return (
-      <Frame dryRun={dryRun}>
+      <CommandFrame dryRun={dryRun}>
         <Header manifest={phase.ctx.newManifest} />
         <NewValuesPrompt
           schema={phase.ctx.newSchema}
@@ -91,31 +91,31 @@ export default function Update({ options }: Props) {
           existingValues={phase.ctx.migratedValues}
           onComplete={onNewValuesComplete}
         />
-      </Frame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'prompt-new-modules') {
     return (
-      <Frame dryRun={dryRun}>
+      <CommandFrame dryRun={dryRun}>
         <Header manifest={phase.ctx.newManifest} />
         <NewModulesReview
           offered={phase.ctx.newOptionalModules}
           onSubmit={onNewModulesComplete}
         />
-      </Frame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'prompt-removed-files') {
     return (
-      <Frame dryRun={dryRun}>
+      <CommandFrame dryRun={dryRun}>
         <Header manifest={phase.ctx.newManifest} />
         <RemovedFilesReview
           paths={phase.paths}
           onSubmit={onRemovedFilesComplete}
         />
-      </Frame>
+      </CommandFrame>
     );
   }
 
@@ -123,7 +123,7 @@ export default function Update({ options }: Props) {
     const pending = phase.plan.pendingConflicts[phase.currentIndex];
     if (!pending) return null;
     return (
-      <Frame dryRun={dryRun}>
+      <CommandFrame dryRun={dryRun}>
         <DiffView
           path={pending.path}
           index={phase.currentIndex + 1}
@@ -131,27 +131,27 @@ export default function Update({ options }: Props) {
           result={pending.result}
           onChoice={onConflictChoice}
         />
-      </Frame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'writing') {
     return (
-      <Frame dryRun={dryRun} showLegend={false}>
-        <UpdateProgress
+      <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandProgress
           current={phase.current}
           total={phase.total}
           label={phase.label}
           verbose={verbose}
           history={phase.history}
         />
-      </Frame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'summary') {
     return (
-      <Frame dryRun={dryRun} showLegend={false}>
+      <CommandFrame dryRun={dryRun} showLegend={false}>
         <UpdateSummary
           summary={phase.summary}
           durationMs={phase.durationMs}
@@ -159,18 +159,18 @@ export default function Update({ options }: Props) {
           hookOutput={phase.hook}
           dryRun={phase.dryRun}
         />
-      </Frame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'cancelled') {
     return (
-      <Frame dryRun={dryRun} showLegend={false}>
+      <CommandFrame dryRun={dryRun} showLegend={false}>
         <Box flexDirection="column">
           <Alert variant="info">Cancelled</Alert>
           <Text dimColor>{phase.reason}</Text>
         </Box>
-      </Frame>
+      </CommandFrame>
     );
   }
 
@@ -178,43 +178,14 @@ export default function Update({ options }: Props) {
   const code = err instanceof ShardMindError ? err.code : null;
   const hint = err instanceof ShardMindError ? err.hint : null;
   return (
-    <Frame dryRun={dryRun} showLegend={false}>
+    <CommandFrame dryRun={dryRun} showLegend={false}>
       <Box flexDirection="column" gap={1}>
         <StatusMessage variant="error">{err.message}</StatusMessage>
         {code && <Text dimColor>code: {code}</Text>}
         {hint && <Text>{hint}</Text>}
         {phase.detail && <Text dimColor>{phase.detail}</Text>}
       </Box>
-    </Frame>
-  );
-}
-
-function Frame({
-  children,
-  dryRun,
-  showLegend = true,
-}: {
-  children: ReactNode;
-  dryRun: boolean;
-  showLegend?: boolean;
-}) {
-  return (
-    <Box flexDirection="column" gap={1}>
-      {dryRun && (
-        <Box>
-          <Text backgroundColor="yellow" color="black">{' DRY RUN '}</Text>
-          <Text dimColor> no files will be written</Text>
-        </Box>
-      )}
-      {children}
-      {showLegend && (
-        <Box marginTop={1}>
-          <Text dimColor>
-            ↑↓ navigate · Space select (multi) · Enter confirm · Esc back · Ctrl+C cancel
-          </Text>
-        </Box>
-      )}
-    </Box>
+    </CommandFrame>
   );
 }
 

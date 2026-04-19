@@ -269,7 +269,6 @@ describe('planUpdate', () => {
       newSelections: selections,
       newTempDir: shardDir,
       newRenderContext: renderCtx(values),
-      oldRenderContext: renderCtx(values),
       removedFileDecisions: {},
     });
 
@@ -331,7 +330,6 @@ describe('planUpdate', () => {
       newSelections: selections,
       newTempDir: shardDir,
       newRenderContext: renderCtx(values),
-      oldRenderContext: renderCtx(values),
       removedFileDecisions: {},
     });
 
@@ -405,7 +403,6 @@ describe('planUpdate', () => {
       newSelections: selections,
       newTempDir: shardDir,
       newRenderContext: renderCtx({}),
-      oldRenderContext: renderCtx({}),
       removedFileDecisions: {},
     });
 
@@ -467,7 +464,6 @@ describe('planUpdate', () => {
       newSelections: selections,
       newTempDir: shardDir,
       newRenderContext: renderCtx({}),
-      oldRenderContext: renderCtx({}),
       removedFileDecisions: {},
     });
 
@@ -501,7 +497,6 @@ describe('planUpdate', () => {
       newSelections: selections,
       newTempDir: shardDir,
       newRenderContext: renderCtx({}),
-      oldRenderContext: renderCtx({}),
       removedFileDecisions: {},
     });
 
@@ -553,7 +548,6 @@ describe('planUpdate', () => {
       newSelections: selections,
       newTempDir: shardDir,
       newRenderContext: renderCtx({}),
-      oldRenderContext: renderCtx({}),
       removedFileDecisions: {},
     });
 
@@ -604,7 +598,6 @@ describe('planUpdate', () => {
       newSelections: selections,
       newTempDir: shardDir,
       newRenderContext: renderCtx({}),
-      oldRenderContext: renderCtx({}),
       removedFileDecisions: {},
     });
 
@@ -655,7 +648,6 @@ describe('planUpdate', () => {
       newSelections: selections,
       newTempDir: shardDir,
       newRenderContext: renderCtx({}),
-      oldRenderContext: renderCtx({}),
       removedFileDecisions: { 'brain/UserEdited.md': 'delete' },
     });
 
@@ -706,7 +698,6 @@ describe('planUpdate', () => {
       newSelections: selections,
       newTempDir: shardDir,
       newRenderContext: renderCtx({}),
-      oldRenderContext: renderCtx({}),
       removedFileDecisions: {},
     });
 
@@ -759,7 +750,6 @@ describe('planUpdate', () => {
       newSelections: selections,
       newTempDir: shardDir,
       newRenderContext: renderCtx({}),
-      oldRenderContext: renderCtx({}),
       removedFileDecisions: {},
     });
 

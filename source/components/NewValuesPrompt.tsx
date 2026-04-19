@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import ValueInput from './ValueInput.js';
 import type { ShardSchema } from '../runtime/types.js';
@@ -22,24 +22,17 @@ export default function NewValuesPrompt({
   existingValues,
   onComplete,
 }: NewValuesPromptProps) {
-  const [index, setIndex] = useState(0);
-  const [values, setValues] = useState<Record<string, unknown>>(existingValues);
-
   const defs = useMemo(
     () => keys.map((k) => [k, schema.values[k]!] as const),
     [keys, schema.values],
   );
+  const [index, setIndex] = useState(0);
+  const [values, setValues] = useState<Record<string, unknown>>(existingValues);
 
-  const done = index >= defs.length;
-  useEffect(() => {
-    if (done) onComplete(values);
-    // One-shot: we only want to fire once when we cross into "done".
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [done]);
+  const entry = defs[index];
+  if (!entry) return null;
 
-  if (done) return null;
-
-  const [key, def] = defs[index]!;
+  const [key, def] = entry;
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold>New values since your last install</Text>
@@ -53,8 +46,12 @@ export default function NewValuesPrompt({
         initialValue={values[key]}
         onSubmit={(v) => {
           const next = { ...values, [key]: v };
+          if (index + 1 >= defs.length) {
+            onComplete(next);
+            return;
+          }
           setValues(next);
-          setIndex((i) => i + 1);
+          setIndex(index + 1);
         }}
       />
     </Box>

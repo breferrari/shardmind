@@ -42,8 +42,9 @@ import {
   rollbackInstall,
   type BackupRecord,
 } from '../../core/install-executor.js';
-import { runPostInstallHook, type HookResult } from '../../core/hook.js';
+import { runPostInstallHook } from '../../core/hook.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
+import { summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
 
 import type { WizardResult } from '../../components/InstallWizard.js';
 import type { CollisionAction } from '../../components/CollisionReview.js';
@@ -59,12 +60,6 @@ export interface PreparedContext {
   prefillValues: Record<string, unknown>;
   moduleFileCounts: Record<string, number>;
   alwaysIncludedFileCount: number;
-}
-
-export interface HookSummary {
-  deferred?: boolean;
-  stdout?: string;
-  exitCode?: number;
 }
 
 export type Phase =
@@ -124,25 +119,14 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     [exit],
   );
 
-  // SIGINT handler: if a render is in progress when the user hits Ctrl+C,
-  // roll back partial writes and restore backups before exiting. Default
-  // Ink behavior exits without knowing about our bookkeeping.
-  useEffect(() => {
-    const handler = () => {
-      if (installingRef.current && !dryRun) {
-        // Fire-and-forget; process is about to exit anyway.
-        rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current)
-          .catch(() => {})
-          .finally(() => process.exit(130));
-      } else {
-        process.exit(130);
-      }
-    };
-    process.on('SIGINT', handler);
-    return () => {
-      process.off('SIGINT', handler);
-    };
-  }, [dryRun, vaultRoot]);
+  // If a render is in progress when the user hits Ctrl+C, roll back
+  // partial writes and restore backups before exiting. Ink's default
+  // exit ignores our bookkeeping.
+  useSigintRollback({
+    enabled: !dryRun,
+    isActive: () => installingRef.current,
+    rollback: () => rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current),
+  });
 
   useEffect(() => {
     let disposed = false;
@@ -505,15 +489,3 @@ async function loadValuesFile(
   return filtered;
 }
 
-function summarizeHook(result: HookResult): HookSummary | null {
-  switch (result.kind) {
-    case 'absent':
-      return null;
-    case 'deferred':
-      return { deferred: true };
-    case 'ran':
-      return { stdout: result.stdout, exitCode: result.exitCode };
-    case 'failed':
-      return { stdout: result.message, exitCode: 1 };
-  }
-}

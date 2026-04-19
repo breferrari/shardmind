@@ -186,7 +186,6 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       newSelections: selections,
       newTempDir: newShard,
       newRenderContext: renderCtx,
-      oldRenderContext: renderCtx,
       removedFileDecisions: {},
     });
 
@@ -256,7 +255,6 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       newSelections: selections,
       newTempDir: newShard,
       newRenderContext: renderCtx,
-      oldRenderContext: renderCtx,
       removedFileDecisions: {},
     });
 
@@ -341,7 +339,6 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       newSelections: selections,
       newTempDir: newShard,
       newRenderContext: renderCtx,
-      oldRenderContext: renderCtx,
       removedFileDecisions: {},
     });
 
@@ -440,5 +437,57 @@ describe('update pipeline (against examples/minimal-shard)', () => {
 
     const needing = removedFilesNeedingDecision(drift, newPaths);
     expect(needing).toContain(modifiedPath);
+  });
+
+  it('keep_as_user preserves the file on disk and untracks it from state', async () => {
+    await installBaseline(vault, MINIMAL_SHARD, 'sha-0.1.0');
+    const modifiedPath = 'brain/North Star.md';
+    const customContent = 'My own edits\n';
+    await fsp.writeFile(path.join(vault, modifiedPath), customContent, 'utf-8');
+
+    await copyShard(MINIMAL_SHARD, newShard);
+    await bumpVersion(newShard, '0.2.0');
+    await fsp.rm(path.join(newShard, 'templates/brain/North Star.md.njk'), { force: true });
+
+    const state = (await readState(vault)) as ShardState;
+    const oldValues = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
+    const newManifest = await parseManifest(path.join(newShard, 'shard.yaml'));
+    const newSchema = await parseSchema(path.join(newShard, 'shard-schema.yaml'));
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const renderCtx = buildRenderContext(newManifest, oldValues, selections);
+    const drift = await detectDrift(vault, state);
+
+    const plan = await planUpdate({
+      vaultRoot: vault,
+      currentState: state,
+      drift,
+      oldValues,
+      newValues: oldValues,
+      newSchema,
+      newSelections: selections,
+      newTempDir: newShard,
+      newRenderContext: renderCtx,
+      removedFileDecisions: { [modifiedPath]: 'keep' },
+    });
+
+    expect(plan.actions).toContainEqual({ kind: 'keep_as_user', path: modifiedPath });
+
+    await runUpdate({
+      vaultRoot: vault,
+      plan,
+      conflictResolutions: {},
+      currentState: state,
+      newManifest,
+      newSchema,
+      newValues: oldValues,
+      newSelections: selections,
+      resolved: { ...RESOLVED, version: newManifest.version },
+      tarballSha256: 'sha-0.2.0',
+      newTempDir: newShard,
+    });
+
+    expect(await fsp.readFile(path.join(vault, modifiedPath), 'utf-8')).toBe(customContent);
+    const nextState = (await readState(vault)) as ShardState;
+    expect(nextState.files[modifiedPath]).toBeUndefined();
   });
 });
