@@ -33,7 +33,11 @@ let defaultStringEnv: nunjucks.Environment | undefined;
 
 function getDefaultStringEnv(): nunjucks.Environment {
   if (!defaultStringEnv) {
-    defaultStringEnv = new nunjucks.Environment(null, NUNJUCKS_OPTS);
+    // Empty loader array → no filesystem resolution. `{% include %}` et al.
+    // wouldn't find anything, which is the correct behavior for in-memory
+    // string rendering. (Passing `null` here works today but isn't
+    // documented by nunjucks as a supported loader value.)
+    defaultStringEnv = new nunjucks.Environment([], NUNJUCKS_OPTS);
   }
   return defaultStringEnv;
 }

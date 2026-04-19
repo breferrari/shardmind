@@ -25,11 +25,12 @@ const CTX: RenderContext = {
   year: '2026',
 };
 
-describe('merge adversarial — sentinel corruption vectors', () => {
-  // differ.ts prefixes every line with U+0001 to sidestep the node-diff3
-  // prototype-pollution crash. If the strip pass is implemented naively
-  // (global replace), legitimate user content containing U+0001 would be
-  // mangled. Probe for it.
+describe('merge adversarial — control characters in line content', () => {
+  // `differ.ts` uses a `LineInterner` that maps every unique line to an
+  // integer-named token before passing it to diff3, so user content can
+  // contain *any* byte — including control characters that an earlier
+  // sentinel-prefix implementation would have mangled. These tests exist
+  // as a regression guard against reintroducing a strip-based encoding.
 
   it('preserves U+0001 that appears inside line content', () => {
     const content = 'before\u0001after\n';
@@ -65,7 +66,6 @@ describe('merge adversarial — prototype pollution vectors', () => {
     it(`handles "${key}" as a single-line file`, () => {
       const result = threeWayMerge(key, key, key);
       expect(result.content).toBe(key);
-      expect(result.content).not.toContain('\u0001');
     });
   }
 
@@ -84,7 +84,6 @@ describe('merge adversarial — prototype pollution vectors', () => {
     expect(result.conflicts).toHaveLength(1);
     expect(result.content).toContain('__proto__');
     expect(result.content).toContain('constructor');
-    expect(result.content).not.toContain('\u0001');
   });
 });
 
@@ -206,7 +205,6 @@ describe('merge adversarial — size extremes', () => {
     const ours = Array.from({ length: 20 }, (_, i) => `shared-${i}\nours-${i}`).join('\n') + '\n';
     const result = threeWayMerge(base, theirs, ours);
     expect(result.conflicts.length).toBeGreaterThan(5);
-    expect(result.content).not.toContain('\u0001');
   });
 });
 

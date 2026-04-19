@@ -42,6 +42,7 @@ import { computeMergeAction } from '../../source/core/differ.js';
 import { renderString } from '../../source/core/renderer.js';
 import { assertNever } from '../../source/runtime/types.js';
 import type { RenderContext } from '../../source/runtime/types.js';
+import { isEnoent } from '../../source/runtime/errno.js';
 import { makeShardState } from '../helpers/index.js';
 
 const FIXTURES = path.resolve('tests/fixtures/merge');
@@ -109,12 +110,14 @@ async function loadFiles(dir: string): Promise<FixtureFiles> {
   ]);
 
   // expected-output.md is optional — conflict scenarios omit it because
-  // the marker format is implementation-defined.
+  // the marker format is implementation-defined. Only ENOENT is tolerated;
+  // any other read error (permissions, etc.) is a real fixture problem
+  // and should surface loudly.
   let expectedOutput: string | null = null;
   try {
     expectedOutput = await fsp.readFile(path.join(base, 'expected-output.md'), 'utf-8');
-  } catch {
-    /* no-op */
+  } catch (err) {
+    if (!isEnoent(err)) throw err;
   }
 
   return {

@@ -30,23 +30,43 @@ type Classified = { bucket: Bucket; entry: DriftEntry };
 const ENGINE_RESERVED_FILES: ReadonlySet<string> = new Set([VALUES_FILE]);
 
 /**
- * Directory names that are never scanned for orphans. `.shardmind/` holds
- * engine state; `.git/` and `.obsidian/` are third-party metadata the shard
- * never claims to manage.
+ * Top-level directory names that should never be treated as "tracked" for
+ * orphan scanning. `.shardmind/` holds engine state; `.git/` and `.obsidian/`
+ * are third-party metadata the shard never claims to manage. Applied when
+ * deriving `trackedDirs` so we never readdir into one of these, even if the
+ * shard misconfigures a tracked file under them.
  */
-const UNSCANNED_DIRS: ReadonlySet<string> = new Set([SHARDMIND_DIR, GIT_DIR, OBSIDIAN_DIR]);
+const UNSCANNED_DIR_NAMES: ReadonlySet<string> = new Set([
+  SHARDMIND_DIR,
+  GIT_DIR,
+  OBSIDIAN_DIR,
+]);
+
+/**
+ * Cap on concurrent file-read handles when hashing the vault. A small limit
+ * keeps per-update work bounded below typical OS fd limits (macOS defaults
+ * to ~256 without `ulimit -n`) while still saturating disk on realistic
+ * vault sizes.
+ */
+const DRIFT_READ_CONCURRENCY = 32;
 
 export async function detectDrift(
   vaultRoot: string,
   state: ShardState,
 ): Promise<DriftReport> {
-  const trackedPaths = new Set(Object.keys(state.files));
+  // Normalize to forward slashes so downstream lookups are separator-
+  // independent. State-file keys are written via `toPosix()` at install
+  // time, but defensive normalization guards any caller that writes state
+  // with native separators.
+  const trackedPaths: ReadonlySet<string> = new Set(
+    Object.keys(state.files).map(toPosix),
+  );
 
   const [classified, orphaned] = await Promise.all([
-    Promise.all(
-      Object.entries(state.files).map(([relPath, file]) =>
-        classifyFile(vaultRoot, relPath, file),
-      ),
+    mapConcurrent(
+      Object.entries(state.files),
+      DRIFT_READ_CONCURRENCY,
+      ([relPath, file]) => classifyFile(vaultRoot, relPath, file),
     ),
     detectOrphans(vaultRoot, trackedPaths),
   ]);
@@ -142,12 +162,13 @@ async function detectOrphans(
 ): Promise<string[]> {
   const trackedDirs = new Set<string>();
   for (const relPath of trackedPaths) {
-    // Normalize to forward slashes before posix.dirname. State-file keys are
-    // written through `toPosix()` at install time so they should already be
-    // forward-slash, but a defensive normalization costs nothing and guards
-    // against any future caller that writes state with native separators.
-    const dir = path.posix.dirname(relPath.replace(/\\/g, '/'));
-    trackedDirs.add(dir === '.' ? '' : dir);
+    const dir = path.posix.dirname(relPath);
+    const normalizedDir = dir === '.' ? '' : dir;
+    // Never scan directories under an engine-reserved or third-party
+    // namespace, even if the shard somehow tracks a file inside one.
+    const topSegment = normalizedDir.split('/')[0] ?? '';
+    if (topSegment && UNSCANNED_DIR_NAMES.has(topSegment)) continue;
+    trackedDirs.add(normalizedDir);
   }
 
   const perDir = await Promise.all(
@@ -174,11 +195,37 @@ async function scanDirForOrphans(
   const orphans: string[] = [];
   for (const entry of entries) {
     if (!entry.isFile()) continue;
-    if (UNSCANNED_DIRS.has(entry.name)) continue;
     const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
     if (trackedPaths.has(rel)) continue;
     if (ENGINE_RESERVED_FILES.has(rel)) continue;
     orphans.push(rel);
   }
   return orphans;
+}
+
+function toPosix(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
+/**
+ * Bounded-concurrency `map`. Runs `fn` over `items` with at most
+ * `concurrency` in flight at once, preserving the input order in the
+ * returned array. Used to cap file-descriptor pressure during drift reads.
+ */
+async function mapConcurrent<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }

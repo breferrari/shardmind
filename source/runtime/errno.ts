@@ -8,10 +8,11 @@
  */
 
 export function errnoCode(err: unknown): string | undefined {
-  if (err !== null && typeof err === 'object' && 'code' in err) {
-    return (err as { code?: string }).code;
-  }
-  return undefined;
+  if (err === null || typeof err !== 'object' || !('code' in err)) return undefined;
+  const code = (err as { code?: unknown }).code;
+  // Node's types document `code` as string, but we guard at runtime so
+  // a stray non-string (some custom errors) can't violate our return type.
+  return typeof code === 'string' ? code : undefined;
 }
 
 export function isEnoent(err: unknown): boolean {

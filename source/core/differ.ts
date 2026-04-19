@@ -133,13 +133,20 @@ export function threeWayMerge(
   theirs: string,
   ours: string,
 ): ThreeWayMergeResult {
-  // Intern every unique line to an integer-named token. See the block
-  // comment on LINE_SPLIT for why this is load-bearing.
+  // Intern every unique line to an integer-named token. Load-bearing because
+  // node-diff3's LCS uses `{}` keyed by line content and collides with
+  // Object.prototype member names (see block comment above the LineInterner
+  // class). Interning to integer-named tokens sidesteps that by construction.
+  //
+  // Note: `split(/\r?\n/)` produces a trailing "" token when input ends with a
+  // newline (e.g. "a\nb\n" → ["a", "b", ""]). That trailing "" is how the
+  // newline-as-document-property is preserved through diff3 — we keep it in
+  // the merge itself and correct for it in stats after the loop.
   const interner = new LineInterner();
   const regions: IRegion<string>[] = diff3MergeRegions(
-    interner.tokenize(theirs),
-    interner.tokenize(base),
-    interner.tokenize(ours),
+    interner.tokenize(theirs.split(LINE_SPLIT)),
+    interner.tokenize(base.split(LINE_SPLIT)),
+    interner.tokenize(ours.split(LINE_SPLIT)),
   );
 
   const merged: string[] = [];
@@ -168,6 +175,14 @@ export function threeWayMerge(
     stats.linesConflicted += resolution.conflictedLines;
   }
 
+  // Correct stats for the trailing-newline token. When all three inputs end
+  // with `\n`, `split` produced a trailing "" on each, diff3 emitted it as
+  // part of a stable unchanged region, and it's padded `linesUnchanged` by 1.
+  // Subtract it so stats match user-visible line counts.
+  if (merged.length > 0 && merged[merged.length - 1] === '' && stats.linesUnchanged > 0) {
+    stats.linesUnchanged -= 1;
+  }
+
   // Merged output is always LF; callers convert at the write boundary.
   return { content: merged.join('\n'), conflicts, stats };
 }
@@ -176,8 +191,8 @@ class LineInterner {
   private readonly table = new Map<string, string>();
   private readonly byIndex: string[] = [];
 
-  tokenize(text: string): string[] {
-    return text.split(LINE_SPLIT).map(line => {
+  tokenize(lines: readonly string[]): string[] {
+    return lines.map(line => {
       let token = this.table.get(line);
       if (token === undefined) {
         token = String(this.byIndex.length);
