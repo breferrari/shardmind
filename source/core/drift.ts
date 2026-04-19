@@ -16,19 +16,39 @@ import path from 'node:path';
 import type { ShardState, DriftReport, DriftEntry, FileState } from '../runtime/types.js';
 import { sha256 } from './fs-utils.js';
 import { isEnoent } from '../runtime/errno.js';
+import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
 
 type Bucket = 'managed' | 'modified' | 'volatile' | 'missing';
 type Classified = { bucket: Bucket; entry: DriftEntry };
+
+/**
+ * Paths ShardMind owns but doesn't record in `state.files`. Excluded from
+ * orphan detection because they're the engine's own scaffolding, not user
+ * content.
+ */
+const ENGINE_RESERVED_FILES: ReadonlySet<string> = new Set([VALUES_FILE]);
+
+/**
+ * Directory names that are never scanned for orphans. `.shardmind/` holds
+ * engine state; `.git/` and `.obsidian/` are third-party metadata the shard
+ * never claims to manage.
+ */
+const UNSCANNED_DIRS: ReadonlySet<string> = new Set([SHARDMIND_DIR, '.git', '.obsidian']);
 
 export async function detectDrift(
   vaultRoot: string,
   state: ShardState,
 ): Promise<DriftReport> {
-  const classified = await Promise.all(
-    Object.entries(state.files).map(([relPath, file]) =>
-      classifyFile(vaultRoot, relPath, file),
+  const trackedPaths = new Set(Object.keys(state.files));
+
+  const [classified, orphaned] = await Promise.all([
+    Promise.all(
+      Object.entries(state.files).map(([relPath, file]) =>
+        classifyFile(vaultRoot, relPath, file),
+      ),
     ),
-  );
+    detectOrphans(vaultRoot, trackedPaths),
+  ]);
 
   const managed: DriftEntry[] = [];
   const modified: DriftEntry[] = [];
@@ -39,12 +59,6 @@ export async function detectDrift(
   for (const { bucket, entry } of classified) {
     byBucket[bucket].push(entry);
   }
-
-  // Orphan detection (files on disk under tracked paths but not in state) is
-  // deferred to v0.2. "Tracked paths" is under-specified once _each iterators
-  // have exploded one template into N per-item files, and no v0.1 flow needs
-  // the information. See #47.
-  const orphaned: string[] = [];
 
   return { managed, modified, volatile, missing, orphaned };
 }
@@ -106,4 +120,64 @@ function missingEntry(relPath: string, file: FileState): DriftEntry {
     actualHash: null,
     ownership: file.ownership === 'modified' ? 'modified' : 'managed',
   };
+}
+
+/**
+ * A file is orphaned when it sits in a directory that contains at least one
+ * state-tracked file, yet isn't itself in state.files. Non-recursive: a
+ * subdirectory only counts as tracked if it directly holds a tracked file.
+ *
+ * Example: if `skills/leadership.md` is tracked, then `skills/` is a tracked
+ * directory; a user-created `skills/my-extra.md` is an orphan. But
+ * `brain/daily/2026-04-19.md` (under an untracked sub-directory) is user
+ * content that ShardMind never claimed — not an orphan.
+ *
+ * Engine scaffolding (`.shardmind/`, `shard-values.yaml`) and third-party
+ * metadata (`.git/`, `.obsidian/`) are excluded.
+ */
+async function detectOrphans(
+  vaultRoot: string,
+  trackedPaths: ReadonlySet<string>,
+): Promise<string[]> {
+  const trackedDirs = new Set<string>();
+  for (const relPath of trackedPaths) {
+    const dir = path.posix.dirname(toPosixPath(relPath));
+    trackedDirs.add(dir === '.' ? '' : dir);
+  }
+
+  const perDir = await Promise.all(
+    [...trackedDirs].map(relDir => scanDirForOrphans(vaultRoot, relDir, trackedPaths)),
+  );
+
+  return perDir.flat().sort();
+}
+
+async function scanDirForOrphans(
+  vaultRoot: string,
+  relDir: string,
+  trackedPaths: ReadonlySet<string>,
+): Promise<string[]> {
+  const absDir = path.join(vaultRoot, relDir);
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = await fsp.readdir(absDir, { withFileTypes: true });
+  } catch (err) {
+    if (isEnoent(err)) return [];
+    throw err;
+  }
+
+  const orphans: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (UNSCANNED_DIRS.has(entry.name)) continue;
+    const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
+    if (trackedPaths.has(rel)) continue;
+    if (ENGINE_RESERVED_FILES.has(rel)) continue;
+    orphans.push(rel);
+  }
+  return orphans;
+}
+
+function toPosixPath(p: string): string {
+  return p.replace(/\\/g, '/');
 }

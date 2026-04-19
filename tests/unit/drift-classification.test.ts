@@ -144,7 +144,6 @@ describe('detectDrift', () => {
     expect(report.modified.map(e => e.path)).toEqual(['x.md']);
     expect(report.volatile.map(e => e.path)).toEqual(['v.md']);
     expect(report.missing.map(e => e.path)).toEqual(['missing.md']);
-    expect(report.orphaned).toEqual([]); // deferred in v0.1
   });
 
   it('returns empty buckets for a state with no files', async () => {
@@ -155,5 +154,104 @@ describe('detectDrift', () => {
     expect(report.volatile).toEqual([]);
     expect(report.missing).toEqual([]);
     expect(report.orphaned).toEqual([]);
+  });
+});
+
+describe('detectDrift — orphan detection', () => {
+  it('reports a user file alongside a tracked file as orphaned', async () => {
+    await writeFile('skills/leadership.md', '# Leadership\n');
+    await writeFile('skills/my-extra-skill.md', '# My extra skill\n');
+
+    const state = makeStateWithFiles({
+      'skills/leadership.md': {
+        template: 'skills/_each.md.njk',
+        rendered_hash: sha256('# Leadership\n'),
+        ownership: 'managed',
+      },
+    });
+
+    const report = await detectDrift(vaultRoot, state);
+
+    expect(report.orphaned).toEqual(['skills/my-extra-skill.md']);
+    expect(report.managed).toHaveLength(1);
+  });
+
+  it('does not recurse into untracked subdirectories', async () => {
+    await writeFile('CLAUDE.md', '# shard\n');
+    await writeFile('brain/daily/2026-04-19.md', 'user note\n');
+
+    const state = makeStateWithFiles({
+      'CLAUDE.md': {
+        template: 'CLAUDE.md.njk',
+        rendered_hash: sha256('# shard\n'),
+        ownership: 'managed',
+      },
+    });
+
+    const report = await detectDrift(vaultRoot, state);
+
+    // `brain/daily/` has no tracked files — user content there is not the
+    // shard's concern and must not appear as an orphan.
+    expect(report.orphaned).not.toContain('brain/daily/2026-04-19.md');
+  });
+
+  it('excludes engine-reserved files (shard-values.yaml)', async () => {
+    await writeFile('CLAUDE.md', '# shard\n');
+    await writeFile('shard-values.yaml', 'user_name: "Alice"\n');
+
+    const state = makeStateWithFiles({
+      'CLAUDE.md': {
+        template: 'CLAUDE.md.njk',
+        rendered_hash: sha256('# shard\n'),
+        ownership: 'managed',
+      },
+    });
+
+    const report = await detectDrift(vaultRoot, state);
+
+    expect(report.orphaned).not.toContain('shard-values.yaml');
+  });
+
+  it('never scans .shardmind/, .git/, or .obsidian/', async () => {
+    await writeFile('CLAUDE.md', '# shard\n');
+    await writeFile('.shardmind/state.json', '{}');
+    await writeFile('.git/HEAD', 'ref: refs/heads/main\n');
+    await writeFile('.obsidian/app.json', '{}');
+
+    const state = makeStateWithFiles({
+      'CLAUDE.md': {
+        template: 'CLAUDE.md.njk',
+        rendered_hash: sha256('# shard\n'),
+        ownership: 'managed',
+      },
+    });
+
+    const report = await detectDrift(vaultRoot, state);
+
+    expect(report.orphaned).toEqual([]);
+  });
+
+  it('aggregates orphans across multiple tracked directories', async () => {
+    await writeFile('CLAUDE.md', '# root\n');
+    await writeFile('extra-at-root.md', 'user\n');
+    await writeFile('skills/leadership.md', '# L\n');
+    await writeFile('skills/my-extra.md', 'user\n');
+
+    const state = makeStateWithFiles({
+      'CLAUDE.md': {
+        template: 'CLAUDE.md.njk',
+        rendered_hash: sha256('# root\n'),
+        ownership: 'managed',
+      },
+      'skills/leadership.md': {
+        template: 'skills/_each.md.njk',
+        rendered_hash: sha256('# L\n'),
+        ownership: 'managed',
+      },
+    });
+
+    const report = await detectDrift(vaultRoot, state);
+
+    expect(report.orphaned).toEqual(['extra-at-root.md', 'skills/my-extra.md']);
   });
 });
