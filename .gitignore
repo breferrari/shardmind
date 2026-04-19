@@ -58,6 +58,7 @@ yarn.lock
 # (commands, agents, scripts, skills, settings.json) that ShardMind installs.
 # Only ignore the auto-memory subdirectories that agents generate at runtime.
 .claude/memory/
+.claude/scheduled_tasks.lock
 .claude/projects/
 .agent/
 memory/
