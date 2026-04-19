@@ -237,11 +237,14 @@ export interface HookContext {
   previousVersion?: string;
 }
 
-export class ShardMindError extends Error {
-  code: string;
-  hint?: string;
+import type { ErrorCode } from './errors.js';
+export type { ErrorCode } from './errors.js';
 
-  constructor(message: string, code: string, hint?: string) {
+export class ShardMindError extends Error {
+  readonly code: ErrorCode;
+  readonly hint?: string;
+
+  constructor(message: string, code: ErrorCode, hint?: string) {
     super(message);
     this.name = 'ShardMindError';
     this.code = code;
