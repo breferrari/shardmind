@@ -111,10 +111,13 @@ describe('merge engine (fixture-driven)', () => {
   for (const dir of fixtureDirs) {
     const scenario = loadScenario(dir);
 
-    it(`${dir}: ${scenario.name}`, async () => {
-      // Dynamic import so each scenario fails independently until
-      // source/core/differ.ts lands. Vitest reports per-test failures
-      // rather than a single file-load error.
+    // `it.fails` marks these as expected-to-fail until source/core/differ.ts
+    // lands. CI stays green; once the implementer writes differ.ts, these
+    // tests will start passing, which flips `it.fails` to red and signals:
+    // "remove `.fails` now".
+    it.fails(`${dir}: ${scenario.name}`, async () => {
+      // Dynamic import so each scenario fails independently rather than
+      // crashing module load with a single ERR_MODULE_NOT_FOUND.
       const { computeMergeAction } = await import('../../source/core/differ.js');
 
       const files = await loadFiles(dir);
