@@ -10,7 +10,7 @@
  * See docs/IMPLEMENTATION.md §4.9 for the spec.
  */
 
-import { diff3MergeRegions, type IRegion } from 'node-diff3';
+import { diff3MergeRegions, type IRegion, type IUnstableRegion } from 'node-diff3';
 import type {
   MergeAction,
   MergeResult,
@@ -26,14 +26,20 @@ const CONFLICT_SEPARATOR = '=======';
 const CONFLICT_END = '>>>>>>> shard update';
 
 export interface ComputeMergeActionInput {
-  path: string;
-  ownership: 'managed' | 'modified';
-  oldTemplate: string;
-  newTemplate: string;
-  oldValues: Record<string, unknown>;
-  newValues: Record<string, unknown>;
-  actualContent: string;
-  renderContext: RenderContext;
+  readonly path: string;
+  readonly ownership: 'managed' | 'modified';
+  readonly oldTemplate: string;
+  readonly newTemplate: string;
+  readonly oldValues: Record<string, unknown>;
+  readonly newValues: Record<string, unknown>;
+  readonly actualContent: string;
+  readonly renderContext: RenderContext;
+}
+
+export interface ThreeWayMergeResult {
+  readonly content: string;
+  readonly conflicts: ConflictRegion[];
+  readonly stats: MergeResult['stats'];
 }
 
 export async function computeMergeAction(
@@ -58,19 +64,7 @@ export async function computeMergeAction(
     return { type: 'overwrite', content: ours };
   }
 
-  // ownership === 'modified'
-  const theirs = input.actualContent;
-  let merge: ReturnType<typeof threeWayMerge>;
-  try {
-    merge = threeWayMerge(base, theirs, ours);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new ShardMindError(
-      `Three-way merge failed for ${input.path}: ${message}`,
-      'MERGE_FAILED',
-      'Re-run with --verbose for the full trace, then report at github.com/breferrari/shardmind/issues.',
-    );
-  }
+  const merge = runMerge(base, input.actualContent, ours, input.path);
 
   if (merge.conflicts.length === 0) {
     return {
@@ -83,19 +77,28 @@ export async function computeMergeAction(
     };
   }
 
-  const result: MergeResult = {
-    content: merge.content,
-    hasConflicts: true,
-    conflicts: merge.conflicts,
-    stats: merge.stats,
+  return {
+    type: 'conflict',
+    result: {
+      content: merge.content,
+      hasConflicts: true,
+      conflicts: merge.conflicts,
+      stats: merge.stats,
+    },
   };
-  return { type: 'conflict', result };
 }
 
-interface ThreeWayMergeResult {
-  content: string;
-  conflicts: ConflictRegion[];
-  stats: MergeResult['stats'];
+function runMerge(base: string, theirs: string, ours: string, path: string): ThreeWayMergeResult {
+  try {
+    return threeWayMerge(base, theirs, ours);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new ShardMindError(
+      `Three-way merge failed for ${path}: ${message}`,
+      'MERGE_FAILED',
+      'Re-run with --verbose for the full trace, then report at github.com/breferrari/shardmind/issues.',
+    );
+  }
 }
 
 /**
@@ -113,79 +116,89 @@ export function threeWayMerge(
   // Normalize line endings to LF before splitting. `base` and `ours` are
   // renderer output (always LF), but `theirs` comes from disk and may be
   // CRLF on Windows. Without this, every line in theirs would trail with
-  // '\r', producing spurious conflicts against base/ours. The merged
-  // output is LF; callers that need platform-native line endings should
-  // convert at the write boundary.
-  const baseLines = base.split(/\r?\n/);
-  const theirsLines = theirs.split(/\r?\n/);
-  const oursLines = ours.split(/\r?\n/);
-
+  // '\r', producing spurious conflicts. Merged output is LF; callers that
+  // need platform-native line endings convert at the write boundary.
   const regions: IRegion<string>[] = diff3MergeRegions(
-    theirsLines,
-    baseLines,
-    oursLines,
+    theirs.split(/\r?\n/),
+    base.split(/\r?\n/),
+    ours.split(/\r?\n/),
   );
 
   const merged: string[] = [];
   const conflicts: ConflictRegion[] = [];
-  let linesUnchanged = 0;
-  let linesAutoMerged = 0;
-  let linesConflicted = 0;
+  const stats = { linesUnchanged: 0, linesAutoMerged: 0, linesConflicted: 0 };
 
   for (const region of regions) {
     if (region.stable) {
       merged.push(...region.bufferContent);
-      linesUnchanged += region.bufferContent.length;
+      // Stable region with buffer === 'o' means all three buffers agreed
+      // (truly unchanged). buffer === 'a' or 'b' means diff3 resolved to
+      // one side's version without ambiguity — count those as auto-merged.
+      if (region.buffer === 'o') {
+        stats.linesUnchanged += region.bufferContent.length;
+      } else {
+        stats.linesAutoMerged += region.bufferContent.length;
+      }
       continue;
     }
 
-    // Unstable region — classify as auto-merge or true conflict.
-    const theirsUnchanged = arraysEqual(region.aContent, region.oContent);
-    const oursUnchanged = arraysEqual(region.bContent, region.oContent);
-    const bothSame = arraysEqual(region.aContent, region.bContent);
-
-    if (theirsUnchanged) {
-      // User left base alone; shard changed → take ours.
-      merged.push(...region.bContent);
-      linesAutoMerged += region.bContent.length;
-    } else if (oursUnchanged) {
-      // Shard left base alone; user changed → take theirs.
-      merged.push(...region.aContent);
-      linesAutoMerged += region.aContent.length;
-    } else if (bothSame) {
-      // False conflict — both sides made the same change.
-      merged.push(...region.aContent);
-      linesAutoMerged += region.aContent.length;
-    } else {
-      const lineStart = merged.length + 1;
-      merged.push(CONFLICT_START);
-      merged.push(...region.aContent);
-      merged.push(CONFLICT_SEPARATOR);
-      merged.push(...region.bContent);
-      merged.push(CONFLICT_END);
-      const lineEnd = merged.length;
-      conflicts.push({
-        lineStart,
-        lineEnd,
-        base: region.oContent.join('\n'),
-        theirs: region.aContent.join('\n'),
-        ours: region.bContent.join('\n'),
-      });
-      linesConflicted += region.aContent.length + region.bContent.length;
-    }
+    const resolution = resolveUnstableRegion(region, merged.length);
+    merged.push(...resolution.lines);
+    if (resolution.conflict) conflicts.push(resolution.conflict);
+    stats.linesAutoMerged += resolution.autoMergedLines;
+    stats.linesConflicted += resolution.conflictedLines;
   }
 
+  return { content: merged.join('\n'), conflicts, stats };
+}
+
+interface RegionResolution {
+  readonly lines: readonly string[];
+  readonly conflict: ConflictRegion | null;
+  readonly autoMergedLines: number;
+  readonly conflictedLines: number;
+}
+
+/**
+ * Classify one unstable region. If either side kept the base unchanged (or
+ * both sides made the identical change), we can auto-merge. Otherwise we
+ * emit git-style conflict markers and describe a `ConflictRegion` for the
+ * UI layer.
+ *
+ * Pure function — no mutation. `mergedLengthBefore` is the length of the
+ * output buffer prior to this region and is used only to compute the
+ * 1-indexed line range recorded in the ConflictRegion.
+ */
+function resolveUnstableRegion(
+  region: IUnstableRegion<string>,
+  mergedLengthBefore: number,
+): RegionResolution {
+  const { aContent: theirs, bContent: ours, oContent: base } = region;
+
+  if (arraysEqual(theirs, base)) {
+    return { lines: ours, conflict: null, autoMergedLines: ours.length, conflictedLines: 0 };
+  }
+  if (arraysEqual(ours, base) || arraysEqual(theirs, ours)) {
+    return { lines: theirs, conflict: null, autoMergedLines: theirs.length, conflictedLines: 0 };
+  }
+
+  const lines = [CONFLICT_START, ...theirs, CONFLICT_SEPARATOR, ...ours, CONFLICT_END];
+  const lineStart = mergedLengthBefore + 1;
+  const lineEnd = mergedLengthBefore + lines.length;
   return {
-    content: merged.join('\n'),
-    conflicts,
-    stats: { linesUnchanged, linesAutoMerged, linesConflicted },
+    lines,
+    conflict: {
+      lineStart,
+      lineEnd,
+      base: base.join('\n'),
+      theirs: theirs.join('\n'),
+      ours: ours.join('\n'),
+    },
+    autoMergedLines: 0,
+    conflictedLines: theirs.length + ours.length,
   };
 }
 
-function arraysEqual<T>(a: T[], b: T[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
+function arraysEqual<T>(a: readonly T[], b: readonly T[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
 }

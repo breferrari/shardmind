@@ -2,8 +2,8 @@
  * Fixture-driven merge engine tests (drift.ts + differ.ts).
  *
  * Each directory under tests/fixtures/merge/ defines one scenario via
- * scenario.yaml + 6 companion files. The runner auto-discovers every fixture
- * and exercises the right code path based on scenario flags.
+ * scenario.yaml + 6 companion files. The runner auto-discovers every
+ * fixture and dispatches to the right code path based on scenario flags.
  *
  * On-disk layout per fixture:
  *   scenario.yaml            metadata only — flags + expected_action
@@ -17,13 +17,10 @@
  *                            depends on implementation — e.g. conflict
  *                            markers)
  *
- * The values YAMLs are the source of truth for render inputs; scenario.yaml
- * does not duplicate them.
- *
  * Dispatch map:
  *   - Scenarios 01–09, 12, 16  → computeMergeAction (skip / overwrite /
  *                                  auto_merge / conflict)
- *   - Scenario 17 (volatile)   → asserted via drift.detectDrift classification
+ *   - Scenario 17              → volatile — detectDrift classification only
  *   - Scenarios 10, 13, 15     → new_file — render new template, assert create
  *   - Scenarios 11, 14         → removed — assert prompt_delete[_module]
  *
@@ -43,7 +40,9 @@ import { describe, it, expect } from 'vitest';
 import { detectDrift } from '../../source/core/drift.js';
 import { computeMergeAction } from '../../source/core/differ.js';
 import { renderString } from '../../source/core/renderer.js';
-import { makeStateWithFiles } from '../helpers/shard-state.js';
+import { assertNever } from '../../source/runtime/types.js';
+import type { RenderContext } from '../../source/runtime/types.js';
+import { makeStateWithFiles } from '../helpers/index.js';
 
 const FIXTURES = path.resolve('tests/fixtures/merge');
 
@@ -80,6 +79,15 @@ interface FixtureFiles {
   expectedOutput: string | null;
 }
 
+type ScenarioKind = 'volatile' | 'new_file' | 'removed' | 'standard';
+
+function classifyScenario(s: Scenario): ScenarioKind {
+  if (s.volatile) return 'volatile';
+  if (s.new_file) return 'new_file';
+  if (s.removed) return 'removed';
+  return 'standard';
+}
+
 const fixtureDirs = fs
   .readdirSync(FIXTURES)
   .filter(name => fs.statSync(path.join(FIXTURES, name)).isDirectory())
@@ -100,12 +108,13 @@ async function loadFiles(dir: string): Promise<FixtureFiles> {
     fsp.readFile(path.join(base, 'actual-file.md'), 'utf-8'),
   ]);
 
+  // expected-output.md is optional — conflict scenarios omit it because
+  // the marker format is implementation-defined.
   let expectedOutput: string | null = null;
   try {
     expectedOutput = await fsp.readFile(path.join(base, 'expected-output.md'), 'utf-8');
   } catch {
-    // Some scenarios (e.g. conflicts) deliberately omit expected-output.md
-    // because the merge markers depend on implementation details.
+    /* no-op */
   }
 
   return {
@@ -119,14 +128,12 @@ async function loadFiles(dir: string): Promise<FixtureFiles> {
 }
 
 /**
- * Collapse scenario flags into the MergeAction ownership input.
- *
- * Runtime ownership is derived from drift hashing (detectDrift in drift.ts),
- * not from the fixture's authored `ownership_before`. If `user_edited` is
- * true, the actual file's hash differs from `rendered_hash`, and drift
- * classifies the file as `modified` regardless of what `ownership_before`
- * says. Scenario 07 relies on this — it declares `ownership_before: managed`
- * + `user_edited: true` to model "file was managed until the user just
+ * Runtime ownership is derived from drift hashing (detectDrift), not from
+ * the fixture's authored `ownership_before`. If `user_edited` is true, the
+ * actual file's hash differs from `rendered_hash`, and drift classifies the
+ * file as `modified` regardless of what `ownership_before` says. Scenario
+ * 07 relies on this — it declares `ownership_before: managed` with
+ * `user_edited: true` to model "file was managed until the user just
  * edited it" and expects a conflict.
  */
 function ownershipForMergeInput(scenario: Scenario): 'managed' | 'modified' {
@@ -134,7 +141,7 @@ function ownershipForMergeInput(scenario: Scenario): 'managed' | 'modified' {
   return 'managed';
 }
 
-function makeRenderContext(scenario: Scenario) {
+function makeRenderContext(scenario: Scenario): RenderContext {
   return {
     values: {},
     included_modules: scenario.module ? [scenario.module] : [],
@@ -150,89 +157,99 @@ describe('merge engine (fixture-driven)', () => {
   });
 
   for (const dir of fixtureDirs) {
-    // Scenario is loaded inside the test body so a malformed scenario.yaml
-    // fails that scenario only, not the whole file at collection time.
+    // Scenario loaded inside the test body so a malformed scenario.yaml
+    // fails only that scenario, not the whole file at collection time.
     it(dir, async () => {
       const scenario = await loadScenario(dir);
       const files = await loadFiles(dir);
-      const renderContext = makeRenderContext(scenario);
+      const kind = classifyScenario(scenario);
 
-      // --- Volatile: detectDrift classifies; update command skips ---
-      if (scenario.volatile) {
-        expect(scenario.expected_action).toBe('skip');
-        const report = await buildVolatileDriftReport(dir, files.actualContent);
-        expect(report.volatile).toHaveLength(1);
-        expect(report.volatile[0]?.path).toBe(`${dir}.md`);
-        return;
-      }
-
-      // --- New file (orchestration): render new template fresh ---
-      if (scenario.new_file) {
-        expect(scenario.expected_action).toBe('create');
-        const itemContext = scenario.each_iterator_add
-          ? extractIteratorItem(files.newValues, scenario)
-          : {};
-        const rendered = renderString(
-          files.newTemplate,
-          {
-            ...renderContext,
-            values: { ...files.newValues, ...itemContext },
-          },
-          `${dir}.md`,
-        );
-        if (files.expectedOutput !== null) {
-          expect(rendered).toBe(files.expectedOutput);
-        }
-        return;
-      }
-
-      // --- Removed file (orchestration): new-template is an empty placeholder ---
-      if (scenario.removed) {
-        const expected =
-          scenario.module_change === 'newly_excluded' ? 'prompt_delete_module' : 'prompt_delete';
-        expect(scenario.expected_action).toBe(expected);
-        expect(files.newTemplate.trim()).toBe('');
-        return;
-      }
-
-      // --- Standard merge path (01–09, 12, 16) ---
-      const action = await computeMergeAction({
-        path: `${dir}.md`,
-        ownership: ownershipForMergeInput(scenario),
-        oldTemplate: files.oldTemplate,
-        newTemplate: files.newTemplate,
-        oldValues: files.oldValues,
-        newValues: files.newValues,
-        actualContent: files.actualContent,
-        renderContext,
-      });
-
-      expect(action.type).toBe(scenario.expected_action);
-
-      if (
-        files.expectedOutput !== null &&
-        (action.type === 'overwrite' || action.type === 'auto_merge')
-      ) {
-        expect((action as { content: string }).content).toBe(files.expectedOutput);
-      }
-
-      if (action.type === 'conflict') {
-        expect(action.result.content).toContain('<<<<<<< yours');
-        expect(action.result.content).toContain('=======');
-        expect(action.result.content).toContain('>>>>>>> shard update');
-        if (scenario.expected_conflict_count !== undefined) {
-          expect(action.result.conflicts).toHaveLength(scenario.expected_conflict_count);
-        }
+      switch (kind) {
+        case 'volatile':
+          return assertVolatile(dir, scenario, files);
+        case 'new_file':
+          return assertNewFile(dir, scenario, files);
+        case 'removed':
+          return assertRemoved(scenario, files);
+        case 'standard':
+          return assertStandardMerge(dir, scenario, files);
+        default:
+          assertNever(kind);
       }
     });
   }
 });
 
+async function assertVolatile(dir: string, scenario: Scenario, files: FixtureFiles): Promise<void> {
+  expect(scenario.expected_action).toBe('skip');
+  const report = await buildVolatileDriftReport(dir, files.actualContent);
+  expect(report.volatile).toHaveLength(1);
+  expect(report.volatile[0]?.path).toBe(`${dir}.md`);
+}
+
+function assertNewFile(dir: string, scenario: Scenario, files: FixtureFiles): void {
+  expect(scenario.expected_action).toBe('create');
+  const renderContext = makeRenderContext(scenario);
+  const iteratorExtras = scenario.each_iterator_add
+    ? extractIteratorItem(files.newValues, scenario)
+    : {};
+  const rendered = renderString(
+    files.newTemplate,
+    { ...renderContext, values: { ...files.newValues, ...iteratorExtras } },
+    `${dir}.md`,
+  );
+  if (files.expectedOutput !== null) {
+    expect(rendered).toBe(files.expectedOutput);
+  }
+}
+
+function assertRemoved(scenario: Scenario, files: FixtureFiles): void {
+  const expected =
+    scenario.module_change === 'newly_excluded' ? 'prompt_delete_module' : 'prompt_delete';
+  expect(scenario.expected_action).toBe(expected);
+  expect(files.newTemplate.trim()).toBe('');
+}
+
+async function assertStandardMerge(
+  dir: string,
+  scenario: Scenario,
+  files: FixtureFiles,
+): Promise<void> {
+  const action = await computeMergeAction({
+    path: `${dir}.md`,
+    ownership: ownershipForMergeInput(scenario),
+    oldTemplate: files.oldTemplate,
+    newTemplate: files.newTemplate,
+    oldValues: files.oldValues,
+    newValues: files.newValues,
+    actualContent: files.actualContent,
+    renderContext: makeRenderContext(scenario),
+  });
+
+  expect(action.type).toBe(scenario.expected_action);
+
+  if (
+    files.expectedOutput !== null &&
+    (action.type === 'overwrite' || action.type === 'auto_merge')
+  ) {
+    expect(action.content).toBe(files.expectedOutput);
+  }
+
+  if (action.type === 'conflict') {
+    expect(action.result.content).toContain('<<<<<<< yours');
+    expect(action.result.content).toContain('=======');
+    expect(action.result.content).toContain('>>>>>>> shard update');
+    if (scenario.expected_conflict_count !== undefined) {
+      expect(action.result.conflicts).toHaveLength(scenario.expected_conflict_count);
+    }
+  }
+}
+
 /**
  * Build a minimal vault on disk with one volatile file and run detectDrift
  * against it. Verifies that drift reports a volatile entry without attempting
- * to hash-compare the content — which is the gate that makes the update
- * command skip volatile files.
+ * to hash-compare the content — the gate that makes the update command skip
+ * volatile files.
  */
 async function buildVolatileDriftReport(dir: string, actualContent: string) {
   const vaultRoot = path.join(os.tmpdir(), `drift-volatile-${crypto.randomUUID()}`);

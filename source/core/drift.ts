@@ -13,47 +13,31 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { ShardState, DriftReport, DriftEntry } from '../runtime/types.js';
+import type { ShardState, DriftReport, DriftEntry, FileState } from '../runtime/types.js';
 import { sha256 } from './fs-utils.js';
 import { isEnoent } from '../runtime/errno.js';
+
+type Bucket = 'managed' | 'modified' | 'volatile' | 'missing';
+type Classified = { bucket: Bucket; entry: DriftEntry };
 
 export async function detectDrift(
   vaultRoot: string,
   state: ShardState,
 ): Promise<DriftReport> {
+  const classified = await Promise.all(
+    Object.entries(state.files).map(([relPath, file]) =>
+      classifyFile(vaultRoot, relPath, file),
+    ),
+  );
+
   const managed: DriftEntry[] = [];
   const modified: DriftEntry[] = [];
   const volatile: DriftEntry[] = [];
   const missing: DriftEntry[] = [];
+  const byBucket = { managed, modified, volatile, missing };
 
-  const entries = await Promise.all(
-    Object.entries(state.files).map(async ([relPath, file]) => {
-      // FileState.ownership uses the literal 'user' for volatile files (what
-      // the install engine writes to state.json); DriftEntry.ownership reports
-      // it as 'volatile' because that is the reporting-layer vocabulary used
-      // by the update command. Intentional naming gap, not a bug.
-      if (file.ownership === 'user') {
-        return { bucket: 'volatile' as const, entry: volatileEntry(relPath, file) };
-      }
-
-      const absPath = path.join(vaultRoot, relPath);
-      try {
-        const content = await fsp.readFile(absPath, 'utf-8');
-        return { bucket: 'hashed' as const, entry: hashedEntry(relPath, file, content) };
-      } catch (err) {
-        if (isEnoent(err)) {
-          return { bucket: 'missing' as const, entry: missingEntry(relPath, file) };
-        }
-        throw err;
-      }
-    }),
-  );
-
-  for (const { bucket, entry } of entries) {
-    if (bucket === 'volatile') volatile.push(entry);
-    else if (bucket === 'missing') missing.push(entry);
-    else if (entry.ownership === 'managed') managed.push(entry);
-    else modified.push(entry);
+  for (const { bucket, entry } of classified) {
+    byBucket[bucket].push(entry);
   }
 
   // Orphan detection (files on disk under tracked paths but not in state) is
@@ -65,7 +49,46 @@ export async function detectDrift(
   return { managed, modified, volatile, missing, orphaned };
 }
 
-function volatileEntry(relPath: string, file: ShardState['files'][string]): DriftEntry {
+async function classifyFile(
+  vaultRoot: string,
+  relPath: string,
+  file: FileState,
+): Promise<Classified> {
+  // FileState.ownership uses the literal 'user' for volatile files (what the
+  // install engine writes to state.json); DriftEntry.ownership reports it as
+  // 'volatile' because that is the reporting-layer vocabulary used by the
+  // update command. Intentional naming gap, not a bug.
+  if (file.ownership === 'user') {
+    return { bucket: 'volatile', entry: volatileEntry(relPath, file) };
+  }
+
+  try {
+    const content = await fsp.readFile(path.join(vaultRoot, relPath), 'utf-8');
+    return classifyByHash(relPath, file, content);
+  } catch (err) {
+    if (isEnoent(err)) {
+      return { bucket: 'missing', entry: missingEntry(relPath, file) };
+    }
+    throw err;
+  }
+}
+
+function classifyByHash(relPath: string, file: FileState, content: string): Classified {
+  const actualHash = sha256(content);
+  const ownership = actualHash === file.rendered_hash ? 'managed' : 'modified';
+  return {
+    bucket: ownership,
+    entry: {
+      path: relPath,
+      template: file.template,
+      renderedHash: file.rendered_hash,
+      actualHash,
+      ownership,
+    },
+  };
+}
+
+function volatileEntry(relPath: string, file: FileState): DriftEntry {
   return {
     path: relPath,
     template: file.template,
@@ -75,27 +98,12 @@ function volatileEntry(relPath: string, file: ShardState['files'][string]): Drif
   };
 }
 
-function missingEntry(relPath: string, file: ShardState['files'][string]): DriftEntry {
+function missingEntry(relPath: string, file: FileState): DriftEntry {
   return {
     path: relPath,
     template: file.template,
     renderedHash: file.rendered_hash,
     actualHash: null,
     ownership: file.ownership === 'modified' ? 'modified' : 'managed',
-  };
-}
-
-function hashedEntry(
-  relPath: string,
-  file: ShardState['files'][string],
-  content: string,
-): DriftEntry {
-  const actualHash = sha256(content);
-  return {
-    path: relPath,
-    template: file.template,
-    renderedHash: file.rendered_hash,
-    actualHash,
-    ownership: actualHash === file.rendered_hash ? 'managed' : 'modified',
   };
 }

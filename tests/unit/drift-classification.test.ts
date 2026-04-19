@@ -12,7 +12,7 @@ import crypto from 'node:crypto';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { detectDrift } from '../../source/core/drift.js';
 import { sha256 } from '../../source/core/fs-utils.js';
-import { makeStateWithFiles } from '../helpers/shard-state.js';
+import { makeStateWithFiles } from '../helpers/index.js';
 
 let vaultRoot: string;
 
