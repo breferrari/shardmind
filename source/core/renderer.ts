@@ -14,12 +14,43 @@ import { ShardMindError } from '../runtime/types.js';
 const VOLATILE_MARKER = '{# shardmind: volatile #}';
 const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 
+const NUNJUCKS_OPTS = {
+  autoescape: false,
+  trimBlocks: true,
+  lstripBlocks: true,
+} as const;
+
 export function createRenderer(templateDir: string): nunjucks.Environment {
-  return nunjucks.configure(templateDir, {
-    autoescape: false,
-    trimBlocks: true,
-    lstripBlocks: true,
-  });
+  return nunjucks.configure(templateDir, NUNJUCKS_OPTS);
+}
+
+/**
+ * Isolated env for rendering a template from a string (no filesystem loader).
+ * Lazily constructed so the `nunjucks.Environment` is only built when needed
+ * and never pollutes the module's global `nunjucks.configure()` state.
+ */
+let defaultStringEnv: nunjucks.Environment | undefined;
+
+function getDefaultStringEnv(): nunjucks.Environment {
+  if (!defaultStringEnv) {
+    defaultStringEnv = new nunjucks.Environment(null, NUNJUCKS_OPTS);
+  }
+  return defaultStringEnv;
+}
+
+/**
+ * Render a template provided as a string, with the same frontmatter-aware
+ * split/render/YAML-normalize/recombine pipeline that `renderFile` uses.
+ * Used by the merge engine (`differ.ts`) where the old/new templates live
+ * in memory (cached or freshly downloaded), not on disk.
+ */
+export function renderString(
+  source: string,
+  context: RenderContext,
+  filePath: string,
+  env: nunjucks.Environment = getDefaultStringEnv(),
+): string {
+  return renderContent(source, context, env, filePath);
 }
 
 /**
