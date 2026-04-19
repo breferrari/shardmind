@@ -1,0 +1,16 @@
+name: "User newly included a module on update"
+description: >
+  The user opted into the "social" module during update. The module's files
+  were not present in the previous install. Each file in the module should be
+  rendered as a fresh install. Expected: create.
+
+ownership_before: null
+user_edited: false
+template_changed: false
+values_changed: false
+conflict_expected: false
+new_file: true
+module_change: newly_included
+module: "social"
+expected_action: create
+

@@ -1,0 +1,12 @@
+name: "Managed file, template changed upstream"
+description: >
+  The shard author edited the template body. The user hasn't touched the file.
+  Expected: silent overwrite with the newly rendered content. No prompt.
+
+ownership_before: managed
+user_edited: false
+template_changed: true
+values_changed: false
+conflict_expected: false
+expected_action: overwrite
+

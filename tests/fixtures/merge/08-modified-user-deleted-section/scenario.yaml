@@ -1,0 +1,14 @@
+name: "User deleted a section, template changed a different section"
+description: >
+  The user removed the Goals section entirely. The shard author updated the
+  Footer text. Diff3 should honor the user's deletion AND apply the footer
+  edit — no conflict. Expected: auto_merge producing a file without Goals but
+  with the updated footer.
+
+ownership_before: modified
+user_edited: true
+template_changed: true
+values_changed: false
+conflict_expected: false
+expected_action: auto_merge
+

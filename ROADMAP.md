@@ -32,7 +32,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 
 ### Milestone 3: Merge Engine (Day 3)
 
-- [ ] Write all 17 merge fixture directories — fixtures before code ([#10](https://github.com/breferrari/shardmind/issues/10))
+- [x] Write all 17 merge fixture directories — fixtures before code ([#10](https://github.com/breferrari/shardmind/issues/10))
 - [ ] `core/drift.ts` + `core/differ.ts` — three-way merge engine ([#11](https://github.com/breferrari/shardmind/issues/11))
 - [ ] Iterate until all 17 scenarios pass
 - [ ] Add edge case fixtures: frontmatter merge, empty file, binary-identical, encoding

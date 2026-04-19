@@ -11,6 +11,3 @@ values_changed: false
 conflict_expected: false
 expected_action: skip
 
-values:
-  old: { user_name: "Alice", org_name: "Acme Corp", qmd_enabled: true }
-  new: { user_name: "Alice", org_name: "Acme Corp", qmd_enabled: true }

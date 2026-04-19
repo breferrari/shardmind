@@ -1,0 +1,16 @@
+name: "New file introduced by shard update"
+description: >
+  The new shard version adds a file that wasn't present in the old state.
+  Nothing exists on disk yet. Expected: render the new template as a fresh
+  install and add it to state.
+  Orchestration fixture: old-template and actual-file are empty placeholders
+  representing absence.
+
+ownership_before: null
+user_edited: false
+template_changed: true
+values_changed: false
+conflict_expected: false
+new_file: true
+expected_action: create
+

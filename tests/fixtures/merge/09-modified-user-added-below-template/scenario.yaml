@@ -1,0 +1,13 @@
+name: "User added content below template, template changed a line above"
+description: >
+  The user appended a personal section at the bottom. The shard author edited
+  a line near the top. Diff3 preserves the user's addition and applies the
+  template edit above. Expected: auto_merge.
+
+ownership_before: modified
+user_edited: true
+template_changed: true
+values_changed: false
+conflict_expected: false
+expected_action: auto_merge
+
