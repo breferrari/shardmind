@@ -89,9 +89,10 @@ describe('threeWayMerge — stats accounting', () => {
   // Regression guard: node-diff3's LCS implementation uses `{}` as a map and
   // blows up when any line is a string that collides with Object.prototype
   // members ('constructor', '__proto__', 'toString', 'hasOwnProperty', etc.).
-  // differ.ts prefixes every line with LINE_SENTINEL before handing it to
-  // diff3 to sidestep this — lines like `constructor` appear routinely in
-  // markdown code blocks about JavaScript, so the fix is load-bearing.
+  // differ.ts interns every line to an integer-named token before handing it
+  // to diff3 — integer-string keys can never collide with Object.prototype.
+  // Lines like `constructor` appear routinely in markdown code blocks about
+  // JavaScript, so the fix is load-bearing.
   it('handles lines that match Object.prototype property names', () => {
     const base = '# Class\n\nnote\n';
     const theirs = '# Class\n\nnote\nuser added\n';
@@ -104,6 +105,5 @@ describe('threeWayMerge — stats accounting', () => {
     expect(result.content).toContain('toString');
     expect(result.content).toContain('hasOwnProperty');
     expect(result.content).toContain('user added');
-    expect(result.content).not.toContain('\u0001');
   });
 });

@@ -151,27 +151,93 @@ function renderWithFrontmatter(
   env: nunjucks.Environment,
   filePath: string,
 ): string {
-  // Render frontmatter with Nunjucks
-  const renderedFm = renderTemplate(frontmatterRaw, context, env, filePath);
+  const safeFm = renderFrontmatterSafely(frontmatterRaw, context, env, filePath);
+  const renderedBody = renderTemplate(bodyRaw, context, env, filePath);
+  return `---\n${safeFm}\n---\n${renderedBody}`;
+}
 
-  // Parse → stringify for safe YAML escaping
-  let safeFm: string;
-  try {
-    const parsed = parseYaml(renderedFm);
-    safeFm = stringifyYaml(parsed, { lineWidth: 0 }).trimEnd();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new ShardMindError(
-      `Frontmatter in ${filePath} rendered invalid YAML: ${message}`,
-      'RENDER_FRONTMATTER_ERROR',
-      'Check template frontmatter for syntax issues after value substitution.',
-    );
+/**
+ * Render the frontmatter, then `parseYaml` → `stringifyYaml` so the stored
+ * shape is stable. If a template substitutes a value that contains YAML
+ * special characters (colon, pipe, quote, etc.) into an unquoted scalar
+ * position — e.g. `owner: {{ name }}` with `name = "foo: bar"` — the naive
+ * render produces invalid YAML.
+ *
+ * Rather than punt to the template author, attempt a one-shot recovery:
+ * re-render with every string value in the context replaced by its
+ * JSON-encoded form (which is always a valid YAML double-quoted scalar).
+ * Non-string leaves (numbers, booleans, arrays, nested objects) are left
+ * untouched so their intended YAML type is preserved.
+ *
+ * If recovery still fails, throw — that means the template itself produces
+ * non-YAML output independent of the values, which is a template bug.
+ */
+function renderFrontmatterSafely(
+  frontmatterRaw: string,
+  context: Record<string, unknown>,
+  env: nunjucks.Environment,
+  filePath: string,
+): string {
+  const firstAttempt = renderTemplate(frontmatterRaw, context, env, filePath);
+  const firstParse = tryParseYaml(firstAttempt);
+  if (firstParse.ok) {
+    return stringifyYaml(firstParse.value, { lineWidth: 0 }).trimEnd();
   }
 
-  // Render body
-  const renderedBody = renderTemplate(bodyRaw, context, env, filePath);
+  const escapedContext = encodeStringLeaves(context) as Record<string, unknown>;
+  const secondAttempt = renderTemplate(frontmatterRaw, escapedContext, env, filePath);
+  const secondParse = tryParseYaml(secondAttempt);
+  if (secondParse.ok) {
+    return stringifyYaml(secondParse.value, { lineWidth: 0 }).trimEnd();
+  }
 
-  return `---\n${safeFm}\n---\n${renderedBody}`;
+  throw new ShardMindError(
+    `Frontmatter in ${filePath} rendered invalid YAML: ${firstParse.error}`,
+    'RENDER_FRONTMATTER_ERROR',
+    'The template frontmatter is syntactically invalid even with YAML-safe value substitution. Check the raw template frontmatter for structural issues.',
+  );
+}
+
+type ParseResult = { ok: true; value: unknown } | { ok: false; error: string };
+
+function tryParseYaml(source: string): ParseResult {
+  try {
+    return { ok: true, value: parseYaml(source) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Walk a value tree and JSON-encode every string leaf. The result is still
+ * a plain JS value — numbers/booleans/nested objects are unchanged — but
+ * any string that gets substituted into a YAML scalar position will land
+ * as a double-quoted form ("foo: bar") and parse as a string.
+ *
+ * Guards against circular references: a value may reach itself through a
+ * hook-computed default or other user-supplied structure; we break the
+ * cycle by returning the already-encoded stand-in, so the walk terminates.
+ */
+function encodeStringLeaves(value: unknown, seen: WeakMap<object, unknown> = new WeakMap()): unknown {
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (value === null || typeof value !== 'object') return value;
+
+  const cached = seen.get(value);
+  if (cached !== undefined) return cached;
+
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    seen.set(value, out);
+    for (const item of value) out.push(encodeStringLeaves(item, seen));
+    return out;
+  }
+
+  const out: Record<string, unknown> = {};
+  seen.set(value, out);
+  for (const [k, v] of Object.entries(value)) {
+    out[k] = encodeStringLeaves(v, seen);
+  }
+  return out;
 }
 
 function renderTemplate(

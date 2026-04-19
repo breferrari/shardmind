@@ -30,17 +30,16 @@ const CONFLICT_END = '>>>>>>> shard update';
 // spurious conflicts against LF base/ours.
 const LINE_SPLIT = /\r?\n/;
 
-// Non-printable sentinel prefixed to every line before handing them to
-// node-diff3. Reason: node-diff3's LCS implementation uses a plain `{}`
-// as a Map and iterates on string keys, which blows up when any line is
-// a string that collides with Object.prototype members ('constructor',
-// '__proto__', 'toString', 'hasOwnProperty', etc.). In a vault of
-// markdown/code content, `constructor` appearing on its own line is not
-// exotic. Prefixing every line with U+0001 (START OF HEADING, never a
-// valid printable character) sidesteps the collision because no
-// prototype member name starts with that code unit. We strip the prefix
-// before anything leaves this module.
-const LINE_SENTINEL = '\u0001';
+// node-diff3's LCS implementation uses a plain `{}` as a hash map keyed by
+// line content. If any line equals a string that collides with
+// Object.prototype (`constructor`, `__proto__`, `toString`, ...), the
+// internal lookup returns a function instead of an array and the library
+// crashes. We sidestep this by interning every unique line to a synthetic
+// integer token (as a decimal string: "0", "1", "2", ...). Object.prototype
+// has no integer-named members, so collisions are impossible by
+// construction. Tokens are mapped back to original lines on output —
+// callers never see the encoding, and it's robust to any user content
+// including control characters.
 
 export interface ComputeMergeActionInput {
   readonly path: string;
@@ -130,12 +129,13 @@ export function threeWayMerge(
   theirs: string,
   ours: string,
 ): ThreeWayMergeResult {
-  // Merged output is always LF — callers that need platform-native line
-  // endings convert at the write boundary.
+  // Intern every unique line to an integer-named token. See the block
+  // comment on LINE_SPLIT for why this is load-bearing.
+  const interner = new LineInterner();
   const regions: IRegion<string>[] = diff3MergeRegions(
-    prefixLines(theirs),
-    prefixLines(base),
-    prefixLines(ours),
+    interner.tokenize(theirs),
+    interner.tokenize(base),
+    interner.tokenize(ours),
   );
 
   const merged: string[] = [];
@@ -144,42 +144,55 @@ export function threeWayMerge(
 
   for (const region of regions) {
     if (region.stable) {
-      merged.push(...region.bufferContent);
+      const decoded = region.bufferContent.map(t => interner.detokenize(t));
+      merged.push(...decoded);
       // Stable region with buffer === 'o' means all three buffers agreed
       // (truly unchanged). buffer === 'a' or 'b' means diff3 resolved to
       // one side's version without ambiguity — count those as auto-merged.
       if (region.buffer === 'o') {
-        stats.linesUnchanged += region.bufferContent.length;
+        stats.linesUnchanged += decoded.length;
       } else {
-        stats.linesAutoMerged += region.bufferContent.length;
+        stats.linesAutoMerged += decoded.length;
       }
       continue;
     }
 
-    const resolution = resolveUnstableRegion(region, merged.length);
+    const resolution = resolveUnstableRegion(region, merged.length, interner);
     merged.push(...resolution.lines);
     if (resolution.conflict) conflicts.push(resolution.conflict);
     stats.linesAutoMerged += resolution.autoMergedLines;
     stats.linesConflicted += resolution.conflictedLines;
   }
 
-  return { content: stripPrefixes(merged.join('\n')), conflicts, stats };
+  // Merged output is always LF; callers convert at the write boundary.
+  return { content: merged.join('\n'), conflicts, stats };
 }
 
-function prefixLines(text: string): string[] {
-  return text.split(LINE_SPLIT).map(line => LINE_SENTINEL + line);
-}
+class LineInterner {
+  private readonly table = new Map<string, string>();
+  private readonly byIndex: string[] = [];
 
-function stripPrefixes(text: string): string {
-  // Global strip of the sentinel from anywhere it appears in the output.
-  // Safer than slicing per-line because merger output interleaves stable
-  // region content with conflict markers we added ourselves (markers do
-  // not carry the sentinel, so this is a no-op on them).
-  return text.replace(new RegExp(LINE_SENTINEL, 'g'), '');
-}
+  tokenize(text: string): string[] {
+    return text.split(LINE_SPLIT).map(line => {
+      let token = this.table.get(line);
+      if (token === undefined) {
+        token = String(this.byIndex.length);
+        this.table.set(line, token);
+        this.byIndex.push(line);
+      }
+      return token;
+    });
+  }
 
-function stripPrefix(line: string): string {
-  return line.startsWith(LINE_SENTINEL) ? line.slice(LINE_SENTINEL.length) : line;
+  detokenize(token: string): string {
+    // Integer-string tokens issued by tokenize(); out-of-range would indicate
+    // a programming error, so we fail loudly rather than produce undefined.
+    const line = this.byIndex[Number(token)];
+    if (line === undefined) {
+      throw new Error(`LineInterner: unknown token ${JSON.stringify(token)}`);
+    }
+    return line;
+  }
 }
 
 interface RegionResolution {
@@ -202,16 +215,29 @@ interface RegionResolution {
 function resolveUnstableRegion(
   region: IUnstableRegion<string>,
   mergedLengthBefore: number,
+  interner: LineInterner,
 ): RegionResolution {
-  const { aContent: theirs, bContent: ours, oContent: base } = region;
+  // Operate on token arrays for equality checks (cheaper than decoding), but
+  // emit decoded lines and decoded conflict snapshots so callers never see
+  // the internal encoding.
+  const theirsTokens = region.aContent;
+  const oursTokens = region.bContent;
+  const baseTokens = region.oContent;
 
-  if (arraysEqual(theirs, base)) {
-    return { lines: ours, conflict: null, autoMergedLines: ours.length, conflictedLines: 0 };
+  const decode = (tokens: string[]): string[] => tokens.map(t => interner.detokenize(t));
+
+  if (arraysEqual(theirsTokens, baseTokens)) {
+    const decoded = decode(oursTokens);
+    return { lines: decoded, conflict: null, autoMergedLines: decoded.length, conflictedLines: 0 };
   }
-  if (arraysEqual(ours, base) || arraysEqual(theirs, ours)) {
-    return { lines: theirs, conflict: null, autoMergedLines: theirs.length, conflictedLines: 0 };
+  if (arraysEqual(oursTokens, baseTokens) || arraysEqual(theirsTokens, oursTokens)) {
+    const decoded = decode(theirsTokens);
+    return { lines: decoded, conflict: null, autoMergedLines: decoded.length, conflictedLines: 0 };
   }
 
+  const theirs = decode(theirsTokens);
+  const ours = decode(oursTokens);
+  const base = decode(baseTokens);
   const lines = [CONFLICT_START, ...theirs, CONFLICT_SEPARATOR, ...ours, CONFLICT_END];
   const lineStart = mergedLengthBefore + 1;
   const lineEnd = mergedLengthBefore + lines.length;
@@ -220,11 +246,9 @@ function resolveUnstableRegion(
     conflict: {
       lineStart,
       lineEnd,
-      // Strip the LINE_SENTINEL prefix before exposing the content to the UI
-      // layer. Consumers never see the prefix; it's an internal encoding.
-      base: base.map(stripPrefix).join('\n'),
-      theirs: theirs.map(stripPrefix).join('\n'),
-      ours: ours.map(stripPrefix).join('\n'),
+      base: base.join('\n'),
+      theirs: theirs.join('\n'),
+      ours: ours.join('\n'),
     },
     autoMergedLines: 0,
     conflictedLines: theirs.length + ours.length,
