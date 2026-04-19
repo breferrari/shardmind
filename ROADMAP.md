@@ -33,8 +33,8 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 ### Milestone 3: Merge Engine (Day 3)
 
 - [x] Write all 17 merge fixture directories — fixtures before code ([#10](https://github.com/breferrari/shardmind/issues/10))
-- [ ] `core/drift.ts` + `core/differ.ts` — three-way merge engine ([#11](https://github.com/breferrari/shardmind/issues/11))
-- [ ] Iterate until all 17 scenarios pass
+- [x] `core/drift.ts` + `core/differ.ts` — three-way merge engine ([#11](https://github.com/breferrari/shardmind/issues/11))
+- [x] Iterate until all 17 scenarios pass
 - [ ] Add edge case fixtures: frontmatter merge, empty file, binary-identical, encoding
 
 ### Milestone 4: Update Command + Status (Day 4)
@@ -111,6 +111,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] Alternate registry configurability (GHE, private, custom URL) ([#39](https://github.com/breferrari/shardmind/issues/39))
 - [ ] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
 - [ ] Re-evaluate `@inkjs/ui` dependency (upstream frozen; shim at `source/components/ui.ts` keeps swap cheap) ([#43](https://github.com/breferrari/shardmind/issues/43))
+- [ ] `core/drift.ts` — orphan detection (files on disk under tracked paths but not in state) ([#47](https://github.com/breferrari/shardmind/issues/47))
 
 ---
 

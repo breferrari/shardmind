@@ -78,7 +78,7 @@ export async function detectDrift(
   // Orphan detection (files on disk under tracked paths but not in state) is
   // deferred to v0.2. "Tracked paths" is under-specified once _each iterators
   // have exploded one template into N per-item files, and no v0.1 flow needs
-  // the information. See roadmap follow-up.
+  // the information. See #47.
   const orphaned: string[] = [];
 
   return { managed, modified, volatile, missing, orphaned };
