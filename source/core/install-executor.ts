@@ -18,6 +18,7 @@ import type {
   ModuleSelections,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
+import { errnoCode } from '../runtime/errno.js';
 import { resolveModules } from './modules.js';
 import { createRenderer, renderFile, buildRenderContext } from './renderer.js';
 import {
@@ -328,8 +329,7 @@ async function writeValuesFile(
   try {
     await fsp.writeFile(abs, serialized, { encoding: 'utf-8', flag: 'wx' });
   } catch (err) {
-    const code = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
-    if (code === 'EEXIST') {
+    if (errnoCode(err) === 'EEXIST') {
       throw new ShardMindError(
         'shard-values.yaml already exists at the install target',
         'VALUES_FILE_COLLISION',

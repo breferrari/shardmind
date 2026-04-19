@@ -12,7 +12,7 @@ import crypto from 'node:crypto';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { detectDrift } from '../../source/core/drift.js';
 import { sha256 } from '../../source/core/fs-utils.js';
-import type { FileState, ShardState } from '../../source/runtime/types.js';
+import { makeStateWithFiles } from '../helpers/shard-state.js';
 
 let vaultRoot: string;
 
@@ -25,21 +25,6 @@ afterEach(async () => {
   await fsp.rm(vaultRoot, { recursive: true, force: true });
 });
 
-function baseState(files: Record<string, FileState>): ShardState {
-  return {
-    schema_version: 1,
-    shard: 'test/shard',
-    source: 'github:test/shard',
-    version: '0.1.0',
-    tarball_sha256: 'x'.repeat(64),
-    installed_at: '2026-04-01T00:00:00Z',
-    updated_at: '2026-04-01T00:00:00Z',
-    values_hash: 'x'.repeat(64),
-    modules: {},
-    files,
-  };
-}
-
 async function writeFile(relPath: string, content: string): Promise<void> {
   const abs = path.join(vaultRoot, relPath);
   await fsp.mkdir(path.dirname(abs), { recursive: true });
@@ -50,7 +35,7 @@ describe('detectDrift', () => {
   it('classifies a hash-matching file as managed', async () => {
     const content = '# Managed\n';
     await writeFile('notes/a.md', content);
-    const state = baseState({
+    const state = makeStateWithFiles({
       'notes/a.md': {
         template: 't.njk',
         rendered_hash: sha256(content),
@@ -71,7 +56,7 @@ describe('detectDrift', () => {
 
   it('classifies a hash-differing file as modified', async () => {
     await writeFile('notes/b.md', '# Edited by user\n');
-    const state = baseState({
+    const state = makeStateWithFiles({
       'notes/b.md': {
         template: 't.njk',
         rendered_hash: sha256('# Original\n'),
@@ -90,7 +75,7 @@ describe('detectDrift', () => {
     // Content intentionally doesn't match the recorded hash — the whole point
     // of volatile is that drift never hashes it.
     await writeFile('inbox.md', '# edits the user is free to make\n');
-    const state = baseState({
+    const state = makeStateWithFiles({
       'inbox.md': {
         template: 'inbox.njk',
         rendered_hash: 'stale-hash-on-purpose',
@@ -109,7 +94,7 @@ describe('detectDrift', () => {
   });
 
   it('reports a file as missing when absent on disk', async () => {
-    const state = baseState({
+    const state = makeStateWithFiles({
       'gone.md': {
         template: 't.njk',
         rendered_hash: sha256('# was here\n'),
@@ -125,7 +110,7 @@ describe('detectDrift', () => {
   });
 
   it('propagates state ownership=modified onto missing entries', async () => {
-    const state = baseState({
+    const state = makeStateWithFiles({
       'gone.md': {
         template: 't.njk',
         rendered_hash: sha256('# was here\n'),
@@ -146,7 +131,7 @@ describe('detectDrift', () => {
     await writeFile('x.md', modifiedContent);
     await writeFile('v.md', volatileContent);
 
-    const state = baseState({
+    const state = makeStateWithFiles({
       'm.md': { template: 't.njk', rendered_hash: sha256(managedContent), ownership: 'managed' },
       'x.md': { template: 't.njk', rendered_hash: sha256('original\n'), ownership: 'managed' },
       'v.md': { template: 'inbox.njk', rendered_hash: 'stale', ownership: 'user' },
@@ -163,7 +148,7 @@ describe('detectDrift', () => {
   });
 
   it('returns empty buckets for a state with no files', async () => {
-    const report = await detectDrift(vaultRoot, baseState({}));
+    const report = await detectDrift(vaultRoot, makeStateWithFiles({}));
 
     expect(report.managed).toEqual([]);
     expect(report.modified).toEqual([]);

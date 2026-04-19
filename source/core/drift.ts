@@ -15,6 +15,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { ShardState, DriftReport, DriftEntry } from '../runtime/types.js';
 import { sha256 } from './fs-utils.js';
+import { isEnoent } from '../runtime/errno.js';
 
 export async function detectDrift(
   vaultRoot: string,
@@ -25,54 +26,34 @@ export async function detectDrift(
   const volatile: DriftEntry[] = [];
   const missing: DriftEntry[] = [];
 
-  for (const [relPath, file] of Object.entries(state.files)) {
-    // FileState.ownership uses the literal 'user' for volatile files (what the
-    // install engine writes to state.json); DriftEntry.ownership reports it as
-    // 'volatile' because that is the reporting-layer vocabulary used by the
-    // update command. Intentional naming gap, not a bug.
-    if (file.ownership === 'user') {
-      volatile.push({
-        path: relPath,
-        template: file.template,
-        renderedHash: file.rendered_hash,
-        actualHash: null,
-        ownership: 'volatile',
-      });
-      continue;
-    }
-
-    const absPath = path.join(vaultRoot, relPath);
-    let content: string;
-    try {
-      content = await fsp.readFile(absPath, 'utf-8');
-    } catch (err) {
-      if (isEnoent(err)) {
-        missing.push({
-          path: relPath,
-          template: file.template,
-          renderedHash: file.rendered_hash,
-          actualHash: null,
-          ownership: file.ownership === 'modified' ? 'modified' : 'managed',
-        });
-        continue;
+  const entries = await Promise.all(
+    Object.entries(state.files).map(async ([relPath, file]) => {
+      // FileState.ownership uses the literal 'user' for volatile files (what
+      // the install engine writes to state.json); DriftEntry.ownership reports
+      // it as 'volatile' because that is the reporting-layer vocabulary used
+      // by the update command. Intentional naming gap, not a bug.
+      if (file.ownership === 'user') {
+        return { bucket: 'volatile' as const, entry: volatileEntry(relPath, file) };
       }
-      throw err;
-    }
 
-    const actualHash = sha256(content);
-    const entry: DriftEntry = {
-      path: relPath,
-      template: file.template,
-      renderedHash: file.rendered_hash,
-      actualHash,
-      ownership: actualHash === file.rendered_hash ? 'managed' : 'modified',
-    };
+      const absPath = path.join(vaultRoot, relPath);
+      try {
+        const content = await fsp.readFile(absPath, 'utf-8');
+        return { bucket: 'hashed' as const, entry: hashedEntry(relPath, file, content) };
+      } catch (err) {
+        if (isEnoent(err)) {
+          return { bucket: 'missing' as const, entry: missingEntry(relPath, file) };
+        }
+        throw err;
+      }
+    }),
+  );
 
-    if (entry.ownership === 'managed') {
-      managed.push(entry);
-    } else {
-      modified.push(entry);
-    }
+  for (const { bucket, entry } of entries) {
+    if (bucket === 'volatile') volatile.push(entry);
+    else if (bucket === 'missing') missing.push(entry);
+    else if (entry.ownership === 'managed') managed.push(entry);
+    else modified.push(entry);
   }
 
   // Orphan detection (files on disk under tracked paths but not in state) is
@@ -84,11 +65,37 @@ export async function detectDrift(
   return { managed, modified, volatile, missing, orphaned };
 }
 
-function isEnoent(err: unknown): boolean {
-  return (
-    err !== null &&
-    typeof err === 'object' &&
-    'code' in err &&
-    (err as { code?: string }).code === 'ENOENT'
-  );
+function volatileEntry(relPath: string, file: ShardState['files'][string]): DriftEntry {
+  return {
+    path: relPath,
+    template: file.template,
+    renderedHash: file.rendered_hash,
+    actualHash: null,
+    ownership: 'volatile',
+  };
+}
+
+function missingEntry(relPath: string, file: ShardState['files'][string]): DriftEntry {
+  return {
+    path: relPath,
+    template: file.template,
+    renderedHash: file.rendered_hash,
+    actualHash: null,
+    ownership: file.ownership === 'modified' ? 'modified' : 'managed',
+  };
+}
+
+function hashedEntry(
+  relPath: string,
+  file: ShardState['files'][string],
+  content: string,
+): DriftEntry {
+  const actualHash = sha256(content);
+  return {
+    path: relPath,
+    template: file.template,
+    renderedHash: file.rendered_hash,
+    actualHash,
+    ownership: actualHash === file.rendered_hash ? 'managed' : 'modified',
+  };
 }

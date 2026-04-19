@@ -22,6 +22,7 @@ import {
   CACHED_TEMPLATES,
   SHARD_TEMPLATES_DIR,
 } from '../runtime/vault-paths.js';
+import { errnoCode } from '../runtime/errno.js';
 import { migrateState } from './state-migrator.js';
 
 const STATE_SCHEMA_VERSION = 1;
@@ -111,8 +112,7 @@ export async function cacheTemplates(vaultRoot: string, tempDir: string): Promis
   try {
     await fsp.cp(src, dest, { recursive: true });
   } catch (err) {
-    const code = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
-    if (code === 'ENOENT') {
+    if (errnoCode(err) === 'ENOENT') {
       throw new ShardMindError(
         `Missing templates/ directory in shard source: ${src}`,
         'STATE_CACHE_MISSING_TEMPLATES',
@@ -137,9 +137,3 @@ export async function cacheManifest(
   await fsp.writeFile(path.join(vaultRoot, CACHED_SCHEMA), serializedSchema, 'utf-8');
 }
 
-function errnoCode(err: unknown): string | undefined {
-  if (err instanceof Error && 'code' in err) {
-    return (err as NodeJS.ErrnoException).code;
-  }
-  return undefined;
-}

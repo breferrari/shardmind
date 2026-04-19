@@ -43,7 +43,7 @@ import { describe, it, expect } from 'vitest';
 import { detectDrift } from '../../source/core/drift.js';
 import { computeMergeAction } from '../../source/core/differ.js';
 import { renderString } from '../../source/core/renderer.js';
-import type { ShardState } from '../../source/runtime/types.js';
+import { makeStateWithFiles } from '../helpers/shard-state.js';
 
 const FIXTURES = path.resolve('tests/fixtures/merge');
 
@@ -241,24 +241,13 @@ async function buildVolatileDriftReport(dir: string, actualContent: string) {
     const relPath = `${dir}.md`;
     await fsp.writeFile(path.join(vaultRoot, relPath), actualContent, 'utf-8');
 
-    const state: ShardState = {
-      schema_version: 1,
-      shard: 'test/shard',
-      source: 'github:test/shard',
-      version: '0.1.0',
-      tarball_sha256: 'x'.repeat(64),
-      installed_at: '2026-04-01T00:00:00Z',
-      updated_at: '2026-04-01T00:00:00Z',
-      values_hash: 'x'.repeat(64),
-      modules: {},
-      files: {
-        [relPath]: {
-          template: 'templates/volatile.md.njk',
-          rendered_hash: 'stale-hash-that-does-not-match-on-purpose',
-          ownership: 'user',
-        },
+    const state = makeStateWithFiles({
+      [relPath]: {
+        template: 'templates/volatile.md.njk',
+        rendered_hash: 'stale-hash-that-does-not-match-on-purpose',
+        ownership: 'user',
       },
-    };
+    });
 
     return await detectDrift(vaultRoot, state);
   } finally {

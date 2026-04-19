@@ -15,6 +15,7 @@ import type {
   ModuleSelections,
 } from '../runtime/types.js';
 import { ShardMindError, assertNever } from '../runtime/types.js';
+import { isEnoent } from '../runtime/errno.js';
 import { isComputedDefault } from './schema.js';
 import { resolveModules } from './modules.js';
 import { sha256 } from './fs-utils.js';
@@ -131,8 +132,7 @@ export async function detectCollisions(
         });
       }
     } catch (err) {
-      const code = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
-      if (code !== 'ENOENT') {
+      if (!isEnoent(err)) {
         throw new ShardMindError(
           `Could not check existing file: ${absolutePath}`,
           'COLLISION_CHECK_FAILED',

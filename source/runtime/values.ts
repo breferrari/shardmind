@@ -6,6 +6,7 @@ import type { ShardSchema, ValidationResult } from './types.js';
 import { ShardMindError } from './types.js';
 import { resolveVaultRoot } from './state.js';
 import { VALUES_FILE } from './vault-paths.js';
+import { errnoCode } from './errno.js';
 
 /**
  * Load `shard-values.yaml` from the current vault.
@@ -36,7 +37,7 @@ export async function loadValues(): Promise<Record<string, unknown>> {
   try {
     raw = await fs.readFile(filePath, 'utf-8');
   } catch (err) {
-    const fsCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
+    const fsCode = errnoCode(err);
     if (fsCode === 'ENOENT') {
       throw new ShardMindError(
         `Cannot read shard-values.yaml: ${filePath}`,
