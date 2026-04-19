@@ -24,9 +24,22 @@ export async function runPostInstallHook(
   tempDir: string,
   manifest: ShardManifest,
 ): Promise<HookResult> {
-  const hookRelPath = manifest.hooks?.['post-install'];
-  if (!hookRelPath) return { kind: 'absent' };
+  return lookupHook(tempDir, manifest.hooks?.['post-install']);
+}
 
+/**
+ * Post-update sibling of `runPostInstallHook`. Same deferred-execution
+ * contract as the install hook — execution mechanism is tracked in #30.
+ */
+export async function runPostUpdateHook(
+  tempDir: string,
+  manifest: ShardManifest,
+): Promise<HookResult> {
+  return lookupHook(tempDir, manifest.hooks?.['post-update']);
+}
+
+async function lookupHook(tempDir: string, hookRelPath: string | undefined): Promise<HookResult> {
+  if (!hookRelPath) return { kind: 'absent' };
   const hookPath = path.join(tempDir, hookRelPath);
   if (!(await pathExists(hookPath))) return { kind: 'absent' };
   return { kind: 'deferred', hookPath };

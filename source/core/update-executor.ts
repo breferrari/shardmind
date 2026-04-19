@@ -1,0 +1,549 @@
+/**
+ * Update executor — disk-mutating operations for `shardmind update`.
+ *
+ * Mirrors install-executor's split: the planner decides, this file acts.
+ * Before any writes happen we snapshot every file the plan will touch
+ * (and the engine's cache) into a per-run backup directory; if anything
+ * fails we walk it back. Commands never see partial state.
+ */
+
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import { stringify as stringifyYaml } from 'yaml';
+import type {
+  ShardManifest,
+  ShardSchema,
+  ShardState,
+  FileState,
+  ResolvedShard,
+  ModuleSelections,
+  MergeStats,
+} from '../runtime/types.js';
+import { ShardMindError } from '../runtime/types.js';
+import { errnoCode, isEnoent } from '../runtime/errno.js';
+import { sha256, pathExists } from './fs-utils.js';
+import { hashValues } from './install-planner.js';
+import {
+  cacheTemplates,
+  cacheManifest,
+  writeState,
+  initShardDir,
+} from './state.js';
+import {
+  SHARDMIND_DIR,
+  VALUES_FILE,
+  STATE_FILE,
+  CACHED_MANIFEST,
+  CACHED_SCHEMA,
+  CACHED_TEMPLATES,
+} from '../runtime/vault-paths.js';
+import type {
+  UpdatePlan,
+  UpdateAction,
+  ConflictResolution,
+} from './update-planner.js';
+
+export interface UpdateRunnerOptions {
+  vaultRoot: string;
+  plan: UpdatePlan;
+  conflictResolutions: Record<string, ConflictResolution>;
+  currentState: ShardState;
+  newManifest: ShardManifest;
+  newSchema: ShardSchema;
+  newValues: Record<string, unknown>;
+  newSelections: ModuleSelections;
+  resolved: ResolvedShard;
+  tarballSha256: string;
+  newTempDir: string;
+  now?: Date;
+  dryRun?: boolean;
+  onProgress?: (event: UpdateProgressEvent) => void;
+}
+
+export type UpdateProgressEvent =
+  | { kind: 'start'; total: number }
+  | { kind: 'file'; index: number; total: number; label: string; outputPath: string; action: UpdateAction['kind'] }
+  | { kind: 'done'; total: number };
+
+export interface UpdateResult {
+  state: ShardState;
+  summary: UpdateSummary;
+  backupDir: string | null;
+}
+
+export interface UpdateSummary {
+  fromVersion: string;
+  toVersion: string;
+  counts: UpdatePlan['counts'];
+  conflictsResolved: number;
+  conflictsKeptMine: number;
+  conflictsSkipped: number;
+  conflictsAcceptedNew: number;
+  autoMergeStats: MergeStats;
+  wroteFiles: string[];
+  deletedFiles: string[];
+}
+
+/**
+ * Execute an UpdatePlan against a real vault.
+ *
+ * Flow:
+ *   1. Snapshot every path the plan touches (file content + .shardmind/
+ *      cache) into `.shardmind/backups/update-<ts>/`.
+ *   2. Apply each action in dependency-safe order (deletes last so a new
+ *      file at the same path can't collide with the about-to-be-deleted
+ *      one).
+ *   3. Re-cache manifest/schema/templates, re-write values, write new
+ *      state.json.
+ *   4. On any exception between step 1 and the final state write, run
+ *      rollback: restore snapshots and delete any files we added that
+ *      weren't in the pre-run snapshot.
+ */
+export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult> {
+  const {
+    vaultRoot,
+    plan,
+    conflictResolutions,
+    currentState,
+    newManifest,
+    newSchema,
+    newValues,
+    newSelections,
+    resolved,
+    tarballSha256,
+    newTempDir,
+    now = new Date(),
+    dryRun = false,
+    onProgress,
+  } = opts;
+
+  const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now);
+  const addedPaths: string[] = [];
+
+  try {
+    if (!dryRun) {
+      await snapshotForRollback(vaultRoot, plan, backupDir!);
+    }
+
+    const writable = plan.actions.filter((a) => actionWrites(a, conflictResolutions));
+    onProgress?.({ kind: 'start', total: writable.length });
+
+    const nextFiles: Record<string, FileState> = { ...currentState.files };
+    const summary: UpdateSummary = {
+      fromVersion: currentState.version,
+      toVersion: newManifest.version,
+      counts: plan.counts,
+      conflictsResolved: 0,
+      conflictsKeptMine: 0,
+      conflictsSkipped: 0,
+      conflictsAcceptedNew: 0,
+      autoMergeStats: { linesUnchanged: 0, linesAutoMerged: 0 },
+      wroteFiles: [],
+      deletedFiles: [],
+    };
+
+    // Two-pass: writes first, deletes second. Writes use mkdir -p so they
+    // can create parents. Deletes after means a rename-style move (delete
+    // + add at a different path) won't clobber a new file.
+    let index = 0;
+    for (const action of plan.actions) {
+      if (isDeleteAction(action, conflictResolutions)) continue;
+      await applyWriteAction(action, {
+        vaultRoot,
+        conflictResolutions,
+        nextFiles,
+        summary,
+        addedPaths,
+        dryRun,
+        onProgress,
+        index: ++index,
+        total: writable.length,
+      });
+    }
+    for (const action of plan.actions) {
+      if (!isDeleteAction(action, conflictResolutions)) continue;
+      await applyDeleteAction(action, {
+        vaultRoot,
+        nextFiles,
+        summary,
+        dryRun,
+        onProgress,
+        index: ++index,
+        total: writable.length,
+      });
+    }
+
+    onProgress?.({ kind: 'done', total: writable.length });
+
+    const nextState: ShardState = {
+      schema_version: 1,
+      shard: `${newManifest.namespace}/${newManifest.name}`,
+      source: resolved.source,
+      version: newManifest.version,
+      tarball_sha256: tarballSha256,
+      installed_at: currentState.installed_at,
+      updated_at: now.toISOString(),
+      values_hash: hashValues(newValues),
+      modules: newSelections,
+      files: nextFiles,
+    };
+
+    if (!dryRun) {
+      await initShardDir(vaultRoot);
+      await cacheTemplates(vaultRoot, newTempDir);
+      await cacheManifest(vaultRoot, newManifest, newSchema);
+      await writeValuesFile(vaultRoot, newValues);
+      await writeState(vaultRoot, nextState);
+    }
+
+    return { state: nextState, summary, backupDir };
+  } catch (err) {
+    if (!dryRun && backupDir) {
+      await rollbackUpdate(vaultRoot, backupDir, addedPaths).catch(() => {});
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Write / delete application
+// ---------------------------------------------------------------------------
+
+interface ApplyContext {
+  vaultRoot: string;
+  conflictResolutions: Record<string, ConflictResolution>;
+  nextFiles: Record<string, FileState>;
+  summary: UpdateSummary;
+  addedPaths: string[];
+  dryRun: boolean;
+  onProgress: ((event: UpdateProgressEvent) => void) | undefined;
+  index: number;
+  total: number;
+}
+
+interface DeleteContext {
+  vaultRoot: string;
+  nextFiles: Record<string, FileState>;
+  summary: UpdateSummary;
+  dryRun: boolean;
+  onProgress: ((event: UpdateProgressEvent) => void) | undefined;
+  index: number;
+  total: number;
+}
+
+async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promise<void> {
+  switch (action.kind) {
+    case 'noop':
+    case 'skip_volatile':
+    case 'keep_as_user':
+      // Nothing to write. These are "no-op at the executor level" —
+      // the planner still recorded them so counts are accurate.
+      return;
+    case 'delete':
+      // Handled in delete pass.
+      return;
+    case 'overwrite':
+    case 'add':
+    case 'restore_missing': {
+      ctx.onProgress?.({
+        kind: 'file',
+        index: ctx.index,
+        total: ctx.total,
+        label: action.path,
+        outputPath: action.path,
+        action: action.kind,
+      });
+      if (!ctx.dryRun) {
+        const wasExisting = await pathExists(path.join(ctx.vaultRoot, action.path));
+        await writeFile(ctx.vaultRoot, action.path, action.content);
+        if (!wasExisting) ctx.addedPaths.push(action.path);
+      }
+      ctx.nextFiles[action.path] = buildFileState(action, 'managed');
+      ctx.summary.wroteFiles.push(action.path);
+      return;
+    }
+    case 'auto_merge': {
+      ctx.onProgress?.({
+        kind: 'file',
+        index: ctx.index,
+        total: ctx.total,
+        label: action.path,
+        outputPath: action.path,
+        action: action.kind,
+      });
+      if (!ctx.dryRun) {
+        await writeFile(ctx.vaultRoot, action.path, action.content);
+      }
+      ctx.nextFiles[action.path] = buildFileState(action, 'modified');
+      ctx.summary.wroteFiles.push(action.path);
+      ctx.summary.autoMergeStats.linesUnchanged += action.stats.linesUnchanged;
+      ctx.summary.autoMergeStats.linesAutoMerged += action.stats.linesAutoMerged;
+      return;
+    }
+    case 'conflict': {
+      const resolution = ctx.conflictResolutions[action.path] ?? 'keep_mine';
+      ctx.onProgress?.({
+        kind: 'file',
+        index: ctx.index,
+        total: ctx.total,
+        label: action.path,
+        outputPath: action.path,
+        action: action.kind,
+      });
+      if (resolution === 'accept_new') {
+        if (!ctx.dryRun) await writeFile(ctx.vaultRoot, action.path, action.newContent);
+        ctx.nextFiles[action.path] = {
+          template: action.templateKey,
+          rendered_hash: action.newContentHash,
+          ownership: 'managed',
+          ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
+        };
+        ctx.summary.wroteFiles.push(action.path);
+        ctx.summary.conflictsAcceptedNew++;
+      } else if (resolution === 'keep_mine') {
+        // Leave file on disk. Track as modified so next drift detects
+        // their version, not the new-template version.
+        const currentContent = await readIfExists(path.join(ctx.vaultRoot, action.path));
+        ctx.nextFiles[action.path] = {
+          template: action.templateKey,
+          rendered_hash: currentContent !== null ? sha256(currentContent) : action.newContentHash,
+          ownership: 'modified',
+          ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
+        };
+        ctx.summary.conflictsKeptMine++;
+      } else {
+        // 'skip': same on-disk outcome as keep_mine, but reported separately.
+        const currentContent = await readIfExists(path.join(ctx.vaultRoot, action.path));
+        ctx.nextFiles[action.path] = {
+          template: action.templateKey,
+          rendered_hash: currentContent !== null ? sha256(currentContent) : action.newContentHash,
+          ownership: 'modified',
+          ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
+        };
+        ctx.summary.conflictsSkipped++;
+      }
+      ctx.summary.conflictsResolved++;
+      return;
+    }
+  }
+}
+
+async function applyDeleteAction(action: UpdateAction, ctx: DeleteContext): Promise<void> {
+  if (action.kind !== 'delete') return;
+  ctx.onProgress?.({
+    kind: 'file',
+    index: ctx.index,
+    total: ctx.total,
+    label: action.path,
+    outputPath: action.path,
+    action: 'delete',
+  });
+  if (!ctx.dryRun) {
+    await fsp.rm(path.join(ctx.vaultRoot, action.path), { force: true });
+  }
+  delete ctx.nextFiles[action.path];
+  ctx.summary.deletedFiles.push(action.path);
+}
+
+function buildFileState(
+  action:
+    | Extract<UpdateAction, { kind: 'overwrite' | 'add' | 'restore_missing' }>
+    | Extract<UpdateAction, { kind: 'auto_merge' }>,
+  ownership: FileState['ownership'],
+): FileState {
+  return {
+    template: action.templateKey,
+    rendered_hash: action.renderedHash,
+    ownership,
+    ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
+  };
+}
+
+function isDeleteAction(
+  action: UpdateAction,
+  _resolutions: Record<string, ConflictResolution>,
+): boolean {
+  return action.kind === 'delete';
+}
+
+function actionWrites(
+  action: UpdateAction,
+  resolutions: Record<string, ConflictResolution>,
+): boolean {
+  switch (action.kind) {
+    case 'overwrite':
+    case 'auto_merge':
+    case 'add':
+    case 'restore_missing':
+    case 'delete':
+      return true;
+    case 'conflict':
+      return resolutions[action.path] === 'accept_new';
+    case 'noop':
+    case 'skip_volatile':
+    case 'keep_as_user':
+      return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot + rollback
+// ---------------------------------------------------------------------------
+
+export async function createBackupDir(vaultRoot: string, now: Date): Promise<string> {
+  const stamp = now.toISOString().replace(/:/g, '-').replace(/\..+$/, '');
+  const dir = path.join(vaultRoot, SHARDMIND_DIR, 'backups', `update-${stamp}`);
+  await fsp.mkdir(dir, { recursive: true });
+  return dir;
+}
+
+async function snapshotForRollback(
+  vaultRoot: string,
+  plan: UpdatePlan,
+  backupDir: string,
+): Promise<void> {
+  const toSnapshot = new Set<string>();
+  for (const action of plan.actions) {
+    switch (action.kind) {
+      case 'overwrite':
+      case 'auto_merge':
+      case 'delete':
+      case 'conflict':
+      case 'restore_missing':
+        toSnapshot.add(action.path);
+        break;
+      case 'add':
+      case 'noop':
+      case 'skip_volatile':
+      case 'keep_as_user':
+        break;
+    }
+  }
+
+  const filesBackupDir = path.join(backupDir, 'files');
+  await fsp.mkdir(filesBackupDir, { recursive: true });
+  for (const rel of toSnapshot) {
+    const src = path.join(vaultRoot, rel);
+    const dst = path.join(filesBackupDir, rel);
+    try {
+      await fsp.mkdir(path.dirname(dst), { recursive: true });
+      await fsp.copyFile(src, dst);
+    } catch (err) {
+      if (!isEnoent(err)) throw err;
+      // ENOENT is expected for 'missing' entries; skip them.
+    }
+  }
+
+  // Cache + state + values file.
+  const cacheBackupDir = path.join(backupDir, 'cache');
+  await fsp.mkdir(cacheBackupDir, { recursive: true });
+  for (const rel of [STATE_FILE, CACHED_MANIFEST, CACHED_SCHEMA, VALUES_FILE]) {
+    const src = path.join(vaultRoot, rel);
+    const dst = path.join(cacheBackupDir, rel);
+    try {
+      await fsp.mkdir(path.dirname(dst), { recursive: true });
+      await fsp.copyFile(src, dst);
+    } catch (err) {
+      if (!isEnoent(err)) throw err;
+    }
+  }
+  const templatesSrc = path.join(vaultRoot, CACHED_TEMPLATES);
+  if (await pathExists(templatesSrc)) {
+    const templatesDst = path.join(cacheBackupDir, CACHED_TEMPLATES);
+    await fsp.cp(templatesSrc, templatesDst, { recursive: true });
+  }
+}
+
+export async function rollbackUpdate(
+  vaultRoot: string,
+  backupDir: string,
+  addedPaths: string[],
+): Promise<void> {
+  // Remove anything we newly introduced first so the restore-step can't
+  // spuriously "succeed" by landing a snapshot on top of a brand-new file.
+  for (const rel of addedPaths) {
+    try {
+      await fsp.rm(path.join(vaultRoot, rel), { force: true });
+    } catch {
+      // ignore
+    }
+  }
+
+  const filesDir = path.join(backupDir, 'files');
+  await restoreTree(filesDir, vaultRoot);
+
+  const cacheDir = path.join(backupDir, 'cache');
+  await restoreTree(cacheDir, vaultRoot);
+}
+
+async function restoreTree(srcRoot: string, destRoot: string): Promise<void> {
+  if (!(await pathExists(srcRoot))) return;
+  const walk = async (dir: string): Promise<string[]> => {
+    const entries = await fsp.readdir(dir, { withFileTypes: true });
+    const out: string[] = [];
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...(await walk(full)));
+      else out.push(full);
+    }
+    return out;
+  };
+  const files = await walk(srcRoot);
+  for (const abs of files) {
+    const rel = path.relative(srcRoot, abs);
+    const dst = path.join(destRoot, rel);
+    await fsp.mkdir(path.dirname(dst), { recursive: true });
+    await fsp.copyFile(abs, dst);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Low-level file ops
+// ---------------------------------------------------------------------------
+
+async function writeFile(vaultRoot: string, outputPath: string, content: string): Promise<void> {
+  const abs = path.join(vaultRoot, outputPath);
+  try {
+    await fsp.mkdir(path.dirname(abs), { recursive: true });
+    await fsp.writeFile(abs, content, 'utf-8');
+  } catch (err) {
+    throw new ShardMindError(
+      `Could not write ${outputPath} during update`,
+      'UPDATE_WRITE_FAILED',
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+async function readIfExists(absPath: string): Promise<string | null> {
+  try {
+    return await fsp.readFile(absPath, 'utf-8');
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * Overwrite `shard-values.yaml` (the install executor uses `wx` so it
+ * refuses to overwrite; here we *want* to replace it atomically).
+ */
+async function writeValuesFile(
+  vaultRoot: string,
+  values: Record<string, unknown>,
+): Promise<void> {
+  const abs = path.join(vaultRoot, VALUES_FILE);
+  const serialized = stringifyYaml(values, { lineWidth: 0 }).trimEnd() + '\n';
+  try {
+    await fsp.writeFile(abs, serialized, 'utf-8');
+  } catch (err) {
+    if (errnoCode(err) === 'EACCES') {
+      throw new ShardMindError(
+        `Could not write ${VALUES_FILE}`,
+        'UPDATE_WRITE_FAILED',
+        'Check filesystem permissions on the vault directory.',
+      );
+    }
+    throw err;
+  }
+}
