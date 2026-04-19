@@ -1199,7 +1199,14 @@ tests/fixtures/
 └── migration/
 ```
 
-### 17.3 The 16 Merge Scenarios
+### 17.3 The 20 Merge Scenarios
+
+Seventeen spec scenarios plus three edge cases. Each is a directory under
+`tests/fixtures/merge/` with `scenario.yaml` + templates + values + actual
+file + expected output. The fixture runner dispatches by scenario flag:
+standard scenarios go through `computeMergeAction`; orchestration-level
+scenarios (new file / removed / volatile / module change) dispatch to
+rendering or drift classification directly.
 
 | # | Scenario | Ownership | Template? | Values? | User edited? | Expected |
 |---|----------|-----------|-----------|---------|--------------|----------|
@@ -1210,54 +1217,79 @@ tests/fixtures/
 | 05 | User edited, nothing upstream | modified | no | no | yes | Skip. Preserve user's. |
 | 06 | Template changed, user edited different section | modified | yes | no | yes | Auto-merge |
 | 07 | Template changed, user edited SAME section | modified | yes | no | yes | Conflict → TUI |
-| 08 | User deleted section | modified | yes | no | deletion | Show diff |
+| 08 | User deleted section | modified | yes | no | deletion | Auto-merge (honor deletion, apply non-conflicting template edit) |
 | 09 | User added below template | modified | yes | no | addition | Auto-merge, preserve additions |
 | 10 | New file from template | — | — | — | — | Render, add to state |
 | 11 | File removed from template | managed | — | — | no | Ask: delete or keep? |
-| 12 | Frontmatter only change | managed | yes (fm) | no | no | Re-render with FM-aware merge |
+| 12 | Frontmatter only change | managed | yes (fm) | no | no | Re-render (managed overwrite) |
 | 13 | Module newly included on update | — | — | — | — | Render as fresh install for that module |
 | 14 | Module excluded on update | included | — | — | — | Ask: delete files or keep as user-owned? |
 | 15 | _each item added | managed | no | yes | no | Render new file |
 | 16 | CLAUDE.md partial updated | managed | yes | no | no | Re-render full CLAUDE.md |
+| 17 | Volatile file, template changed | volatile | yes | no | yes | Skip (never re-render volatile) |
+| 18 | Empty file → shard adds content | managed | yes | no | no | Overwrite |
+| 19 | UTF-8 non-ASCII round-trip | modified | yes | no | yes | Auto-merge, bytes preserved |
+| 20 | Frontmatter edited + body edited (modified) | modified | yes | no | yes | Auto-merge (user tag + shard body change) |
 
 ### 17.4 Three-Way Merge Implementation
 
-Uses `node-diff3` (Khanna-Myers algorithm):
+Uses `node-diff3`'s `diff3MergeRegions` (Khanna–Myers algorithm) — **not**
+the flat `diff3Merge`. The regions variant exposes `buffer: 'a' | 'o' | 'b'`
+on stable regions and separate `aContent / oContent / bContent` on unstable
+ones, which is the only way to distinguish stable-unchanged lines from
+stable-auto-merged lines and produce accurate merge stats.
 
 ```typescript
-import { diff3Merge } from 'node-diff3';
+import { diff3MergeRegions } from 'node-diff3';
 
-export function threeWayMerge(input: MergeInput): MergeResult {
-  const merged = diff3Merge(
-    input.theirs.split('\n'),  // user's file
-    input.base.split('\n'),    // old rendered (cached)
-    input.ours.split('\n'),    // new rendered
+export function threeWayMerge(base, theirs, ours): ThreeWayMergeResult {
+  const regions = diff3MergeRegions(
+    theirs.split(/\r?\n/),  // a — user on disk
+    base.split(/\r?\n/),    // o — old rendered (cached)
+    ours.split(/\r?\n/),    // b — new rendered
   );
-  // Process regions: ok → keep, conflict → mark
-  // Return content + hasConflicts + conflict regions + stats
+
+  for (const r of regions) {
+    if (r.stable) {
+      emit(r.bufferContent);
+      if (r.buffer === 'o') stats.linesUnchanged   += r.bufferContent.length;
+      else                  stats.linesAutoMerged  += r.bufferContent.length;
+      continue;
+    }
+    // Unstable: classify as auto-merge or true conflict.
+    if (arraysEqual(r.aContent, r.oContent))       emit(r.bContent);  // ours
+    else if (arraysEqual(r.bContent, r.oContent))  emit(r.aContent);  // theirs
+    else if (arraysEqual(r.aContent, r.bContent))  emit(r.aContent);  // false conflict
+    else                                           emitConflictMarkers(...);
+  }
 }
 ```
+
+The `/\r?\n/` split tolerates CRLF on Windows-saved user files while base and
+ours are renderer output (always LF). Merged output is always LF — callers
+convert at the write boundary if they need platform-native line endings.
 
 ### 17.5 Edge Cases
 
 | Edge case | Decision |
 |-----------|----------|
-| **Frontmatter merge** | Parse both as YAML objects, deep-merge, don't line-merge |
-| **Empty file on disk** | Treat as modified. Show diff. |
-| **Hash-identical after re-render** | Short-circuit. No diff needed. |
-| **Wikilink targets moved** | Warn. Suggest find-and-replace. |
-| **_each item renamed** | Rename file, don't delete+recreate (preserves backlinks) |
-| **Encoding** | Test with Unicode, emoji, CJK in values |
+| **Frontmatter merge** | Render the whole file; renderer parses frontmatter and emits normalized YAML (parse → stringify via `yaml`). diff3 then line-merges the whole document. User tag additions and shard field additions merge cleanly because disjoint YAML keys become non-adjacent lines. Fixture 20 proves this. |
+| **Empty file** | Render pipeline produces an empty string; `sha256(base) === sha256(ours)` short-circuits the no-change path. Fixture 18 tests the variant where base is empty but ours has content → overwrite. |
+| **Hash-identical after re-render** | Short-circuit via `sha256(base) === sha256(ours)`. No diff3 pass. Covered by scenarios 01, 05. |
+| **CRLF user file** | `split(/\r?\n/)` normalizes on the way in; merged output is LF. Covered by `tests/unit/differ-line-endings.test.ts`. |
+| **UTF-8 non-ASCII** | diff3 is byte/line-agnostic for string content. Fixture 19 exercises emoji, accented Latin, and CJK. |
+| **Wikilink targets moved** | Warn. Suggest find-and-replace. *(v0.2 — out of scope for the engine.)* |
+| **_each item renamed** | Rename file, don't delete+recreate (preserves backlinks). *(v0.2 — requires iterator-aware diffing beyond the single-file merge primitive.)* |
 
 ### 17.6 Test-First Build Order
 
-1. Write all 16 fixture files (templates, values, actual, expected)
-2. Write test runner that auto-discovers fixtures
-3. Run → all fail
-4. Implement `computeMergeAction()` → ownership tests pass
-5. Implement `threeWayMerge()` → merge output tests pass
-6. Add edge case fixtures → find bugs → fix
-7. Wire into `commands/update.tsx`
+1. ✅ Write 17 spec-defined fixture files (templates, values, actual, expected) in PR #10.
+2. ✅ Write test runner (`tests/unit/drift.test.ts`) that auto-discovers fixtures and dispatches by scenario kind.
+3. ✅ `it.fails` all 17 before the engine exists.
+4. ✅ Implement `computeMergeAction()` → skip / overwrite ownership tests pass.
+5. ✅ Implement `threeWayMerge()` → auto_merge / conflict tests pass.
+6. ✅ Add edge-case fixtures (empty, UTF-8, frontmatter-modified-merge) plus direct unit tests for stats invariants (`tests/unit/three-way-merge.test.ts`) and CRLF robustness (`tests/unit/differ-line-endings.test.ts`).
+7. Wire into `commands/update.tsx` — *Milestone 4 / issue #12, out of scope for the merge-engine PR.*
 
 ---
 

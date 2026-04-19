@@ -30,6 +30,18 @@ const CONFLICT_END = '>>>>>>> shard update';
 // spurious conflicts against LF base/ours.
 const LINE_SPLIT = /\r?\n/;
 
+// Non-printable sentinel prefixed to every line before handing them to
+// node-diff3. Reason: node-diff3's LCS implementation uses a plain `{}`
+// as a Map and iterates on string keys, which blows up when any line is
+// a string that collides with Object.prototype members ('constructor',
+// '__proto__', 'toString', 'hasOwnProperty', etc.). In a vault of
+// markdown/code content, `constructor` appearing on its own line is not
+// exotic. Prefixing every line with U+0001 (START OF HEADING, never a
+// valid printable character) sidesteps the collision because no
+// prototype member name starts with that code unit. We strip the prefix
+// before anything leaves this module.
+const LINE_SENTINEL = '\u0001';
+
 export interface ComputeMergeActionInput {
   readonly path: string;
   readonly ownership: 'managed' | 'modified';
@@ -121,9 +133,9 @@ export function threeWayMerge(
   // Merged output is always LF — callers that need platform-native line
   // endings convert at the write boundary.
   const regions: IRegion<string>[] = diff3MergeRegions(
-    theirs.split(LINE_SPLIT),
-    base.split(LINE_SPLIT),
-    ours.split(LINE_SPLIT),
+    prefixLines(theirs),
+    prefixLines(base),
+    prefixLines(ours),
   );
 
   const merged: string[] = [];
@@ -151,7 +163,23 @@ export function threeWayMerge(
     stats.linesConflicted += resolution.conflictedLines;
   }
 
-  return { content: merged.join('\n'), conflicts, stats };
+  return { content: stripPrefixes(merged.join('\n')), conflicts, stats };
+}
+
+function prefixLines(text: string): string[] {
+  return text.split(LINE_SPLIT).map(line => LINE_SENTINEL + line);
+}
+
+function stripPrefixes(text: string): string {
+  // Global strip of the sentinel from anywhere it appears in the output.
+  // Safer than slicing per-line because merger output interleaves stable
+  // region content with conflict markers we added ourselves (markers do
+  // not carry the sentinel, so this is a no-op on them).
+  return text.replace(new RegExp(LINE_SENTINEL, 'g'), '');
+}
+
+function stripPrefix(line: string): string {
+  return line.startsWith(LINE_SENTINEL) ? line.slice(LINE_SENTINEL.length) : line;
 }
 
 interface RegionResolution {
@@ -192,9 +220,11 @@ function resolveUnstableRegion(
     conflict: {
       lineStart,
       lineEnd,
-      base: base.join('\n'),
-      theirs: theirs.join('\n'),
-      ours: ours.join('\n'),
+      // Strip the LINE_SENTINEL prefix before exposing the content to the UI
+      // layer. Consumers never see the prefix; it's an internal encoding.
+      base: base.map(stripPrefix).join('\n'),
+      theirs: theirs.map(stripPrefix).join('\n'),
+      ours: ours.map(stripPrefix).join('\n'),
     },
     autoMergedLines: 0,
     conflictedLines: theirs.length + ours.length,
