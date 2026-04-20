@@ -211,7 +211,6 @@ export interface MergeStatsWithConflicts extends MergeStats {
 
 export interface MergeResult {
   content: string;
-  hasConflicts: boolean;
   conflicts: ConflictRegion[];
   stats: MergeStatsWithConflicts;
 }

@@ -38,7 +38,9 @@ describe('NewValuesPrompt', () => {
     const frame = lastFrame() ?? '';
     expect(frame).toContain('New values since your last install');
     expect(frame).toContain('Step 1 of 1');
-    expect(frame).toContain('setup');
+    // Renders the human-readable group label ("Setup"), not the raw id
+    // ("setup") — same lookup InstallWizard uses for consistency.
+    expect(frame).toContain('Setup');
     expect(frame).toContain('Your name?');
   });
 

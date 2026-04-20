@@ -2,7 +2,7 @@ import { Box, Text } from 'ink';
 import { Spinner, StatusMessage, Alert } from '../components/ui.js';
 import zod from 'zod';
 
-import { ShardMindError } from '../runtime/types.js';
+import { ShardMindError, assertNever } from '../runtime/types.js';
 
 import InstallWizard from '../components/InstallWizard.js';
 import CollisionReview from '../components/CollisionReview.js';
@@ -49,105 +49,101 @@ export default function Install({ args, options }: Props) {
     vaultRoot: process.cwd(),
   });
 
-  if (phase.kind === 'booting' || phase.kind === 'loading') {
-    const msg = phase.kind === 'loading' ? phase.message : 'Starting…';
-    return (
-      <CommandFrame dryRun={dryRun} showLegend={false}>
-        <Box gap={1}>
-          <Spinner />
-          <Text>{msg}</Text>
-        </Box>
-      </CommandFrame>
-    );
+  // Exhaustive switch: adding a new Phase variant without a case here
+  // is a compile error, not a silent render-nothing bug.
+  switch (phase.kind) {
+    case 'booting':
+    case 'loading': {
+      const msg = phase.kind === 'loading' ? phase.message : 'Starting…';
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false}>
+          <Box gap={1}>
+            <Spinner />
+            <Text>{msg}</Text>
+          </Box>
+        </CommandFrame>
+      );
+    }
+    case 'gate':
+      return (
+        <CommandFrame dryRun={dryRun}>
+          <ExistingInstallGate state={phase.state} onChoice={onGateChoice} />
+        </CommandFrame>
+      );
+    case 'wizard':
+      return (
+        <CommandFrame dryRun={dryRun}>
+          <InstallWizard
+            manifest={phase.ctx.manifest}
+            schema={phase.ctx.schema}
+            prefillValues={phase.ctx.prefillValues}
+            moduleFileCounts={phase.ctx.moduleFileCounts}
+            alwaysIncludedFileCount={phase.ctx.alwaysIncludedFileCount}
+            onComplete={onWizardComplete}
+            onCancel={onWizardCancel}
+            onError={onWizardError}
+          />
+        </CommandFrame>
+      );
+    case 'collision':
+      return (
+        <CommandFrame dryRun={dryRun}>
+          <CollisionReview collisions={phase.collisions} onChoice={onCollisionChoice} />
+        </CommandFrame>
+      );
+    case 'installing':
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false}>
+          <CommandProgress
+            current={phase.current}
+            total={phase.total}
+            label={phase.label}
+            verbose={verbose}
+            history={phase.history}
+          />
+        </CommandFrame>
+      );
+    case 'summary':
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false}>
+          <Summary
+            manifest={phase.manifest}
+            vaultRoot={phase.vaultRoot}
+            fileCount={phase.fileCount}
+            durationMs={phase.durationMs}
+            backups={phase.backups}
+            hookOutput={phase.hook}
+            dryRun={phase.dryRun}
+          />
+        </CommandFrame>
+      );
+    case 'cancelled':
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false}>
+          <Box flexDirection="column">
+            <Alert variant="info">Cancelled</Alert>
+            <Text dimColor>{phase.reason}</Text>
+          </Box>
+        </CommandFrame>
+      );
+    case 'error': {
+      const err = phase.error;
+      const code = err instanceof ShardMindError ? err.code : null;
+      const hint = err instanceof ShardMindError ? err.hint : null;
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false}>
+          <Box flexDirection="column" gap={1}>
+            <StatusMessage variant="error">{err.message}</StatusMessage>
+            {code && <Text dimColor>code: {code}</Text>}
+            {hint && <Text>{hint}</Text>}
+            {phase.detail && <Text dimColor>{phase.detail}</Text>}
+          </Box>
+        </CommandFrame>
+      );
+    }
+    default:
+      return assertNever(phase);
   }
-
-  if (phase.kind === 'gate') {
-    return (
-      <CommandFrame dryRun={dryRun}>
-        <ExistingInstallGate state={phase.state} onChoice={onGateChoice} />
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'wizard') {
-    return (
-      <CommandFrame dryRun={dryRun}>
-        <InstallWizard
-          manifest={phase.ctx.manifest}
-          schema={phase.ctx.schema}
-          prefillValues={phase.ctx.prefillValues}
-          moduleFileCounts={phase.ctx.moduleFileCounts}
-          alwaysIncludedFileCount={phase.ctx.alwaysIncludedFileCount}
-          onComplete={onWizardComplete}
-          onCancel={onWizardCancel}
-          onError={onWizardError}
-        />
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'collision') {
-    return (
-      <CommandFrame dryRun={dryRun}>
-        <CollisionReview collisions={phase.collisions} onChoice={onCollisionChoice} />
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'installing') {
-    return (
-      <CommandFrame dryRun={dryRun} showLegend={false}>
-        <CommandProgress
-          current={phase.current}
-          total={phase.total}
-          label={phase.label}
-          verbose={verbose}
-          history={phase.history}
-        />
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'summary') {
-    return (
-      <CommandFrame dryRun={dryRun} showLegend={false}>
-        <Summary
-          manifest={phase.manifest}
-          vaultRoot={phase.vaultRoot}
-          fileCount={phase.fileCount}
-          durationMs={phase.durationMs}
-          backups={phase.backups}
-          hookOutput={phase.hook}
-          dryRun={phase.dryRun}
-        />
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'cancelled') {
-    return (
-      <CommandFrame dryRun={dryRun} showLegend={false}>
-        <Box flexDirection="column">
-          <Alert variant="info">Cancelled</Alert>
-          <Text dimColor>{phase.reason}</Text>
-        </Box>
-      </CommandFrame>
-    );
-  }
-
-  const err = phase.error;
-  const code = err instanceof ShardMindError ? err.code : null;
-  const hint = err instanceof ShardMindError ? err.hint : null;
-  return (
-    <CommandFrame dryRun={dryRun} showLegend={false}>
-      <Box flexDirection="column" gap={1}>
-        <StatusMessage variant="error">{err.message}</StatusMessage>
-        {code && <Text dimColor>code: {code}</Text>}
-        {hint && <Text>{hint}</Text>}
-        {phase.detail && <Text dimColor>{phase.detail}</Text>}
-      </Box>
-    </CommandFrame>
-  );
 }
 
 export const description = 'Install a shard into the current directory';

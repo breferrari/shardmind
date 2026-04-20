@@ -14,6 +14,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { HookResult } from '../../core/hook.js';
+import { assertNever } from '../../runtime/types.js';
 
 export interface HookSummary {
   deferred?: boolean;
@@ -31,6 +32,8 @@ export function summarizeHook(result: HookResult): HookSummary | null {
       return { stdout: result.stdout, exitCode: result.exitCode };
     case 'failed':
       return { stdout: result.message, exitCode: 1 };
+    default:
+      return assertNever(result);
   }
 }
 

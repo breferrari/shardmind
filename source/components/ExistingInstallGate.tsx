@@ -5,6 +5,8 @@ import type { ShardState, ModuleSelections } from '../runtime/types.js';
 
 export type GateChoice = 'update' | 'reinstall' | 'cancel';
 
+const GATE_CHOICES = new Set<GateChoice>(['update', 'reinstall', 'cancel']);
+
 interface ExistingInstallGateProps {
   state: ShardState;
   onChoice: (choice: GateChoice) => void;
@@ -16,6 +18,10 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
   const [screen, setScreen] = useState<Screen>('choose');
   const [error, setError] = useState<string | null>(null);
   const lastSubmittedValue = useRef<string | null>(null);
+  // Same `Select` double-fire guard as CollisionReview / DiffView:
+  // without it, a second onChange firing of `update` or `cancel` would
+  // call `onChoice` twice and the machine would transition twice.
+  const firedRef = useRef(false);
 
   if (screen === 'confirm-reinstall') {
     return (
@@ -44,6 +50,12 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
             }}
             onSubmit={(v) => {
               if (v === 'REINSTALL') {
+                // Same firedRef guard as the Select path — TextInput
+                // can fire onSubmit more than once on Ink re-focus,
+                // and `reinstall` is destructive; a double-fire would
+                // queue two wipes.
+                if (firedRef.current) return;
+                firedRef.current = true;
                 onChoice('reinstall');
               } else {
                 lastSubmittedValue.current = v;
@@ -82,17 +94,22 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
         <Text bold>What would you like to do?</Text>
         <Select
           options={[
-            { label: 'Keep the existing install (recommended — `shardmind update` arrives in Milestone 4)', value: 'update' },
+            { label: 'Keep the existing install (run `shardmind update` to pick up new versions)', value: 'update' },
             { label: 'Reinstall from scratch — destructive', value: 'reinstall' },
             { label: 'Cancel', value: 'cancel' },
           ]}
           onChange={(v) => {
+            if (!GATE_CHOICES.has(v as GateChoice)) return;
             const choice = v as GateChoice;
             if (choice === 'reinstall') {
+              // Reinstall requires a second confirmation; don't arm
+              // the firedRef until the user commits on the next screen.
               setScreen('confirm-reinstall');
-            } else {
-              onChoice(choice);
+              return;
             }
+            if (firedRef.current) return;
+            firedRef.current = true;
+            onChoice(choice);
           }}
         />
       </Box>
