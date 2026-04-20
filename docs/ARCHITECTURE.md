@@ -664,6 +664,12 @@ Full diagnostic output. Replaces the old `doctor` command concept.
     ⬆  v4.0.0 available (run 'shardmind update')
 ```
 
+**v0.1 deviations from the example above**:
+
+- **Per-modified-file flavor text** (`"you added a custom section"`, `"filled in your goals"`) is aspirational; v0.1 renders the path only. Natural-language summaries of user edits would require semantic diff (LLM-class understanding) we deliberately keep out of the engine. Numeric `+N/−M` change counts — which would require re-rendering every modified file's cached template against current values and running `diff3MergeRegions` — are tracked as a future refinement rather than shipped in v0.1 to keep the common-case status run sub-second on large vaults.
+- **Shard-specific environment rows** like `"QMD not installed"` require a shard to contribute diagnostics. v0.1 has no `status` hook type (hooks are post-install and post-update only), so the Environment section ships with Node.js version and a PATH-lookup answer for the Obsidian CLI. Shard-contributed diagnostics are a future enhancement.
+- **Update-available line** is cache-backed (24h TTL; see `docs/IMPLEMENTATION.md §4.15`). When the cache answer is stale — network offline but a previous check exists — the line suffixes `(cached)` so the user can tell.
+
 ### 10.4 `shardmind install <shard>` — Install Flow
 
 ```

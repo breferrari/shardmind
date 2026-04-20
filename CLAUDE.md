@@ -61,12 +61,13 @@ shardmind/
 │   │   └── hooks/                     # State-machine + shared command hooks
 │   │       ├── use-install-machine.ts
 │   │       ├── use-update-machine.ts
+│   │       ├── use-status-report.ts   # Async loader for status command
 │   │       └── shared.ts              # summarizeHook, useSigintRollback
 │   ├── components/
 │   │   ├── CommandFrame.tsx           # Dry-run banner + keyboard legend
 │   │   ├── CommandProgress.tsx        # Shared progress UI (install + update)
-│   │   ├── StatusView.tsx             # Quick status (planned)
-│   │   ├── VerboseView.tsx            # Detailed diagnostics (planned)
+│   │   ├── StatusView.tsx             # Quick status (shardmind root command)
+│   │   ├── VerboseView.tsx            # Detailed diagnostics (shardmind --verbose)
 │   │   ├── InstallWizard.tsx          # Values prompts + module review
 │   │   ├── ModuleReview.tsx           # Multiselect for modules
 │   │   ├── DiffView.tsx               # Three-way diff + conflict resolution
@@ -91,6 +92,8 @@ shardmind/
 │   │   ├── install-planner.ts         # Pure install plan + collisions
 │   │   ├── install-executor.ts        # Apply install plan with rollback
 │   │   ├── values-io.ts               # Shared YAML load for shard-values.yaml
+│   │   ├── update-check.ts            # 24h cached latest-version lookup (status + update)
+│   │   ├── status.ts                  # Pure StatusReport builder for the status command
 │   │   ├── hook.ts                    # Post-install / post-update hook lookup
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── runtime/                       # Exported for hook scripts
@@ -198,6 +201,8 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `update-planner.ts` | §4.11 | Plan update actions from drift + new-shard render |
 | `update-executor.ts` | §4.12 | Apply update plan with snapshot-based rollback |
 | `values-io.ts` | §4.13 | Shared YAML load for shard-values.yaml (install + update) |
+| `status.ts` | §4.14 | Pure StatusReport builder for the `shardmind` (status) command |
+| `update-check.ts` | §4.15 | 24h cached GitHub latest-version lookup shared by status + update |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
 
