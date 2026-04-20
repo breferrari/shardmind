@@ -58,6 +58,24 @@ describe('applyMigrations — rename', () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it('refuses to overwrite a pre-existing target key and warns', () => {
+    const result = applyMigrations(
+      { legacy_name: 'brenno', user_name: 'already set' },
+      '1.0.0',
+      '2.0.0',
+      [
+        {
+          from_version: '2.0.0',
+          changes: [{ type: 'rename', old: 'legacy_name', new: 'user_name' }],
+        },
+      ],
+    );
+    expect(result.values).toEqual({ legacy_name: 'brenno', user_name: 'already set' });
+    expect(result.applied).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatch(/already has a value/);
+  });
+
   it('warns and skips when the source key is missing', () => {
     const result = applyMigrations(
       { other: 1 },
@@ -277,9 +295,12 @@ describe('applyMigrations — chain', () => {
     expect(result.applied).toEqual([]);
   });
 
-  it('throws on invalid semver input', () => {
-    expect(() => applyMigrations({}, 'not-a-version', '1.0.0', [])).toThrow(
-      /Invalid semver/,
+  it('throws MIGRATION_INVALID_VERSION on non-semver input', () => {
+    expect(() => applyMigrations({}, 'not-a-version', '1.0.0', [])).toThrowError(
+      expect.objectContaining({ code: 'MIGRATION_INVALID_VERSION' }),
+    );
+    expect(() => applyMigrations({}, '1.0.0', '!nope!', [])).toThrowError(
+      expect.objectContaining({ code: 'MIGRATION_INVALID_VERSION' }),
     );
   });
 });

@@ -35,34 +35,42 @@ export function summarizeHook(result: HookResult): HookSummary | null {
 }
 
 /**
- * Attach a SIGINT listener that calls `rollback()` when a mutation is
+ * Attach a SIGINT listener that runs `rollback()` when a mutation is
  * in progress, then exits with the conventional 130 code. The caller
  * supplies `isActive` so the handler can distinguish "Ctrl-C during
  * network fetch" (just exit) from "Ctrl-C mid-write" (roll back first).
+ *
+ * `cleanup` runs on every Ctrl-C (active or not) — use it for things
+ * like deleting the downloaded-shard tempdir that must die regardless
+ * of whether writes had started. All callbacks are swallow-failures:
+ * the process is about to exit anyway.
  *
  * Returns nothing; the effect registers + cleans up the listener for
  * as long as the component is mounted.
  */
 export function useSigintRollback(opts: {
-  enabled: boolean;
   isActive: () => boolean;
   rollback: () => Promise<void>;
+  cleanup?: () => Promise<void>;
 }): void {
-  const { enabled, isActive, rollback } = opts;
+  const { isActive, rollback, cleanup } = opts;
   useEffect(() => {
-    if (!enabled) return;
-    const handler = () => {
-      if (isActive()) {
-        rollback()
-          .catch(() => {})
-          .finally(() => process.exit(130));
-      } else {
-        process.exit(130);
+    const handler = async () => {
+      try {
+        if (isActive()) await rollback();
+      } catch {
+        // swallow; process is about to exit
       }
+      try {
+        if (cleanup) await cleanup();
+      } catch {
+        // swallow
+      }
+      process.exit(130);
     };
     process.on('SIGINT', handler);
     return () => {
       process.off('SIGINT', handler);
     };
-  }, [enabled, isActive, rollback]);
+  }, [isActive, rollback, cleanup]);
 }

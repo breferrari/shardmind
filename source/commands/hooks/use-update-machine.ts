@@ -159,13 +159,15 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
   );
 
   // If we're mid-write, walk the executor's snapshot back before exiting.
+  // Tempdir cleanup fires on every Ctrl-C — otherwise cancelling during the
+  // download/plan phase would leak the extracted shard on disk.
   useSigintRollback({
-    enabled: !dryRun,
-    isActive: () => writingRef.current && backupDirRef.current !== null,
+    isActive: () => !dryRun && writingRef.current && backupDirRef.current !== null,
     rollback: () =>
       backupDirRef.current
         ? rollbackUpdate(vaultRoot, backupDirRef.current, addedPathsRef.current)
         : Promise.resolve(),
+    cleanup: () => (ctxCleanupRef.current ? ctxCleanupRef.current() : Promise.resolve()),
   });
 
   // Boot pipeline: state → resolve → download → parse → migrate → branch.

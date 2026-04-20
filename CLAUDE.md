@@ -57,13 +57,23 @@ shardmind/
 │   ├── commands/
 │   │   ├── index.tsx                  # Status display (root command)
 │   │   ├── install.tsx                # shardmind install <shard>
-│   │   └── update.tsx                 # shardmind update
+│   │   ├── update.tsx                 # shardmind update
+│   │   └── hooks/                     # State-machine + shared command hooks
+│   │       ├── use-install-machine.ts
+│   │       ├── use-update-machine.ts
+│   │       └── shared.ts              # summarizeHook, useSigintRollback
 │   ├── components/
-│   │   ├── StatusView.tsx             # Quick status
-│   │   ├── VerboseView.tsx            # Detailed diagnostics (--verbose)
+│   │   ├── CommandFrame.tsx           # Dry-run banner + keyboard legend
+│   │   ├── CommandProgress.tsx        # Shared progress UI (install + update)
+│   │   ├── StatusView.tsx             # Quick status (planned)
+│   │   ├── VerboseView.tsx            # Detailed diagnostics (planned)
 │   │   ├── InstallWizard.tsx          # Values prompts + module review
 │   │   ├── ModuleReview.tsx           # Multiselect for modules
-│   │   ├── DiffView.tsx               # Three-way diff display
+│   │   ├── DiffView.tsx               # Three-way diff + conflict resolution
+│   │   ├── NewValuesPrompt.tsx        # Update: prompt for newly required values
+│   │   ├── NewModulesReview.tsx       # Update: offer newly optional modules
+│   │   ├── RemovedFilesReview.tsx     # Update: per-file keep/delete decision
+│   │   ├── UpdateSummary.tsx          # Final update report
 │   │   └── Header.tsx                 # Branded header
 │   ├── core/
 │   │   ├── manifest.ts                # Parse + validate shard.yaml
@@ -75,7 +85,14 @@ shardmind/
 │   │   ├── drift.ts                   # Ownership detection + drift analysis
 │   │   ├── differ.ts                  # Three-way merge (node-diff3)
 │   │   ├── migrator.ts                # Apply schema migrations to values
-│   │   └── modules.ts                 # Module resolution + file gating
+│   │   ├── modules.ts                 # Module resolution + file gating
+│   │   ├── update-planner.ts          # Pure update plan from drift + new shard
+│   │   ├── update-executor.ts         # Apply update plan with rollback
+│   │   ├── install-planner.ts         # Pure install plan + collisions
+│   │   ├── install-executor.ts        # Apply install plan with rollback
+│   │   ├── values-io.ts               # Shared YAML load for shard-values.yaml
+│   │   ├── hook.ts                    # Post-install / post-update hook lookup
+│   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── runtime/                       # Exported for hook scripts
 │   │   ├── index.ts                   # Re-exports
 │   │   ├── values.ts                  # loadValues()
@@ -178,6 +195,9 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `drift.ts` | §4.8 | Ownership detection + drift analysis |
 | `differ.ts` | §4.9 | Three-way merge via node-diff3 |
 | `migrator.ts` | §4.10 | Apply schema migrations to values |
+| `update-planner.ts` | §4.11 | Plan update actions from drift + new-shard render |
+| `update-executor.ts` | §4.12 | Apply update plan with snapshot-based rollback |
+| `values-io.ts` | §4.13 | Shared YAML load for shard-values.yaml (install + update) |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
 

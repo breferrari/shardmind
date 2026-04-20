@@ -702,31 +702,43 @@ shardmind update
 
   breferrari/obsidian-mind v3.5.0 → v4.0.0
 
-  Fetching v4.0.0...
+  Fetching v4.0.0…
 ```
 
-If new values were added to the schema: prompt only for those. If schema migrations exist: apply automatically, show summary. If new modules were added: offer to include them.
+If new values were added to the schema: prompt only for those. If schema migrations exist: apply automatically, surface warnings in the final summary. If new optional modules appeared in the new shard: offer to include them (default on). If any modified-by-user files are no longer produced by the new shard: ask whether to keep your version (untracked) or delete.
 
 Then the diff review:
 
 ```
   43 files unchanged (silent re-render)
-   2 files updated (no conflict)
+   2 files auto-merged
    1 file needs your review:
 
-  CLAUDE.md
-  ┌─ yours ──────────────────────────────┐
-  │ ## Custom Section                    │
-  │ My custom workflow for auth reviews  │
-  ├─ shard update ───────────────────────┤
-  │ ## Auth Review Workflow              │
-  │ Updated process for Q2 2026         │
-  └──────────────────────────────────────┘
+  Conflict in CLAUDE.md (1 of 1)
+    lines 47–52
+    before line
+    <<<<<<< yours
+    ## Custom Section
+    My custom workflow for auth reviews
+    =======
+    ## Auth Review Workflow
+    Updated process for Q2 2026
+    >>>>>>> shard update
+    after line
 
-  [Accept new] [Keep mine] [Open in editor] [Skip]
+    150 unchanged · 8 auto-merged · 1 region conflicted
+
+  [Accept new] [Keep mine] [Skip] (Open in editor · v0.2)
 ```
 
-After resolution: update state.json → update cached templates → post-update hook → summary.
+After resolution: the executor snapshots every path it will touch to `.shardmind/backups/update-<timestamp>/`, applies writes and deletes in two passes (writes first so a delete can't clobber a new file at the same path), re-caches the manifest + schema + templates, writes new `state.json`, then runs the non-fatal post-update hook. Any failure between snapshot and state-write walks the snapshot back and leaves the vault indistinguishable from pre-update.
+
+Flags:
+- `--yes` — skip every prompt; opt into every new optional module and auto-keep every conflict (useful for unattended CI upgrades).
+- `--verbose` — show per-file action history during the write phase.
+- `--dry-run` — run the full pipeline (fetch, migrate, plan, merge) without touching the vault; the summary reports what *would* happen.
+
+Implementation modules: `source/core/migrator.ts` (IMPLEMENTATION §4.10), `source/core/update-planner.ts` (§4.11), `source/core/update-executor.ts` (§4.12). Orchestration lives in `source/commands/hooks/use-update-machine.ts`. The full phase diagram is in IMPLEMENTATION §3.
 
 ### 10.6 Install Location
 

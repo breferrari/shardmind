@@ -85,6 +85,18 @@ function applyChange(
           warning: `[${fromVersion}] rename: source key '${change.old}' not present; skipped.`,
         };
       }
+      // Refuse to clobber an existing value at the target key. Silent
+      // overwrite would lose user data that arrived through a separate
+      // path (e.g. a concurrent migration chain or a manual edit).
+      // Warn and skip; the old key stays put so nothing is destroyed.
+      if (change.new in values) {
+        return {
+          applied: false,
+          warning:
+            `[${fromVersion}] rename: target key '${change.new}' already has a value; ` +
+            `kept both. Remove one manually if the collision was unintended.`,
+        };
+      }
       values[change.new] = values[change.old];
       delete values[change.old];
       return { applied: true, warning: null };

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { Box, Text } from 'ink';
 import ValueInput from './ValueInput.js';
 import type { ShardSchema } from '../runtime/types.js';
@@ -15,6 +15,10 @@ interface NewValuesPromptProps {
  * shape of the install wizard's value phase but without the header,
  * computed-preview, and confirm steps — those belong to install's
  * first-run ceremony, not an update.
+ *
+ * `ValueInput` remounts per step because it is keyed on `id` internally,
+ * so its input state resets cleanly between questions. `completedRef`
+ * guards against a re-entrant submit that would fire `onComplete` twice.
  */
 export default function NewValuesPrompt({
   schema,
@@ -28,6 +32,7 @@ export default function NewValuesPrompt({
   );
   const [index, setIndex] = useState(0);
   const [values, setValues] = useState<Record<string, unknown>>(existingValues);
+  const completedRef = useRef(false);
 
   const entry = defs[index];
   if (!entry) return null;
@@ -45,8 +50,10 @@ export default function NewValuesPrompt({
         def={def}
         initialValue={values[key]}
         onSubmit={(v) => {
+          if (completedRef.current) return;
           const next = { ...values, [key]: v };
           if (index + 1 >= defs.length) {
+            completedRef.current = true;
             onComplete(next);
             return;
           }

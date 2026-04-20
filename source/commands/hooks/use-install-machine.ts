@@ -103,6 +103,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   const writtenPathsRef = useRef<string[]>([]);
   const backupsRef = useRef<BackupRecord[]>([]);
   const installingRef = useRef(false);
+  // Shard tempdir cleanup, populated once the shard download completes.
+  // A SIGINT between download and wizard-submit needs to run this.
+  const ctxCleanupRef = useRef<(() => Promise<void>) | null>(null);
   // Mutable pointer to the latest handleWizardComplete closure so
   // runNonInteractive can call it without circular useCallback deps.
   const handleWizardCompleteRef = useRef<(r: WizardResult, c: PreparedContext) => Promise<void>>(
@@ -120,17 +123,17 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   );
 
   // If a render is in progress when the user hits Ctrl+C, roll back
-  // partial writes and restore backups before exiting. Ink's default
-  // exit ignores our bookkeeping.
+  // partial writes and restore backups before exiting. `cleanup` drops
+  // the shard tempdir regardless of phase — without it, cancelling at
+  // the wizard or collision screens leaks the extracted shard on disk.
   useSigintRollback({
-    enabled: !dryRun,
-    isActive: () => installingRef.current,
+    isActive: () => !dryRun && installingRef.current,
     rollback: () => rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current),
+    cleanup: () => (ctxCleanupRef.current ? ctxCleanupRef.current() : Promise.resolve()),
   });
 
   useEffect(() => {
     let disposed = false;
-    let ctxForCleanup: PreparedContext | null = null;
 
     (async () => {
       try {
@@ -139,6 +142,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
         setPhase({ kind: 'loading', message: `Downloading ${resolved.namespace}/${resolved.name}@${resolved.version}…` });
         const temp = await downloadShard(resolved.tarballUrl);
+        ctxCleanupRef.current = temp.cleanup;
 
         setPhase({ kind: 'loading', message: 'Parsing manifest and schema…' });
         const manifest = await parseManifest(temp.manifest);
@@ -164,7 +168,6 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           moduleFileCounts,
           alwaysIncludedFileCount,
         };
-        ctxForCleanup = ctx;
 
         const existing = await readState(vaultRoot);
         if (existing) {
@@ -187,8 +190,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
     return () => {
       disposed = true;
-      if (ctxForCleanup) {
-        ctxForCleanup.cleanup().catch(() => {});
+      if (ctxCleanupRef.current) {
+        ctxCleanupRef.current().catch(() => {});
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

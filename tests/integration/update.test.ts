@@ -486,4 +486,99 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     const nextState = (await readState(vault)) as ShardState;
     expect(nextState.files[modifiedPath]).toBeUndefined();
   });
+
+  it('dry-run plans and reports changes without mutating the vault', async () => {
+    const newTemplate = 'Welcome to your vault, {{ user_name }} (v2-dry)\n';
+    const { state, oldValues, newManifest, newSchema } = await setUpUpdate({
+      bumpTo: '0.2.0',
+      newHomeTemplate: newTemplate,
+    });
+
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const renderCtx = buildRenderContext(newManifest, oldValues, selections);
+    const drift = await detectDrift(vault, state);
+
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: oldValues },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: renderCtx,
+      },
+      removedFileDecisions: {},
+    });
+    expect(plan.counts.silent).toBeGreaterThan(0);
+
+    const homePath = path.join(vault, 'Home.md');
+    const beforeContent = await fsp.readFile(homePath, 'utf-8');
+    const beforeState = (await readState(vault)) as ShardState;
+
+    const result = await runUpdate({
+      vaultRoot: vault,
+      plan,
+      conflictResolutions: {},
+      currentState: state,
+      newManifest,
+      newSchema,
+      newValues: oldValues,
+      newSelections: selections,
+      resolved: { ...RESOLVED, version: newManifest.version },
+      tarballSha256: 'sha-0.2.0',
+      newTempDir: newShard,
+      dryRun: true,
+    });
+
+    // Disk unchanged.
+    expect(await fsp.readFile(homePath, 'utf-8')).toBe(beforeContent);
+    // State version still old.
+    const afterState = (await readState(vault)) as ShardState;
+    expect(afterState.version).toBe(beforeState.version);
+    // Summary still reflects what *would* have happened.
+    expect(result.summary.toVersion).toBe('0.2.0');
+    expect(result.summary.counts.silent).toBe(plan.counts.silent);
+    expect(result.backupDir).toBeNull();
+  });
+
+  it('falls back to full-file conflict when the cached template was wiped', async () => {
+    // User edits a file, then somebody clobbers the engine cache (rm -rf
+    // .shardmind/templates/). Next update has no way to reconstruct a
+    // three-way base. The planner should surface the file as a full
+    // conflict and not silently overwrite the user's edits.
+    const { state, oldValues, newManifest, newSchema } = await setUpUpdate({
+      bumpTo: '0.2.0',
+      modifyFile: {
+        path: 'Home.md',
+        content: 'entirely different user content\n',
+      },
+      newHomeTemplate: 'shard update replacement\n',
+    });
+
+    // Wipe the cached template for Home.md.
+    await fsp.rm(path.join(vault, '.shardmind', 'templates', 'Home.md.njk'), { force: true });
+
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const renderCtx = buildRenderContext(newManifest, oldValues, selections);
+    const drift = await detectDrift(vault, state);
+
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: oldValues },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: renderCtx,
+      },
+      removedFileDecisions: {},
+    });
+
+    const conflict = plan.actions.find((a) => a.kind === 'conflict' && a.path === 'Home.md');
+    expect(conflict).toBeDefined();
+    if (conflict?.kind !== 'conflict') throw new Error('narrowing');
+    expect(conflict.result.conflicts).toHaveLength(1);
+    expect(conflict.result.conflicts[0]!.theirs).toContain('entirely different user content');
+    expect(conflict.result.conflicts[0]!.ours).toContain('shard update replacement');
+  });
 });

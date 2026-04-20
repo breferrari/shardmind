@@ -3,7 +3,28 @@ import { Box, Text } from 'ink';
 import { Select } from './ui.js';
 import type { ConflictRegion, MergeResult } from '../runtime/types.js';
 
+/** Actions the user can take for each conflict. `open_editor` is v0.2. */
 export type DiffAction = 'accept_new' | 'keep_mine' | 'skip';
+
+/** Matches differ.ts's canonical splitter: tolerate CR, accept LF. */
+const LINE_SPLIT = /\r?\n/;
+
+/** Context lines shown before and after each conflict region. */
+const CONTEXT_LINES = 3;
+
+/**
+ * `Select` accepts arbitrary string values; we use the type-guarded
+ * lookup below to filter the disabled "Open in editor" placeholder so
+ * no out-of-band value reaches `onChoice`.
+ */
+const DIFF_ACTIONS = new Set<DiffAction>(['accept_new', 'keep_mine', 'skip']);
+
+const SELECT_OPTIONS = [
+  { label: 'Accept new (use shard version)', value: 'accept_new' },
+  { label: 'Keep mine (preserve your edits)', value: 'keep_mine' },
+  { label: 'Skip this file', value: 'skip' },
+  { label: '(Open in editor · v0.2)', value: 'open_editor_disabled' },
+] as const;
 
 interface DiffViewProps {
   path: string;
@@ -13,10 +34,8 @@ interface DiffViewProps {
   onChoice: (action: DiffAction) => void;
 }
 
-const CONTEXT_LINES = 3;
-
 export default function DiffView({ path: filePath, index, total, result, onChoice }: DiffViewProps) {
-  const mergedLines = useMemo(() => result.content.split('\n'), [result.content]);
+  const mergedLines = useMemo(() => result.content.split(LINE_SPLIT), [result.content]);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -42,15 +61,9 @@ export default function DiffView({ path: filePath, index, total, result, onChoic
       </Text>
 
       <Select
-        options={[
-          { label: 'Accept new (use shard version)', value: 'accept_new' },
-          { label: 'Keep mine (preserve your edits)', value: 'keep_mine' },
-          { label: 'Skip this file', value: 'skip' },
-          { label: '(Open in editor · v0.2)', value: 'open_editor_disabled' },
-        ]}
+        options={SELECT_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
         onChange={(choice) => {
-          if (choice === 'open_editor_disabled') return;
-          onChoice(choice as DiffAction);
+          if (DIFF_ACTIONS.has(choice as DiffAction)) onChoice(choice as DiffAction);
         }}
       />
     </Box>
@@ -71,8 +84,8 @@ function ConflictBlock({
 
   const before = mergedLines.slice(beforeStart, beforeEnd);
   const after = mergedLines.slice(afterStart, afterEnd);
-  const yours = region.theirs.split('\n');
-  const shard = region.ours.split('\n');
+  const yours = region.theirs.split(LINE_SPLIT);
+  const shard = region.ours.split(LINE_SPLIT);
 
   return (
     <Box flexDirection="column" marginBottom={1}>
