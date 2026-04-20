@@ -39,7 +39,17 @@ async function doBuild(): Promise<void> {
   const distMtime = await latestMtime([DIST_CLI, DIST_RUNTIME]);
   const srcMtime = await latestMtime(await walkSources());
 
-  if (distMtime !== null && srcMtime !== null && distMtime >= srcMtime) {
+  // Cache hit requires EVERY required artifact to exist on disk — not
+  // just that something in dist/ is newer than source. Using
+  // latestMtime's max means one missing required file (e.g. dist/cli.js)
+  // can still produce a fresh-enough timestamp if a sibling
+  // (dist/runtime/index.js) happens to be recent. Verify DIST_CLI
+  // explicitly before skipping the build.
+  const cliExists = await fs
+    .access(DIST_CLI)
+    .then(() => true)
+    .catch(() => false);
+  if (cliExists && distMtime !== null && srcMtime !== null && distMtime >= srcMtime) {
     return; // cache hit
   }
 

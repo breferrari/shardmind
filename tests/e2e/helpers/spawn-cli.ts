@@ -70,15 +70,22 @@ const DEFAULT_TIMEOUT = 15_000;
  */
 export async function spawnCli(args: string[], opts: SpawnCliOptions): Promise<CliResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT;
-  const env: NodeJS.ProcessEnv = {
-    // Start from a clean slate so the test doesn't inherit the dev's
-    // SHARDMIND_GITHUB_API_BASE pointing at a previous run's stub, etc.
-    ...process.env,
-    ...(opts.ttyLike
-      ? {}
-      : { CI: '1', TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '0' }),
-    ...(opts.env ?? {}),
-  };
+  // Inherit the parent env (tests need PATH, HOME, etc. to find node +
+  // read tempdirs), then drop any SHARDMIND_* keys the dev shell might
+  // export — without this, running the suite locally with a shell-level
+  // `SHARDMIND_GITHUB_API_BASE` set to a prior stub would poison the
+  // test against a non-running endpoint. `opts.env` is merged last so
+  // tests can re-add the keys they actually want (e.g. the current
+  // stub's URL).
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('SHARDMIND_')) delete env[key];
+  }
+  Object.assign(
+    env,
+    opts.ttyLike ? {} : { CI: '1', TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '0' },
+    opts.env ?? {},
+  );
 
   const startedAt = Date.now();
   const child = spawn('node', [DIST_CLI, ...args], {
