@@ -93,6 +93,8 @@ shardmind --verbose                    # Detailed diagnostics
 
 Three commands. Two that write. One that reads. No menu, no wizard fatigue. Status-first.
 
+Wrapper scripts, CI pipelines, enterprise deployments — see [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for exit codes, environment variables (`GITHUB_TOKEN`, `SHARDMIND_GITHUB_API_BASE`, `SHARDMIND_REGISTRY_INDEX_URL`), file locations, and signal handling.
+
 ---
 
 ## Technology
@@ -158,6 +160,7 @@ Shard authors choose which agents to support. A shard can ship `CLAUDE.md` only,
 
 | Document | What |
 |----------|------|
+| [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Exit codes, env vars (`GITHUB_TOKEN`, `SHARDMIND_GITHUB_API_BASE`, `SHARDMIND_REGISTRY_INDEX_URL`), file locations, signal handling. |
 | [`docs/ERRORS.md`](docs/ERRORS.md) | Every `ShardMindError` code: meaning, cause, remedy. |
 | [`VISION.md`](VISION.md) | Origin story, architectural bets, scope guardrails, competitive moat. |
 | [`ROADMAP.md`](ROADMAP.md) | v0.1 milestones (linked to issues), v0.2 deferred, v1.0 ecosystem. |

@@ -42,7 +42,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 - [x] `commands/update.tsx` — upgrade flow with drift detection + DiffView ([#12](https://github.com/breferrari/shardmind/issues/12))
 - [x] `commands/index.tsx` — status display + --verbose diagnostics ([#13](https://github.com/breferrari/shardmind/issues/13))
 - [x] Integration test: install → modify files → update → verify merge behavior
-- [ ] E2E test: all 3 commands via CLI invocation
+- [x] E2E test: all 3 commands via CLI invocation ([#54](https://github.com/breferrari/shardmind/issues/54))
 
 ### Milestone 5: Flagship Shard (Day 5)
 

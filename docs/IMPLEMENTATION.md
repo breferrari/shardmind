@@ -102,7 +102,7 @@ Concretely driven by the `useUpdateMachine` hook in `source/commands/hooks/use-u
 graph TD
     A["shardmind update"] --> B
 
-    B["state.ts<br/>Read state.json → source, version, modules, files<br/>Absent → no-install phase, exit"] --> C
+    B["state.ts<br/>Read state.json → source, version, modules, files<br/>Absent → throw UPDATE_NO_INSTALL (exit 1)"] --> C
     C["registry + download<br/>Resolve state.source → tarball<br/>version + tarball_sha match state → up-to-date, exit"] --> D
     D["manifest + schema<br/>Parse new shard.yaml, shard-schema.yaml"] --> E
     E["values-io + migrator<br/>Load shard-values.yaml → applyMigrations<br/>(rename/added/removed/type_changed)"] --> F
@@ -180,6 +180,19 @@ interface ResolvedShard {
 5. If version not specified → use `latest` field from registry
 6. Construct tarball URL: `https://api.github.com/repos/{owner}/{repo}/tarball/v{version}`
 7. Verify the tag exists (HEAD request to GitHub API). 404 → error.
+
+**Env-var overrides** (read once at module load, overridable for testing,
+enterprise GitHub Enterprise deployments, and future self-hosted registry
+scenarios — see ARCHITECTURE §19.7):
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `SHARDMIND_GITHUB_API_BASE` | `https://api.github.com` | Routes `releases/latest` + tarball calls through the provided base. Trailing slashes are stripped. |
+| `SHARDMIND_REGISTRY_INDEX_URL` | `https://raw.githubusercontent.com/shardmind/registry/main/index.json` | Points the namespaced `owner/repo` index lookup at an alternate registry. |
+
+Both are invisible to production users — the defaults reproduce the
+current behavior exactly. The E2E suite uses `SHARDMIND_GITHUB_API_BASE`
+to point at a local stub server (see `tests/e2e/helpers/github-stub.ts`).
 
 **Error cases**:
 - Shard not found in registry → `"Shard 'foo/bar' not found. Check spelling or use github:owner/repo for direct install."`
@@ -989,8 +1002,8 @@ Update + migration codes (added in Milestone 4):
 
 | Code | Thrown by | Hint pattern |
 |------|-----------|--------------|
-| `UPDATE_NO_INSTALL` | use-update-machine | "Run `shardmind install <shard>` first." |
-| `UPDATE_SOURCE_MISMATCH` | reserved for registry-drift detection | — |
+| `UPDATE_NO_INSTALL` | use-update-machine (thrown when `readState` returns `null`) | "Run `shardmind install <shard>` first, then come back to update." |
+| `UPDATE_SOURCE_MISMATCH` | use-update-machine (thrown when `resolveRef(state.source)` surfaces `REGISTRY_INVALID_REF` — state is corrupted or hand-edited) | "The value `<state.source>` in .shardmind/state.json doesn't match the expected `namespace/name` or `github:namespace/name` shape. Likely hand-edited or partially corrupted — reinstall the shard to repair." |
 | `UPDATE_CACHE_MISSING` | update-planner | "State and drift report disagree — re-install the shard." |
 | `UPDATE_WRITE_FAILED` | update-executor | OS error message + permission / space hint |
 | `MIGRATION_INVALID_VERSION` | migrator | "currentVersion and targetVersion must be valid semver." |
@@ -1149,13 +1162,31 @@ Afternoon:
     source/commands/index.tsx
 
   E2E test:
-    tests/e2e/cli.test.ts
-      → shardmind (status output)
-      → shardmind --verbose (diagnostics)
-      → shardmind install (full flow)
-      → shardmind update (full flow)
+    tests/e2e/cli.test.ts (ships in PR #54)
+      → 30 scenarios spawned against dist/cli.js via child_process
+      → Bootstrap (2): --version, --help
+      → Status    (7): empty vault, fresh install, --verbose sections,
+                       update-available arrow, modified-file +N/−M,
+                       STATE_CORRUPT rendering, offline degradation
+      → Install   (12): happy + slashes + dry-run + open-hint + @version
+                        + VERSION_NOT_FOUND + SHARD_NOT_FOUND +
+                        REGISTRY_INVALID_REF + VALUES_MISSING + collision
+                        backup + dry-run-over-collision + SIGINT rollback
+                        (POSIX only)
+      → Update    (7): UPDATE_NO_INSTALL typed error, up-to-date,
+                       real bump + file add, auto-merge on non-conflict,
+                       UPDATE_SOURCE_MISMATCH on corrupted state.source,
+                       --dry-run no-op, SIGINT rollback (POSIX only)
+      → Property  (2): install structural determinism (files/modules/
+                       values_hash), dry-run safety across arbitrary
+                       valid values
 
-  Verify: all 3 commands work, TUI renders correctly
+  Hermetic via tests/e2e/helpers/github-stub.ts (local HTTP emulator
+  pointed at by SHARDMIND_GITHUB_API_BASE). No public network hits.
+  See docs/ARCHITECTURE.md §19.7 for the E2E methodology.
+
+  Verify: all 3 commands work, TUI renders correctly, exit codes
+  correctly signal success/failure for scripting.
 ```
 
 ### Day 5: obsidian-mind v4
