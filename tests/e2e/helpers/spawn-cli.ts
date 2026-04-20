@@ -61,13 +61,19 @@ export interface SpawnCliOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   stdin?: string;
-  /** Default 15_000. The outer ceiling on how long we wait before SIGKILL. */
+  /** Default 45_000. The outer ceiling on how long we wait before SIGKILL. */
   timeoutMs?: number;
   /** Deliver a signal after a stdout regex matches. */
   signalAt?: SignalAt;
 }
 
-const DEFAULT_TIMEOUT = 15_000;
+// 45s accommodates the slowest CI cell (GitHub Actions windows-latest +
+// node 24) where Defender + cold-start stdlib dispatch can blow install
+// timing past 15s even for the minimal shard. A full install + update
+// cycle on that runner measures ~25s; same test on ubuntu-22 is ~2s. The
+// timeout is a SIGKILL safety net against a genuinely stuck child, not
+// a perf budget — individual tests can still override when they care.
+const DEFAULT_TIMEOUT = 45_000;
 
 /**
  * Spawn the CLI, wait for it to exit (or timeout), return captured output.
