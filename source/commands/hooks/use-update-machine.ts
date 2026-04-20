@@ -7,7 +7,7 @@
  * stays thin presentation.
  *
  * Phase ordering (see docs/IMPLEMENTATION.md §3):
- *   booting → loading → (no-install | up-to-date | migrating →
+ *   booting → loading → (up-to-date | migrating →
  *   prompt-new-values → prompt-new-modules → prompt-removed-files →
  *   resolving-conflicts → writing → summary)
  *
@@ -82,7 +82,6 @@ export interface PreparedContext {
 export type Phase =
   | { kind: 'booting' }
   | { kind: 'loading'; message: string }
-  | { kind: 'no-install' }
   | { kind: 'up-to-date'; manifest: ShardManifest; state: ShardState }
   | { kind: 'prompt-new-values'; ctx: PreparedContext }
   | { kind: 'prompt-new-modules'; ctx: PreparedContext; values: Record<string, unknown> }
@@ -150,9 +149,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         next.kind === 'summary' ||
         next.kind === 'cancelled' ||
         next.kind === 'error' ||
-        next.kind === 'no-install' ||
         next.kind === 'up-to-date'
       ) {
+        // Non-zero exit on error so scripting / CI can detect failure.
+        // cancelled + up-to-date + summary are all "successful outcomes"
+        // from the engine's perspective and keep the default exit 0.
+        if (next.kind === 'error') process.exitCode = 1;
         setTimeout(() => exit(), 100);
       }
     },
@@ -183,13 +185,10 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       try {
         setPhase({ kind: 'loading', message: 'Reading install state…' });
         const state = await readState(vaultRoot);
-        if (!state) {
-          finish({ kind: 'no-install' });
-          return;
-        }
+        if (!state) throwNoInstall();
 
         setPhase({ kind: 'loading', message: `Resolving ${state.source}…` });
-        const resolved = await resolveRef(state.source);
+        const resolved = await resolveRefForUpdate(state.source);
         // Warm the update-check cache so the next `shardmind` (status) run
         // answers "latest version" instantly instead of paying for another
         // GitHub API call. Swallows errors — a cache-priming failure must
@@ -561,6 +560,80 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Throw the typed `UPDATE_NO_INSTALL` error. Extracted so unit tests can
+ * assert the exact code and hint without rendering the Ink tree.
+ */
+function throwNoInstall(): never {
+  throw new ShardMindError(
+    'No shard installed in this directory.',
+    'UPDATE_NO_INSTALL',
+    'Run `shardmind install <shard>` first, then come back to update.',
+  );
+}
+
+/**
+ * Wrapper around `resolveRef` that rewrites CLI-input-shaped hints into
+ * update-path-shaped hints. Exported for unit tests — the install command
+ * uses `resolveRef` directly because its hints (type the ref correctly)
+ * match its context.
+ *
+ * - `REGISTRY_INVALID_REF` → `UPDATE_SOURCE_MISMATCH`: the ref shape is
+ *   broken, which during update always means `state.json` was hand-edited
+ *   or partially corrupted.
+ * - `SHARD_NOT_FOUND` / `VERSION_NOT_FOUND`: same code, new hint — the
+ *   original hints mention spelling and version-flag tweaks that don't
+ *   apply to a ref read from disk.
+ * - `REGISTRY_NETWORK` / `REGISTRY_RATE_LIMITED`: unchanged; their hints
+ *   are context-agnostic.
+ */
+export async function resolveRefForUpdate(source: string): Promise<ResolvedShard> {
+  try {
+    return await resolveRef(source);
+  } catch (err) {
+    if (err instanceof ShardMindError) {
+      if (err.code === 'REGISTRY_INVALID_REF') {
+        throw new ShardMindError(
+          `state.source in .shardmind/state.json is not a valid shard reference: '${source}'`,
+          'UPDATE_SOURCE_MISMATCH',
+          `The value '${source}' in .shardmind/state.json doesn't match the expected "namespace/name" or "github:namespace/name" shape. Likely hand-edited or partially corrupted — reinstall the shard to repair.`,
+        );
+      }
+      if (err.code === 'SHARD_NOT_FOUND') {
+        throw new ShardMindError(
+          err.message,
+          'SHARD_NOT_FOUND',
+          `The shard recorded in .shardmind/state.json ('${source}') is no longer listed in the registry. It may have been renamed, moved, or deprecated — check the shard's homepage, or reinstall from a github:owner/repo source.`,
+        );
+      }
+      if (err.code === 'VERSION_NOT_FOUND') {
+        throw new ShardMindError(
+          err.message,
+          'VERSION_NOT_FOUND',
+          `The latest version of '${source}' reports a tag whose tarball is missing upstream — usually a transient GitHub state or a deleted tag. Retry in a minute, or reinstall if the issue persists.`,
+        );
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * Pure-ish async function that gathers the update context. Reads state,
+ * throws `UPDATE_NO_INSTALL` if absent, resolves the ref via
+ * `resolveRefForUpdate` (rewriting hints for the update audience), and
+ * returns both pieces. Exported so unit tests can exercise every error
+ * path end-to-end without mounting the React tree.
+ */
+export async function lookupUpdateTarget(
+  vaultRoot: string,
+): Promise<{ state: ShardState; resolved: ResolvedShard }> {
+  const state = await readState(vaultRoot);
+  if (!state) throwNoInstall();
+  const resolved = await resolveRefForUpdate(state.source);
+  return { state, resolved };
+}
 
 function loadCurrentValues(vaultRoot: string): Promise<Record<string, unknown>> {
   return loadValuesYaml(path.join(vaultRoot, VALUES_FILE), {
