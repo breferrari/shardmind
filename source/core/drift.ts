@@ -50,6 +50,14 @@ const UNSCANNED_DIR_NAMES: ReadonlySet<string> = new Set([
  */
 const DRIFT_READ_CONCURRENCY = 32;
 
+/**
+ * Cap on concurrent `readdir` calls during orphan detection. Vaults that
+ * track hundreds of files across hundreds of directories would otherwise
+ * fan out one open-directory handle per tracked dir, reliably hitting
+ * EMFILE on macOS's 256-handle default.
+ */
+const ORPHAN_SCAN_CONCURRENCY = 32;
+
 export async function detectDrift(
   vaultRoot: string,
   state: ShardState,
@@ -98,7 +106,13 @@ async function classifyFile(
   }
 
   try {
-    const content = await fsp.readFile(path.join(vaultRoot, relPath), 'utf-8');
+    // Read as Buffer so the hash matches install time for ANY content —
+    // copy-origin files (images, PDFs, binary assets) are hashed as bytes
+    // by install-executor, and reading them as utf-8 here would replace
+    // invalid sequences with U+FFFD and produce a different sha256 every
+    // run. Both `sha256` and `update(buf)` accept Buffer, so rendered
+    // text files produce the same hash whether read as Buffer or utf-8.
+    const content = await fsp.readFile(path.join(vaultRoot, relPath));
     return classifyByHash(relPath, file, content);
   } catch (err) {
     if (isEnoent(err)) {
@@ -108,7 +122,7 @@ async function classifyFile(
   }
 }
 
-function classifyByHash(relPath: string, file: FileState, content: string): Classified {
+function classifyByHash(relPath: string, file: FileState, content: Buffer): Classified {
   const actualHash = sha256(content);
   const ownership = actualHash === file.rendered_hash ? 'managed' : 'modified';
   return {
@@ -171,8 +185,10 @@ async function detectOrphans(
     trackedDirs.add(normalizedDir);
   }
 
-  const perDir = await Promise.all(
-    [...trackedDirs].map(relDir => scanDirForOrphans(vaultRoot, relDir, trackedPaths)),
+  const perDir = await mapConcurrent(
+    [...trackedDirs],
+    ORPHAN_SCAN_CONCURRENCY,
+    relDir => scanDirForOrphans(vaultRoot, relDir, trackedPaths),
   );
 
   return perDir.flat().sort();

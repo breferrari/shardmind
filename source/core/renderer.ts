@@ -262,12 +262,41 @@ function renderTemplate(
   }
 }
 
+/**
+ * Windows-reserved device names. NTFS refuses to create a file with any
+ * of these as its basename (case-insensitive), WITH OR WITHOUT an
+ * extension — `CON.txt`, `LPT1.md`, `AUX.foo.bar` all crash on Windows
+ * the same way bare `CON` does. The regex matches on the STEM (the
+ * portion before the first dot) so we catch both shapes.
+ *
+ * Install succeeds on POSIX but crashes on Windows with EINVAL / EACCES;
+ * we rewrite them to a safe form so shards written against Linux don't
+ * silently break on a Windows user.
+ */
+const WINDOWS_RESERVED_NAMES_RE = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+
 function sanitizeSlug(slug: string): string {
-  return slug
+  let out = slug
     .replace(/[/\\]/g, '-')
     .replace(/\.\./g, '-')
     .replace(/[<>:"|?*\x00-\x1f]/g, '-')
     .trim();
+  // NTFS silently strips trailing `.` and space from filenames, which
+  // produces a different-named file than the slug we planned with —
+  // fold them up front so the output path and the rendered state agree.
+  out = out.replace(/[. ]+$/, '');
+  // A slug of only dots / spaces / control chars collapses to an empty
+  // string after the rewrites above. Emitting "" produces an output
+  // path like `foo/.md` (a dotfile on POSIX; invisible on Windows),
+  // which disagrees with the planned shape. Fall back to `_` so every
+  // valid shard produces at least one legible path component.
+  if (!out) out = '_';
+  // Reserved-name check runs on the stem — NTFS blocks `CON.txt` just
+  // as hard as bare `CON`.
+  const dotIndex = out.indexOf('.');
+  const stem = dotIndex === -1 ? out : out.slice(0, dotIndex);
+  if (WINDOWS_RESERVED_NAMES_RE.test(stem)) out = `_${out}`;
+  return out;
 }
 
 function buildRenderedFile(outputPath: string, content: string, volatile: boolean): RenderedFile {

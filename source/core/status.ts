@@ -25,6 +25,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { diffLines } from 'diff';
+import semver from 'semver';
 import type {
   ShardManifest,
   ShardSchema,
@@ -413,7 +414,15 @@ async function resolveUpdate(
     };
   }
 
-  if (result.latest_version === currentVersion) {
+  // Use semver equality where possible so `1.0.0` == `1.0.0+build.2`
+  // (build metadata is non-precedence per semver 2.0.0 §10). Fall back
+  // to strict string compare for non-semver version strings (custom
+  // tag schemes, pre-release tags without normalization).
+  const isSame =
+    semver.valid(result.latest_version) !== null && semver.valid(currentVersion) !== null
+      ? semver.eq(result.latest_version, currentVersion)
+      : result.latest_version === currentVersion;
+  if (isSame) {
     return { kind: 'up-to-date', current: currentVersion };
   }
 

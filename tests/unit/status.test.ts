@@ -135,6 +135,28 @@ describe('buildStatusReport', () => {
     expect(upd?.severity).toBe('info');
   });
 
+  it('treats build-metadata-only differences as up-to-date (semver §10)', async () => {
+    // Per semver 2.0.0 §10, build metadata (`+build.2`) does not
+    // participate in precedence. A cached latest of `0.1.0+build.2`
+    // against an installed `0.1.0+build.1` must report up-to-date,
+    // not endlessly prompt the user to update to a phantom newer
+    // version. The previous strict `===` comparison surfaced every
+    // build-metadata bump as an update.
+    await installMinimal(vault);
+
+    // Tweak the installed state's version to include build metadata.
+    const statePath = path.join(vault, '.shardmind', 'state.json');
+    const raw = await fsp.readFile(statePath, 'utf-8');
+    const state = JSON.parse(raw);
+    state.version = '0.1.0+build.1';
+    await fsp.writeFile(statePath, JSON.stringify(state, null, 2), 'utf-8');
+
+    await primeLatestVersion(vault, RESOLVED.source, '0.1.0+build.2');
+
+    const report = await buildStatusReport(vault, { verbose: false });
+    expect(report!.update).toMatchObject({ kind: 'up-to-date' });
+  });
+
   it('reports "unknown / cache-miss" when the update check is skipped', async () => {
     // `skipUpdateCheck` is semantically distinct from network failure:
     // the caller opted out of the lookup, so the reason is cache-miss,

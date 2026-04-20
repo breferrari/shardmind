@@ -95,10 +95,28 @@ export function validateFrontmatter(
   };
 }
 
+/**
+ * Shell-glob → regex. Matches shell semantics:
+ *   - `**` crosses path segments (`.*`)
+ *   - `*`  does not (`[^/]*`) — `brain/*.md` matches `brain/Index.md` but
+ *     not `brain/sub/Index.md`, consistent with every shell and the
+ *     frontmatter rules shard authors write.
+ *   - `?`  matches a single non-separator character.
+ *
+ * `**` is handled by splitting on the literal sequence first, then
+ * escaping + expanding `*` / `?` inside each segment, then joining with
+ * `.*`. No sentinel tokens — that avoids the attack where user input
+ * containing the sentinel would be misinterpreted.
+ */
 function globToRegex(glob: string): RegExp {
   const escaped = glob
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.');
+    .split('**')
+    .map(segment =>
+      segment
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '[^/]*')
+        .replace(/\?/g, '[^/]'),
+    )
+    .join('.*');
   return new RegExp(`^${escaped}$`);
 }

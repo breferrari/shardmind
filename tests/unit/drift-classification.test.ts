@@ -255,3 +255,84 @@ describe('detectDrift — orphan detection', () => {
     expect(report.orphaned).toEqual(['extra-at-root.md', 'skills/my-extra.md']);
   });
 });
+
+describe('detectDrift — binary assets', () => {
+  // Install-executor hashes copy-origin files as raw bytes (`sha256(buffer)`).
+  // Drift must do the same — reading as `utf-8` replaces invalid byte
+  // sequences with U+FFFD and produces a different sha256, which would
+  // mis-classify every binary asset as `modified` on first status check
+  // and then corrupt the bytes on `shardmind update`.
+  it('classifies a binary asset by BYTE hash, matching install-time', async () => {
+    // Bytes that fail utf-8 decoding: an unpaired 0xFF never appears in
+    // valid utf-8. Reading this as utf-8 would emit `\uFFFD` replacements
+    // and the hash would diverge from the install-time buffer hash.
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe]);
+    const abs = path.join(vaultRoot, 'assets/logo.png');
+    await fsp.mkdir(path.dirname(abs), { recursive: true });
+    await fsp.writeFile(abs, bytes);
+
+    const state = makeShardState({ files: {
+      'assets/logo.png': {
+        template: 'assets/logo.png',
+        rendered_hash: sha256(bytes),
+        ownership: 'managed',
+      },
+    } });
+
+    const report = await detectDrift(vaultRoot, state);
+
+    expect(report.managed).toHaveLength(1);
+    expect(report.managed[0]?.path).toBe('assets/logo.png');
+    expect(report.managed[0]?.actualHash).toBe(sha256(bytes));
+    expect(report.modified).toHaveLength(0);
+  });
+});
+
+describe('detectDrift — orphan scan scale', () => {
+  // A state.files with 200+ tracked directories previously fan-outed
+  // unbounded `readdir` calls, reliably hitting EMFILE on macOS's
+  // 256-handle default. The scan now runs through `mapConcurrent`.
+  it('round-trips a preinstalled-then-tracked binary through install+drift', async () => {
+    // Byte parity sanity: install-executor stores `sha256(buffer)` for
+    // copy-origin files, drift.ts reads as Buffer and hashes bytes, so
+    // a binary file classifies as `managed` on first check.
+    const pngPrefix = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const abs = path.join(vaultRoot, 'assets/logo.png');
+    await fsp.mkdir(path.dirname(abs), { recursive: true });
+    await fsp.writeFile(abs, pngPrefix);
+
+    const state = makeShardState({ files: {
+      'assets/logo.png': {
+        template: 'assets/logo.png',
+        rendered_hash: sha256(pngPrefix),
+        ownership: 'managed',
+      },
+    } });
+
+    const report1 = await detectDrift(vaultRoot, state);
+    expect(report1.managed).toHaveLength(1);
+    expect(report1.modified).toHaveLength(0);
+
+    // Second pass with the exact same bytes still stable.
+    const report2 = await detectDrift(vaultRoot, state);
+    expect(report2.managed[0]?.actualHash).toBe(report1.managed[0]?.actualHash);
+  });
+
+  it('handles 200 tracked directories without EMFILE', async () => {
+    const files: Record<string, import('../../source/runtime/types.js').FileState> = {};
+    for (let i = 0; i < 200; i++) {
+      const rel = `dir-${i.toString().padStart(3, '0')}/note.md`;
+      const content = `# Note ${i}\n`;
+      const abs = path.join(vaultRoot, rel);
+      await fsp.mkdir(path.dirname(abs), { recursive: true });
+      await fsp.writeFile(abs, content, 'utf-8');
+      files[rel] = { template: 't.njk', rendered_hash: sha256(content), ownership: 'managed' };
+    }
+    const state = makeShardState({ files });
+
+    const report = await detectDrift(vaultRoot, state);
+
+    expect(report.managed).toHaveLength(200);
+    expect(report.orphaned).toEqual([]);
+  });
+});

@@ -421,6 +421,31 @@ describe('hashValues', () => {
     const b = hashValues({ items: [{ x: 1 }, { x: 3 }] });
     expect(a).not.toBe(b);
   });
+
+  it('terminates on cyclic values without stack overflow', () => {
+    // YAML anchors can produce cyclic object graphs — e.g.
+    //   a: &x
+    //     self: *x
+    // `yaml.parse` returns a real cycle. Without a cycle guard the
+    // recursive walk stack-overflows on hostile input; here we just
+    // assert the call returns a string.
+    const cyclic: Record<string, unknown> = { name: 'alice' };
+    cyclic['self'] = cyclic;
+    const hash = hashValues(cyclic);
+    expect(typeof hash).toBe('string');
+    expect(hash).toHaveLength(64);
+  });
+
+  it('produces a stable hash across two cyclic references to the same graph', () => {
+    // Two callers producing equivalent cyclic shapes hash to the same
+    // value — the cycle-break emits `null` at the recursion point, and
+    // null is deterministic.
+    const a: Record<string, unknown> = { name: 'alice' };
+    a['self'] = a;
+    const b: Record<string, unknown> = { name: 'alice' };
+    b['self'] = b;
+    expect(hashValues(a)).toBe(hashValues(b));
+  });
 });
 
 describe('defaultModuleSelections', () => {

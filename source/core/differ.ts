@@ -30,6 +30,20 @@ const CONFLICT_END = '>>>>>>> shard update';
 // spurious conflicts against LF base/ours.
 const LINE_SPLIT = /\r?\n/;
 
+/**
+ * Dominant line ending of `theirs` (the user's on-disk file). When a
+ * Windows user saves a managed note with CRLF, we honor that on merge
+ * output rather than silently rewriting the file to LF — which would
+ * flip line endings on every `shardmind update` and churn git blame.
+ *
+ * Heuristic: if the file contains any `\r\n`, treat as CRLF. Mixed
+ * endings collapse to CRLF which is the practical norm on Windows
+ * editors that emit CRLF-by-default.
+ */
+function detectLineEnding(source: string): '\r\n' | '\n' {
+  return source.includes('\r\n') ? '\r\n' : '\n';
+}
+
 // node-diff3's LCS implementation uses a plain `{}` as a hash map keyed by
 // line content. If any line equals a string that collides with
 // Object.prototype (`constructor`, `__proto__`, `toString`, ...), the
@@ -101,7 +115,6 @@ export async function computeMergeAction(
     type: 'conflict',
     result: {
       content: merge.content,
-      hasConflicts: true,
       conflicts: merge.conflicts,
       stats: merge.stats,
     },
@@ -183,8 +196,12 @@ export function threeWayMerge(
     stats.linesUnchanged -= 1;
   }
 
-  // Merged output is always LF; callers convert at the write boundary.
-  return { content: merged.join('\n'), conflicts, stats };
+  // Restore theirs's line ending on merged output. Renderer output is
+  // LF-canonical and so is `base`/`ours`, but the user's `theirs` may be
+  // CRLF — preserving it here means `shardmind update` doesn't silently
+  // flip the file's line endings on write.
+  const lineEnding = detectLineEnding(theirs);
+  return { content: merged.join(lineEnding), conflicts, stats };
 }
 
 class LineInterner {

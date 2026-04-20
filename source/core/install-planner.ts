@@ -230,13 +230,23 @@ export function hashValues(values: Record<string, unknown>): string {
  * a deterministic byte sequence. Arrays keep their order; primitives pass
  * through. Unlike the `replacer` array overload of JSON.stringify, this
  * does NOT drop nested object keys.
+ *
+ * A WeakSet guards against YAML anchor cycles — `yaml.parse` produces
+ * cyclic objects for documents like `a: &x { self: *x }`, and a naive
+ * recursion would stack-overflow on user input. A cycle is replaced with
+ * `null` in the emitted shape; that's stable across runs (the same anchor
+ * round-trips to the same null) which is all `hashValues` actually needs.
  */
-function stableJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableJson);
+function stableJson(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (value !== null && typeof value === 'object') {
+    if (seen.has(value as object)) return null;
+    seen.add(value as object);
+  }
+  if (Array.isArray(value)) return value.map(v => stableJson(v, seen));
   if (value && typeof value === 'object') {
     const sorted: Record<string, unknown> = {};
     for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      sorted[key] = stableJson((value as Record<string, unknown>)[key]);
+      sorted[key] = stableJson((value as Record<string, unknown>)[key], seen);
     }
     return sorted;
   }

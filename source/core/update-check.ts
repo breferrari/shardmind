@@ -14,8 +14,9 @@
  * Cache file: `.shardmind/update-check.json` (vault-local, next to state.json).
  *
  * TTL: 24 hours. Any read older than that re-fetches from GitHub, succeeds or
- *   falls back to the stale value. This matches ROADMAP.md v0.2 item #51 — the
- *   status command depends on this cache to be useful, so it's built here.
+ *   falls back to the stale value. Shipped under the status-command work
+ *   (ROADMAP #51, pulled forward into v0.1) because status depends on this
+ *   cache to stay responsive across frequent invocations.
  *
  * Safety properties:
  *   - Writes are atomic (write-to-tempfile + rename) so a crashed or concurrent
