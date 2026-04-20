@@ -107,10 +107,16 @@ shardmind/
 │       └── index.ts                   # Re-exports from runtime
 ├── tests/
 │   ├── unit/                          # Pure function tests
+│   ├── component/                     # Ink components via ink-testing-library
 │   ├── integration/                   # Multi-module pipeline tests
-│   ├── e2e/                           # Full CLI invocation tests
+│   ├── e2e/                           # Full CLI invocation tests (subprocess)
+│   │   ├── cli.test.ts                # 30 scenarios covering all 3 commands
+│   │   └── helpers/                   # build-once, tarball, github-stub,
+│   │                                  # spawn-cli, vault factories
+│   ├── helpers/                       # Shared test utilities (factories)
 │   └── fixtures/                      # Test data
-│       ├── merge/                     # 17 three-way merge scenarios
+│       ├── merge/                     # 20 three-way merge scenarios
+│       ├── shards/                    # Pre-built shard tarballs
 │       ├── schema/                    # Valid + invalid schemas
 │       ├── render/                    # Template rendering scenarios
 │       └── migration/                 # Value migration scenarios
@@ -208,13 +214,14 @@ Read the spec section before implementing. It has inputs, outputs, algorithm ste
 
 ### Testing
 
-- **Fixtures before code** for the merge engine. Write all 17 fixture directories (see spec §17.2), then implement until they pass. TDD is mandatory for `drift.ts` and `differ.ts`.
+- **Fixtures before code** for the merge engine. Write all 17 fixture directories (see spec §19.2), then implement until they pass. TDD is mandatory for `drift.ts` and `differ.ts`.
 - **Unit tests** for pure functions in `source/core/`. Test files: `tests/unit/<module>.test.ts`.
+- **Component tests** for Ink components via `ink-testing-library`. Files: `tests/component/<Component>.test.tsx`.
 - **Integration tests** for pipelines: install (temp dir → full vault), update (install → modify → update → verify).
-- **E2E tests** for CLI: invoke binary via `execa`, check output and file state.
+- **E2E tests** for CLI: spawn `dist/cli.js` as a subprocess via `node:child_process` and route through the local GitHub stub (`tests/e2e/helpers/github-stub.ts`). No `execa` dependency; no public network. See `docs/ARCHITECTURE.md §19.7` for the hermetic-E2E methodology.
 - Each merge fixture is a self-contained directory with `scenario.yaml`, template files, values files, actual file, and expected output. See `tests/fixtures/merge/01-managed-no-change/` for the pattern.
 - **Clean up after tests**: remove temp dirs, don't leak state between tests.
-- Run `npm test` before committing. It must be green.
+- Run `npm test` before committing. It must be green. In CI, `npm run build` runs before `npm test` so the E2E suite has `dist/cli.js` to spawn.
 
 ### Commits
 

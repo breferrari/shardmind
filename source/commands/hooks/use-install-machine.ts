@@ -116,6 +116,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     (next: Phase) => {
       setPhase(next);
       if (next.kind === 'summary' || next.kind === 'cancelled' || next.kind === 'error') {
+        // Set the exit code BEFORE scheduling the Ink teardown so the
+        // process exits non-zero on error. Success and user-cancel stay
+        // at 0 — cancelled is the user's choice, not a failure.
+        if (next.kind === 'error') process.exitCode = 1;
         setTimeout(() => exit(), 100);
       }
     },

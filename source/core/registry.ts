@@ -1,7 +1,35 @@
 import type { ResolvedShard } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 
+/**
+ * Base URL for the GitHub REST API. Defaults to the public endpoint; the
+ * `SHARDMIND_GITHUB_API_BASE` environment variable overrides it. Read once
+ * at module load because hot-swapping API endpoints mid-process would mean
+ * install and update could reach different hosts on the same run, which
+ * no downstream consumer is prepared to reason about.
+ *
+ * Used by `fetchLatestRelease`, `resolve` (tarball URL construction), and
+ * indirectly by `verifyTag` (which consumes `resolve`'s tarball URL). The
+ * E2E suite sets this to the local GitHub-stub address so no test hits
+ * the real internet; future work (#34 validate, #39 alternate registries,
+ * GHE support) also consumes it.
+ *
+ * Trailing slashes are stripped so downstream path joins like
+ * `${GITHUB_API_BASE}/repos/...` always produce well-formed URLs
+ * regardless of how the env var was written.
+ */
+const GITHUB_API_BASE = (process.env['SHARDMIND_GITHUB_API_BASE'] ?? 'https://api.github.com').replace(
+  /\/+$/,
+  '',
+);
+
+/**
+ * URL for the shared shard registry index. Overridable via
+ * `SHARDMIND_REGISTRY_INDEX_URL` — same rationale as `GITHUB_API_BASE`.
+ * Non-direct `namespace/name` refs go through this file.
+ */
 const REGISTRY_INDEX_URL =
+  process.env['SHARDMIND_REGISTRY_INDEX_URL'] ??
   'https://raw.githubusercontent.com/shardmind/registry/main/index.json';
 
 // Provisional index.json shape. Not yet ratified in IMPLEMENTATION.md §4.1 —
@@ -124,7 +152,7 @@ export async function resolve(shardRef: string): Promise<ResolvedShard> {
     source = `github:${entry.repo}`;
   }
 
-  const tarballUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/tarball/v${version}`;
+  const tarballUrl = `${GITHUB_API_BASE}/repos/${repoOwner}/${repoName}/tarball/v${version}`;
   await verifyTag(tarballUrl, repoOwner, repoName, version);
 
   return {
@@ -202,7 +230,7 @@ async function fetchLatestRelease(
   name: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const url = `https://api.github.com/repos/${namespace}/${name}/releases/latest`;
+  const url = `${GITHUB_API_BASE}/repos/${namespace}/${name}/releases/latest`;
   const response = await safeFetch(url, { ...githubHeaders(), signal });
 
   if (response.status === 403 && isRateLimited(response)) {

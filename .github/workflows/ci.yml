@@ -37,5 +37,10 @@ jobs:
 
       - run: rm -f package-lock.json && npm install
       - run: npm run typecheck
-      - run: npm test
+      # Build before test: the E2E suite (tests/e2e/) spawns dist/cli.js as
+      # a subprocess. Without a fresh build, those tests would fail with a
+      # cryptic "Cannot find module 'dist/cli.js'" before any assertion
+      # runs. The E2E harness has its own build-once guard as a fallback
+      # for local dev, but CI runs a hermetic install so we rebuild here.
       - run: npm run build
+      - run: npm test

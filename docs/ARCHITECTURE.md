@@ -1187,16 +1187,17 @@ export default {
 
 ## 19. Testing Strategy
 
-### 17.1 Testing Tiers
+### 19.1 Testing Tiers
 
 | Tier | What | Framework | Location |
 |------|------|-----------|----------|
 | **Unit** | Pure functions: renderer, schema, drift, migrator, modules | vitest | `tests/unit/` |
+| **Component** | Ink TUI rendering for interactive views | vitest + ink-testing-library | `tests/component/` |
 | **Integration** | Multi-module flows: install pipeline, update pipeline | vitest | `tests/integration/` |
 | **Fixture-based** | Three-way merge scenarios with real files | vitest + fixture dirs | `tests/fixtures/` |
-| **E2E** | Full CLI invocation against temp vault | vitest + execa | `tests/e2e/` |
+| **E2E** | Full CLI invocation (`dist/cli.js`) against a temp vault, routed through a local GitHub API emulator | vitest + `node:child_process` | `tests/e2e/` |
 
-### 17.2 Fixture Directory Structure
+### 19.2 Fixture Directory Structure
 
 ```
 tests/fixtures/
@@ -1217,7 +1218,7 @@ tests/fixtures/
 └── migration/
 ```
 
-### 17.3 The 20 Merge Scenarios
+### 19.3 The 20 Merge Scenarios
 
 Seventeen spec scenarios plus three edge cases. Each is a directory under
 `tests/fixtures/merge/` with `scenario.yaml` + templates + values + actual
@@ -1249,7 +1250,7 @@ rendering or drift classification directly.
 | 19 | UTF-8 non-ASCII round-trip | modified | yes | no | yes | Auto-merge, bytes preserved |
 | 20 | Frontmatter edited + body edited (modified) | modified | yes | no | yes | Auto-merge (user tag + shard body change) |
 
-### 17.4 Three-Way Merge Implementation
+### 19.4 Three-Way Merge Implementation
 
 Uses `node-diff3`'s `diff3MergeRegions` (Khanna–Myers algorithm) — **not**
 the flat `diff3Merge`. The regions variant exposes `buffer: 'a' | 'o' | 'b'`
@@ -1287,7 +1288,7 @@ The `/\r?\n/` split tolerates CRLF on Windows-saved user files while base and
 ours are renderer output (always LF). Merged output is always LF — callers
 convert at the write boundary if they need platform-native line endings.
 
-### 17.5 Edge Cases
+### 19.5 Edge Cases
 
 | Edge case | Decision |
 |-----------|----------|
@@ -1299,7 +1300,7 @@ convert at the write boundary if they need platform-native line endings.
 | **Wikilink targets moved** | Warn. Suggest find-and-replace. *(v0.2 — out of scope for the engine.)* |
 | **_each item renamed** | Rename file, don't delete+recreate (preserves backlinks). *(v0.2 — requires iterator-aware diffing beyond the single-file merge primitive.)* |
 
-### 17.6 Test-First Build Order
+### 19.6 Test-First Build Order
 
 1. ✅ Write 17 spec-defined fixture files (templates, values, actual, expected) in PR #10.
 2. ✅ Write test runner (`tests/unit/drift.test.ts`) that auto-discovers fixtures and dispatches by scenario kind.
@@ -1307,7 +1308,72 @@ convert at the write boundary if they need platform-native line endings.
 4. ✅ Implement `computeMergeAction()` → skip / overwrite ownership tests pass.
 5. ✅ Implement `threeWayMerge()` → auto_merge / conflict tests pass.
 6. ✅ Add edge-case fixtures (empty, UTF-8, frontmatter-modified-merge) plus direct unit tests for stats invariants (`tests/unit/three-way-merge.test.ts`) and CRLF robustness (`tests/unit/differ-line-endings.test.ts`).
-7. Wire into `commands/update.tsx` — *Milestone 4 / issue #12, out of scope for the merge-engine PR.*
+7. ✅ Wire into `commands/update.tsx` — PR #52 (Milestone 4).
+
+### 19.7 Hermetic E2E via local GitHub stub
+
+The E2E tier spawns `dist/cli.js` as a subprocess and exercises it the way
+an end user would — no direct core imports, no vitest mocks — while
+staying hermetic. No test reaches the public internet.
+
+- **Production hook**: `source/core/registry.ts` reads its API base from
+  `SHARDMIND_GITHUB_API_BASE` (env, read once at module load). The same
+  env var is used by future work (#34 `validate`, #39 alternate
+  registries, enterprise GHE support). `SHARDMIND_REGISTRY_INDEX_URL`
+  has the same shape for the namespaced `owner/repo` index lookup.
+- **Stub**: `tests/e2e/helpers/github-stub.ts` spins up an HTTP server on
+  `127.0.0.1:0` (OS-assigned port) that emulates three GitHub REST
+  endpoints — `releases/latest`, `HEAD tarball`, `GET tarball`. The
+  `setLatest` API lets a test advertise a newer release mid-session,
+  driving update-available status without restarting the server. The
+  server is `unref()`-ed so a forgotten `close()` can't pin the
+  process; the suite's `afterAll` closes it explicitly.
+- **Fixture tarballs**: `tests/e2e/helpers/tarball.ts` builds three
+  variants on demand from `examples/minimal-shard/` — v0.1.0 mirrors
+  the source; v0.2.0 adds a brain-module file and bumps Home.md;
+  v0.3.0 goes one step further so conflict scenarios have real
+  material. The builder caches on SHA-256 of the source tree so
+  repeated runs don't pay the tar cost when nothing changed.
+- **Subprocess wrapper**: `tests/e2e/helpers/spawn-cli.ts` wraps
+  `node:child_process.spawn('node', [dist/cli.js, ...args])`. Captures
+  stdout / stderr / exit code / signal and normalizes CRLF so Windows
+  runs match POSIX assertions. The `signalAt` option listens for a
+  stdout regex and delivers a signal mid-run, which is how SIGINT
+  rollback scenarios stay deterministic without timing-sensitive sleeps.
+- **Build guard**: `tests/e2e/helpers/build-once.ts` rebuilds
+  `dist/cli.js` when any source file is newer. Memoized per-process so
+  parallel vitest workers don't race on the tsup invocation. CI runs
+  `npm run build` explicitly (see `.github/workflows/ci.yml`); the
+  guard exists so `npm test` works locally without a manual build step.
+- **Cross-platform SIGINT — production vs CI**: Node's `child.kill('SIGINT')`
+  force-terminates on Windows instead of delivering a catchable signal.
+  `source/core/cancellation.ts` compensates in the **production** CLI: it
+  installs a stdin listener in non-TTY mode that watches for the ETX byte
+  (`0x03`, the ASCII form of Ctrl+C) and calls `process.emit('SIGINT')`
+  inside the child's own process — where every `process.on('SIGINT', ...)`
+  handler, including `useSigintRollback`, fires exactly as it would on
+  POSIX. TTY users keep the native console-signal path on both platforms
+  — the stdin listener attaches only when `stdin.isTTY` is falsy on boot
+  so Ink's keyboard handling doesn't fight for stdin bytes.
+
+  The **test harness** delivers ETX on Windows and a real signal on POSIX;
+  `signalAt: { afterMs }` times the interrupt against a slowed-down stub
+  tarball (`stub.setTarballDelay(ms)`) since non-TTY Ink renders only the
+  final frame and pattern-based timing isn't reliable. This works on
+  Windows dev boxes but not on GitHub Actions Windows Server 2022 runners
+  — the runner image has a pipe-buffering quirk where the parent's
+  single-byte write doesn't reach the child before the test's outer
+  timeout fires. Until we find a test-harness mechanism that bridges
+  reliably, the two SIGINT E2E scenarios carry an
+  `it.skipIf(process.platform === 'win32')` on that cell; follow-up
+  tracked as **#57**. The production bridge is not gated — real Windows
+  users get the same cancellation behavior as POSIX, and local Windows
+  dev boxes exercise the path end-to-end.
+- **Exit code contract**: install and update set `process.exitCode = 1`
+  on error-phase transitions so scripting / CI can detect failures. The
+  status command (`commands/index.tsx`) intentionally keeps exit 0 even
+  on error: per §10.2 it's an ambient read-only surface and must never
+  stack-trace the shell. The typed error code still surfaces to stdout.
 
 ---
 

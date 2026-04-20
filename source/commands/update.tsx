@@ -53,21 +53,6 @@ export default function Update({ options }: Props) {
     );
   }
 
-  if (phase.kind === 'no-install') {
-    return (
-      <CommandFrame dryRun={dryRun}>
-        <Box flexDirection="column" gap={1}>
-          <StatusMessage variant="warning">
-            No shard installed in this directory.
-          </StatusMessage>
-          <Text dimColor>
-            Run <Text bold>shardmind install &lt;shard&gt;</Text> first, then come back to update.
-          </Text>
-        </Box>
-      </CommandFrame>
-    );
-  }
-
   if (phase.kind === 'up-to-date') {
     return (
       <CommandFrame dryRun={dryRun}>

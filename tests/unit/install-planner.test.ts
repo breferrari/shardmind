@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,7 +15,7 @@ import {
   backupCollisions,
   restoreBackups,
 } from '../../source/core/install-executor.js';
-import type { ShardSchema } from '../../source/runtime/types.js';
+import { ShardMindError, type ShardSchema } from '../../source/runtime/types.js';
 
 function schema(values: ShardSchema['values'], modules: ShardSchema['modules'] = {}): ShardSchema {
   return {
@@ -170,6 +170,84 @@ describe('backupCollisions', () => {
     expect(records[0]?.backupPath).toBe(`${original}.shardmind-backup-${stamp}.1`);
     const stale = await fsp.readFile(`${original}.shardmind-backup-${stamp}`, 'utf-8');
     expect(stale).toBe('stale'); // untouched
+  });
+
+  it('restores earlier backups when a later rename fails — vault ends byte-identical', async () => {
+    // Three collisions: first two succeed, third fails because the target
+    // path sits inside a missing directory we can't create via rename. The
+    // transactional contract says: the first two renames must be walked
+    // back so the vault looks pre-call, even though the error throws.
+    const a = path.join(vault, 'A.md');
+    const b = path.join(vault, 'B.md');
+    const c = path.join(vault, 'missing-dir', 'C.md');
+    await fsp.writeFile(a, 'alpha', 'utf-8');
+    await fsp.writeFile(b, 'bravo', 'utf-8');
+    // Intentionally do NOT create missing-dir, so the fsp.rename on `c`
+    // fails with ENOENT (the parent of the backup path doesn't exist
+    // because rename preserves the directory component).
+    // Actually rename on nonexistent SOURCE (c itself) also throws ENOENT,
+    // which is what we want for deterministic failure.
+
+    await expect(
+      backupCollisions(
+        [
+          { outputPath: 'A.md', absolutePath: a, size: 5, mtime: new Date(), kind: 'file' },
+          { outputPath: 'B.md', absolutePath: b, size: 5, mtime: new Date(), kind: 'file' },
+          // Third entry points at a path that doesn't exist — rename will ENOENT
+          { outputPath: 'missing-dir/C.md', absolutePath: c, size: 0, mtime: new Date(), kind: 'file' },
+        ],
+        new Date('2026-04-18T10:30:00.000Z'),
+      ),
+    ).rejects.toMatchObject({ code: 'BACKUP_FAILED' });
+
+    // Pre-call state: A.md and B.md exist with their original contents; no
+    // .shardmind-backup-* artifacts linger.
+    expect(await fsp.readFile(a, 'utf-8')).toBe('alpha');
+    expect(await fsp.readFile(b, 'utf-8')).toBe('bravo');
+    const siblings = await fsp.readdir(vault);
+    expect(siblings.sort()).toEqual(['A.md', 'B.md'].sort());
+  });
+
+  it('names the orphaned backup path in the hint when restore also fails', async () => {
+    // Force a restore-walk failure by pre-seeding a file at the original
+    // location after the rename — the restore's rename(backup, original)
+    // will EEXIST on Windows / overwrite on Unix. We use an occupied
+    // directory to force EEXIST on both.
+    const a = path.join(vault, 'A.md');
+    const missing = path.join(vault, 'missing.md');
+    await fsp.writeFile(a, 'alpha', 'utf-8');
+
+    // Three-call rename sequence:
+    //   1. A → backup       (succeed, via the real rename)
+    //   2. missing → backup (throw ENOENT — triggers the restore-walk)
+    //   3. restore-walk of A (throw EACCES — forces an orphaned path)
+    // The mock returns a typed Promise-based shim so no unsafe casts leak
+    // into the test source.
+    const realRename = fsp.rename;
+    const spy = vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      if (spy.mock.calls.length === 1) return realRename(from, to);
+      if (spy.mock.calls.length === 2) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      }
+      throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+    });
+
+    try {
+      const err = await backupCollisions(
+        [
+          { outputPath: 'A.md', absolutePath: a, size: 5, mtime: new Date(), kind: 'file' },
+          { outputPath: 'missing.md', absolutePath: missing, size: 0, mtime: new Date(), kind: 'file' },
+        ],
+        new Date('2026-04-18T10:30:00.000Z'),
+      ).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      const hint = err instanceof ShardMindError ? err.hint : null;
+      expect(hint).toContain('Partial backups could not be restored');
+      expect(hint).toContain(`${a}.shardmind-backup-2026-04-18T10-30-00`);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
