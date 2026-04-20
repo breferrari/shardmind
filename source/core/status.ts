@@ -24,6 +24,7 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { diffLines } from 'diff';
 import type {
   ShardManifest,
   ShardSchema,
@@ -33,11 +34,15 @@ import type {
   StatusEnvironmentReport,
   StatusFrontmatterIssue,
   StatusFrontmatterSummary,
+  StatusModifiedChanges,
   StatusModuleSummary,
   StatusValuesSummary,
   StatusWarning,
   UpdateStatus,
   DriftReport,
+  DriftEntry,
+  ModuleSelections,
+  RenderContext,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { readState } from './state.js';
@@ -46,12 +51,14 @@ import { parseSchema, buildValuesValidator } from './schema.js';
 import { detectDrift } from './drift.js';
 import { loadValuesYaml } from './values-io.js';
 import { getLatestVersion } from './update-check.js';
-import { mapConcurrent, pathExists } from './fs-utils.js';
+import { mapConcurrent, pathExists, stripTemplatePrefix } from './fs-utils.js';
 import { errnoCode } from '../runtime/errno.js';
 import { validateFrontmatter } from '../runtime/frontmatter.js';
+import { renderString, buildRenderContext } from './renderer.js';
 import {
   CACHED_MANIFEST,
   CACHED_SCHEMA,
+  CACHED_TEMPLATES,
   VALUES_FILE,
 } from '../runtime/vault-paths.js';
 
@@ -75,6 +82,14 @@ const FRONTMATTER_READ_CONCURRENCY = 16;
  * sample.
  */
 const MAX_INVALID_VALUE_KEYS = 20;
+
+/**
+ * Concurrency cap for the per-modified-file render + diff pass. Each file
+ * rebuilds the Nunjucks render pipeline from a cached template; at 8 in
+ * flight we saturate disk on a drifted 200-file vault without piling up
+ * v8 heap pressure from parallel template environments.
+ */
+const MODIFIED_DIFF_CONCURRENCY = 8;
 
 export interface BuildStatusReportOptions {
   /** Load verbose-only sections (frontmatter lint + environment probe). */
@@ -102,23 +117,28 @@ export async function buildStatusReport(
   const manifest = await loadCachedManifest(vaultRoot, warnings);
   const schema = await loadCachedSchema(vaultRoot, warnings);
 
+  const rawValues = await loadRawValues(vaultRoot);
+
   const [drift, update, values] = await Promise.all([
     safeDetectDrift(vaultRoot, state, warnings),
     opts.skipUpdateCheck
       ? Promise.resolve<UpdateStatus>({
           kind: 'unknown',
           current: state.version,
-          reason: 'no-network',
+          // Not network failure — the caller intentionally skipped the
+          // lookup (CI mode, offline-first tests). Distinct from the
+          // `'no-network'` reason we emit after a real fetch failure.
+          reason: 'cache-miss',
         })
-      : resolveUpdate(vaultRoot, state, now),
+      : resolveUpdate(vaultRoot, state, now, warnings, opts.verbose),
     schema
-      ? loadValuesSummary(vaultRoot, schema)
+      ? buildValuesSummary(rawValues, schema)
       : Promise.resolve<StatusValuesSummary>({
           valid: false,
           total: 0,
           invalidKeys: [],
           invalidCount: 0,
-          fileMissing: true,
+          fileMissing: rawValues === null,
         }),
   ]);
 
@@ -127,17 +147,30 @@ export async function buildStatusReport(
   const effectiveManifest: ShardManifest = manifest ?? synthesizeManifest(state);
 
   const driftSummary = summarizeDrift(drift);
-
   const modules: StatusModuleSummary = buildModuleSummary(state);
 
-  const frontmatter =
-    opts.verbose && schema
-      ? await lintFrontmatter(vaultRoot, drift, schema)
-      : null;
+  // Verbose sections are independent — fan them out in parallel. Each has
+  // its own IO budget (frontmatter: 16, modified diff: 8, env probe: fs
+  // stat batch) so they don't contend on the same handles.
+  const [modifiedChanges, frontmatter, environment] = opts.verbose
+    ? await Promise.all([
+        driftSummary.modified > 0
+          ? computeModifiedChanges(
+              vaultRoot,
+              drift.modified.slice(0, MAX_PATHS_PER_BUCKET),
+              effectiveManifest,
+              rawValues,
+              state.modules,
+            )
+          : Promise.resolve(null),
+        schema ? lintFrontmatter(vaultRoot, drift, schema) : Promise.resolve(null),
+        probeEnvironment(),
+      ])
+    : [null, null, null];
 
-  const environment: StatusEnvironmentReport | null = opts.verbose
-    ? await probeEnvironment()
-    : null;
+  if (modifiedChanges) {
+    driftSummary.modifiedChanges = modifiedChanges;
+  }
 
   emitSectionWarnings({
     warnings,
@@ -249,6 +282,7 @@ function summarizeDrift(drift: DriftReport): StatusDriftSummary {
     missing: drift.missing.length,
     orphaned: drift.orphaned.length,
     modifiedPaths: modifiedPaths.slice(0, MAX_PATHS_PER_BUCKET),
+    modifiedChanges: null,
     orphanedPaths: orphanedPaths.slice(0, MAX_PATHS_PER_BUCKET),
     missingPaths: missingPaths.slice(0, MAX_PATHS_PER_BUCKET),
     truncated,
@@ -267,21 +301,31 @@ function buildModuleSummary(state: ShardState): StatusModuleSummary {
   return { included, excluded };
 }
 
-async function loadValuesSummary(
+/**
+ * Load and parse `shard-values.yaml` once, shared between values validation
+ * and the per-modified-file render+diff pass. Returns `null` when the file
+ * can't be read or isn't a YAML mapping — callers degrade to "missing"
+ * behavior rather than re-try.
+ */
+async function loadRawValues(
   vaultRoot: string,
-  schema: ShardSchema,
-): Promise<StatusValuesSummary> {
+): Promise<Record<string, unknown> | null> {
   const filePath = path.join(vaultRoot, VALUES_FILE);
-
-  // Skip the redundant pathExists pre-check — loadValuesYaml already throws
-  // on ENOENT and every other read failure. One syscall instead of two.
-  let loaded: Record<string, unknown>;
   try {
-    loaded = await loadValuesYaml(filePath, {
+    return await loadValuesYaml(filePath, {
       errors: { readFailed: 'VALUES_READ_FAILED', invalid: 'VALUES_INVALID' },
       label: 'shard-values.yaml',
     });
   } catch {
+    return null;
+  }
+}
+
+function buildValuesSummary(
+  rawValues: Record<string, unknown> | null,
+  schema: ShardSchema,
+): StatusValuesSummary {
+  if (rawValues === null) {
     return {
       valid: false,
       total: totalValuesCount(schema),
@@ -292,7 +336,7 @@ async function loadValuesSummary(
   }
 
   const validator = buildValuesValidator(schema);
-  const result = validator.safeParse(loaded);
+  const result = validator.safeParse(rawValues);
   if (result.success) {
     return {
       valid: true,
@@ -336,8 +380,22 @@ async function resolveUpdate(
   vaultRoot: string,
   state: ShardState,
   now: number,
+  warnings: StatusWarning[],
+  verbose: boolean,
 ): Promise<UpdateStatus> {
   const result = await getLatestVersion(vaultRoot, state.source, now);
+
+  // A corrupt cache entry was self-healed on the way in. The user's next
+  // run sees a clean cache; we flag it once here for verbose runs so a
+  // user investigating flakiness can see their cache was broken before
+  // the heal. Non-verbose runs don't surface it — the fix already happened.
+  if (result.cacheHealed && verbose) {
+    warnings.push({
+      severity: 'info',
+      message: 'Update-check cache was corrupt and has been reset.',
+      hint: 'UPDATE_CHECK_CACHE_CORRUPT: healed automatically; no action needed.',
+    });
+  }
 
   if (result.kind === 'unknown') {
     return {
@@ -425,6 +483,122 @@ async function lintFrontmatter(
     issueCount,
     truncated,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Verbose-only: per-modified-file line-change counts.
+// ---------------------------------------------------------------------------
+
+/**
+ * For each drifted `modified` file, render the cached template with the
+ * current `shard-values.yaml` + module selections, then 2-way diff the
+ * rendered base against the actual file content. Returns an array aligned
+ * 1:1 with the capped `modifiedPaths` list.
+ *
+ * Every failure mode (no cached template, render throw, file read error)
+ * surfaces as a `skipped` variant so the UI can print the path plus a
+ * dim "diff unavailable" tag instead of blanking out. The rendered base
+ * is discarded immediately — we only need the line counts.
+ *
+ * Verbose-only because each file costs one template render (~5–20 ms for
+ * typical shards) plus one line-diff pass; running this unconditionally
+ * would regress the common-case quick-status wall-clock target.
+ */
+async function computeModifiedChanges(
+  vaultRoot: string,
+  entries: readonly DriftEntry[],
+  manifest: ShardManifest,
+  rawValues: Record<string, unknown> | null,
+  selections: ModuleSelections,
+): Promise<StatusModifiedChanges[]> {
+  if (rawValues === null) {
+    // Without values we can't render; surface a skipped entry per file so
+    // the user knows the counts are unavailable rather than silently absent.
+    return entries.map(e => ({
+      path: e.path,
+      skipped: true as const,
+      reason: 'render-failed' as const,
+    }));
+  }
+
+  const renderCtx = buildRenderContext(manifest, rawValues, selections);
+  return mapConcurrent(entries, MODIFIED_DIFF_CONCURRENCY, entry =>
+    renderAndDiffEntry(vaultRoot, entry, renderCtx),
+  );
+}
+
+/**
+ * Single-entry pipeline: read cached template → render against current
+ * values → read actual file → count line diff. Each failure step returns
+ * the matching `skipped` variant so the caller can render "diff
+ * unavailable" without a try/catch ladder in the mapping callback.
+ */
+async function renderAndDiffEntry(
+  vaultRoot: string,
+  entry: DriftEntry,
+  renderCtx: RenderContext,
+): Promise<StatusModifiedChanges> {
+  if (!entry.template) {
+    return { path: entry.path, skipped: true, reason: 'no-template' };
+  }
+
+  const templatePath = path.join(
+    vaultRoot,
+    CACHED_TEMPLATES,
+    stripTemplatePrefix(entry.template),
+  );
+
+  let templateSource: string;
+  try {
+    templateSource = await fsp.readFile(templatePath, 'utf-8');
+  } catch {
+    return { path: entry.path, skipped: true, reason: 'no-template' };
+  }
+
+  let base: string;
+  try {
+    base = renderString(templateSource, renderCtx, entry.path);
+  } catch {
+    return { path: entry.path, skipped: true, reason: 'render-failed' };
+  }
+
+  let actual: string;
+  try {
+    actual = await fsp.readFile(path.join(vaultRoot, entry.path), 'utf-8');
+  } catch {
+    return { path: entry.path, skipped: true, reason: 'read-failed' };
+  }
+
+  const { linesAdded, linesRemoved } = countLineChanges(base, actual);
+  return { path: entry.path, linesAdded, linesRemoved };
+}
+
+/**
+ * 2-way line count via the `diff` package. Returns the number of lines
+ * present in `actual` but not in `base` (added) and the number present in
+ * `base` but not in `actual` (removed). Semantics match `git diff --stat`.
+ *
+ * Both inputs are normalized before diffing so byte-level-but-logically-
+ * equivalent edits don't inflate the counts:
+ *   - CRLF → LF: a template stored LF but re-saved CRLF by a Windows
+ *     editor would otherwise register every line as changed.
+ *   - Leading UTF-8 BOM: editors like Notepad prepend a BOM on save; a
+ *     BOM-only shift would otherwise cause the entire file to diff.
+ */
+function countLineChanges(
+  base: string,
+  actual: string,
+): { linesAdded: number; linesRemoved: number } {
+  const normalize = (s: string): string =>
+    (s.startsWith('\uFEFF') ? s.slice(1) : s).replace(/\r\n/g, '\n');
+  const hunks = diffLines(normalize(base), normalize(actual));
+  let linesAdded = 0;
+  let linesRemoved = 0;
+  for (const hunk of hunks) {
+    if (hunk.added) linesAdded += hunk.count ?? 0;
+    else if (hunk.removed) linesRemoved += hunk.count ?? 0;
+  }
+  return { linesAdded, linesRemoved };
 }
 
 // ---------------------------------------------------------------------------

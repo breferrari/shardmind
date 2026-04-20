@@ -276,6 +276,16 @@ export interface StatusDriftSummary {
   orphaned: number;
   /** Capped list of modified file paths for display; `modified` holds the true count. */
   modifiedPaths: string[];
+  /**
+   * Per-modified-file line-change counts, populated only when the builder
+   * is called with `verbose: true`. Requires rendering the cached template
+   * against current values (see `status.ts`), so we gate it behind verbose
+   * to keep the quick-mode status run sub-second on large vaults.
+   * Same order and length as `modifiedPaths`; entries may be `null` when
+   * the render or diff couldn't be computed (missing cached template,
+   * missing values, unreadable file).
+   */
+  modifiedChanges: StatusModifiedChanges[] | null;
   /** Capped list of orphan paths for verbose display. */
   orphanedPaths: string[];
   /** Capped list of missing file paths for verbose display. */
@@ -283,6 +293,17 @@ export interface StatusDriftSummary {
   /** True if any `*Paths` list is truncated (caller can render "… and N more"). */
   truncated: boolean;
 }
+
+/**
+ * Line-level change summary for a single modified file. Mirrors the
+ * semantics of `diff --stat`: `linesAdded` counts lines present on disk
+ * that aren't in the rendered base; `linesRemoved` counts lines in the
+ * rendered base that aren't on disk. `null` is used when the diff was
+ * skipped or couldn't be computed.
+ */
+export type StatusModifiedChanges =
+  | { path: string; linesAdded: number; linesRemoved: number }
+  | { path: string; skipped: true; reason: 'no-template' | 'render-failed' | 'read-failed' };
 
 /**
  * Update availability for the installed shard.
@@ -293,14 +314,25 @@ export interface StatusDriftSummary {
  *   or note that it's from a previous cached answer ('stale'). We intentionally
  *   don't compare semver precedence — a downgrade to a re-tagged earlier
  *   release is still something the user should see.
- * - `unknown` — no cached answer and the network could not be reached, OR
- *   the installed `state.source` is not a `github:` reference (e.g. a future
- *   private-registry shape). The status view renders this as a dim "—".
+ * - `unknown` — three sub-cases distinguished by `reason`:
+ *     * `'no-network'` — we tried to fetch and the request failed AND no
+ *       prior cache exists. Transient; retryable.
+ *     * `'cache-miss'` — the update check was skipped (caller passed
+ *       `skipUpdateCheck`) AND no prior cache had been primed. Distinct
+ *       from `'no-network'` because the user didn't experience a failure,
+ *       the query was intentionally deferred.
+ *     * `'unsupported-source'` — the installed `state.source` is not a
+ *       `github:` reference (e.g. a future private-registry shape).
+ *       Permanent for the given vault until reinstall.
  */
 export type UpdateStatus =
   | { kind: 'up-to-date'; current: string }
   | { kind: 'available'; current: string; latest: string; cacheAge: 'fresh' | 'stale' }
-  | { kind: 'unknown'; current: string; reason: 'no-network' | 'unsupported-source' };
+  | {
+      kind: 'unknown';
+      current: string;
+      reason: 'no-network' | 'cache-miss' | 'unsupported-source';
+    };
 
 export interface StatusModuleSummary {
   /** Module IDs the user opted into at install time. */

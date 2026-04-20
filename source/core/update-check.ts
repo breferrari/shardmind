@@ -62,11 +62,31 @@ interface UpdateCheck {
  * to present the answer as authoritative (`fresh`), cached-but-known-stale
  * (`stale` — network currently down), or unavailable (`unknown` — no cache
  * and the network is unreachable).
+ *
+ * `cacheHealed` is set when the previous cache entry was found corrupt
+ * (bad JSON, wrong shape, or a directory at the cache path) and the
+ * reader self-healed by deleting it. Verbose-mode callers can surface
+ * this as a diagnostic (`UPDATE_CHECK_CACHE_CORRUPT`) so a user
+ * investigating flakiness can see their cache was transiently broken.
+ * Every other caller ignores the flag — the healing already happened.
  */
-export type UpdateCheckResult =
+export type UpdateCheckResult = (
   | { kind: 'fresh'; latest_version: string; checked_at: string }
   | { kind: 'stale'; latest_version: string; checked_at: string; reason: 'no-network' }
-  | { kind: 'unknown'; reason: 'no-network' | 'unsupported-source' };
+  | { kind: 'unknown'; reason: 'no-network' | 'unsupported-source' }
+) & {
+  cacheHealed?: boolean;
+};
+
+/**
+ * Result of `readCache`. `cache` is the parsed entry or `null` for any
+ * unusable condition. `corruptHealed` signals that a pre-existing file
+ * was deleted because it was unparseable — the next write will repopulate.
+ */
+export interface ReadCacheResult {
+  cache: UpdateCheck | null;
+  corruptHealed: boolean;
+}
 
 export const CACHE_FILENAME = 'update-check.json';
 export const TTL_MS = 24 * 60 * 60 * 1000;
@@ -87,7 +107,7 @@ function cachePath(vaultRoot: string): string {
  * Never throws on cache pathology — pathology here is a status-UX degradation,
  * not a user-facing failure mode.
  */
-export async function readCache(vaultRoot: string): Promise<UpdateCheck | null> {
+export async function readCache(vaultRoot: string): Promise<ReadCacheResult> {
   const filePath = cachePath(vaultRoot);
 
   let raw: string;
@@ -95,19 +115,21 @@ export async function readCache(vaultRoot: string): Promise<UpdateCheck | null> 
     raw = await fsp.readFile(filePath, 'utf-8');
   } catch (err) {
     const code = errnoCode(err);
-    if (code === 'ENOENT') return null;
+    if (code === 'ENOENT') return { cache: null, corruptHealed: false };
     // If the cache path is a directory (user manually created
     // `.shardmind/update-check.json/` as a folder — rare but possible), a
     // plain read returns EISDIR and recurs forever unless we heal it. Unlike
     // permission-denied, which the user has to fix themselves, a stale
-    // directory at our cache path is safe to delete on sight.
+    // directory at our cache path is safe to delete on sight. Flag as
+    // corruption-healed so the verbose status view can surface it.
     if (code === 'EISDIR') {
       await deleteCache(vaultRoot);
+      return { cache: null, corruptHealed: true };
     }
     // Permission / other I/O error on a file that exists: treat as absent.
     // The user can still use the command; status just won't know the latest
     // version until the next successful write happens.
-    return null;
+    return { cache: null, corruptHealed: false };
   }
 
   let parsed: unknown;
@@ -115,15 +137,15 @@ export async function readCache(vaultRoot: string): Promise<UpdateCheck | null> 
     parsed = JSON.parse(raw);
   } catch {
     await deleteCache(vaultRoot);
-    return null;
+    return { cache: null, corruptHealed: true };
   }
 
   if (!isValidCacheShape(parsed)) {
     await deleteCache(vaultRoot);
-    return null;
+    return { cache: null, corruptHealed: true };
   }
 
-  return parsed;
+  return { cache: parsed, corruptHealed: false };
 }
 
 /**
@@ -210,14 +232,21 @@ export async function getLatestVersion(
     return { kind: 'unknown', reason: 'unsupported-source' };
   }
 
-  const cached = await readCache(vaultRoot);
+  const { cache: cached, corruptHealed } = await readCache(vaultRoot);
+
+  // `attachHealed` stamps the corruption-healed flag onto any result we
+  // return, so a one-time corrupt read surfaces in verbose status output
+  // exactly once — the next invocation reads the clean replacement and
+  // reports no healing.
+  const attachHealed = <T extends UpdateCheckResult>(result: T): T =>
+    corruptHealed ? { ...result, cacheHealed: true } : result;
 
   if (cached && cached.source === source && isFresh(cached, now)) {
-    return {
+    return attachHealed({
       kind: 'fresh',
       latest_version: cached.latest_version,
       checked_at: cached.checked_at,
-    };
+    });
   }
 
   let latest: string;
@@ -229,14 +258,14 @@ export async function getLatestVersion(
     // more informative than "unknown" for the common case where the user
     // was offline and then reinstalled while offline.
     if (cached) {
-      return {
+      return attachHealed({
         kind: 'stale',
         latest_version: cached.latest_version,
         checked_at: cached.checked_at,
         reason: 'no-network',
-      };
+      });
     }
-    return { kind: 'unknown', reason: 'no-network' };
+    return attachHealed({ kind: 'unknown', reason: 'no-network' });
   }
 
   const checked_at = new Date(clamp(now)).toISOString();
@@ -247,7 +276,7 @@ export async function getLatestVersion(
     latest_version: latest,
   });
 
-  return { kind: 'fresh', latest_version: latest, checked_at };
+  return attachHealed({ kind: 'fresh', latest_version: latest, checked_at });
 }
 
 /**

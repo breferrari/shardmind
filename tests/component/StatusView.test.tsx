@@ -49,6 +49,7 @@ function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
       missing: 0,
       orphaned: 0,
       modifiedPaths: [],
+      modifiedChanges: null,
       orphanedPaths: [],
       missingPaths: [],
       truncated: false,

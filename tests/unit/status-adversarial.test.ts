@@ -11,7 +11,7 @@
  * `update-adversarial.test.ts` — per-test assertions, minimal setup, real FS.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -69,6 +69,7 @@ async function installMinimal(vault: string): Promise<void> {
 
 describe('status (adversarial)', () => {
   let vault: string;
+  const originalFetch = globalThis.fetch;
 
   beforeEach(async () => {
     vault = path.join(os.tmpdir(), `shardmind-status-adv-${crypto.randomUUID()}`);
@@ -76,6 +77,7 @@ describe('status (adversarial)', () => {
   });
 
   afterEach(async () => {
+    globalThis.fetch = originalFetch;
     await fsp.rm(vault, { recursive: true, force: true });
   });
 
@@ -317,6 +319,98 @@ describe('status (adversarial)', () => {
     });
     expect(report!.manifest.namespace.length).toBe(40);
     expect(report!.manifest.name.length).toBe(40);
+  });
+
+  it('BOM-prefixed file does not inflate the diff to the whole file', async () => {
+    await installMinimal(vault);
+
+    // Prepend a UTF-8 BOM to Home.md. Byte-level this is a modification
+    // (hash differs) but logically no lines changed — the diff must NOT
+    // register every line as changed (which is what happens without BOM
+    // stripping in countLineChanges — a pre-fix run showed N+/N- for a
+    // file of N lines).
+    const homePath = path.join(vault, 'Home.md');
+    const original = await fsp.readFile(homePath, 'utf-8');
+    const originalLineCount = original.split('\n').length;
+    await fsp.writeFile(homePath, '\uFEFF' + original, 'utf-8');
+
+    const report = await buildStatusReport(vault, {
+      verbose: true,
+      skipUpdateCheck: true,
+    });
+    expect(report!.drift.modified).toBe(1);
+    const entry = report!.drift.modifiedChanges?.[0];
+    expect(entry).toBeDefined();
+    if (entry && !('skipped' in entry)) {
+      // Without BOM stripping the diff would roughly equal the full file;
+      // with it we get at most a single-line trailing-newline artifact.
+      expect(entry.linesAdded).toBeLessThan(originalLineCount);
+      expect(entry.linesRemoved).toBeLessThan(originalLineCount);
+    } else {
+      throw new Error('expected a non-skipped change entry for BOM-prefixed file');
+    }
+  });
+
+  it('surfaces UPDATE_CHECK_CACHE_CORRUPT as a verbose-only warning when the cache auto-heals', async () => {
+    await installMinimal(vault);
+
+    // Stub network so the verbose path can run the real update check
+    // without hitting GitHub. Empty release response → fetch succeeds,
+    // cache gets rewritten, corruption signal propagates.
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ tag_name: 'v0.1.0' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    // Plant a corrupt cache that readCache will auto-heal on next read.
+    const cachePath = path.join(vault, '.shardmind', 'update-check.json');
+    await fsp.writeFile(cachePath, '{not-valid-json', 'utf-8');
+
+    const verbose = await buildStatusReport(vault, {
+      verbose: true,
+      skipUpdateCheck: false,
+    });
+    const corruptWarning = verbose!.warnings.find(w =>
+      w.hint?.includes('UPDATE_CHECK_CACHE_CORRUPT'),
+    );
+    expect(corruptWarning).toBeDefined();
+    expect(corruptWarning?.severity).toBe('info');
+  });
+
+  it('does NOT surface the corruption warning in quick mode (non-verbose)', async () => {
+    await installMinimal(vault);
+
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ tag_name: 'v0.1.0' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    await fsp.writeFile(
+      path.join(vault, '.shardmind', 'update-check.json'),
+      '{not-valid-json',
+      'utf-8',
+    );
+
+    const quick = await buildStatusReport(vault, {
+      verbose: false,
+      skipUpdateCheck: false,
+    });
+    expect(
+      quick!.warnings.some(w => w.hint?.includes('UPDATE_CHECK_CACHE_CORRUPT')),
+    ).toBe(false);
+  });
+
+  it('reports `cache-miss` (not `no-network`) when the update check is skipped', async () => {
+    await installMinimal(vault);
+    const report = await buildStatusReport(vault, {
+      verbose: false,
+      skipUpdateCheck: true,
+    });
+    expect(report!.update).toMatchObject({ kind: 'unknown', reason: 'cache-miss' });
   });
 
   it('caps the modified paths list at 20 and marks truncated', async () => {

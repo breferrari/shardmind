@@ -26,6 +26,7 @@ import type {
   StatusDriftSummary,
   StatusFrontmatterSummary,
   StatusEnvironmentReport,
+  StatusModifiedChanges,
 } from '../runtime/types.js';
 
 interface VerboseViewProps {
@@ -129,6 +130,7 @@ function FilesSection({ drift }: { drift: StatusDriftSummary }) {
           total={drift.modified}
           paths={drift.modifiedPaths}
           heading="modified by you"
+          renderSuffix={(_, i) => renderChangeSuffix(drift.modifiedChanges?.[i])}
         />
       )}
 
@@ -160,9 +162,11 @@ function FilesSection({ drift }: { drift: StatusDriftSummary }) {
 }
 
 /**
- * Header row + capped list of paths + `…and N more` overflow. Shared between
- * the `modified` and `missing` drift buckets because both render identically
- * in verbose mode — only the icon, color, and heading differ.
+ * Header row + capped list of paths + `…and N more` overflow. Used for
+ * every drift bucket that prints per-file rows (modified, missing). The
+ * `renderSuffix` slot lets callers attach per-row decorators — `+N/−M`
+ * for the `modified` bucket, none for `missing` — without each caller
+ * reimplementing the shared layout.
  */
 function BucketList({
   icon,
@@ -170,22 +174,25 @@ function BucketList({
   total,
   paths,
   heading,
+  renderSuffix,
 }: {
   icon: string;
   color: 'yellow' | 'red';
   total: number;
   paths: string[];
   heading: string;
+  renderSuffix?: (path: string, index: number) => React.ReactNode;
 }) {
   return (
     <Box flexDirection="column">
       <Row icon={icon} color={color}>
         {total} {heading}:
       </Row>
-      {paths.map(p => (
+      {paths.map((p, i) => (
         <Text key={p}>
           {'     '}
           {p}
+          {renderSuffix?.(p, i)}
         </Text>
       ))}
       {total > paths.length && (
@@ -194,6 +201,35 @@ function BucketList({
         </Text>
       )}
     </Box>
+  );
+}
+
+/**
+ * Per-modified-file suffix: `— +12 / −3` or `(diff unavailable)` when the
+ * builder couldn't render the cached template. The green/red colors are
+ * applied directly to the +/− count Texts rather than inheriting from a
+ * dimmed wrapper, because Ink's color inheritance merges `dimColor` into
+ * nested color props and washes the numbers out. The separator and the
+ * "unavailable" label do inherit dim — that's the intended contrast.
+ */
+function renderChangeSuffix(entry: StatusModifiedChanges | undefined): React.ReactNode {
+  if (!entry) return null;
+  if ('skipped' in entry) {
+    return <Text dimColor> (diff unavailable)</Text>;
+  }
+  // A 0/0 hunk means the files are logically equal after CRLF + BOM
+  // normalization — drift detection saw a hash delta but the diff
+  // doesn't. Rather than a confusing `+0/−0`, render the truthful cause.
+  if (entry.linesAdded === 0 && entry.linesRemoved === 0) {
+    return <Text dimColor> (whitespace-only)</Text>;
+  }
+  return (
+    <>
+      <Text dimColor>{' — '}</Text>
+      <Text color="green">+{entry.linesAdded}</Text>
+      <Text dimColor>/</Text>
+      <Text color="red">−{entry.linesRemoved}</Text>
+    </>
   );
 }
 

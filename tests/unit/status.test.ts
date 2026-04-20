@@ -135,13 +135,16 @@ describe('buildStatusReport', () => {
     expect(upd?.severity).toBe('info');
   });
 
-  it('reports "unknown" when skipUpdateCheck is set and no cache exists', async () => {
+  it('reports "unknown / cache-miss" when the update check is skipped', async () => {
+    // `skipUpdateCheck` is semantically distinct from network failure:
+    // the caller opted out of the lookup, so the reason is cache-miss,
+    // not no-network. Preserves the distinction the UI surfaces.
     await installMinimal(vault);
     const report = await buildStatusReport(vault, {
       verbose: false,
       skipUpdateCheck: true,
     });
-    expect(report!.update).toMatchObject({ kind: 'unknown', reason: 'no-network' });
+    expect(report!.update).toMatchObject({ kind: 'unknown', reason: 'cache-miss' });
   });
 
   it('populates verbose-only sections when verbose=true', async () => {
@@ -153,6 +156,50 @@ describe('buildStatusReport', () => {
     expect(report!.frontmatter).not.toBeNull();
     expect(report!.environment).not.toBeNull();
     expect(report!.environment!.nodeVersion).toMatch(/^v/);
+  });
+
+  it('computes per-modified-file +N/−M line counts in verbose mode', async () => {
+    await installMinimal(vault);
+
+    // Edit Home.md with an additive change — should register as +lines, 0 removed
+    // because we only append.
+    const homePath = path.join(vault, 'Home.md');
+    const original = await fsp.readFile(homePath, 'utf-8');
+    await fsp.writeFile(homePath, original + '\n\nExtra paragraph.\nAnother line.\n', 'utf-8');
+
+    const report = await buildStatusReport(vault, {
+      verbose: true,
+      skipUpdateCheck: true,
+    });
+    expect(report!.drift.modified).toBe(1);
+    expect(report!.drift.modifiedChanges).not.toBeNull();
+    const entry = report!.drift.modifiedChanges![0];
+    expect(entry).toBeDefined();
+    if (entry && !('skipped' in entry)) {
+      expect(entry.path).toBe('Home.md');
+      // Appending lines should register added > 0. We don't assert
+      // linesRemoved=0 because line-based diff treats a file's trailing
+      // boundary as a hunk edge — an appended paragraph can register
+      // a re-written last line as +/− even when only net-additive.
+      expect(entry.linesAdded).toBeGreaterThan(0);
+      expect(entry.linesAdded).toBeGreaterThanOrEqual(entry.linesRemoved);
+    } else {
+      throw new Error('expected a non-skipped change entry for Home.md');
+    }
+  });
+
+  it('omits modifiedChanges in quick mode to keep the fast path fast', async () => {
+    await installMinimal(vault);
+    const homePath = path.join(vault, 'Home.md');
+    const original = await fsp.readFile(homePath, 'utf-8');
+    await fsp.writeFile(homePath, original + '\nuser line\n', 'utf-8');
+
+    const report = await buildStatusReport(vault, {
+      verbose: false,
+      skipUpdateCheck: true,
+    });
+    expect(report!.drift.modified).toBe(1);
+    expect(report!.drift.modifiedChanges).toBeNull();
   });
 
   it('reports missing files as a warning when a tracked file is deleted', async () => {

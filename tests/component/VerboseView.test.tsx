@@ -48,6 +48,12 @@ function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
       missing: 0,
       orphaned: 127,
       modifiedPaths: ['CLAUDE.md', 'brain/North Star.md', 'Home.md', 'brain/Goals.md'],
+      modifiedChanges: [
+        { path: 'CLAUDE.md', linesAdded: 12, linesRemoved: 3 },
+        { path: 'brain/North Star.md', linesAdded: 5, linesRemoved: 0 },
+        { path: 'Home.md', skipped: true, reason: 'no-template' },
+        { path: 'brain/Goals.md', linesAdded: 0, linesRemoved: 2 },
+      ],
       orphanedPaths: [],
       missingPaths: [],
       truncated: false,
@@ -160,8 +166,47 @@ describe('VerboseView', () => {
     expect(frame).toContain('brain/North Star.md');
   });
 
+  it('renders +N/−M line counts per modified file when the builder supplies them', () => {
+    const { lastFrame } = render(<VerboseView report={baseReport()} />);
+    const frame = lastFrame() ?? '';
+    // First entry: CLAUDE.md with +12/−3
+    expect(frame).toContain('+12');
+    expect(frame).toContain('−3');
+    // Second entry: +5/−0
+    expect(frame).toContain('+5');
+  });
+
+  it('renders "(whitespace-only)" when both linesAdded and linesRemoved are 0', () => {
+    const { lastFrame } = render(
+      <VerboseView
+        report={baseReport({
+          drift: {
+            ...baseReport().drift,
+            modified: 1,
+            modifiedPaths: ['Home.md'],
+            modifiedChanges: [{ path: 'Home.md', linesAdded: 0, linesRemoved: 0 }],
+          },
+        })}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('whitespace-only');
+    // Must not show the confusing +0/−0 form.
+    expect(frame).not.toMatch(/\+0/);
+  });
+
+  it('shows "diff unavailable" for entries where the render was skipped', () => {
+    const { lastFrame } = render(<VerboseView report={baseReport()} />);
+    expect(lastFrame()).toContain('diff unavailable');
+  });
+
   it('shows "…and N more" when the modified list is truncated', () => {
     const modifiedPaths = Array.from({ length: 20 }, (_, i) => `file-${i}.md`);
+    const modifiedChanges = modifiedPaths.map(p => ({
+      path: p,
+      linesAdded: 1,
+      linesRemoved: 0,
+    }));
     const { lastFrame } = render(
       <VerboseView
         report={baseReport({
@@ -169,6 +214,7 @@ describe('VerboseView', () => {
             ...baseReport().drift,
             modified: 30,
             modifiedPaths,
+            modifiedChanges,
             truncated: true,
           },
         })}

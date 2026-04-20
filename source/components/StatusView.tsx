@@ -84,10 +84,7 @@ export function UpdateLine({ report }: StatusViewProps) {
       );
     }
     case 'unknown': {
-      const reason =
-        u.reason === 'no-network'
-          ? 'offline — latest version unknown'
-          : 'non-GitHub source — update check unavailable';
+      const reason = reasonMessage(u.reason);
       return <Text dimColor>— {reason}</Text>;
     }
     default:
@@ -106,6 +103,26 @@ function WarningRow({ warning }: { warning: StatusWarning }) {
       )}
     </Box>
   );
+}
+
+/**
+ * Human-readable message for each `UpdateStatus.reason`. Separated so the
+ * mapping is exhaustively checked by the compiler and so a new reason
+ * added to the union fails the build at every call site.
+ */
+function reasonMessage(
+  reason: Extract<StatusReport['update'], { kind: 'unknown' }>['reason'],
+): string {
+  switch (reason) {
+    case 'no-network':
+      return 'offline — latest version unknown';
+    case 'cache-miss':
+      return 'update check skipped — run again to check';
+    case 'unsupported-source':
+      return 'non-GitHub source — update check unavailable';
+    default:
+      return assertNever(reason);
+  }
 }
 
 function variantForSeverity(

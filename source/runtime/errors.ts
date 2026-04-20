@@ -77,4 +77,5 @@ export type ErrorCode =
   | 'MIGRATION_TRANSFORM_FAILED'
 
   // Update-check cache (status command + update command share this)
-  | 'UPDATE_CHECK_FAILED';
+  | 'UPDATE_CHECK_FAILED'
+  | 'UPDATE_CHECK_CACHE_CORRUPT';

@@ -112,7 +112,8 @@ describe('update-check', () => {
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
 
       const reread = await readCache(vault);
-      expect(reread?.latest_version).toBe('4.0.0');
+      expect(reread.cache?.latest_version).toBe('4.0.0');
+      expect(reread.corruptHealed).toBe(false);
     });
 
     it('invalidates cache on source mismatch (user reinstalled from a different repo)', async () => {
@@ -159,7 +160,9 @@ describe('update-check', () => {
         'utf-8',
       );
 
-      expect(await readCache(vault)).toBeNull();
+      const reread = await readCache(vault);
+      expect(reread.cache).toBeNull();
+      expect(reread.corruptHealed).toBe(true);
       expect(await readRawCache(vault)).toBeNull(); // deleted by readCache
     });
   });
@@ -176,12 +179,18 @@ describe('update-check', () => {
 
       const result = await getLatestVersion(vault, SOURCE, Date.now());
       expect(result.kind).toBe('fresh');
+      // UPDATE_CHECK_CACHE_CORRUPT signal: readCache detected the bad
+      // file, deleted it, and flagged the healing on the result so
+      // verbose callers can surface a diagnostic.
+      expect(result.cacheHealed).toBe(true);
       const contents = await readRawCache(vault);
       expect(contents).toContain('"latest_version": "3.5.0"');
     });
 
-    it('returns null from readCache when file is absent', async () => {
-      expect(await readCache(vault)).toBeNull();
+    it('returns an empty read result when the cache file is absent', async () => {
+      const reread = await readCache(vault);
+      expect(reread.cache).toBeNull();
+      expect(reread.corruptHealed).toBe(false);
     });
   });
 
@@ -334,7 +343,7 @@ describe('update-check', () => {
       await primeLatestVersion(vault, SOURCE, '3.5.0', now);
 
       const cached = await readCache(vault);
-      expect(cached).toMatchObject({
+      expect(cached.cache).toMatchObject({
         schema_version: 1,
         source: SOURCE,
         latest_version: '3.5.0',
@@ -351,12 +360,16 @@ describe('update-check', () => {
 
     it('is a no-op for non-github sources', async () => {
       await primeLatestVersion(vault, 'registry:foo/bar', '1.0.0');
-      expect(await readCache(vault)).toBeNull();
+      const reread = await readCache(vault);
+      expect(reread.cache).toBeNull();
+      expect(reread.corruptHealed).toBe(false);
     });
 
     it('is a no-op when given an empty version', async () => {
       await primeLatestVersion(vault, SOURCE, '');
-      expect(await readCache(vault)).toBeNull();
+      const reread = await readCache(vault);
+      expect(reread.cache).toBeNull();
+      expect(reread.corruptHealed).toBe(false);
     });
   });
 
