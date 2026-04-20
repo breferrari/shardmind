@@ -281,9 +281,11 @@ export interface StatusDriftSummary {
    * is called with `verbose: true`. Requires rendering the cached template
    * against current values (see `status.ts`), so we gate it behind verbose
    * to keep the quick-mode status run sub-second on large vaults.
-   * Same order and length as `modifiedPaths`; entries may be `null` when
-   * the render or diff couldn't be computed (missing cached template,
-   * missing values, unreadable file).
+   *
+   * When populated, the array has the same length and order as
+   * `modifiedPaths`. The whole field is `null` in quick mode; individual
+   * entries are never `null` — a failed render or diff surfaces via the
+   * `{ skipped: true, reason }` variant of `StatusModifiedChanges`.
    */
   modifiedChanges: StatusModifiedChanges[] | null;
   /** Capped list of orphan paths for verbose display. */
@@ -298,8 +300,9 @@ export interface StatusDriftSummary {
  * Line-level change summary for a single modified file. Mirrors the
  * semantics of `diff --stat`: `linesAdded` counts lines present on disk
  * that aren't in the rendered base; `linesRemoved` counts lines in the
- * rendered base that aren't on disk. `null` is used when the diff was
- * skipped or couldn't be computed.
+ * rendered base that aren't on disk. When the diff was skipped or
+ * couldn't be computed, the `{ path, skipped: true, reason }` variant
+ * is used instead — callers never need to handle `null` here.
  */
 export type StatusModifiedChanges =
   | { path: string; linesAdded: number; linesRemoved: number }

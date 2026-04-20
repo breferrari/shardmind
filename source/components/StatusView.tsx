@@ -48,7 +48,14 @@ export default function StatusView({ report }: StatusViewProps) {
 
 function InstalledLine({ report }: StatusViewProps) {
   const { installedAgo, updatedAgo, drift } = report;
-  const totalManaged = drift.managed + drift.modified + drift.volatile;
+  // The shard manages every file recorded in state.files — that's the sum
+  // of all four drift buckets: unchanged (`managed`), user-edited
+  // (`modified`), shard-declared-volatile (`volatile`), and gone-from-disk
+  // (`missing`). Excluding `missing` would under-report whenever a managed
+  // file is temporarily deleted; the UI label says "managed files", not
+  // "present managed files".
+  const totalManaged =
+    drift.managed + drift.modified + drift.volatile + drift.missing;
   const modifiedFragment = `${drift.modified} modified`;
 
   const when = updatedAgo

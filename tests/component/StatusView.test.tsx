@@ -143,6 +143,28 @@ describe('StatusView', () => {
     expect(lastFrame()).toContain('offline');
   });
 
+  it('includes missing files in the managed-files total', () => {
+    // The label says "managed files" — every file recorded in state.files
+    // counts, including ones that are temporarily absent from disk.
+    // Previously the count summed only managed+modified+volatile, which
+    // silently under-reported whenever a managed file was deleted.
+    const { lastFrame } = render(
+      <StatusView
+        report={baseReport({
+          drift: {
+            ...baseReport().drift,
+            managed: 40,
+            modified: 2,
+            volatile: 3,
+            missing: 5,
+          },
+        })}
+      />,
+    );
+    // 40 + 2 + 3 + 5 = 50
+    expect(lastFrame()).toContain('50 managed files');
+  });
+
   it('lists warnings with their hints', () => {
     const { lastFrame } = render(
       <StatusView
