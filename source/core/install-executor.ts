@@ -69,6 +69,16 @@ export type ProgressEvent =
  * Rename each colliding path to `<original>.shardmind-backup-<timestamp>`.
  * Works for both files and directories (fsp.rename handles both).
  * Unique-suffix-appends when the canonical backup name already exists.
+ *
+ * **Transactional**: if any rename fails, the successful renames from
+ * earlier in the loop are walked back (backup → original) before
+ * `BACKUP_FAILED` throws. The vault is left byte-identical to its
+ * pre-call state so the caller can surface the error without risking
+ * that user content has been silently stashed at a `.shardmind-backup-*`
+ * path. A rare secondary failure during restore-walk records the path
+ * in the thrown error's hint so the user can recover manually — this is
+ * the only case where partial-backup state can escape the function, and
+ * we keep the user informed instead of hiding it.
  */
 export async function backupCollisions(
   collisions: Collision[],
@@ -82,10 +92,31 @@ export async function backupCollisions(
     try {
       await fsp.rename(collision.absolutePath, backupPath);
     } catch (err) {
+      // Restore the renames we've already done so the vault ends up
+      // indistinguishable from its pre-call state. Walk backwards — no
+      // ordering dependency here, but matching the deepest-first intuition
+      // makes directory-over-file edge cases behave more predictably.
+      const orphaned: string[] = [];
+      for (let i = records.length - 1; i >= 0; i--) {
+        const record = records[i]!;
+        try {
+          await fsp.rename(record.backupPath, record.originalPath);
+        } catch {
+          // Secondary failure — user content still exists at backupPath,
+          // just not at originalPath. Report it so recovery is possible.
+          orphaned.push(record.backupPath);
+        }
+      }
+
+      const rootMessage = err instanceof Error ? err.message : String(err);
+      const hint = orphaned.length > 0
+        ? `${rootMessage}. Partial backups could not be restored to: ${orphaned.join(', ')}. Move them back manually before retrying.`
+        : `${rootMessage}. Earlier backups were restored; the vault is unchanged. Check permissions on the collision target and retry.`;
+
       throw new ShardMindError(
         `Could not back up existing file: ${collision.absolutePath}`,
         'BACKUP_FAILED',
-        err instanceof Error ? err.message : String(err),
+        hint,
       );
     }
     records.push({ originalPath: collision.absolutePath, backupPath });
