@@ -749,4 +749,159 @@ describe('planUpdate', () => {
     });
     expect(plan.counts.volatile).toBe(1);
   });
+
+  it('routes an `add` through DiffView when user has untracked content at the same path', async () => {
+    // Silent data-loss regression guard: if the new shard produces a
+    // file at a path the user already has content at, we must NOT
+    // emit a plain `add` (which overwrites silently). Route through
+    // `conflict` with `preexisting: true` so the executor's keep_mine
+    // path leaves the file alone AND untracked.
+    const schema = baseSchema({
+      modules: { brain: { label: 'Brain', paths: ['brain/'], removable: false } },
+    });
+    const selections: ModuleSelections = { brain: 'included' };
+    const values = { user_name: 'brenno' };
+
+    const newTemplate = 'Welcome {{ user_name }}! From shard v2.\n';
+    const userContent = '# My own Backlog\n\nPersonal notes.\n';
+
+    const vault = await buildVault({
+      vaultFiles: { 'brain/Backlog.md': userContent },
+      cachedTemplates: {},
+    });
+    const shardDir = await buildShardTempDir({ 'brain/Backlog.md.njk': newTemplate });
+
+    const drift: DriftReport = {
+      managed: [],
+      modified: [],
+      volatile: [],
+      missing: [],
+      orphaned: ['brain/Backlog.md'],
+    };
+
+    const plan = await planUpdate({
+      vault: { root: vault, state: makeShardState({
+        version: '1.0.0',
+        modules: selections,
+        files: {},
+      }), drift },
+      values: { old: values, new: values },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx(values),
+      },
+      removedFileDecisions: {},
+    });
+
+    const addKinds = plan.actions.map((a) => a.kind);
+    expect(addKinds).not.toContain('add');
+    expect(addKinds).toContain('conflict');
+    const conflict = plan.actions.find((a) => a.kind === 'conflict');
+    if (!conflict || conflict.kind !== 'conflict') throw new Error('narrowing');
+    expect(conflict.path).toBe('brain/Backlog.md');
+    expect(conflict.preexisting).toBe(true);
+    expect(plan.pendingConflicts).toHaveLength(1);
+    expect(plan.counts.conflicts).toBe(1);
+    expect(plan.counts.added).toBe(0);
+  });
+
+  it('preexisting-add conflict records a BYTE hash for theirs, not the utf-8 decode', async () => {
+    // If the preexisting file is binary, decoding as utf-8 mangles
+    // invalid byte sequences with U+FFFD, and hashing the decoded
+    // string produces a value that drifts from install-executor's
+    // byte-level hash. The planner now reads bytes for the hash.
+    const schema = baseSchema({
+      modules: { brain: { label: 'Brain', paths: ['brain/'], removable: false } },
+    });
+    const selections: ModuleSelections = { brain: 'included' };
+
+    // Bytes that include an unpaired 0xFF — invalid as utf-8.
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe]);
+
+    const vault = path.join(tempRoot, 'vault-binconflict');
+    await fsp.mkdir(vault, { recursive: true });
+    await fsp.mkdir(path.join(vault, 'brain', 'assets'), { recursive: true });
+    await fsp.writeFile(path.join(vault, 'brain', 'assets', 'logo.png'), bytes);
+
+    const shardDir = await buildShardTempDir({
+      'brain/assets/logo.png.njk': 'placeholder render\n',
+    });
+
+    const drift: DriftReport = {
+      managed: [],
+      modified: [],
+      volatile: [],
+      missing: [],
+      orphaned: ['brain/assets/logo.png'],
+    };
+
+    const plan = await planUpdate({
+      vault: { root: vault, state: makeShardState({
+        version: '1.0.0',
+        modules: selections,
+        files: {},
+      }), drift },
+      values: { old: {}, new: {} },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx({}),
+      },
+      removedFileDecisions: {},
+    });
+
+    const conflict = plan.actions.find((a) => a.kind === 'conflict');
+    if (!conflict || conflict.kind !== 'conflict') throw new Error('narrowing');
+    expect(conflict.preexisting).toBe(true);
+    // theirsHash must be the raw byte hash, not the hash of the
+    // U+FFFD-polluted utf-8 decode.
+    expect(conflict.theirsHash).toBe(sha256(bytes));
+  });
+
+  it('emits a plain `add` when the new-shard path is free on disk', async () => {
+    const schema = baseSchema({
+      modules: { brain: { label: 'Brain', paths: ['brain/'], removable: false } },
+    });
+    const selections: ModuleSelections = { brain: 'included' };
+    const values = { user_name: 'brenno' };
+
+    const newTemplate = 'Welcome!\n';
+
+    const vault = await buildVault({
+      vaultFiles: {},
+      cachedTemplates: {},
+    });
+    const shardDir = await buildShardTempDir({ 'brain/NewFile.md.njk': newTemplate });
+
+    const drift: DriftReport = {
+      managed: [],
+      modified: [],
+      volatile: [],
+      missing: [],
+      orphaned: [],
+    };
+
+    const plan = await planUpdate({
+      vault: { root: vault, state: makeShardState({
+        version: '1.0.0',
+        modules: selections,
+        files: {},
+      }), drift },
+      values: { old: values, new: values },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx(values),
+      },
+      removedFileDecisions: {},
+    });
+
+    expect(plan.actions.map((a) => a.kind)).toEqual(['add']);
+    expect(plan.counts.added).toBe(1);
+    expect(plan.counts.conflicts).toBe(0);
+  });
 });

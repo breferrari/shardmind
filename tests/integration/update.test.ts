@@ -15,7 +15,7 @@
  * runUpdate) against real filesystem state.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -48,6 +48,7 @@ import type {
   ShardManifest,
   ShardSchema,
 } from '../../source/runtime/types.js';
+import { ShardMindError } from '../../source/runtime/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -624,5 +625,206 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     expect(conflict.result.conflicts).toHaveLength(1);
     expect(conflict.result.conflicts[0]!.theirs).toContain('entirely different user content');
     expect(conflict.result.conflicts[0]!.ours).toContain('shard update replacement');
+  });
+
+  it('preexisting add-collision + keep_mine preserves user bytes and leaves them UNTRACKED', async () => {
+    // The round-1 harden fix for silent-data-loss on add: user creates
+    // their own file at a path the new shard wants to introduce; the
+    // planner emits `conflict` with `preexisting: true`; on `keep_mine`
+    // the executor leaves the file on disk AND drops it from
+    // state.files so we never silently adopt content the user didn't
+    // opt in to manage.
+    await installBaseline(vault, MINIMAL_SHARD, 'sha-0.1.0');
+    const newPath = 'brain/Backlog.md';
+    const userBytes = '# My own backlog\n\nPersonal notes I made myself.\n';
+    await fsp.writeFile(path.join(vault, newPath), userBytes, 'utf-8');
+
+    await copyShard(MINIMAL_SHARD, newShard);
+    await bumpVersion(newShard, '0.2.0');
+    await fsp.writeFile(
+      path.join(newShard, 'templates/brain/Backlog.md.njk'),
+      'Shard-managed backlog for {{ user_name }}\n',
+      'utf-8',
+    );
+
+    const state = (await readState(vault)) as ShardState;
+    const oldValues = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
+    const newManifest = await parseManifest(path.join(newShard, 'shard.yaml'));
+    const newSchema = await parseSchema(path.join(newShard, 'shard-schema.yaml'));
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const renderCtx = buildRenderContext(newManifest, oldValues, selections);
+    const drift = await detectDrift(vault, state);
+
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: oldValues },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: renderCtx,
+      },
+      removedFileDecisions: {},
+    });
+
+    const conflict = plan.actions.find((a) => a.kind === 'conflict' && a.path === newPath);
+    if (!conflict || conflict.kind !== 'conflict') throw new Error('expected preexisting conflict');
+    expect(conflict.preexisting).toBe(true);
+
+    await runUpdate({
+      vaultRoot: vault,
+      plan,
+      conflictResolutions: { [newPath]: 'keep_mine' },
+      currentState: state,
+      newManifest,
+      newSchema,
+      newValues: oldValues,
+      newSelections: selections,
+      resolved: { ...RESOLVED, version: newManifest.version },
+      tarballSha256: 'sha-0.2.0',
+      newTempDir: newShard,
+    });
+
+    // User bytes intact.
+    expect(await fsp.readFile(path.join(vault, newPath), 'utf-8')).toBe(userBytes);
+    // State does NOT record this path — we never adopted it.
+    const nextState = (await readState(vault)) as ShardState;
+    expect(nextState.files[newPath]).toBeUndefined();
+  });
+
+  it('throws a wrapped ShardMindError when write fails AND rollback is partial', async () => {
+    // End-to-end validation of the round-1 err-wrapper (update-executor's
+    // catch block): if an update write throws AND the snapshot rollback
+    // cannot restore every snapshot, the wrapper carries the rollback
+    // failures list, the original error as `cause`, and preserves the
+    // original code / hint. Previously this path mutated `err.message`
+    // in place — which throws on frozen errors and compounds across
+    // re-catches.
+    const { state, oldValues, newManifest, newSchema } = await setUpUpdate({
+      bumpTo: '0.2.0',
+      newHomeTemplate: 'Welcome to your vault, {{ user_name }} (wrapper-test)\n',
+    });
+
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const renderCtx = buildRenderContext(newManifest, oldValues, selections);
+    const drift = await detectDrift(vault, state);
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: oldValues },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: renderCtx,
+      },
+      removedFileDecisions: {},
+    });
+
+    const targetAbs = path.join(vault, 'Home.md');
+    const backupRoot = path.join(vault, '.shardmind', 'backups');
+    // Fail the update write for Home.md — triggers the executor's outer
+    // catch so rollback runs.
+    const realWrite = fsp.writeFile;
+    const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (p, data, opts) => {
+      if (typeof p === 'string' && p === targetAbs) {
+        throw Object.assign(new Error('simulated EACCES on Home.md'), { code: 'EACCES' });
+      }
+      return realWrite(p, data, opts);
+    });
+    // Fail the rollback restore for the same path — triggers the
+    // `rollbackFailures.length > 0` branch inside the catch handler.
+    const realCopy = fsp.copyFile;
+    const copySpy = vi.spyOn(fsp, 'copyFile').mockImplementation(async (src, dst, mode) => {
+      if (typeof dst === 'string' && dst === targetAbs && typeof src === 'string' && src.startsWith(backupRoot)) {
+        throw Object.assign(new Error('simulated EACCES on restore'), { code: 'EACCES' });
+      }
+      return realCopy(src, dst, mode);
+    });
+
+    try {
+      const err = await runUpdate({
+        vaultRoot: vault,
+        plan,
+        conflictResolutions: {},
+        currentState: state,
+        newManifest,
+        newSchema,
+        newValues: oldValues,
+        newSelections: selections,
+        resolved: { ...RESOLVED, version: newManifest.version },
+        tarballSha256: 'sha-0.2.0',
+        newTempDir: newShard,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ShardMindError);
+      const wrapped = err as ShardMindError & { rollbackFailures?: Array<{ path: string; reason: string }>; cause?: unknown };
+      expect(wrapped.code).toBe('UPDATE_WRITE_FAILED');
+      expect(wrapped.message).toMatch(/Rollback incomplete/);
+      expect(wrapped.rollbackFailures?.length ?? 0).toBeGreaterThan(0);
+      // `cause` chains back to the original thrown error — no mutation
+      // of its message.
+      expect(wrapped.cause).toBeInstanceOf(Error);
+    } finally {
+      writeSpy.mockRestore();
+      copySpy.mockRestore();
+    }
+  });
+
+  it('preexisting add-collision + accept_new writes shard bytes and adopts as managed', async () => {
+    await installBaseline(vault, MINIMAL_SHARD, 'sha-0.1.0');
+    const newPath = 'brain/Backlog.md';
+    const userBytes = '# My own backlog\n';
+    await fsp.writeFile(path.join(vault, newPath), userBytes, 'utf-8');
+
+    await copyShard(MINIMAL_SHARD, newShard);
+    await bumpVersion(newShard, '0.2.0');
+    const shardBody = 'Shard-managed backlog for {{ user_name }}\n';
+    await fsp.writeFile(
+      path.join(newShard, 'templates/brain/Backlog.md.njk'),
+      shardBody,
+      'utf-8',
+    );
+
+    const state = (await readState(vault)) as ShardState;
+    const oldValues = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
+    const newManifest = await parseManifest(path.join(newShard, 'shard.yaml'));
+    const newSchema = await parseSchema(path.join(newShard, 'shard-schema.yaml'));
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const renderCtx = buildRenderContext(newManifest, oldValues, selections);
+    const drift = await detectDrift(vault, state);
+
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: oldValues },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: renderCtx,
+      },
+      removedFileDecisions: {},
+    });
+
+    await runUpdate({
+      vaultRoot: vault,
+      plan,
+      conflictResolutions: { [newPath]: 'accept_new' },
+      currentState: state,
+      newManifest,
+      newSchema,
+      newValues: oldValues,
+      newSelections: selections,
+      resolved: { ...RESOLVED, version: newManifest.version },
+      tarballSha256: 'sha-0.2.0',
+      newTempDir: newShard,
+    });
+
+    // Shard bytes now on disk.
+    const onDisk = await fsp.readFile(path.join(vault, newPath), 'utf-8');
+    expect(onDisk).toContain(`Shard-managed backlog for ${oldValues['user_name'] as string}`);
+    // Tracked as managed in state.
+    const nextState = (await readState(vault)) as ShardState;
+    expect(nextState.files[newPath]).toBeDefined();
+    expect(nextState.files[newPath]!.ownership).toBe('managed');
   });
 });
