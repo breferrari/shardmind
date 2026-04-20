@@ -904,4 +904,52 @@ describe('planUpdate', () => {
     expect(plan.counts.added).toBe(1);
     expect(plan.counts.conflicts).toBe(0);
   });
+
+  it('throws UPDATE_WRITE_FAILED at plan time when a directory sits at a new-add path', async () => {
+    // Copilot round-8 finding: the previous `pathExists` → `readFile`
+    // sequence would throw EISDIR from `fsp.readFile` on a directory
+    // collision, crashing the planner mid-flight with an unfriendly
+    // error. Silently emitting a plain `add` would just move the crash
+    // to the executor's write-time EISDIR. Stat-based detection lets
+    // the planner surface a typed error BEFORE any snapshot runs.
+    const schema = baseSchema({
+      modules: { brain: { label: 'Brain', paths: ['brain/'], removable: false } },
+    });
+    const selections: ModuleSelections = { brain: 'included' };
+
+    // Pre-create a DIRECTORY at the path the new shard wants as a file.
+    const vault = path.join(tempRoot, 'vault-dircollide');
+    await fsp.mkdir(vault, { recursive: true });
+    await fsp.mkdir(path.join(vault, 'brain', 'Backlog.md'), { recursive: true });
+
+    const shardDir = await buildShardTempDir({
+      'brain/Backlog.md.njk': 'Welcome!\n',
+    });
+
+    const drift: DriftReport = {
+      managed: [],
+      modified: [],
+      volatile: [],
+      missing: [],
+      orphaned: [],
+    };
+
+    await expect(
+      planUpdate({
+        vault: { root: vault, state: makeShardState({
+          version: '1.0.0',
+          modules: selections,
+          files: {},
+        }), drift },
+        values: { old: {}, new: {} },
+        newShard: {
+          schema,
+          selections,
+          tempDir: shardDir,
+          renderContext: renderCtx({}),
+        },
+        removedFileDecisions: {},
+      }),
+    ).rejects.toMatchObject({ code: 'UPDATE_WRITE_FAILED' });
+  });
 });

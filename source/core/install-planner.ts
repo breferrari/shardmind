@@ -231,24 +231,28 @@ export function hashValues(values: Record<string, unknown>): string {
  * through. Unlike the `replacer` array overload of JSON.stringify, this
  * does NOT drop nested object keys.
  *
- * A WeakSet guards against YAML anchor cycles — `yaml.parse` produces
- * cyclic objects for documents like `a: &x { self: *x }`, and a naive
- * recursion would stack-overflow on user input. A cycle is replaced with
- * `null` in the emitted shape; that's stable across runs (the same anchor
- * round-trips to the same null) which is all `hashValues` actually needs.
+ * The WeakSet tracks ONLY currently-descending ancestors — entries are
+ * removed on exit via `try/finally`. This distinguishes genuine cycles
+ * (same reference re-encountered during its own descent → emit `null`)
+ * from shared-but-non-cyclic references (YAML aliases like
+ * `a: &x {k:1}\nb: *x` that resolve to the same object across sibling
+ * positions → each position emits the full expansion). A persistent
+ * "visited-ever" set would collapse the alias second-visit to `null`
+ * and change the hash, making the semantically-equivalent anchor-free
+ * YAML hash differently — a silent data-corruption foot-gun.
  */
 function stableJson(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
-  if (value !== null && typeof value === 'object') {
-    if (seen.has(value as object)) return null;
-    seen.add(value as object);
-  }
-  if (Array.isArray(value)) return value.map(v => stableJson(v, seen));
-  if (value && typeof value === 'object') {
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value as object)) return null;
+  seen.add(value as object);
+  try {
+    if (Array.isArray(value)) return value.map(v => stableJson(v, seen));
     const sorted: Record<string, unknown> = {};
     for (const key of Object.keys(value as Record<string, unknown>).sort()) {
       sorted[key] = stableJson((value as Record<string, unknown>)[key], seen);
     }
     return sorted;
+  } finally {
+    seen.delete(value as object);
   }
-  return value;
 }

@@ -61,9 +61,17 @@ Round-3 code-quality cleanups:
   - `tests/integration/update.test.ts::preexisting add-collision + accept_new writes shard bytes and adopts as managed` — same flow with the opposite resolution: shard bytes land, state tracks `ownership: 'managed'`.
   - `tests/integration/update.test.ts::throws a wrapped ShardMindError when write fails AND rollback is partial` — forces the outer catch via `vi.spyOn(fsp, 'writeFile')` + the rollback restore failure via `vi.spyOn(fsp, 'copyFile')`, asserts `err.code === 'UPDATE_WRITE_FAILED'`, `err.message` matches `/Rollback incomplete/`, `err.rollbackFailures` non-empty, `err.cause instanceof Error`.
 
+### Fixed (Copilot review — 3 real regressions caught after rounds 1-7)
+
+Copilot's PR review surfaced three issues the 7-round loop missed. First two are poster children for "self-verification failures are normal" — I had a cycle-guard test but no sibling-sharing test, and a file-collision test but no directory-collision test.
+
+- **`stableJson` cycle guard collapsed YAML aliases to `null`.** The round-1 fix used a persistent `WeakSet` of "ever-visited" objects. Genuine cycles (`a: &x {self: *x}`) worked — but YAML alias sibling-sharing (`a: &x {k:1}\nb: *x`, both keys pointing at the SAME ref, no cycle) hit the seen-set on the second visit and emitted `null`, producing a different hash than the semantically-equivalent anchor-free YAML. That would have made `state.json.values_hash` drift every time a shard author added or removed an anchor. `source/core/install-planner.ts::stableJson` now tracks only currently-descending ancestors via `try/finally + seen.delete`. +2 regression tests.
+- **`update-planner` crashed on a directory at a new-add path.** The add-collision branch did `pathExists(abs)` → `readStringAndByteHash(abs)`. `pathExists` is true for directories too; the subsequent `fsp.readFile` threw EISDIR, which `readStringAndByteHash` didn't catch. Silently emitting a plain `add` wouldn't help — the executor's write would crash with the same EISDIR. Now stat-checks in a single I/O; directory collision throws typed `UPDATE_WRITE_FAILED` at plan time (before any snapshot runs) with a hint pointing at the specific path. +1 regression test.
+- **`docs/IMPLEMENTATION.md §4.9` step 6a** still said "merged output is always LF" — stale after round-1's CRLF-preservation fix. Round 4's `hasConflicts` sweep missed the adjacent sentence. Now explicitly documents the theirs-dominant line-ending invariant.
+
 ### Final count
 
-Test suite: **551 → 571** (+20 regression tests). `tsc --noEmit` clean; full suite green; build clean; zero `any` / `@ts-ignore` / `@ts-nocheck` / `as any` / `as unknown as` in `source/` outside the two documented zod-dynamic-generation exceptions.
+Test suite: **551 → 574** (+23 regression tests). `tsc --noEmit` clean; full suite green; build clean; zero `any` / `@ts-ignore` / `@ts-nocheck` / `as any` / `as unknown as` in `source/` outside the two documented zod-dynamic-generation exceptions.
 
 ### Added
 

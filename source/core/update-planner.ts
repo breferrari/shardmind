@@ -30,7 +30,7 @@ import { isEnoent } from '../runtime/errno.js';
 import { computeMergeAction } from './differ.js';
 import { resolveModules } from './modules.js';
 import { renderFile, createRenderer } from './renderer.js';
-import { sha256, mapConcurrent, stripTemplatePrefix, pathExists } from './fs-utils.js';
+import { sha256, mapConcurrent, stripTemplatePrefix } from './fs-utils.js';
 import {
   SHARD_TEMPLATES_DIR,
   CACHED_TEMPLATES,
@@ -520,22 +520,45 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     PLAN_IO_CONCURRENCY,
     async (output) => {
       const abs = path.join(vaultRoot, output.outputPath);
-      if (!(await pathExists(abs))) {
-        return {
-          kind: 'add',
-          path: output.outputPath,
-          content: output.content,
-          renderedHash: output.hash,
-          templateKey: toTemplateKey(newTempDir, output.entry.sourcePath),
-          ...(output.entry.iterator ? { iteratorKey: output.entry.iterator } : {}),
-          ...(output.copyFromSourcePath ? { copyFromSourcePath: output.copyFromSourcePath } : {}),
-        };
+      // Stat in a single I/O so we can tell "free path" from "file collision"
+      // from "directory collision" without a pathExists → readFile race.
+      // ENOENT → free path. EISDIR branch below handles the directory case.
+      let stat;
+      try {
+        stat = await fsp.stat(abs);
+      } catch (err) {
+        if (isEnoent(err)) {
+          return {
+            kind: 'add',
+            path: output.outputPath,
+            content: output.content,
+            renderedHash: output.hash,
+            templateKey: toTemplateKey(newTempDir, output.entry.sourcePath),
+            ...(output.entry.iterator ? { iteratorKey: output.entry.iterator } : {}),
+            ...(output.copyFromSourcePath ? { copyFromSourcePath: output.copyFromSourcePath } : {}),
+          };
+        }
+        throw err;
       }
+
+      if (stat.isDirectory()) {
+        // User has a directory at a path the new shard wants as a file.
+        // Reading it as a file below would crash with EISDIR; silently
+        // emitting plain `add` would crash the same way on write. Surface
+        // a typed error at plan time so the user sees actionable guidance
+        // BEFORE any snapshot or write runs.
+        throw new ShardMindError(
+          `Update cannot proceed: the new shard adds a file at '${output.outputPath}', but a directory exists there.`,
+          'UPDATE_WRITE_FAILED',
+          `Remove or rename the directory at '${abs}' before re-running \`shardmind update\`. This directory is not part of the previous install — it's user content at a path the new shard now claims.`,
+        );
+      }
+
       // Preexisting untracked file at an add path. Read bytes so
       // `theirsHash` stays consistent with install-executor's
       // bytewise hashing (binary assets were silently mishashed when
       // the previous implementation decoded as UTF-8 first). If the
-      // file raced out of existence between `pathExists` above and
+      // file raced out of existence between the stat above and
       // this read, fall back to a plain `add` — there's nothing to
       // collide with anymore.
       const actualRead = await readStringAndByteHash(abs);
@@ -629,7 +652,7 @@ function conflictFromDirect(
  * Returns `null` on ENOENT so callers decide semantics:
  *   - modified-file path: file was in `drift.modified` at scan time, so
  *     ENOENT now is a race. Caller throws `UPDATE_CACHE_MISSING`.
- *   - add-collision path: ENOENT between `pathExists` and read is a race;
+ *   - add-collision path: ENOENT between `fsp.stat` and read is a race;
  *     caller degrades to a plain `add` (no collision to report).
  */
 async function readStringAndByteHash(
