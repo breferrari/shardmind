@@ -238,6 +238,170 @@ export interface HookContext {
   previousVersion?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Status command (`shardmind` root + `shardmind --verbose`).
+// Produced by `core/status.ts`, rendered by `components/StatusView.tsx` and
+// `components/VerboseView.tsx`. See docs/IMPLEMENTATION.md §4.14.
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregated view of a vault's shard state, drift, update availability,
+ * module selections, values validity, and — when verbose — frontmatter
+ * health and environment diagnostics. Purely derived; no mutation.
+ */
+export interface StatusReport {
+  manifest: ShardManifest;
+  state: ShardState;
+  /** Human-readable "3 weeks ago" for `state.installed_at` vs. report time. */
+  installedAgo: string;
+  /** Same for `updated_at`, or `null` if the shard has never been updated. */
+  updatedAgo: string | null;
+  drift: StatusDriftSummary;
+  update: UpdateStatus;
+  modules: StatusModuleSummary;
+  values: StatusValuesSummary;
+  /** Populated only when the builder is called with `verbose: true`. */
+  frontmatter: StatusFrontmatterSummary | null;
+  /** Populated only when the builder is called with `verbose: true`. */
+  environment: StatusEnvironmentReport | null;
+  /** Surface-worthy findings aggregated from every section. */
+  warnings: StatusWarning[];
+}
+
+export interface StatusDriftSummary {
+  managed: number;
+  modified: number;
+  volatile: number;
+  missing: number;
+  orphaned: number;
+  /** Capped list of modified file paths for display; `modified` holds the true count. */
+  modifiedPaths: string[];
+  /**
+   * Per-modified-file line-change counts, populated only when the builder
+   * is called with `verbose: true`. Requires rendering the cached template
+   * against current values (see `status.ts`), so we gate it behind verbose
+   * to keep the quick-mode status run sub-second on large vaults.
+   *
+   * When populated, the array has the same length and order as
+   * `modifiedPaths`. The whole field is `null` in quick mode; individual
+   * entries are never `null` — a failed render or diff surfaces via the
+   * `{ skipped: true, reason }` variant of `StatusModifiedChanges`.
+   */
+  modifiedChanges: StatusModifiedChanges[] | null;
+  /** Capped list of orphan paths for verbose display. */
+  orphanedPaths: string[];
+  /** Capped list of missing file paths for verbose display. */
+  missingPaths: string[];
+  /** True if any `*Paths` list is truncated (caller can render "… and N more"). */
+  truncated: boolean;
+}
+
+/**
+ * Line-level change summary for a single modified file. Mirrors the
+ * semantics of `diff --stat`: `linesAdded` counts lines present on disk
+ * that aren't in the rendered base; `linesRemoved` counts lines in the
+ * rendered base that aren't on disk. When the diff was skipped or
+ * couldn't be computed, the `{ path, skipped: true, reason }` variant
+ * is used instead — callers never need to handle `null` here.
+ */
+export type StatusModifiedChanges =
+  | { path: string; linesAdded: number; linesRemoved: number }
+  | { path: string; skipped: true; reason: 'no-template' | 'render-failed' | 'read-failed' };
+
+/**
+ * Update availability for the installed shard.
+ *
+ * - `up-to-date` — latest GitHub tag equals `state.version`.
+ * - `available` — latest tag is different (typically newer) than installed.
+ *   `cacheAge` tells the caller whether to trust the answer fully ('fresh')
+ *   or note that it's from a previous cached answer ('stale'). We intentionally
+ *   don't compare semver precedence — a downgrade to a re-tagged earlier
+ *   release is still something the user should see.
+ * - `unknown` — three sub-cases distinguished by `reason`:
+ *     * `'no-network'` — we tried to fetch and the request failed AND no
+ *       prior cache exists. Transient; retryable.
+ *     * `'cache-miss'` — the update check was skipped (caller passed
+ *       `skipUpdateCheck`) AND no prior cache had been primed. Distinct
+ *       from `'no-network'` because the user didn't experience a failure,
+ *       the query was intentionally deferred.
+ *     * `'unsupported-source'` — the installed `state.source` is not a
+ *       `github:` reference (e.g. a future private-registry shape).
+ *       Permanent for the given vault until reinstall.
+ */
+export type UpdateStatus =
+  | { kind: 'up-to-date'; current: string }
+  | { kind: 'available'; current: string; latest: string; cacheAge: 'fresh' | 'stale' }
+  | {
+      kind: 'unknown';
+      current: string;
+      reason: 'no-network' | 'cache-miss' | 'unsupported-source';
+    };
+
+export interface StatusModuleSummary {
+  /** Module IDs the user opted into at install time. */
+  included: string[];
+  /** Module IDs the user opted out of at install time. */
+  excluded: string[];
+}
+
+export interface StatusValuesSummary {
+  valid: boolean;
+  /** Number of keys the schema declares. */
+  total: number;
+  /**
+   * Keys zod rejected (missing required, wrong type, bad enum). Capped at
+   * `MAX_INVALID_VALUE_KEYS` for display; `invalidCount` carries the true
+   * count so warnings and verbose summaries don't under-report.
+   */
+  invalidKeys: string[];
+  /** True pre-cap count of invalid keys; `>= invalidKeys.length`. */
+  invalidCount: number;
+  /** True when the values file itself couldn't be read or parsed. */
+  fileMissing: boolean;
+}
+
+export interface StatusFrontmatterSummary {
+  /** Count of managed `.md` files whose frontmatter passed validation. */
+  valid: number;
+  /** Count of managed `.md` files the validator inspected. */
+  total: number;
+  /**
+   * Files with missing required keys; capped at `MAX_FRONTMATTER_ISSUES`
+   * for display. `issueCount` carries the true pre-cap count so the
+   * rendered "…and N more" reflects reality.
+   */
+  issues: StatusFrontmatterIssue[];
+  /** True pre-cap count of files with issues; `>= issues.length`. */
+  issueCount: number;
+  /** True when the `issues` list has been truncated. */
+  truncated: boolean;
+}
+
+export interface StatusFrontmatterIssue {
+  path: string;
+  missing: string[];
+  noteType: string | null;
+}
+
+/**
+ * Environment diagnostics surfaced under `--verbose`.
+ *
+ * `obsidianCliAvailable` is a best-effort PATH lookup: `true` if we found
+ * an `obsidian` (or `Obsidian.exe` on Windows) binary on the user's PATH,
+ * `false` otherwise. Never a hard warning — Obsidian is not required to
+ * manage a shard, it's just nice to know.
+ */
+export interface StatusEnvironmentReport {
+  nodeVersion: string;
+  obsidianCliAvailable: boolean;
+}
+
+export interface StatusWarning {
+  severity: 'info' | 'warning' | 'error';
+  message: string;
+  hint?: string;
+}
+
 import type { ErrorCode } from './errors.js';
 export type { ErrorCode } from './errors.js';
 

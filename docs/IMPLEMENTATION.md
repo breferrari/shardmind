@@ -723,6 +723,119 @@ Returns a plain object. Caller-supplied error codes keep each call site's hint c
 
 ---
 
+### 4.14 `status.ts`
+
+**Purpose**: Pure aggregator for the `shardmind` (root) command. Produces a `StatusReport` from `state.json`, cached manifest, cached schema, drift detection, values validation, update-check cache, and — when `verbose=true` — per-file frontmatter linting plus environment probing. Consumed by `StatusView` and `VerboseView`.
+
+**Inputs**:
+```typescript
+buildStatusReport(
+  vaultRoot: string,
+  opts: {
+    verbose: boolean;
+    now?: number;              // injectable clock for tests
+    skipUpdateCheck?: boolean; // offline/CI mode
+  },
+): Promise<StatusReport | null>
+```
+
+Returns `null` when the vault has no `.shardmind/state.json` — the "not in a shard-managed vault" signal. Never throws on section-level failures; each sub-loader (manifest, schema, drift, values) contributes a `StatusWarning` if it can't do its job, and the aggregator keeps building.
+
+**Algorithm**:
+1. `readState(vaultRoot)`. If `null` → return `null` immediately.
+2. In parallel:
+   - Load cached manifest via `parseManifest(.shardmind/shard.yaml)` (failure → synthesize a minimal manifest from `state.shard` + warning).
+   - Load cached schema via `parseSchema(.shardmind/shard-schema.yaml)` (failure → values/frontmatter sections degrade + warning).
+   - `detectDrift(vaultRoot, state)` (failure → empty drift + warning).
+   - Resolve update availability via `core/update-check.getLatestVersion(vaultRoot, state.source, now)`, unless `skipUpdateCheck` (then report `unknown`).
+   - Validate `shard-values.yaml` via `buildValuesValidator(schema).safeParse()`.
+3. If `verbose`, fan three independent passes out via `Promise.all`:
+   - **Per-modified-file diff.** For each entry in `drift.modified` (capped at 20), read the cached template from `.shardmind/templates/<relative>`, render with current values + selections via `renderString(...)`, diff rendered base against actual disk content via `diffLines` (CRLF + UTF-8-BOM normalized first), and record `{ linesAdded, linesRemoved }`. Every failure step (missing template / render throw / unreadable file) surfaces as a `skipped` variant. Bounded by `MODIFIED_DIFF_CONCURRENCY = 8` to cap disk + heap pressure.
+   - **Frontmatter lint.** Walk drift's `managed + modified` `.md` files with `mapConcurrent(16, …)`, run `validateFrontmatter()`, collect missing-key rows (capped at 20).
+   - **Environment probe.** Report `process.version` and a parallel PATH scan for an `obsidian`/`Obsidian.exe` binary.
+4. Format `installed_at` / `updated_at` via `relativeTimeAgo(fromIso, now)` with buckets `just now → minutes → hours → days → weeks → months → over a year ago`.
+5. Emit section warnings (`update available`, `N modified`, `M missing`, `values invalid`, `N frontmatter issues`, and — in verbose mode — `UPDATE_CHECK_CACHE_CORRUPT` if the cache layer healed a corrupt entry during the run) and return the aggregated `StatusReport`.
+
+**Caps**:
+- `MAX_PATHS_PER_BUCKET = 20` on every `*Paths` list (counts are full; lists are capped, `truncated` flag set when clamped).
+- `MAX_FRONTMATTER_ISSUES = 20`.
+- `MAX_INVALID_VALUE_KEYS = 20` with `invalidCount` preserving the pre-cap total.
+- `FRONTMATTER_READ_CONCURRENCY = 16` (matches `SNAPSHOT_CONCURRENCY` in update-executor).
+- `MODIFIED_DIFF_CONCURRENCY = 8` for the per-file render + diff pass.
+
+**Deviations from the spec** (`docs/ARCHITECTURE.md §10.2–10.3`):
+- Flavor text like `"you added a custom section"` is rendered as a plain path without a natural-language summary — semantic diff of user edits would require an LLM. Numeric `+N/−M` counts **are** shipped.
+- Shard-specific environment checks (e.g. `"QMD not installed"`) are absent because no `status` hook exists yet (hooks are post-install/post-update only); this remains a future shard-author feature.
+
+**Dependencies**: `core/state`, `core/drift`, `core/manifest`, `core/schema`, `core/values-io`, `core/update-check`, `runtime/frontmatter`, `core/fs-utils`.
+
+### 4.15 `update-check.ts`
+
+**Purpose**: 24-hour cached "latest GitHub release tag" lookup for a given `state.source`. Shared between the status command (read path) and the update command (priming path) so status invocations don't hammer the GitHub API.
+
+**Inputs**:
+```typescript
+getLatestVersion(
+  vaultRoot: string,
+  source: string,              // e.g. "github:owner/repo"
+  now?: number,
+): Promise<UpdateCheckResult>
+
+primeLatestVersion(
+  vaultRoot: string,
+  source: string,
+  latest_version: string,
+  now?: number,
+): Promise<void>
+
+readCache(vaultRoot: string): Promise<ReadCacheResult>
+
+interface ReadCacheResult {
+  cache: UpdateCheck | null;
+  /** True when a prior cache file was corrupt (bad JSON, wrong shape,
+   *  or a directory at the cache path) and has been auto-deleted. */
+  corruptHealed: boolean;
+}
+
+type UpdateCheckResult = (
+  | { kind: 'fresh'; latest_version: string; checked_at: string }
+  | { kind: 'stale'; latest_version: string; checked_at: string; reason: 'no-network' }
+  | { kind: 'unknown'; reason: 'no-network' | 'unsupported-source' }
+) & {
+  /** Set when a prior corrupt cache entry was detected and auto-healed
+   *  on the way in. Verbose callers surface it as the typed
+   *  `UPDATE_CHECK_CACHE_CORRUPT` warning. */
+  cacheHealed?: boolean;
+};
+```
+
+**Storage**: `.shardmind/update-check.json`. Vault-local; shipped next to `state.json`; written atomically via `writeFile(tmp) → rename(tmp, final)`.
+
+**Algorithm (getLatestVersion)**:
+1. If `source` does not start with `github:` → return `unknown/unsupported-source` (no network call).
+2. Read cache. If the file is corrupt JSON or wrong shape → delete it, treat as absent.
+3. If cache source matches AND `checked_at` is within `TTL_MS = 24h` AND not future-dated → return `fresh` with the cached value. No network.
+4. Otherwise call `registry.fetchLatestVersion(source, { signal })` with a 4-second `AbortController` budget. The signal threads all the way down to `fetch()` so an expired budget actually cancels the socket (not just resolves the wrapper). A timeout surfaces internally as a typed `UPDATE_CHECK_FAILED` error rather than a generic `REGISTRY_NETWORK` to preserve the distinction between "GitHub was unreachable" and "our budget expired".
+5. Success → write the cache atomically, return `fresh`.
+6. Failure:
+   - If a cache entry exists (regardless of source/staleness) → return `stale` with the cached value and `reason: 'no-network'`.
+   - Otherwise → return `unknown` with `reason: 'no-network'`.
+
+**Algorithm (primeLatestVersion)**:
+1. No-op for non-`github:` sources or empty versions.
+2. Atomically write a full `UpdateCheck` entry with the given `latest_version`.
+3. Callers (update command) `.catch(() => {})` the result — a priming failure must not cascade into an update failure.
+
+**Safety properties**:
+- Atomic writes prevent a half-written JSON from being read by a concurrent reader.
+- Corrupt JSON is deleted on sight so a crashed half-write can't wedge the cache forever.
+- Non-finite or future-dated clocks collapse to "just now"-equivalent, never produce negative durations.
+- Every failure mode degrades to a `StatusReport.update` discriminant the UI handles — status never throws on cache pathology.
+
+**Dependencies**: `core/registry` (for `fetchLatestVersion`), `runtime/vault-paths`, `runtime/errno`.
+
+---
+
 ## 5. Runtime Module: `shardmind/runtime`
 
 ### 5.1 `resolveVaultRoot()`

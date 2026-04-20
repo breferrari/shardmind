@@ -31,6 +31,7 @@ import type {
 import { ShardMindError } from '../../runtime/types.js';
 
 import { resolve as resolveRef } from '../../core/registry.js';
+import { primeLatestVersion } from '../../core/update-check.js';
 import { downloadShard } from '../../core/download.js';
 import { parseManifest } from '../../core/manifest.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
@@ -189,6 +190,13 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 
         setPhase({ kind: 'loading', message: `Resolving ${state.source}…` });
         const resolved = await resolveRef(state.source);
+        // Warm the update-check cache so the next `shardmind` (status) run
+        // answers "latest version" instantly instead of paying for another
+        // GitHub API call. Swallows errors — a cache-priming failure must
+        // not cascade into an update failure.
+        void primeLatestVersion(vaultRoot, state.source, resolved.version).catch(() => {
+          /* swallow */
+        });
 
         setPhase({
           kind: 'loading',

@@ -26,6 +26,56 @@ interface ParsedRef {
 
 const SHARD_REF_RE = /^(github:)?([a-z0-9][a-z0-9-]*)\/([a-z0-9][a-z0-9-]*)(?:@(.+))?$/;
 
+/**
+ * Cheap read-only "what is the latest tag?" lookup for a `github:owner/repo`
+ * source. Used by the update-check cache (see `core/update-check.ts`) so the
+ * status command can tell a user whether their installed shard is behind
+ * the latest release, without paying for `resolve()`'s tarball HEAD check
+ * (which `update` still needs because it actually downloads the tarball).
+ *
+ * Rejects non-`github:` sources with `REGISTRY_INVALID_REF` — the registry
+ * path goes through `resolve()`, which is the authority for that shape.
+ *
+ * Accepts an optional `AbortSignal` so callers with a wall-clock budget
+ * (e.g. the status command's 4-second update-check budget) can cancel the
+ * underlying HTTP request instead of letting a hanging TCP socket leak
+ * past the timeout. Without this, `Promise.race` around the call would
+ * resolve the caller but the `fetch` would keep the socket open.
+ *
+ * @param source The `state.source` string recorded at install time
+ *   (e.g. `"github:breferrari/obsidian-mind"`).
+ * @param options.signal Optional abort signal forwarded to the HTTP client.
+ * @returns The normalized semver string (leading `v` stripped).
+ * @throws `ShardMindError` with the same code set `fetchLatestRelease` emits
+ *   (`REGISTRY_NETWORK`, `REGISTRY_RATE_LIMITED`, `VERSION_NOT_FOUND`).
+ */
+export async function fetchLatestVersion(
+  source: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<string> {
+  if (!source.startsWith('github:')) {
+    throw new ShardMindError(
+      `fetchLatestVersion only supports github: sources, got: '${source}'`,
+      'REGISTRY_INVALID_REF',
+      'Non-GitHub registries are not implemented yet.',
+    );
+  }
+
+  const rest = source.slice('github:'.length);
+  const slash = rest.indexOf('/');
+  if (slash <= 0 || slash === rest.length - 1) {
+    throw new ShardMindError(
+      `Malformed github source: '${source}'`,
+      'REGISTRY_INVALID_REF',
+      'Expected "github:owner/repo".',
+    );
+  }
+
+  const owner = rest.slice(0, slash);
+  const repo = rest.slice(slash + 1);
+  return fetchLatestRelease(owner, repo, options.signal);
+}
+
 export async function resolve(shardRef: string): Promise<ResolvedShard> {
   const parsed = parseRef(shardRef);
 
@@ -147,9 +197,13 @@ async function fetchRegistryIndex(): Promise<RegistryIndex> {
   }
 }
 
-async function fetchLatestRelease(namespace: string, name: string): Promise<string> {
+async function fetchLatestRelease(
+  namespace: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<string> {
   const url = `https://api.github.com/repos/${namespace}/${name}/releases/latest`;
-  const response = await safeFetch(url, githubHeaders());
+  const response = await safeFetch(url, { ...githubHeaders(), signal });
 
   if (response.status === 403 && isRateLimited(response)) {
     throw rateLimitError();
