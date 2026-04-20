@@ -100,13 +100,15 @@ describe('merge adversarial — line ending edge cases', () => {
     expect(result.content).toBe(withLn);
   });
 
-  it('handles mixed CRLF/LF in theirs', () => {
+  it('handles mixed CRLF/LF in theirs by picking CRLF (dominant Windows style)', () => {
     const base = 'a\nb\nc\n';
     const theirs = 'a\r\nb\nc\r\n';
     const ours = 'a\nb\nc\n';
     const result = threeWayMerge(base, theirs, ours);
     expect(result.conflicts).toHaveLength(0);
-    expect(result.content).not.toContain('\r');
+    // Mixed → CRLF: whenever theirs contains ANY CRLF we honor it on
+    // output so we never silently rewrite a Windows user's file to LF.
+    expect(result.content).toContain('\r\n');
   });
 
   it('handles pure CR (old Mac) line endings gracefully — no crash', () => {

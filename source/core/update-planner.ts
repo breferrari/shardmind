@@ -61,6 +61,15 @@ export type UpdateAction =
       theirsHash: string;
       templateKey: string | null;
       iteratorKey?: string;
+      /**
+       * Set when the user has untracked content at a path the new shard
+       * newly introduces (`add` that collided with a user-created file).
+       * On `accept_new` the shard content adopts the path as managed; on
+       * `keep_mine` / `skip` the user's file stays on disk AND stays
+       * untracked — we never silently start managing a file the user
+       * didn't opt in to.
+       */
+      preexisting?: boolean;
     }
   | { kind: 'skip_volatile'; path: string }
   | { kind: 'add'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string; copyFromSourcePath?: string }
@@ -144,7 +153,15 @@ export interface SchemaAdditions {
    * whether to opt in; default is to include.
    */
   newOptionalModules: Array<{ id: string; def: ModuleDefinition }>;
-  /** Modules present in the current install but gone from the new schema. */
+  /**
+   * Modules present in the current install but gone from the new schema.
+   * v0.1 surfaces this only via the update summary's silent-delete count
+   * (`mergeModuleSelections` already omits dropped ids from the new
+   * selections); the list is populated here so v0.2 can render a
+   * dedicated "these modules were removed upstream" block without a
+   * second computation pass. Kept intentionally instead of deleted —
+   * exported shape, pinned by tests.
+   */
   dropped: string[];
 }
 
@@ -397,17 +414,32 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
         );
       }
 
-      const [actualContent, oldTemplate] = await Promise.all([
-        readUtf8(path.join(vaultRoot, entry.path)),
+      const [actualRead, oldTemplate] = await Promise.all([
+        readStringAndByteHash(path.join(vaultRoot, entry.path)),
         loadOldTemplate(vaultRoot, fileState.template),
       ]);
+      if (actualRead === null) {
+        // Drift reported this file as `modified` at scan time, so ENOENT
+        // now is a race between scan and merge — the user (or another
+        // process) deleted the file mid-update. Pretending it was empty
+        // would overwrite their absence with the merged shard content
+        // on the next write. Surface a typed error instead so the user
+        // can re-run the update against a coherent vault.
+        throw new ShardMindError(
+          `File '${entry.path}' vanished between drift detection and merge planning`,
+          'UPDATE_CACHE_MISSING',
+          `Vault contents changed during \`shardmind update\`. Re-run — drift detection picks up the current shape and either classifies '${entry.path}' as missing (restored from the shard) or excludes it from the plan.`,
+        );
+      }
+      const actualContent = actualRead.content;
+      const theirsHash = actualRead.hash;
 
       if (oldTemplate === null) {
         return conflictFromDirect(
           entry.path,
           target,
           actualContent,
-          sha256(actualContent),
+          theirsHash,
           newTempDir,
         );
       }
@@ -450,7 +482,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             result: mergeAction.result,
             newContent: target.content,
             newContentHash: target.hash,
-            theirsHash: sha256(actualContent),
+            theirsHash,
             templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
             ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
           };
@@ -475,19 +507,94 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     }
   }
 
+  // New-add actions: for each shard-produced output that isn't tracked
+  // in state.files, decide between a plain `add` (path is free on disk)
+  // and a `conflict` (user has untracked content at the same path).
+  // Silently overwriting an untracked user file is a data-loss bug on
+  // par with the install command's collision handling — route the
+  // user's content through DiffView instead.
   const trackedPaths = new Set(Object.keys(currentState.files));
-  for (const output of newPlan.outputs) {
-    if (trackedPaths.has(output.outputPath)) continue;
-    actions.push({
-      kind: 'add',
-      path: output.outputPath,
-      content: output.content,
-      renderedHash: output.hash,
-      templateKey: toTemplateKey(newTempDir, output.entry.sourcePath),
-      ...(output.entry.iterator ? { iteratorKey: output.entry.iterator } : {}),
-      ...(output.copyFromSourcePath ? { copyFromSourcePath: output.copyFromSourcePath } : {}),
-    });
-    counts.added++;
+  const addCandidates = newPlan.outputs.filter(o => !trackedPaths.has(o.outputPath));
+  const addActions = await mapConcurrent<typeof addCandidates[number], UpdateAction>(
+    addCandidates,
+    PLAN_IO_CONCURRENCY,
+    async (output) => {
+      const abs = path.join(vaultRoot, output.outputPath);
+      // Stat in a single I/O so we can tell "free path" from "file collision"
+      // from "directory collision" without a pathExists → readFile race.
+      // ENOENT → free path. EISDIR branch below handles the directory case.
+      let stat;
+      try {
+        stat = await fsp.stat(abs);
+      } catch (err) {
+        if (isEnoent(err)) {
+          return {
+            kind: 'add',
+            path: output.outputPath,
+            content: output.content,
+            renderedHash: output.hash,
+            templateKey: toTemplateKey(newTempDir, output.entry.sourcePath),
+            ...(output.entry.iterator ? { iteratorKey: output.entry.iterator } : {}),
+            ...(output.copyFromSourcePath ? { copyFromSourcePath: output.copyFromSourcePath } : {}),
+          };
+        }
+        throw err;
+      }
+
+      if (stat.isDirectory()) {
+        // User has a directory at a path the new shard wants as a file.
+        // Reading it as a file below would crash with EISDIR; silently
+        // emitting plain `add` would crash the same way on write. Surface
+        // a typed error at plan time so the user sees actionable guidance
+        // BEFORE any snapshot or write runs.
+        throw new ShardMindError(
+          `Update cannot proceed: the new shard adds a file at '${output.outputPath}', but a directory exists there.`,
+          'UPDATE_WRITE_FAILED',
+          `Remove or rename the directory at '${abs}' before re-running \`shardmind update\`. This directory is not part of the previous install — it's user content at a path the new shard now claims.`,
+        );
+      }
+
+      // Preexisting untracked file at an add path. Read bytes so
+      // `theirsHash` stays consistent with install-executor's
+      // bytewise hashing (binary assets were silently mishashed when
+      // the previous implementation decoded as UTF-8 first). If the
+      // file raced out of existence between the stat above and
+      // this read, fall back to a plain `add` — there's nothing to
+      // collide with anymore.
+      const actualRead = await readStringAndByteHash(abs);
+      if (actualRead === null) {
+        return {
+          kind: 'add',
+          path: output.outputPath,
+          content: output.content,
+          renderedHash: output.hash,
+          templateKey: toTemplateKey(newTempDir, output.entry.sourcePath),
+          ...(output.entry.iterator ? { iteratorKey: output.entry.iterator } : {}),
+          ...(output.copyFromSourcePath ? { copyFromSourcePath: output.copyFromSourcePath } : {}),
+        };
+      }
+      return {
+        ...(conflictFromDirect(
+          output.outputPath,
+          output,
+          actualRead.content,
+          actualRead.hash,
+          newTempDir,
+        ) as Extract<UpdateAction, { kind: 'conflict' }>),
+        preexisting: true,
+      };
+    },
+  );
+  for (const action of addActions) {
+    actions.push(action);
+    if (action.kind === 'add') {
+      counts.added++;
+    } else if (action.kind === 'conflict') {
+      // Same accounting as a modified-file conflict so the pending-
+      // conflicts count in the summary stays coherent.
+      pendingConflicts.push({ path: action.path, result: action.result });
+      counts.conflicts++;
+    }
   }
 
   return { actions, pendingConflicts, counts };
@@ -512,7 +619,6 @@ function conflictFromDirect(
     path: filePath,
     result: {
       content: `<<<<<<< yours\n${actualContent}\n=======\n${target.content}\n>>>>>>> shard update\n`,
-      hasConflicts: true,
       conflicts: [
         {
           lineStart: 1,
@@ -535,11 +641,28 @@ function conflictFromDirect(
   };
 }
 
-async function readUtf8(absPath: string): Promise<string> {
+/**
+ * Read a user file and produce both its string view (for the three-way
+ * merge, which is line-oriented) and its bytewise hash (for `theirsHash`
+ * which is recorded in state.files on `keep_mine`/`skip` resolutions).
+ * Always hashes bytes — install-executor hashes copy-origin files this
+ * way, so a bytewise hash here stays consistent across install/update
+ * cycles even for content that isn't valid UTF-8.
+ *
+ * Returns `null` on ENOENT so callers decide semantics:
+ *   - modified-file path: file was in `drift.modified` at scan time, so
+ *     ENOENT now is a race. Caller throws `UPDATE_CACHE_MISSING`.
+ *   - add-collision path: ENOENT between `fsp.stat` and read is a race;
+ *     caller degrades to a plain `add` (no collision to report).
+ */
+async function readStringAndByteHash(
+  absPath: string,
+): Promise<{ content: string; hash: string } | null> {
   try {
-    return await fsp.readFile(absPath, 'utf-8');
+    const buf = await fsp.readFile(absPath);
+    return { content: buf.toString('utf-8'), hash: sha256(buf) };
   } catch (err) {
-    if (isEnoent(err)) return '';
+    if (isEnoent(err)) return null;
     throw err;
   }
 }

@@ -231,7 +231,7 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 
 **Meaning:** Install tried to write `shard-values.yaml` but the file already exists. The `ExistingInstallGate` normally catches this earlier; this is a last-defense check.
 
-**Remedy:** Move or remove the existing `shard-values.yaml`. `shardmind update` (Milestone 4) will handle this automatically once available.
+**Remedy:** Move or remove the existing `shard-values.yaml` before re-running `install`. If `.shardmind/state.json` is also present, `shardmind update` is the right command (it'll upgrade the current install in place); without state.json, `update` throws `UPDATE_NO_INSTALL` so `install` is the only path.
 
 ### `VALUES_MISSING`
 
@@ -308,6 +308,70 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 **Meaning:** A template with `_each` in its name expects a list-typed value in the render context, but `values.<iterator>` isn't an array.
 
 **Remedy:** Ensure the named value in `shard-values.yaml` is a list.
+
+---
+
+## Update / merge
+
+### `MERGE_FAILED`
+
+**Meaning:** The three-way merge engine (`source/core/differ.ts`) threw while applying `node-diff3` to a modified file. Rare — usually a symptom of a file the merge engine can't handle.
+
+**Remedy:** Re-run with `--verbose` for the full trace and file an issue at github.com/breferrari/shardmind/issues. Workaround: delete or rename the file to break it out of the update plan, then re-run `shardmind update`.
+
+### `UPDATE_NO_INSTALL`
+
+**Meaning:** `shardmind update` was invoked in a directory that has no `.shardmind/state.json`.
+
+**Remedy:** Run `shardmind install <shard>` first, then retry.
+
+### `UPDATE_SOURCE_MISMATCH`
+
+**Meaning:** `state.source` in `.shardmind/state.json` doesn't parse as a valid shard reference (`namespace/name` or `github:namespace/name`). Usually a hand-edit or partial corruption of `state.json`.
+
+**Remedy:** Reinstall the shard to regenerate a coherent `state.json`.
+
+### `UPDATE_CACHE_MISSING`
+
+**Meaning:** One of three drift-between-inputs failures during `shardmind update`:
+
+1. The cached schema (`.shardmind/shard-schema.yaml`) is missing or corrupt, so the migration plan can't be computed.
+2. Drift reports a file as `modified` but `state.files` doesn't record it — state and drift disagree.
+3. A file that was present at drift-detection time vanished before the merge planner reached it (user or another process deleted it mid-update).
+
+**Remedy:** (1) Re-run `shardmind install <source>` to regenerate `.shardmind/`. (2) / (3) Re-run `shardmind update` — drift detection picks up the current shape on the next pass.
+
+### `UPDATE_WRITE_FAILED`
+
+**Meaning:** A write during the update executor failed (mkdir + writeFile on a planned output path). Typically filesystem-level (permissions, disk-full, antivirus lock). May also surface as the code on a wrapped rollback-incomplete error when the update failed AND the snapshot couldn't restore every file.
+
+**Remedy:** Check filesystem permissions on the vault directory and the mentioned path; retry. If partial-rollback also failed, the error message lists paths the snapshot couldn't restore — those files still exist under `.shardmind/backups/update-*/files/`.
+
+### `MIGRATION_INVALID_VERSION`
+
+**Meaning:** `applyMigrations` was handed a `currentVersion` or `targetVersion` that doesn't parse as semver.
+
+**Remedy:** Engine bug — open an issue. Both versions come from parsed `state.json` or fresh `shard.yaml` and should always be valid semver.
+
+### `MIGRATION_TRANSFORM_FAILED`
+
+**Meaning:** Reserved for the v0.2 sandboxed-transform path. Currently `migrator.ts` catches `type_changed` transform exceptions and records a warning (best-effort posture), so this code is declared but not thrown in v0.1.
+
+**Remedy:** N/A in v0.1. When the sandboxed evaluator lands (v0.2), this code will surface if a transform crashes and the command layer will distinguish it from "transform returned the wrong shape."
+
+## Update-check cache (status + update)
+
+### `UPDATE_CHECK_FAILED`
+
+**Meaning:** Internal — the 4-second fetch budget for the background "what's the latest version?" lookup expired. Surfaced only from paths that treat update-check as fatal; the status command maps it to an `unknown` update result.
+
+**Remedy:** Usually transient network pressure. The cache (when present) still answers subsequent runs; re-try later.
+
+### `UPDATE_CHECK_CACHE_CORRUPT`
+
+**Meaning:** The cached `.shardmind/update-check.json` couldn't be parsed or was the wrong shape. The cache is self-healed on sight (deleted + re-fetched) and the verbose status surfaces this once as an info warning.
+
+**Remedy:** Automatic. No user action needed.
 
 ---
 

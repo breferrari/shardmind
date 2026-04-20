@@ -364,7 +364,7 @@ async function writeValuesFile(
       throw new ShardMindError(
         'shard-values.yaml already exists at the install target',
         'VALUES_FILE_COLLISION',
-        'Move or remove shard-values.yaml before installing. `shardmind update` (Milestone 4) will handle this automatically once available.',
+        'Move or remove shard-values.yaml before re-running install. If `.shardmind/state.json` also exists, run `shardmind update` instead to upgrade the current install in place; without state.json, update throws UPDATE_NO_INSTALL.',
       );
     }
     throw err;

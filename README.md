@@ -193,7 +193,7 @@ The `shardmind/runtime` module is available to any TypeScript hook script. Claud
 
 ## Status
 
-**Pre-release.** Architecture designed. Implementation spec complete. Build in progress.
+**Pre-release.** The engine is complete — install, update (three-way merge + migrations + conflict resolution), status, and the runtime module all ship and are covered end-to-end. Flagship-shard conversion (obsidian-mind) and the shard registry are the remaining v0.1 milestones.
 
 ---
 

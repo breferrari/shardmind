@@ -23,7 +23,6 @@ function makeResult(overrides: Partial<MergeResult> = {}): MergeResult {
       'after line 2',
       '',
     ].join('\n'),
-    hasConflicts: true,
     conflicts: [
       {
         lineStart: 3,

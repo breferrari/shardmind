@@ -38,12 +38,18 @@ export default function NewValuesPrompt({
   if (!entry) return null;
 
   const [key, def] = entry;
+  // Prefer the human-readable group label from the schema (e.g.
+  // "Onboarding") over the raw group id ("onboarding"). Keeps the UX
+  // consistent with InstallWizard, which does the same lookup.
+  const groupLabel = def.group
+    ? schema.groups.find(g => g.id === def.group)?.label ?? def.group
+    : null;
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold>New values since your last install</Text>
       <Text dimColor>
         Step {index + 1} of {defs.length}
-        {def.group ? ` · ${def.group}` : ''}
+        {groupLabel ? ` · ${groupLabel}` : ''}
       </Text>
       <ValueInput
         id={key}

@@ -205,6 +205,8 @@ Declarative "when to route where". Surfaced to agents via `shardmind/runtime`. `
 
 Shorthand `key: [a, b]` expands to `key: { required: [a, b] }`. Optional `path_match` applies the rule only to matching paths. `global` is the catch-all.
 
+`path_match` uses shell-glob semantics: `*` matches within a single path segment (stops at `/`), `**` crosses segments. So `brain/*.md` matches `brain/Goals.md` but not `brain/sub/deep/Goals.md`; use `brain/**.md` if you want every `.md` under `brain/` regardless of depth. Regex metacharacters inside the glob (`.`, `[`, `(`, etc.) are treated as literals.
+
 ### `migrations` — value migrations
 
 Ordered rules applied to `shard-values.yaml` when the shard version moves forward. Four change types: `rename`, `added`, `removed`, `type_changed`. See `MigrationChange` in `source/runtime/types.ts` for the exact shape.

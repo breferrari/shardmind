@@ -152,8 +152,9 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
 
     // Every action that emits an `onProgress 'file'` event counts toward
     // `total` — including conflicts resolved as keep_mine/skip that emit
-    // progress but don't actually write. Using `actionWrites` here would
-    // under-count total and let `index` overshoot 100% on the progress bar.
+    // progress but don't actually write. Counting only write-actions
+    // would under-count total and let `index` overshoot 100% on the
+    // progress bar.
     const progressTotal = plan.actions.filter(actionEmitsProgress).length;
     onProgress?.({ kind: 'start', total: progressTotal });
 
@@ -176,7 +177,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     // + add at a different path) won't clobber a new file.
     let index = 0;
     for (const action of plan.actions) {
-      if (isDeleteAction(action, conflictResolutions)) continue;
+      if (isDeleteAction(action)) continue;
       await applyWriteAction(action, {
         vaultRoot,
         conflictResolutions,
@@ -191,7 +192,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       });
     }
     for (const action of plan.actions) {
-      if (!isDeleteAction(action, conflictResolutions)) continue;
+      if (!isDeleteAction(action)) continue;
       await applyDeleteAction(action, {
         vaultRoot,
         nextFiles,
@@ -229,29 +230,44 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     return { state: nextState, summary, backupDir };
   } catch (err) {
     if (!dryRun && backupDir) {
+      let rollbackFailures: RollbackFailure[] = [];
       try {
-        const rollbackFailures = await rollbackUpdate(vaultRoot, backupDir, addedPaths);
-        if (rollbackFailures.length > 0) {
-          // Attach rollback failures to the thrown error so the command
-          // layer can surface "update failed AND rollback was partial" —
-          // silently swallowing would tell the user the vault is back
-          // to pre-update when it isn't.
-          const summary = rollbackFailures
-            .slice(0, 5)
-            .map((f) => `  - ${f.path}: ${f.reason}`)
-            .join('\n');
-          const more = rollbackFailures.length > 5
-            ? `\n  …and ${rollbackFailures.length - 5} more`
-            : '';
-          (err as Error & { rollbackFailures?: RollbackFailure[] }).rollbackFailures =
-            rollbackFailures;
-          if (err instanceof Error) {
-            err.message = `${err.message}\nRollback incomplete (${rollbackFailures.length} files):\n${summary}${more}`;
-          }
-        }
+        rollbackFailures = await rollbackUpdate(vaultRoot, backupDir, addedPaths);
       } catch {
-        // rollback itself crashed — swallow and re-throw the original
-        // so we don't mask the underlying failure cause
+        // Rollback itself crashed — swallow and fall through to rethrow
+        // the original so we never mask the root-cause failure.
+      }
+      if (rollbackFailures.length > 0) {
+        // Surface partial-rollback detail in a NEW error rather than
+        // mutating `err.message`. Mutation throws on frozen/sealed
+        // third-party errors (a rare but real case for wrapped native
+        // errors) and compounds if the same error is caught again
+        // further up the stack and logged twice. Preserve the code when
+        // we can so command-layer code-based branching still works;
+        // attach the failures list and the original as `cause`.
+        const summary = rollbackFailures
+          .slice(0, 5)
+          .map((f) => `  - ${f.path}: ${f.reason}`)
+          .join('\n');
+        const more = rollbackFailures.length > 5
+          ? `\n  …and ${rollbackFailures.length - 5} more`
+          : '';
+        const baseMessage = err instanceof Error ? err.message : String(err);
+        const wrapped = err instanceof ShardMindError
+          ? new ShardMindError(
+              `${baseMessage}\nRollback incomplete (${rollbackFailures.length} files):\n${summary}${more}`,
+              err.code,
+              err.hint,
+            )
+          : new ShardMindError(
+              `${baseMessage}\nRollback incomplete (${rollbackFailures.length} files):\n${summary}${more}`,
+              'UPDATE_WRITE_FAILED',
+              'The update failed AND the rollback could not restore every snapshot. Check the listed paths manually.',
+            );
+        (wrapped as Error & { rollbackFailures?: RollbackFailure[] }).rollbackFailures =
+          rollbackFailures;
+        (wrapped as Error & { cause?: unknown }).cause = err;
+        throw wrapped;
       }
     }
     throw err;
@@ -371,13 +387,21 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
       } else {
         // keep_mine / skip: leave the user's file on disk. `theirsHash`
         // was captured at plan time so we don't need to re-read + rehash
-        // here. Track as modified so next drift picks up their version.
-        ctx.nextFiles[action.path] = {
-          template: action.templateKey,
-          rendered_hash: action.theirsHash,
-          ownership: 'modified',
-          ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
-        };
+        // here. For a preexisting-untracked add collision, the user's
+        // file stays UNTRACKED — we never silently adopt content they
+        // didn't opt in to manage. For the standard modified-file
+        // conflict, track as modified so next drift picks up their
+        // version.
+        if (action.preexisting) {
+          delete ctx.nextFiles[action.path];
+        } else {
+          ctx.nextFiles[action.path] = {
+            template: action.templateKey,
+            rendered_hash: action.theirsHash,
+            ownership: 'modified',
+            ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
+          };
+        }
         if (resolution === 'keep_mine') ctx.summary.conflictsKeptMine++;
         else ctx.summary.conflictsSkipped++;
       }
@@ -418,19 +442,16 @@ function buildFileState(
   };
 }
 
-function isDeleteAction(
-  action: UpdateAction,
-  _resolutions: Record<string, ConflictResolution>,
-): boolean {
+function isDeleteAction(action: UpdateAction): boolean {
   return action.kind === 'delete';
 }
 
 /**
  * Whether an action emits an `onProgress` event during application.
- * Broader than `actionWrites`: every `conflict` emits progress even if
- * its resolution is `keep_mine`/`skip` (no disk write), so we use this
- * to compute the progress `total` — otherwise `index` could exceed
- * `total` and the progress bar would overshoot 100%.
+ * Every `conflict` emits progress even if its resolution is
+ * `keep_mine`/`skip` (no disk write), so we use this to compute the
+ * progress `total` — otherwise `index` could exceed `total` and the
+ * progress bar would overshoot 100%.
  */
 function actionEmitsProgress(action: UpdateAction): boolean {
   switch (action.kind) {

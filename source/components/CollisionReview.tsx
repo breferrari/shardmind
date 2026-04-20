@@ -1,8 +1,11 @@
+import { useRef } from 'react';
 import { Box, Text } from 'ink';
 import { Select, Alert } from './ui.js';
 import type { Collision } from '../core/install-planner.js';
 
 export type CollisionAction = 'backup' | 'overwrite' | 'cancel';
+
+const COLLISION_ACTIONS = new Set<CollisionAction>(['backup', 'overwrite', 'cancel']);
 
 interface CollisionReviewProps {
   collisions: Collision[];
@@ -12,6 +15,10 @@ interface CollisionReviewProps {
 export default function CollisionReview({ collisions, onChoice }: CollisionReviewProps) {
   const fileCount = collisions.filter((c) => c.kind === 'file').length;
   const dirCount = collisions.length - fileCount;
+  // `Select` can fire onChange more than once if Ink re-focuses the
+  // instance. A double-fire on `overwrite` would launch two `rm -rf`
+  // passes and two concurrent installs — same defense as DiffView.
+  const firedRef = useRef(false);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -54,7 +61,12 @@ export default function CollisionReview({ collisions, onChoice }: CollisionRevie
               value: 'cancel',
             },
           ]}
-          onChange={(v) => onChoice(v as CollisionAction)}
+          onChange={(v) => {
+            if (firedRef.current) return;
+            if (!COLLISION_ACTIONS.has(v as CollisionAction)) return;
+            firedRef.current = true;
+            onChoice(v as CollisionAction);
+          }}
         />
       </Box>
     </Box>

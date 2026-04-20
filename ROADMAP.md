@@ -114,6 +114,11 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] Drop `LineInterner` workaround once `node-diff3` releases the prototype-lookup fix ([#49](https://github.com/breferrari/shardmind/issues/49), upstream [bhousel/node-diff3#87](https://github.com/bhousel/node-diff3/pull/87))
 - [ ] `$EDITOR` integration for DiffView conflict resolution ([#50](https://github.com/breferrari/shardmind/issues/50))
 - [x] 24h update-check cache shared between status + update ([#51](https://github.com/breferrari/shardmind/issues/51) — shipped with #13)
+- [ ] DiffView: distinguish preexisting add-collision from modified-file conflict ([#60](https://github.com/breferrari/shardmind/issues/60))
+- [ ] `--yes` policy for preexisting add-collisions (currently churns every update) ([#61](https://github.com/breferrari/shardmind/issues/61))
+- [ ] Byte-identical preexisting add-collision adopts silently ([#62](https://github.com/breferrari/shardmind/issues/62))
+- [ ] Binary files bypass three-way merge entirely ([#63](https://github.com/breferrari/shardmind/issues/63))
+- [ ] `docs/IMPLEMENTATION.md` §4.11a / §4.11b for install-planner + install-executor ([#64](https://github.com/breferrari/shardmind/issues/64))
 
 ---
 

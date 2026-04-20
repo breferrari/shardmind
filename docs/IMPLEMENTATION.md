@@ -514,8 +514,8 @@ interface DriftEntry {
 **Algorithm**:
 1. For each file in `state.files` (in parallel via `Promise.all`):
    a. If `FileState.ownership === 'user'` (volatile at install time) → `DriftEntry` with `ownership: 'volatile'` → add to `volatile`. Never hashed; content may diverge by design.
-   b. Read file from disk. If ENOENT → add to `missing` (propagate state ownership).
-   c. Compute `sha256(file content)`.
+   b. Read file from disk as `Buffer` (not UTF-8). If ENOENT → add to `missing` (propagate state ownership).
+   c. Compute `sha256(buffer)` over raw bytes. This is load-bearing: `install-executor` hashes copy-origin files (images, PDFs, binary assets) as bytes too, so a bytewise hash here stays consistent across install/update cycles. A UTF-8 decode-then-hash would replace invalid sequences with `U+FFFD` and mis-classify every binary asset as `modified` on first status check.
    d. Compare against `state.files[path].rendered_hash`. Equal → `managed`. Different → `modified`.
 2. Orphan scan (runs in parallel with the classification): union of parent directories of every tracked path is the set of tracked directories. For each tracked directory, `readdir` non-recursively and report files not in `state.files` as orphans. Excludes engine-reserved files (`VALUES_FILE`) and never-scanned directories (`.shardmind`, `.git`, `.obsidian`). Subdirectories of a tracked directory are not auto-scanned — they only count if they themselves contain a tracked file.
 3. Return classified report.
@@ -562,9 +562,9 @@ interface MergeStats {
 4. If `sha256(base) === sha256(ours)` → no upstream change → `{ type: 'skip' }`
 5. If ownership is `managed` (base === theirs) → `{ type: 'overwrite', content: ours }`
 6. If ownership is `modified`:
-   a. Run `diff3MergeRegions(theirs.split(/\r?\n/), base.split(/\r?\n/), ours.split(/\r?\n/))` — not the flat `diff3Merge`; the regions variant exposes `buffer: 'a' | 'o' | 'b'` on stable regions and `aContent / oContent / bContent` on unstable ones, which is the only way to distinguish stable-unchanged (`buffer === 'o'`) from stable-auto-merged (`buffer === 'a' | 'b'`) lines. The `/\r?\n/` split tolerates CRLF on Windows-saved files; merged output is always LF.
+   a. Run `diff3MergeRegions(theirs.split(/\r?\n/), base.split(/\r?\n/), ours.split(/\r?\n/))` — not the flat `diff3Merge`; the regions variant exposes `buffer: 'a' | 'o' | 'b'` on stable regions and `aContent / oContent / bContent` on unstable ones, which is the only way to distinguish stable-unchanged (`buffer === 'o'`) from stable-auto-merged (`buffer === 'a' | 'b'`) lines. The `/\r?\n/` split tolerates CRLF on Windows-saved files; merged output preserves `theirs`'s dominant line ending (`\r\n` if any CRLF in `theirs`, else `\n`) so `shardmind update` doesn't silently flip line endings on Windows users' managed files.
    b. For each stable region: emit `bufferContent`. For each unstable region: if `aContent === oContent` take `bContent`; if `bContent === oContent` take `aContent`; if `aContent === bContent` take either (false conflict); else emit git-style conflict markers and record a `ConflictRegion`.
-   c. No conflicts → `{ type: 'auto_merge', content, stats }`. Conflicts → `{ type: 'conflict', result: { content, hasConflicts: true, conflicts, stats } }`.
+   c. No conflicts → `{ type: 'auto_merge', content, stats }`. Conflicts → `{ type: 'conflict', result: { content, conflicts, stats } }`.
 
 **`MergeResult`** (for conflicts):
 ```typescript
@@ -576,8 +576,7 @@ interface MergeStatsWithConflicts {
 
 interface MergeResult {
   content: string;              // Merged content with conflict markers
-  hasConflicts: boolean;
-  conflicts: ConflictRegion[];
+  conflicts: ConflictRegion[]; // non-empty ⇒ conflicts exist; consumers read `conflicts.length > 0`
   stats: MergeStatsWithConflicts;
 }
 
@@ -1004,7 +1003,7 @@ Update + migration codes (added in Milestone 4):
 |------|-----------|--------------|
 | `UPDATE_NO_INSTALL` | use-update-machine (thrown when `readState` returns `null`) | "Run `shardmind install <shard>` first, then come back to update." |
 | `UPDATE_SOURCE_MISMATCH` | use-update-machine (thrown when `resolveRef(state.source)` surfaces `REGISTRY_INVALID_REF` — state is corrupted or hand-edited) | "The value `<state.source>` in .shardmind/state.json doesn't match the expected `namespace/name` or `github:namespace/name` shape. Likely hand-edited or partially corrupted — reinstall the shard to repair." |
-| `UPDATE_CACHE_MISSING` | update-planner | "State and drift report disagree — re-install the shard." |
+| `UPDATE_CACHE_MISSING` | update-planner (drift references a path absent from `state.files`, OR a `drift.modified` file vanishes between drift scan and merge planning), use-update-machine (cached schema missing) | "State and drift report disagree — re-install the shard." / "Vault contents changed during `shardmind update`. Re-run." |
 | `UPDATE_WRITE_FAILED` | update-executor | OS error message + permission / space hint |
 | `MIGRATION_INVALID_VERSION` | migrator | "currentVersion and targetVersion must be valid semver." |
 | `MIGRATION_TRANSFORM_FAILED` | reserved for sandbox-enforcement path | — |

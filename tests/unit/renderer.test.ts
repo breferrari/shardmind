@@ -168,6 +168,131 @@ describe('renderFile', () => {
         await fs.rm(tmpDir, { recursive: true, force: true });
       }
     });
+
+    it('rewrites Windows-reserved slugs so fsp.writeFile succeeds on NTFS', async () => {
+      // CON / PRN / AUX / NUL / COM[1-9] / LPT[1-9] are NTFS device
+      // names; a shard author writing `slug: CON` produces an output
+      // path `projects/CON.md` that crashes install on Windows. The
+      // reserved-name check runs on the STEM (portion before first dot)
+      // so `CON.txt` and `LPT1.md` also rewrite — NTFS blocks them too.
+      const os = await import('node:os');
+      const tmpDir = path.join(os.tmpdir(), `renderer-test-${crypto.randomUUID()}`);
+      await fs.mkdir(tmpDir, { recursive: true });
+      await fs.writeFile(path.join(tmpDir, '_each.md.njk'), '# {{ item.name }}\n');
+
+      try {
+        const env = createRenderer(tmpDir);
+        const entry = makeEntry({
+          sourcePath: path.join(tmpDir, '_each.md.njk'),
+          outputPath: 'projects/_each.md',
+          iterator: 'projects',
+        });
+        const ctx = makeContext({
+          values: {
+            projects: [
+              { name: 'Bare', slug: 'CON' },
+              { name: 'Lower', slug: 'com1' },
+              { name: 'StemReserved', slug: 'CON.txt' },
+              { name: 'MultiDot', slug: 'LPT1.foo.bar' },
+              { name: 'Normal', slug: 'normal-slug' },
+            ],
+          },
+        });
+
+        const results = await renderFile(entry, ctx, env) as import('../../source/runtime/types.js').RenderedFile[];
+        expect(results.map(r => r.outputPath)).toEqual([
+          'projects/_CON.md',
+          'projects/_com1.md',
+          'projects/_CON.txt.md',
+          'projects/_LPT1.foo.bar.md',
+          'projects/normal-slug.md',
+        ]);
+      } finally {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('falls back to `_` when the slug collapses to empty after rewrites', async () => {
+      // A slug that's only spaces, or empty, would rewrite to "" —
+      // producing an output path like `notes/.md` (dotfile on POSIX,
+      // hidden on Windows). Fall back to `_` so every output path has
+      // a legible stem. (Pure-dots collapses to `-` via `..` rewrite
+      // plus trailing-dot strip; `-` is a fine filename stem, so
+      // only the truly-empty case needs the fallback.)
+      const os = await import('node:os');
+      const tmpDir = path.join(os.tmpdir(), `renderer-test-${crypto.randomUUID()}`);
+      await fs.mkdir(tmpDir, { recursive: true });
+      await fs.writeFile(path.join(tmpDir, '_each.md.njk'), '# {{ item.name }}\n');
+
+      try {
+        const env = createRenderer(tmpDir);
+        const entry = makeEntry({
+          sourcePath: path.join(tmpDir, '_each.md.njk'),
+          outputPath: 'notes/_each.md',
+          iterator: 'notes',
+        });
+        const ctx = makeContext({
+          values: {
+            notes: [
+              { name: 'OnlySpaces', slug: '   ' },
+              { name: 'Empty', slug: '' },
+            ],
+          },
+        });
+
+        const results = await renderFile(entry, ctx, env) as import('../../source/runtime/types.js').RenderedFile[];
+        for (const r of results) {
+          expect(r.outputPath).toBe('notes/_.md');
+        }
+      } finally {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('strips trailing dots and spaces from slugs (NTFS strips them silently)', async () => {
+      const os = await import('node:os');
+      const tmpDir = path.join(os.tmpdir(), `renderer-test-${crypto.randomUUID()}`);
+      await fs.mkdir(tmpDir, { recursive: true });
+      await fs.writeFile(path.join(tmpDir, '_each.md.njk'), '# {{ item.name }}\n');
+
+      try {
+        const env = createRenderer(tmpDir);
+        const entry = makeEntry({
+          sourcePath: path.join(tmpDir, '_each.md.njk'),
+          outputPath: 'notes/_each.md',
+          iterator: 'notes',
+        });
+        const ctx = makeContext({
+          values: {
+            notes: [
+              // `..` is the path-traversal guard; any leftover trailing
+              // dot is then stripped so NTFS doesn't silently drop it.
+              // `trailing...` → `trailing-.` (traversal guard) → `trailing-`.
+              { name: 'Dots', slug: 'trailing...' },
+              { name: 'TrailingSpace', slug: 'trailing ' },
+              // Pure trailing dots without traversal → stripped cleanly.
+              { name: 'PureDot', slug: 'singledot.' },
+            ],
+          },
+        });
+
+        const results = await renderFile(entry, ctx, env) as import('../../source/runtime/types.js').RenderedFile[];
+        const paths = results.map(r => r.outputPath);
+        // What matters: no output path ends in `.md` with an NTFS-
+        // strippable `. ` before the extension. Validate by asserting
+        // the slug portion (before `.md`) never ends with a bare dot
+        // or space.
+        for (const p of paths) {
+          const stem = p.replace(/\.md$/, '');
+          const tail = stem.slice(stem.lastIndexOf('/') + 1);
+          expect(tail).not.toMatch(/[. ]$/);
+        }
+        expect(paths[1]).toBe('notes/trailing.md');
+        expect(paths[2]).toBe('notes/singledot.md');
+      } finally {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('hashing', () => {

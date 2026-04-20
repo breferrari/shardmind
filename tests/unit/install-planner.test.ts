@@ -421,6 +421,58 @@ describe('hashValues', () => {
     const b = hashValues({ items: [{ x: 1 }, { x: 3 }] });
     expect(a).not.toBe(b);
   });
+
+  it('terminates on cyclic values without stack overflow', () => {
+    // YAML anchors can produce cyclic object graphs — e.g.
+    //   a: &x
+    //     self: *x
+    // `yaml.parse` returns a real cycle. Without a cycle guard the
+    // recursive walk stack-overflows on hostile input; here we just
+    // assert the call returns a string.
+    const cyclic: Record<string, unknown> = { name: 'alice' };
+    cyclic['self'] = cyclic;
+    const hash = hashValues(cyclic);
+    expect(typeof hash).toBe('string');
+    expect(hash).toHaveLength(64);
+  });
+
+  it('produces a stable hash across two cyclic references to the same graph', () => {
+    // Two callers producing equivalent cyclic shapes hash to the same
+    // value — the cycle-break emits `null` at the recursion point, and
+    // null is deterministic.
+    const a: Record<string, unknown> = { name: 'alice' };
+    a['self'] = a;
+    const b: Record<string, unknown> = { name: 'alice' };
+    b['self'] = b;
+    expect(hashValues(a)).toBe(hashValues(b));
+  });
+
+  it('hashes YAML-alias sibling sharing identically to the anchor-free equivalent', () => {
+    // YAML `a: &x {k: 1}\nb: *x` resolves to `{a, b}` with both keys
+    // pointing at the SAME object reference. The cycle guard must
+    // distinguish a real cycle (re-encounter during descent) from a
+    // shared-but-non-cyclic sibling (re-encounter AFTER descent
+    // finished). Emitting `null` for the second sibling — as a
+    // persistent visited-ever set would — silently changes the hash
+    // vs. anchor-free YAML, which would produce `values_hash` drift
+    // every time a shard author added or removed an anchor.
+    const shared = { k: 1 };
+    const withAnchor = { a: shared, b: shared };
+    const expanded = { a: { k: 1 }, b: { k: 1 } };
+    expect(hashValues(withAnchor)).toBe(hashValues(expanded));
+  });
+
+  it('distinguishes a real cycle from shared non-cyclic siblings', () => {
+    // Guard against the other direction of regression: if descent
+    // tracking ever stops firing at all, the cycle case would hash
+    // identically to a non-cyclic "just a shared sibling" graph. They
+    // are genuinely different shapes.
+    const cyclic: Record<string, unknown> = { name: 'a' };
+    cyclic['self'] = cyclic;
+    const shared = { name: 'a' };
+    const nonCyclic = { name: 'a', self: shared };
+    expect(hashValues(cyclic)).not.toBe(hashValues(nonCyclic));
+  });
 });
 
 describe('defaultModuleSelections', () => {

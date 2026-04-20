@@ -7,7 +7,7 @@ import { resolveVaultRoot, loadState, getIncludedModules } from '../../source/ru
 import { loadValues, validateValues } from '../../source/runtime/values.js';
 import { loadSchema } from '../../source/runtime/schema.js';
 import { validateFrontmatter } from '../../source/runtime/frontmatter.js';
-import type { ShardSchema } from '../../source/runtime/types.js';
+import { assertNever, type ShardSchema } from '../../source/runtime/types.js';
 
 let mockVault: string;
 const originalCwd = process.cwd;
@@ -282,5 +282,61 @@ describe('validateFrontmatter', () => {
     const result = validateFrontmatter('README.md', '# README\nNo frontmatter here.\n', schema);
     expect(result.valid).toBe(true);
     expect(result.noteType).toBeNull();
+  });
+
+  it('path_match glob does NOT cross path segments', () => {
+    // `brain/*.md` (single `*`) must not match `brain/sub/note.md` —
+    // shell-glob semantics say `*` stops at `/`. The previous naive
+    // `*` → `.*` rewrite matched across segments and picked the wrong
+    // note-type rule for deeply-nested files.
+    const content = '---\ndate: 2026-04-01\ntags:\n  - t\n---\n# Deep\n';
+    const result = validateFrontmatter('brain/sub/deep/note.md', content, schema);
+    // The global rule still applies (date + tags both present), but the
+    // `brain-note` rule (path_match: `brain/*.md`) must not claim a
+    // file three levels deep.
+    expect(result.noteType).toBeNull();
+    expect(result.valid).toBe(true);
+  });
+
+  it('path_match `**` DOES cross path segments (recursive glob)', () => {
+    // `**` is the opt-in escape hatch for cross-segment matching.
+    const localSchema: ShardSchema = {
+      ...schema,
+      frontmatter: {
+        global: { required: [] },
+        'deep-note': { required: ['date'], path_match: 'brain/**.md' },
+      },
+    };
+    const content = '---\ndate: 2026-04-01\n---\n# Deep\n';
+    const result = validateFrontmatter('brain/sub/deep/note.md', content, localSchema);
+    expect(result.noteType).toBe('deep-note');
+  });
+
+  it('assertNever throws with the received value when called at runtime', () => {
+    // Type-level exhaustiveness checks trip at compile time; the runtime
+    // arm exists so a dynamically-wrong dispatch (library caller passing
+    // a typo'd discriminant, or a JSON-decoded enum from a future
+    // schema version) surfaces an actionable error instead of falling
+    // through to whatever code followed the switch.
+    expect(() => assertNever('bogus' as never)).toThrow(/Unhandled variant/);
+    expect(() => assertNever({ kind: 'bogus' } as never)).toThrow();
+  });
+
+  it('path_match escapes regex metacharacters literally', () => {
+    // A glob like `notes/[draft].md` should match that exact filename,
+    // not treat `[draft]` as a regex character class. The escape step
+    // runs per-segment inside the `**` tokenizer.
+    const localSchema: ShardSchema = {
+      ...schema,
+      frontmatter: {
+        global: { required: [] },
+        'bracket-note': { required: ['date'], path_match: 'notes/[draft].md' },
+      },
+    };
+    const content = '---\ndate: 2026-04-01\n---\n# Draft\n';
+    const match = validateFrontmatter('notes/[draft].md', content, localSchema);
+    expect(match.noteType).toBe('bracket-note');
+    const miss = validateFrontmatter('notes/d.md', content, localSchema);
+    expect(miss.noteType).toBeNull();
   });
 });

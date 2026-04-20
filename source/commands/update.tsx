@@ -2,7 +2,7 @@ import { Box, Text } from 'ink';
 import zod from 'zod';
 
 import { Spinner, StatusMessage, Alert } from '../components/ui.js';
-import { ShardMindError } from '../runtime/types.js';
+import { ShardMindError, assertNever } from '../runtime/types.js';
 
 import DiffView from '../components/DiffView.js';
 import NewValuesPrompt from '../components/NewValuesPrompt.js';
@@ -41,137 +41,128 @@ export default function Update({ options }: Props) {
     dryRun,
   });
 
-  if (phase.kind === 'booting' || phase.kind === 'loading') {
-    const msg = phase.kind === 'loading' ? phase.message : 'Starting…';
-    return (
-      <CommandFrame dryRun={dryRun}>
-        <Box gap={1}>
-          <Spinner />
-          <Text>{msg}</Text>
-        </Box>
-      </CommandFrame>
-    );
+  switch (phase.kind) {
+    case 'booting':
+    case 'loading': {
+      const msg = phase.kind === 'loading' ? phase.message : 'Starting…';
+      return (
+        <CommandFrame dryRun={dryRun}>
+          <Box gap={1}>
+            <Spinner />
+            <Text>{msg}</Text>
+          </Box>
+        </CommandFrame>
+      );
+    }
+    case 'up-to-date':
+      return (
+        <CommandFrame dryRun={dryRun}>
+          <Box flexDirection="column" gap={1}>
+            <Header manifest={phase.manifest} />
+            <StatusMessage variant="success">
+              Already up to date at v{phase.state.version}.
+            </StatusMessage>
+          </Box>
+        </CommandFrame>
+      );
+    case 'prompt-new-values':
+      return (
+        <CommandFrame dryRun={dryRun}>
+          <Header manifest={phase.ctx.newManifest} />
+          <NewValuesPrompt
+            schema={phase.ctx.newSchema}
+            keys={phase.ctx.newRequiredKeys}
+            existingValues={phase.ctx.migratedValues}
+            onComplete={onNewValuesComplete}
+          />
+        </CommandFrame>
+      );
+    case 'prompt-new-modules':
+      return (
+        <CommandFrame dryRun={dryRun}>
+          <Header manifest={phase.ctx.newManifest} />
+          <NewModulesReview
+            offered={phase.ctx.newOptionalModules}
+            onSubmit={onNewModulesComplete}
+          />
+        </CommandFrame>
+      );
+    case 'prompt-removed-files':
+      return (
+        <CommandFrame dryRun={dryRun}>
+          <Header manifest={phase.ctx.newManifest} />
+          <RemovedFilesReview
+            paths={phase.paths}
+            onSubmit={onRemovedFilesComplete}
+          />
+        </CommandFrame>
+      );
+    case 'resolving-conflicts': {
+      const pending = phase.plan.pendingConflicts[phase.currentIndex];
+      if (!pending) return null;
+      return (
+        <CommandFrame dryRun={dryRun}>
+          <DiffView
+            path={pending.path}
+            index={phase.currentIndex + 1}
+            total={phase.plan.pendingConflicts.length}
+            result={pending.result}
+            onChoice={onConflictChoice}
+          />
+        </CommandFrame>
+      );
+    }
+    case 'writing':
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false}>
+          <CommandProgress
+            current={phase.current}
+            total={phase.total}
+            label={phase.label}
+            verbose={verbose}
+            history={phase.history}
+          />
+        </CommandFrame>
+      );
+    case 'summary':
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false}>
+          <UpdateSummary
+            summary={phase.summary}
+            durationMs={phase.durationMs}
+            migrationWarnings={phase.migrationWarnings}
+            hookOutput={phase.hook}
+            dryRun={phase.dryRun}
+          />
+        </CommandFrame>
+      );
+    case 'cancelled':
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false}>
+          <Box flexDirection="column">
+            <Alert variant="info">Cancelled</Alert>
+            <Text dimColor>{phase.reason}</Text>
+          </Box>
+        </CommandFrame>
+      );
+    case 'error': {
+      const err = phase.error;
+      const code = err instanceof ShardMindError ? err.code : null;
+      const hint = err instanceof ShardMindError ? err.hint : null;
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false}>
+          <Box flexDirection="column" gap={1}>
+            <StatusMessage variant="error">{err.message}</StatusMessage>
+            {code && <Text dimColor>code: {code}</Text>}
+            {hint && <Text>{hint}</Text>}
+            {phase.detail && <Text dimColor>{phase.detail}</Text>}
+          </Box>
+        </CommandFrame>
+      );
+    }
+    default:
+      return assertNever(phase);
   }
-
-  if (phase.kind === 'up-to-date') {
-    return (
-      <CommandFrame dryRun={dryRun}>
-        <Box flexDirection="column" gap={1}>
-          <Header manifest={phase.manifest} />
-          <StatusMessage variant="success">
-            Already up to date at v{phase.state.version}.
-          </StatusMessage>
-        </Box>
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'prompt-new-values') {
-    return (
-      <CommandFrame dryRun={dryRun}>
-        <Header manifest={phase.ctx.newManifest} />
-        <NewValuesPrompt
-          schema={phase.ctx.newSchema}
-          keys={phase.ctx.newRequiredKeys}
-          existingValues={phase.ctx.migratedValues}
-          onComplete={onNewValuesComplete}
-        />
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'prompt-new-modules') {
-    return (
-      <CommandFrame dryRun={dryRun}>
-        <Header manifest={phase.ctx.newManifest} />
-        <NewModulesReview
-          offered={phase.ctx.newOptionalModules}
-          onSubmit={onNewModulesComplete}
-        />
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'prompt-removed-files') {
-    return (
-      <CommandFrame dryRun={dryRun}>
-        <Header manifest={phase.ctx.newManifest} />
-        <RemovedFilesReview
-          paths={phase.paths}
-          onSubmit={onRemovedFilesComplete}
-        />
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'resolving-conflicts') {
-    const pending = phase.plan.pendingConflicts[phase.currentIndex];
-    if (!pending) return null;
-    return (
-      <CommandFrame dryRun={dryRun}>
-        <DiffView
-          path={pending.path}
-          index={phase.currentIndex + 1}
-          total={phase.plan.pendingConflicts.length}
-          result={pending.result}
-          onChoice={onConflictChoice}
-        />
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'writing') {
-    return (
-      <CommandFrame dryRun={dryRun} showLegend={false}>
-        <CommandProgress
-          current={phase.current}
-          total={phase.total}
-          label={phase.label}
-          verbose={verbose}
-          history={phase.history}
-        />
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'summary') {
-    return (
-      <CommandFrame dryRun={dryRun} showLegend={false}>
-        <UpdateSummary
-          summary={phase.summary}
-          durationMs={phase.durationMs}
-          migrationWarnings={phase.migrationWarnings}
-          hookOutput={phase.hook}
-          dryRun={phase.dryRun}
-        />
-      </CommandFrame>
-    );
-  }
-
-  if (phase.kind === 'cancelled') {
-    return (
-      <CommandFrame dryRun={dryRun} showLegend={false}>
-        <Box flexDirection="column">
-          <Alert variant="info">Cancelled</Alert>
-          <Text dimColor>{phase.reason}</Text>
-        </Box>
-      </CommandFrame>
-    );
-  }
-
-  const err = phase.error;
-  const code = err instanceof ShardMindError ? err.code : null;
-  const hint = err instanceof ShardMindError ? err.hint : null;
-  return (
-    <CommandFrame dryRun={dryRun} showLegend={false}>
-      <Box flexDirection="column" gap={1}>
-        <StatusMessage variant="error">{err.message}</StatusMessage>
-        {code && <Text dimColor>code: {code}</Text>}
-        {hint && <Text>{hint}</Text>}
-        {phase.detail && <Text dimColor>{phase.detail}</Text>}
-      </Box>
-    </CommandFrame>
-  );
 }
 
 export const description = 'Update the installed shard to its latest version';

@@ -70,12 +70,17 @@ shardmind/
 │   │   ├── VerboseView.tsx            # Detailed diagnostics (shardmind --verbose)
 │   │   ├── InstallWizard.tsx          # Values prompts + module review
 │   │   ├── ModuleReview.tsx           # Multiselect for modules
+│   │   ├── CollisionReview.tsx        # Install: backup / overwrite / cancel
+│   │   ├── ExistingInstallGate.tsx    # Install: existing-install disambiguation
 │   │   ├── DiffView.tsx               # Three-way diff + conflict resolution
 │   │   ├── NewValuesPrompt.tsx        # Update: prompt for newly required values
 │   │   ├── NewModulesReview.tsx       # Update: offer newly optional modules
 │   │   ├── RemovedFilesReview.tsx     # Update: per-file keep/delete decision
+│   │   ├── Summary.tsx                # Final install report
 │   │   ├── UpdateSummary.tsx          # Final update report
-│   │   └── Header.tsx                 # Branded header
+│   │   ├── ValueInput.tsx             # Typed input widget (string/number/select…)
+│   │   ├── Header.tsx                 # Branded header
+│   │   └── ui.ts                      # Barrel re-export of @inkjs/ui primitives
 │   ├── core/
 │   │   ├── manifest.ts                # Parse + validate shard.yaml
 │   │   ├── schema.ts                  # Parse shard-schema.yaml → zod validator
@@ -83,6 +88,7 @@ shardmind/
 │   │   ├── download.ts                # Fetch + extract GitHub tarball
 │   │   ├── renderer.ts                # Nunjucks + frontmatter-aware rendering
 │   │   ├── state.ts                   # Read/write .shardmind/state.json
+│   │   ├── state-migrator.ts          # Forward-migrate state.json (v0.2 hook, v0.1 scaffolding)
 │   │   ├── drift.ts                   # Ownership detection + drift analysis
 │   │   ├── differ.ts                  # Three-way merge (node-diff3)
 │   │   ├── migrator.ts                # Apply schema migrations to values
@@ -94,15 +100,19 @@ shardmind/
 │   │   ├── values-io.ts               # Shared YAML load for shard-values.yaml
 │   │   ├── update-check.ts            # 24h cached latest-version lookup (status + update)
 │   │   ├── status.ts                  # Pure StatusReport builder for the status command
+│   │   ├── cancellation.ts            # Cross-platform SIGINT bridge (Windows stdin-ETX)
 │   │   ├── hook.ts                    # Post-install / post-update hook lookup
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── runtime/                       # Exported for hook scripts
 │   │   ├── index.ts                   # Re-exports
-│   │   ├── values.ts                  # loadValues()
+│   │   ├── values.ts                  # loadValues(), validateValues()
 │   │   ├── schema.ts                  # loadSchema()
 │   │   ├── frontmatter.ts             # validateFrontmatter()
 │   │   ├── state.ts                   # loadState(), getIncludedModules()
-│   │   └── types.ts                   # All shared types
+│   │   ├── vault-paths.ts             # SHARDMIND_DIR, VALUES_FILE, STATE_FILE, …
+│   │   ├── errors.ts                  # Typed ErrorCode registry
+│   │   ├── errno.ts                   # errnoCode(err), isEnoent(err) helpers
+│   │   └── types.ts                   # All shared types + ShardMindError + assertNever
 │   └── types/
 │       └── index.ts                   # Re-exports from runtime
 ├── tests/
@@ -148,7 +158,7 @@ npm run typecheck     # tsc --noEmit
 
 - **Language**: TypeScript, ESM, strict mode.
 - **Formatting**: follow the existing style in the codebase. No formatter configured yet — consistency by convention.
-- **No `any`** except in `schema.ts` zod dynamic generation (documented in spec). Prefer `unknown` + type narrowing.
+- **No `any`** except in `source/core/schema.ts` and `source/runtime/values.ts` zod dynamic generation (documented in spec; the runtime copy is a necessary duplicate because `runtime/` can't import from `core/`). Prefer `unknown` + type narrowing everywhere else.
 - **No `@ts-ignore` or `@ts-nocheck`**. Fix root causes. If a suppression is truly needed, comment why.
 - **Prefer `zod`** for validation at external boundaries: shard.yaml parsing, values validation, CLI arg parsing (Pastel handles this).
 - **Error handling**: throw `ShardMindError(message, code, hint)`. Commands catch and render via Ink `StatusMessage`. User errors get a message + hint. Engine errors get a full stack trace + "This is a bug, please report." See spec §7.
@@ -204,11 +214,17 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `drift.ts` | §4.8 | Ownership detection + drift analysis |
 | `differ.ts` | §4.9 | Three-way merge via node-diff3 |
 | `migrator.ts` | §4.10 | Apply schema migrations to values |
+| `install-planner.ts` | §4.11a (to land) | Pure install plan (outputs, collisions, value-coercion, computed defaults) |
+| `install-executor.ts` | §4.11b (to land) | Apply install plan with transactional backup + rollback |
 | `update-planner.ts` | §4.11 | Plan update actions from drift + new-shard render |
 | `update-executor.ts` | §4.12 | Apply update plan with snapshot-based rollback |
 | `values-io.ts` | §4.13 | Shared YAML load for shard-values.yaml (install + update) |
 | `status.ts` | §4.14 | Pure StatusReport builder for the `shardmind` (status) command |
 | `update-check.ts` | §4.15 | 24h cached GitHub latest-version lookup shared by status + update |
+| `cancellation.ts` | ARCHITECTURE §19.7 | Cross-platform SIGINT bridge (Windows stdin-ETX → process.emit SIGINT) |
+| `state-migrator.ts` | §4.7 (v0.2 hook) | Forward-migration framework for `.shardmind/state.json`; scaffolding in v0.1 |
+| `hook.ts` | (runtime glue) | Resolve + invoke post-install / post-update hook scripts (non-fatal) |
+| `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent, stripTemplatePrefix |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
 

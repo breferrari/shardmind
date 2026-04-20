@@ -75,6 +75,12 @@ export type ErrorCode =
   | 'UPDATE_CACHE_MISSING'
   | 'UPDATE_WRITE_FAILED'
   | 'MIGRATION_INVALID_VERSION'
+  // Reserved for the v0.2 sandboxed-transform path: currently migrator.ts
+  // swallows `type_changed` transform exceptions and records a warning
+  // (best-effort posture), so this code is declared but unthrown. When
+  // the sandboxed evaluator lands it will fire this code so the command
+  // layer can distinguish "transform crashed" from "transform returned
+  // the wrong shape". See IMPLEMENTATION.md §7.
   | 'MIGRATION_TRANSFORM_FAILED'
 
   // Update-check cache (status command + update command share this)
