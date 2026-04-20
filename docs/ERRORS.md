@@ -231,7 +231,7 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 
 **Meaning:** Install tried to write `shard-values.yaml` but the file already exists. The `ExistingInstallGate` normally catches this earlier; this is a last-defense check.
 
-**Remedy:** Move or remove the existing `shard-values.yaml`. `shardmind update` (Milestone 4) will handle this automatically once available.
+**Remedy:** Move or remove the existing `shard-values.yaml` before re-running `install`. If `.shardmind/state.json` is also present, `shardmind update` is the right command (it'll upgrade the current install in place); without state.json, `update` throws `UPDATE_NO_INSTALL` so `install` is the only path.
 
 ### `VALUES_MISSING`
 
