@@ -31,12 +31,21 @@ if ! shardmind update --yes; then
   echo "update failed" >&2
   exit 1
 fi
-
-# Cross-platform cancellation (useful when parent process dies)
-printf '\x03' > /proc/$$/fd/0  # POSIX shell equivalent of Ctrl+C into stdin
 ```
 
-Non-interactive invocations (stdin is a pipe, not a TTY) can send the ETX byte (`0x03`) on stdin to request clean cancellation. The CLI treats it as SIGINT internally and walks back any in-progress writes before exiting with `130`. This is how the Windows E2E tests deliver SIGINT mid-install — `child.kill('SIGINT')` from a parent process is emulated as `TerminateProcess` on Windows, which skips every `process.on('SIGINT', ...)` handler. The ETX bridge (`source/core/cancellation.ts`) keeps cancellation cross-platform.
+**Non-interactive cancellation** — when the CLI is invoked non-interactively (stdin is a pipe, not a TTY), writing the ETX byte (`0x03`, the ASCII form of Ctrl+C) to the child's stdin requests clean cancellation. The CLI re-emits SIGINT inside its own process, walks back any in-progress writes, and exits with `130`. This exists because Node's `child.kill('SIGINT')` is emulated as `TerminateProcess` on Windows — skipping every `process.on('SIGINT', ...)` handler — so a cross-platform wrapper can't rely on signalling. Wrapper scripts control the child's stdin explicitly to deliver the byte:
+
+```javascript
+import { spawn } from 'node:child_process';
+const child = spawn('shardmind', ['install', 'acme/demo', '--yes', '--values', 'values.yaml'], {
+  stdio: ['pipe', 'inherit', 'inherit'],
+});
+// Later, when you want to cancel:
+child.stdin.write(Buffer.from([0x03]));
+child.stdin.end();
+```
+
+The bridge lives in `source/core/cancellation.ts`; TTY invocations are unaffected (real Ctrl+C in the terminal is handled by Node's native console-signal plumbing on both platforms).
 
 ---
 

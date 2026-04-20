@@ -27,7 +27,13 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import fc from 'fast-check';
+
+// Read package.json for the expected --version assertion so the test
+// tracks the shipped version automatically instead of hard-coding.
+const pkg = createRequire(import.meta.url)('../../package.json') as { version: string };
+const PACKAGE_VERSION = pkg.version;
 
 import { ensureBuilt } from './helpers/build-once.js';
 import { buildTarballFixtures, cleanupTarballFixtures, type TarballFixtures } from './helpers/tarball.js';
@@ -108,7 +114,7 @@ describe('CLI bootstrap', () => {
     vault = await createEmptyVault('version');
     const result = await spawnCli(['--version'], { cwd: vault.root, env: envWithStub() });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.trim()).toMatch(/^0\.1\.0$/);
+    expect(result.stdout.trim()).toBe(PACKAGE_VERSION);
   });
 
   it('--help lists install and update subcommands', async () => {

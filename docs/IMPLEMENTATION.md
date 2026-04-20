@@ -1172,11 +1172,13 @@ Afternoon:
                         + VERSION_NOT_FOUND + SHARD_NOT_FOUND +
                         REGISTRY_INVALID_REF + VALUES_MISSING + collision
                         backup + dry-run-over-collision + SIGINT rollback
-                        (POSIX only)
+                        (skipped on GH Actions Windows only; see §19.7
+                        and #57 — production bridge is cross-platform)
       → Update    (7): UPDATE_NO_INSTALL typed error, up-to-date,
                        real bump + file add, auto-merge on non-conflict,
                        UPDATE_SOURCE_MISMATCH on corrupted state.source,
-                       --dry-run no-op, SIGINT rollback (POSIX only)
+                       --dry-run no-op, SIGINT rollback
+                       (same GH Actions Windows skip as install)
       → Property  (2): install structural determinism (files/modules/
                        values_hash), dry-run safety across arbitrary
                        valid values
