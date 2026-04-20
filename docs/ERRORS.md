@@ -28,9 +28,15 @@ Thrown by `source/core/registry.ts`.
 
 ### `VERSION_NOT_FOUND`
 
-**Meaning:** The version you asked for isn't available. For registry mode, the version isn't in the `versions[]` array. For direct mode, the git tag `v<version>` doesn't exist on the repo. Also thrown when direct-mode `releases/latest` returns 404.
+**Meaning:** The version you asked for isn't available. For registry mode, the version isn't in the `versions[]` array. For direct mode, the git tag `v<version>` doesn't exist on the repo (HEAD on the tarball URL returns 404).
 
 **Remedy:** Pick an available version (the error message lists them for registry mode), or omit `@version` to use the latest.
+
+### `NO_RELEASES_PUBLISHED`
+
+**Meaning:** Direct-mode `/releases/latest` returned 404 — the upstream repo has no published releases at all. Distinct from `VERSION_NOT_FOUND` (which fires when a specific tag is missing) so `shardmind update` can route on a stable code instead of matching message text.
+
+**Remedy:** Specify a version explicitly with `@version` if one exists, or publish a GitHub release upstream, or reinstall from a different source.
 
 ### `REGISTRY_NETWORK`
 

@@ -65,14 +65,20 @@ describe('CollisionReview', () => {
 
   it('backup choice fires onChoice("backup")', async () => {
     const onChoice = vi.fn();
-    const { stdin } = await mount(
+    const { stdin, lastFrame } = await mount(
       <CollisionReview
         collisions={[collision('Home.md')]}
         onChoice={onChoice}
       />,
     );
 
-    // First option (backup) is default; Enter commits.
+    // `mount`'s 30 ms stabilization tick is sometimes too short for Ink's
+    // Select to bind its `useInput` handler on Windows CI. The sibling
+    // cancel test gets enough grace from its two ARROW_DOWN writes;
+    // this test writes ENTER immediately, so we wait for the Back-up
+    // option to render before injecting input. `waitFor` adds its own
+    // post-predicate tick, which covers the remaining useInput latency.
+    await waitFor(lastFrame, (f) => f.includes('Back up'));
     stdin.write(ENTER);
     await waitFor(() => (onChoice.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
 
@@ -81,13 +87,16 @@ describe('CollisionReview', () => {
 
   it('cancel choice fires onChoice("cancel")', async () => {
     const onChoice = vi.fn();
-    const { stdin } = await mount(
+    const { stdin, lastFrame } = await mount(
       <CollisionReview
         collisions={[collision('Home.md')]}
         onChoice={onChoice}
       />,
     );
 
+    // Same Windows useInput-registration race as the backup test — wait
+    // for the Select to render before driving it.
+    await waitFor(lastFrame, (f) => f.includes('Back up'));
     // Move down twice: backup → overwrite → cancel
     stdin.write(ARROW_DOWN);
     await tick(30);

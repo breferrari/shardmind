@@ -88,7 +88,10 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
     expect((err as ShardMindError).hint).toContain('ghost/shard');
   });
 
-  it('keeps VERSION_NOT_FOUND but rewrites the hint for update audience', async () => {
+  it('VERSION_NOT_FOUND from a missing tarball gets the "transient / deleted tag" hint', async () => {
+    // verifyTag branch: /releases/latest succeeds with a tag, then the
+    // HEAD on the tarball 404s — the tag exists in the API but the
+    // tarball is unreachable. "Retry in a minute" is the right hint.
     globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const u = typeof url === 'string' ? url : url.toString();
       if (u.endsWith('/releases/latest')) {
@@ -105,6 +108,33 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
     expect((err as ShardMindError).hint).not.toMatch(/pick an available version/i);
     // Update-path hint mentions transient GitHub state or deleted tag.
     expect((err as ShardMindError).hint).toMatch(/transient|deleted/i);
+    // And NOT the "no published releases" hint — that's the other branch.
+    expect((err as ShardMindError).hint).not.toMatch(/no published releases/i);
+  });
+
+  it('NO_RELEASES_PUBLISHED keeps its code but rewrites the install hint for update audience', async () => {
+    // fetchLatestRelease branch: /releases/latest 404s — the upstream
+    // repo has no releases at all. registry.ts emits NO_RELEASES_PUBLISHED
+    // (a distinct code) so the update command can route on it reliably
+    // without matching the message text. The update-audience hint avoids
+    // the install-path "publish a GitHub release" wording (which assumes
+    // the user controls the upstream) and the tarball-missing wording
+    // (which doesn't fit — there is no tarball here).
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      if (u.endsWith('/releases/latest')) return new Response(null, { status: 404 });
+      throw new Error(`Unexpected fetch: ${u}`);
+    }) as typeof fetch;
+
+    const err = await resolveRefForUpdate('github:acme/widget').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ShardMindError);
+    expect((err as ShardMindError).code).toBe('NO_RELEASES_PUBLISHED');
+    // Install-path "publish a release" hint must not surface.
+    expect((err as ShardMindError).hint).not.toMatch(/publish a GitHub release/i);
+    // Update-path "no published releases" branch hint — and not the
+    // tarball-missing hint.
+    expect((err as ShardMindError).hint).toMatch(/no published releases/i);
+    expect((err as ShardMindError).hint).not.toMatch(/transient/i);
   });
 
   it('passes REGISTRY_NETWORK through unchanged — hint is already context-agnostic', async () => {

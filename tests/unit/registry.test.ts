@@ -252,7 +252,11 @@ describe('registry.resolve', () => {
       expect(calls.some((u) => u.includes('/releases/latest'))).toBe(false);
     });
 
-    it('throws VERSION_NOT_FOUND when direct mode repo has no releases', async () => {
+    it('throws NO_RELEASES_PUBLISHED when direct mode repo has no releases', async () => {
+      // Distinct from VERSION_NOT_FOUND: /releases/latest returning 404
+      // means the repo has no releases at all. The update command uses
+      // this code to pick an accurate remediation hint without matching
+      // the message text (which is brittle).
       globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
         const u = typeof url === 'string' ? url : url.toString();
         if (u.endsWith('/releases/latest')) return new Response(null, { status: 404 });
@@ -260,7 +264,7 @@ describe('registry.resolve', () => {
       }) as typeof fetch;
 
       await expect(resolve('github:acme/widget')).rejects.toMatchObject({
-        code: 'VERSION_NOT_FOUND',
+        code: 'NO_RELEASES_PUBLISHED',
       });
     });
   });
@@ -356,6 +360,51 @@ describe('registry.resolve', () => {
       }) as typeof fetch;
 
       await resolveFresh('github:acme/widget');
+    });
+
+    it('trims whitespace around SHARDMIND_GITHUB_API_BASE', async () => {
+      // Env values copied from docs / CI secret stores frequently pick up
+      // leading newlines or trailing spaces. Untrimmed, they produce URLs
+      // like `\n http://host\n/repos/...`, which makes `new URL(url).host`
+      // inside `safeFetch`'s error path throw a second, unrelated error.
+      process.env['SHARDMIND_GITHUB_API_BASE'] = '  \n http://127.0.0.1:12345  \n';
+      vi.resetModules();
+      const { resolve: resolveFresh } = await import('../../source/core/registry.js');
+
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        expect(u).toBe(
+          init?.method === 'HEAD'
+            ? 'http://127.0.0.1:12345/repos/acme/widget/tarball/v1.0.0'
+            : 'http://127.0.0.1:12345/repos/acme/widget/releases/latest',
+        );
+        if (u.endsWith('/releases/latest')) return jsonResponse({ tag_name: 'v1.0.0' });
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      await resolveFresh('github:acme/widget');
+    });
+
+    it('trims whitespace around SHARDMIND_REGISTRY_INDEX_URL', async () => {
+      process.env['SHARDMIND_REGISTRY_INDEX_URL'] = '  http://127.0.0.1:12345/index.json\n';
+      vi.resetModules();
+      const { resolve: resolveFresh } = await import('../../source/core/registry.js');
+
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u === 'http://127.0.0.1:12345/index.json') {
+          return indexResponse({
+            shards: {
+              'ns/name': { repo: 'ns/name', latest: '1.0.0', versions: ['1.0.0'] },
+            },
+          });
+        }
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      await resolveFresh('ns/name');
     });
 
     it('SHARDMIND_REGISTRY_INDEX_URL reroutes registry index lookup', async () => {

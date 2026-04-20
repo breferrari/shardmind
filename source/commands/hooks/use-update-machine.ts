@@ -607,7 +607,24 @@ export async function resolveRefForUpdate(source: string): Promise<ResolvedShard
           `The shard recorded in .shardmind/state.json ('${source}') is no longer listed in the registry. It may have been renamed, moved, or deprecated — check the shard's homepage, or reinstall from a github:owner/repo source.`,
         );
       }
+      if (err.code === 'NO_RELEASES_PUBLISHED') {
+        // registry.ts fires NO_RELEASES_PUBLISHED when `/releases/latest`
+        // returns 404 — the upstream repo has no releases at all. The
+        // "retry / transient state" hint doesn't fit: there's no tarball
+        // to retry. Point at the actual remediation without speculating
+        // about cause (the shard may have installed from a pinned
+        // @version tag that never had releases, which state.source can't
+        // retain).
+        throw new ShardMindError(
+          err.message,
+          'NO_RELEASES_PUBLISHED',
+          `'${source}' currently has no published releases. Check the repository's releases page — someone may need to publish a release, or you may need to reinstall from a different source.`,
+        );
+      }
       if (err.code === 'VERSION_NOT_FOUND') {
+        // This is the `verifyTag` HEAD-404 branch: /releases/latest
+        // returned a tag but the tarball isn't fetchable. Usually a
+        // transient GitHub state or a deleted tag.
         throw new ShardMindError(
           err.message,
           'VERSION_NOT_FOUND',

@@ -155,6 +155,31 @@ describe('backupCollisions', () => {
     expect(backup).toBe('user content');
   });
 
+  it('names the collision "kind" in the error message when backup fails', async () => {
+    // Covers both the file and the directory branch: the thrown error
+    // reads "Could not back up existing <kind>: <path>", not the legacy
+    // always-"file" wording. Directory collisions happen for real — a
+    // shard with a module path that matches an existing vault folder —
+    // so the message has to be accurate.
+    const filePath = path.join(vault, 'file-in-missing-parent', 'x.md');
+    const dirPath = path.join(vault, 'dir-in-missing-parent', 'subdir');
+    // Parent directories do not exist → fsp.rename throws ENOENT for both.
+
+    const fileErr = await backupCollisions(
+      [{ outputPath: 'x.md', absolutePath: filePath, size: 0, mtime: new Date(), kind: 'file' }],
+      new Date('2026-04-18T10:30:00.000Z'),
+    ).catch((e: unknown) => e);
+    expect(fileErr).toBeInstanceOf(ShardMindError);
+    expect((fileErr as ShardMindError).message).toMatch(/Could not back up existing file:/);
+
+    const dirErr = await backupCollisions(
+      [{ outputPath: 'subdir', absolutePath: dirPath, size: 0, mtime: new Date(), kind: 'directory' }],
+      new Date('2026-04-18T10:30:00.000Z'),
+    ).catch((e: unknown) => e);
+    expect(dirErr).toBeInstanceOf(ShardMindError);
+    expect((dirErr as ShardMindError).message).toMatch(/Could not back up existing directory:/);
+  });
+
   it('appends a counter when a backup path already exists (same-second collisions)', async () => {
     const original = path.join(vault, 'Home.md');
     const stamp = '2026-04-18T10-30-00';
@@ -209,10 +234,13 @@ describe('backupCollisions', () => {
   });
 
   it('names the orphaned backup path in the hint when restore also fails', async () => {
-    // Force a restore-walk failure by pre-seeding a file at the original
-    // location after the rename — the restore's rename(backup, original)
-    // will EEXIST on Windows / overwrite on Unix. We use an occupied
-    // directory to force EEXIST on both.
+    // Force a restore-walk failure by intercepting the third fsp.rename
+    // call with a mocked EACCES. Earlier drafts of this test tried to
+    // trigger a real EEXIST by pre-seeding a file at the original path,
+    // but that's racy under Windows' rename-over-existing semantics;
+    // a mocked errno is deterministic on every OS and matches how
+    // backupCollisions actually rolls back in production (it re-throws
+    // whatever the OS returns).
     const a = path.join(vault, 'A.md');
     const missing = path.join(vault, 'missing.md');
     await fsp.writeFile(a, 'alpha', 'utf-8');
