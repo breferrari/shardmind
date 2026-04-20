@@ -607,25 +607,28 @@ export async function resolveRefForUpdate(source: string): Promise<ResolvedShard
           `The shard recorded in .shardmind/state.json ('${source}') is no longer listed in the registry. It may have been renamed, moved, or deprecated — check the shard's homepage, or reinstall from a github:owner/repo source.`,
         );
       }
+      if (err.code === 'NO_RELEASES_PUBLISHED') {
+        // registry.ts fires NO_RELEASES_PUBLISHED when `/releases/latest`
+        // returns 404 — the upstream repo has no releases at all. The
+        // "retry / transient state" hint doesn't fit: there's no tarball
+        // to retry. Point at the actual remediation without speculating
+        // about cause (the shard may have installed from a pinned
+        // @version tag that never had releases, which state.source can't
+        // retain).
+        throw new ShardMindError(
+          err.message,
+          'NO_RELEASES_PUBLISHED',
+          `'${source}' currently has no published releases. Check the repository's releases page — someone may need to publish a release, or you may need to reinstall from a different source.`,
+        );
+      }
       if (err.code === 'VERSION_NOT_FOUND') {
-        // registry.ts throws VERSION_NOT_FOUND in two distinct cases:
-        //   1. GitHub's /releases/latest returns 404 — the repo has no
-        //      releases at all ("No releases found for <owner>/<repo>").
-        //   2. verifyTag's HEAD probe on the tarball URL returns 404 —
-        //      the tag exists in /releases/latest but the tarball isn't
-        //      fetchable (transient GitHub state or deleted tag).
-        // The "tarball missing upstream" hint only fits case 2. Rewriting
-        // case 1 with it is actively misleading — the user has no tarball
-        // to retry, they need to cut a release upstream. Detect by the
-        // message prefix registry.ts emits and preserve the original
-        // "publish a GitHub release" hint there instead.
-        const isNoReleases = err.message.startsWith('No releases found');
+        // This is the `verifyTag` HEAD-404 branch: /releases/latest
+        // returned a tag but the tarball isn't fetchable. Usually a
+        // transient GitHub state or a deleted tag.
         throw new ShardMindError(
           err.message,
           'VERSION_NOT_FOUND',
-          isNoReleases
-            ? `'${source}' has no published releases — someone uninstalled or deleted them upstream since the shard was installed. Check the repository's releases page, or reinstall from a different source.`
-            : `The latest version of '${source}' reports a tag whose tarball is missing upstream — usually a transient GitHub state or a deleted tag. Retry in a minute, or reinstall if the issue persists.`,
+          `The latest version of '${source}' reports a tag whose tarball is missing upstream — usually a transient GitHub state or a deleted tag. Retry in a minute, or reinstall if the issue persists.`,
         );
       }
     }

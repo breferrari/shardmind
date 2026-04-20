@@ -241,9 +241,14 @@ async function fetchLatestRelease(
   }
 
   if (response.status === 404) {
+    // Distinct from the verifyTag 404 branch (which throws VERSION_NOT_FOUND).
+    // This one fires when GitHub's `/releases/latest` returns 404, meaning
+    // the repo has no published releases at all. Keeping these codes
+    // separate lets the update command emit a different, accurate hint —
+    // instead of a brittle text match on the message.
     throw new ShardMindError(
       `No releases found for ${namespace}/${name}`,
-      'VERSION_NOT_FOUND',
+      'NO_RELEASES_PUBLISHED',
       'Specify a version explicitly with @version, or publish a GitHub release.',
     );
   }

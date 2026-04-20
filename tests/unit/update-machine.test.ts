@@ -112,10 +112,14 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
     expect((err as ShardMindError).hint).not.toMatch(/no published releases/i);
   });
 
-  it('VERSION_NOT_FOUND from a repo with no releases gets the "no published releases" hint', async () => {
+  it('NO_RELEASES_PUBLISHED keeps its code but rewrites the install hint for update audience', async () => {
     // fetchLatestRelease branch: /releases/latest 404s — the upstream
-    // repo has no releases at all. "Retry in a minute" is misleading;
-    // the user needs a different remediation. This test pins the split.
+    // repo has no releases at all. registry.ts emits NO_RELEASES_PUBLISHED
+    // (a distinct code) so the update command can route on it reliably
+    // without matching the message text. The update-audience hint avoids
+    // the install-path "publish a GitHub release" wording (which assumes
+    // the user controls the upstream) and the tarball-missing wording
+    // (which doesn't fit — there is no tarball here).
     globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
       const u = typeof url === 'string' ? url : url.toString();
       if (u.endsWith('/releases/latest')) return new Response(null, { status: 404 });
@@ -124,10 +128,11 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
 
     const err = await resolveRefForUpdate('github:acme/widget').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ShardMindError);
-    expect((err as ShardMindError).code).toBe('VERSION_NOT_FOUND');
-    // Install-path hint must not surface.
+    expect((err as ShardMindError).code).toBe('NO_RELEASES_PUBLISHED');
+    // Install-path "publish a release" hint must not surface.
     expect((err as ShardMindError).hint).not.toMatch(/publish a GitHub release/i);
-    // Update-path "no releases" branch hint — and not the tarball-missing hint.
+    // Update-path "no published releases" branch hint — and not the
+    // tarball-missing hint.
     expect((err as ShardMindError).hint).toMatch(/no published releases/i);
     expect((err as ShardMindError).hint).not.toMatch(/transient/i);
   });

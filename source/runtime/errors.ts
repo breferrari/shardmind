@@ -47,6 +47,7 @@ export type ErrorCode =
   // Registry / download
   | 'SHARD_NOT_FOUND'
   | 'VERSION_NOT_FOUND'
+  | 'NO_RELEASES_PUBLISHED'
   | 'REGISTRY_NETWORK'
   | 'REGISTRY_INVALID_REF'
   | 'REGISTRY_RATE_LIMITED'

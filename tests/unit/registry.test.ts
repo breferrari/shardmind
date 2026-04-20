@@ -252,7 +252,11 @@ describe('registry.resolve', () => {
       expect(calls.some((u) => u.includes('/releases/latest'))).toBe(false);
     });
 
-    it('throws VERSION_NOT_FOUND when direct mode repo has no releases', async () => {
+    it('throws NO_RELEASES_PUBLISHED when direct mode repo has no releases', async () => {
+      // Distinct from VERSION_NOT_FOUND: /releases/latest returning 404
+      // means the repo has no releases at all. The update command uses
+      // this code to pick an accurate remediation hint without matching
+      // the message text (which is brittle).
       globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
         const u = typeof url === 'string' ? url : url.toString();
         if (u.endsWith('/releases/latest')) return new Response(null, { status: 404 });
@@ -260,7 +264,7 @@ describe('registry.resolve', () => {
       }) as typeof fetch;
 
       await expect(resolve('github:acme/widget')).rejects.toMatchObject({
-        code: 'VERSION_NOT_FOUND',
+        code: 'NO_RELEASES_PUBLISHED',
       });
     });
   });

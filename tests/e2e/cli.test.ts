@@ -309,8 +309,9 @@ describe('shardmind install', () => {
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(1);
-    // The stub returns 404 for unregistered repos; surfaces as VERSION_NOT_FOUND.
-    expect(result.stdout).toMatch(/VERSION_NOT_FOUND|SHARD_NOT_FOUND|not found/i);
+    // The stub returns 404 for unregistered repos; /releases/latest 404
+    // now surfaces as NO_RELEASES_PUBLISHED (was VERSION_NOT_FOUND pre-#58).
+    expect(result.stdout).toMatch(/NO_RELEASES_PUBLISHED|VERSION_NOT_FOUND|SHARD_NOT_FOUND|not found/i);
   });
 
   it('rejects a malformed ref with REGISTRY_INVALID_REF', async () => {
