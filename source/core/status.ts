@@ -112,6 +112,13 @@ export async function buildStatusReport(
   const state = await readState(vaultRoot);
   if (!state) return null;
 
+  // `readState` casts without field-level validation, so state.version may
+  // arrive as an empty string from a hand-edited state.json. Normalize once
+  // here so every `UpdateStatus.current` (via this closure or `resolveUpdate`)
+  // and every equality check against `latest_version` uses the same value.
+  // Mirrors the synthesizeManifest fallback for `state.shard`.
+  const currentVersion = state.version?.trim() || 'unknown';
+
   const warnings: StatusWarning[] = [];
 
   const manifest = await loadCachedManifest(vaultRoot, warnings);
@@ -124,13 +131,13 @@ export async function buildStatusReport(
     opts.skipUpdateCheck
       ? Promise.resolve<UpdateStatus>({
           kind: 'unknown',
-          current: state.version,
+          current: currentVersion,
           // Not network failure — the caller intentionally skipped the
           // lookup (CI mode, offline-first tests). Distinct from the
           // `'no-network'` reason we emit after a real fetch failure.
           reason: 'cache-miss',
         })
-      : resolveUpdate(vaultRoot, state, now, warnings, opts.verbose),
+      : resolveUpdate(state, currentVersion, vaultRoot, now, warnings, opts.verbose),
     schema
       ? buildValuesSummary(rawValues, schema)
       : Promise.resolve<StatusValuesSummary>({
@@ -377,8 +384,9 @@ function uniq<T>(xs: readonly T[]): T[] {
 // ---------------------------------------------------------------------------
 
 async function resolveUpdate(
-  vaultRoot: string,
   state: ShardState,
+  currentVersion: string,
+  vaultRoot: string,
   now: number,
   warnings: StatusWarning[],
   verbose: boolean,
@@ -400,18 +408,18 @@ async function resolveUpdate(
   if (result.kind === 'unknown') {
     return {
       kind: 'unknown',
-      current: state.version,
+      current: currentVersion,
       reason: result.reason,
     };
   }
 
-  if (result.latest_version === state.version) {
-    return { kind: 'up-to-date', current: state.version };
+  if (result.latest_version === currentVersion) {
+    return { kind: 'up-to-date', current: currentVersion };
   }
 
   return {
     kind: 'available',
-    current: state.version,
+    current: currentVersion,
     latest: result.latest_version,
     cacheAge: result.kind === 'fresh' ? 'fresh' : 'stale',
   };

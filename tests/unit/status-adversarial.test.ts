@@ -285,6 +285,25 @@ describe('status (adversarial)', () => {
     expect(report!.manifest.version).toBe('unknown');
   });
 
+  it('normalizes empty/whitespace state.version into UpdateStatus.current', async () => {
+    // Avoids a corrupt-state.json producing UI strings like "upgrade from v"
+    // or comparing an empty version against the latest tag.
+    await installMinimal(vault);
+    const state = (await readState(vault)) as ShardState;
+    const broken: ShardState = { ...state, version: '   ' };
+    await fsp.writeFile(path.join(vault, STATE_FILE), JSON.stringify(broken), 'utf-8');
+
+    const report = await buildStatusReport(vault, {
+      verbose: false,
+      skipUpdateCheck: true,
+    });
+    expect(report!.update).toMatchObject({
+      kind: 'unknown',
+      current: 'unknown',
+      reason: 'cache-miss',
+    });
+  });
+
   it('synthesizes a safe manifest when state.shard has no slash', async () => {
     await installMinimal(vault);
     await fsp.rm(path.join(vault, CACHED_MANIFEST));

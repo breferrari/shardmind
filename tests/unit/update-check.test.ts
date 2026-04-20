@@ -195,6 +195,25 @@ describe('update-check', () => {
   });
 
   describe('network failures', () => {
+    it('does not return a source-mismatched cache as stale on fetch failure', async () => {
+      // Previously the fetch-failure path returned *any* cache entry as
+      // stale, including entries written for a different repo (user
+      // reinstalled). That contradicted the source-mismatch invariant.
+      // With the fix, a mismatched cache collapses to `unknown` instead.
+      const now = Date.now();
+      await writeCache(vault, {
+        schema_version: 1,
+        checked_at: new Date(now - 1000).toISOString(),
+        source: 'github:someone/else',
+        latest_version: '9.9.9',
+      });
+
+      globalThis.fetch = vi.fn(() => networkError());
+
+      const result = await getLatestVersion(vault, SOURCE, now);
+      expect(result).toEqual({ kind: 'unknown', reason: 'no-network' });
+    });
+
     it('returns stale cached value when network fails', async () => {
       const now = Date.now();
       await writeCache(vault, {

@@ -253,11 +253,13 @@ export async function getLatestVersion(
   try {
     latest = await fetchWithTimeout(source);
   } catch {
-    // Network failed. Fall back to whatever cache we have, even if stale,
-    // even if the source just changed — a previous-repo version is still
-    // more informative than "unknown" for the common case where the user
-    // was offline and then reinstalled while offline.
-    if (cached) {
+    // Network failed. Fall back to the cached entry only when it was
+    // written for the SAME source — reporting a latest_version from a
+    // different repo after a reinstall would directly contradict the
+    // source-mismatch invariant stated at the top of this module and
+    // would mislead offline users. A mismatched-source entry degrades
+    // to `unknown` just like a missing cache would.
+    if (cached && cached.source === source) {
       return attachHealed({
         kind: 'stale',
         latest_version: cached.latest_version,
