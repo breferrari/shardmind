@@ -1345,21 +1345,30 @@ staying hermetic. No test reaches the public internet.
   parallel vitest workers don't race on the tsup invocation. CI runs
   `npm run build` explicitly (see `.github/workflows/ci.yml`); the
   guard exists so `npm test` works locally without a manual build step.
-- **Cross-platform SIGINT**: Node's `child.kill('SIGINT')` force-terminates
-  on Windows instead of delivering a catchable signal, so a naive signal
-  test would skip the rollback code entirely on every Windows cell. The
-  CLI compensates: `source/core/cancellation.ts` installs a stdin listener
-  in non-TTY mode that watches for the ETX byte (`0x03`, the ASCII form
-  of Ctrl+C) and calls `process.emit('SIGINT')` inside the child's own
-  process — where every `process.on('SIGINT', ...)` handler, including
-  `useSigintRollback`, fires exactly as it would on POSIX. `spawn-cli.ts`
-  writes ETX on Windows and delivers a real signal on POSIX; the
-  `signalAt: { afterMs }` form lets tests time the interrupt against a
-  slowed-down stub tarball (`stub.setTarballDelay(ms)`) since non-TTY
-  Ink renders only the final frame and pattern-based timing isn't
-  reliable. TTY users keep the native console-signal path on both
-  platforms — the stdin listener attaches only when `stdin.isTTY` is
-  falsy on boot.
+- **Cross-platform SIGINT — production vs CI**: Node's `child.kill('SIGINT')`
+  force-terminates on Windows instead of delivering a catchable signal.
+  `source/core/cancellation.ts` compensates in the **production** CLI: it
+  installs a stdin listener in non-TTY mode that watches for the ETX byte
+  (`0x03`, the ASCII form of Ctrl+C) and calls `process.emit('SIGINT')`
+  inside the child's own process — where every `process.on('SIGINT', ...)`
+  handler, including `useSigintRollback`, fires exactly as it would on
+  POSIX. TTY users keep the native console-signal path on both platforms
+  — the stdin listener attaches only when `stdin.isTTY` is falsy on boot
+  so Ink's keyboard handling doesn't fight for stdin bytes.
+
+  The **test harness** delivers ETX on Windows and a real signal on POSIX;
+  `signalAt: { afterMs }` times the interrupt against a slowed-down stub
+  tarball (`stub.setTarballDelay(ms)`) since non-TTY Ink renders only the
+  final frame and pattern-based timing isn't reliable. This works on
+  Windows dev boxes but not on GitHub Actions Windows Server 2022 runners
+  — the runner image has a pipe-buffering quirk where the parent's
+  single-byte write doesn't reach the child before the test's outer
+  timeout fires. Until we find a test-harness mechanism that bridges
+  reliably, the two SIGINT E2E scenarios carry an
+  `it.skipIf(process.platform === 'win32')` on that cell; follow-up
+  tracked as **#57**. The production bridge is not gated — real Windows
+  users get the same cancellation behavior as POSIX, and local Windows
+  dev boxes exercise the path end-to-end.
 - **Exit code contract**: install and update set `process.exitCode = 1`
   on error-phase transitions so scripting / CI can detect failures. The
   status command (`commands/index.tsx`) intentionally keeps exit 0 even
