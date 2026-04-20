@@ -436,6 +436,50 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     expect(needing).toContain(modifiedPath);
   });
 
+  it('fires onBackupReady before any writes, so SIGINT can roll back mid-run', async () => {
+    // Round 4 /harden audit caught that the state machine was
+    // populating its backupDirRef only AFTER runUpdate returned — so
+    // a mid-write Ctrl-C would find the ref null and skip rollback.
+    // The fix exposes `onBackupReady` from the executor. This test
+    // locks the ordering: backup callback fires before any file write.
+    const { state, oldValues, newManifest, newSchema } = await setUpUpdate({
+      bumpTo: '0.2.0',
+      newHomeTemplate: 'Hello {{ user_name }}, v2!\n',
+    });
+
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const drift = await detectDrift(vault, state);
+    const renderCtx = buildRenderContext(newManifest, oldValues, selections);
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: oldValues },
+      newShard: { schema: newSchema, selections, tempDir: newShard, renderContext: renderCtx },
+      removedFileDecisions: {},
+    });
+
+    const events: Array<{ kind: string }> = [];
+    await runUpdate({
+      vaultRoot: vault,
+      plan,
+      conflictResolutions: {},
+      currentState: state,
+      newManifest,
+      newSchema,
+      newValues: oldValues,
+      newSelections: selections,
+      resolved: { ...RESOLVED, version: newManifest.version },
+      tarballSha256: 'sha-0.2.0',
+      newTempDir: newShard,
+      onBackupReady: () => events.push({ kind: 'backup' }),
+      onFileTouched: () => events.push({ kind: 'touched' }),
+    });
+
+    const backupIdx = events.findIndex((e) => e.kind === 'backup');
+    const firstTouch = events.findIndex((e) => e.kind === 'touched');
+    expect(backupIdx).toBe(0);
+    expect(firstTouch).toBeGreaterThan(backupIdx);
+  });
+
   it('keep_as_user preserves the file on disk and untracks it from state', async () => {
     await installBaseline(vault, MINIMAL_SHARD, 'sha-0.1.0');
     const modifiedPath = 'brain/North Star.md';

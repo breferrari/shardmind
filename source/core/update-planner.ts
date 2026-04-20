@@ -39,9 +39,16 @@ import {
 /** Cap fan-out when reading templates + user files during merge planning. */
 const PLAN_IO_CONCURRENCY = 16;
 
+/**
+ * Copy-origin actions (those that come from `resolution.copy`, not from
+ * the Nunjucks render pipeline) carry a `copyFromSourcePath` pointer.
+ * The executor prefers `fsp.copyFile` on that path so binary assets
+ * survive the round-trip byte-for-byte. Text-origin actions omit this
+ * field and the executor writes `content` as UTF-8.
+ */
 export type UpdateAction =
   | { kind: 'noop'; path: string; reason: string }
-  | { kind: 'overwrite'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string }
+  | { kind: 'overwrite'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string; copyFromSourcePath?: string }
   | { kind: 'auto_merge'; path: string; content: string; renderedHash: string; stats: MergeStats; templateKey: string | null; iteratorKey?: string }
   | {
       kind: 'conflict';
@@ -56,8 +63,8 @@ export type UpdateAction =
       iteratorKey?: string;
     }
   | { kind: 'skip_volatile'; path: string }
-  | { kind: 'add'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string }
-  | { kind: 'restore_missing'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string }
+  | { kind: 'add'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string; copyFromSourcePath?: string }
+  | { kind: 'restore_missing'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string; copyFromSourcePath?: string }
   | { kind: 'delete'; path: string }
   | { kind: 'keep_as_user'; path: string };
 
@@ -214,8 +221,22 @@ export function removedFilesNeedingDecision(
 export interface RenderedFileEntry {
   outputPath: string;
   entry: FileEntry;
+  /**
+   * Text content used by the merge engine and by text-writing
+   * executors. For copy-origin files, this is a `toString('utf-8')`
+   * view of the source bytes — suitable for text comparison but NOT
+   * round-trip-safe for binary assets. The executor must prefer
+   * `copyFromSourcePath` for those to preserve bytes.
+   */
   content: string;
   hash: string;
+  /**
+   * Set for copy-origin files (images, scripts, binary assets). When
+   * present, the executor should write by byte-copying this source
+   * path rather than encoding `content` as UTF-8 — which would mangle
+   * any non-UTF-8 bytes.
+   */
+  copyFromSourcePath?: string;
 }
 
 export interface NewFilePlan {
@@ -226,6 +247,11 @@ export interface NewFilePlan {
  * Render every file the new shard would produce for `newSelections`.
  * Returned content + hashes feed directly into `planUpdate` so that one
  * render pass covers both "add" and "merge ours".
+ *
+ * Rendered files carry string content from Nunjucks. Copy-origin files
+ * carry a `copyFromSourcePath` pointer so the executor can `fsp.copyFile`
+ * byte-for-byte — essential for binary assets (PNG, PDF, compiled
+ * scripts) that would be corrupted by a UTF-8 round trip.
  */
 export async function renderNewShard(
   newSchema: ShardSchema,
@@ -256,6 +282,7 @@ export async function renderNewShard(
         entry,
         content: buffer.toString('utf-8'),
         hash: sha256(buffer),
+        copyFromSourcePath: entry.sourcePath,
       };
     }),
   ]);
@@ -321,6 +348,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       renderedHash: target.hash,
       templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
       ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+      ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
     });
     counts.silent++;
   }
@@ -339,6 +367,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       renderedHash: target.hash,
       templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
       ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+      ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
     });
     counts.restored++;
   }
@@ -456,6 +485,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       renderedHash: output.hash,
       templateKey: toTemplateKey(newTempDir, output.entry.sourcePath),
       ...(output.entry.iterator ? { iteratorKey: output.entry.iterator } : {}),
+      ...(output.copyFromSourcePath ? { copyFromSourcePath: output.copyFromSourcePath } : {}),
     });
     counts.added++;
   }

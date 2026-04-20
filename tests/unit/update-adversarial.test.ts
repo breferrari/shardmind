@@ -472,6 +472,31 @@ describe('rollbackUpdate — idempotency + partial snapshots', () => {
     expect(secondFailures).toEqual([]);
   });
 
+  it('preserves binary copy-origin assets byte-for-byte via copyFromSourcePath', async () => {
+    // A full runUpdate path would require mocking cache/templates — that's
+    // not what this test is about. We surgical-test writeAction via the
+    // one public surface that exercises it: renderNewShard → the planner's
+    // hash matches the actual bytes (not a UTF-8 round-trip) when
+    // copyFromSourcePath is present.
+    const binary = Buffer.from([0xff, 0xfe, 0x00, 0x01, 0xc0, 0xff, 0xee]);
+    const shardDir = await makeShardDir(tempRoot, {});
+    // Write a binary copy-source INSIDE the shard tempDir (scripts/ is
+    // always-copied per modules.ts ALWAYS_COPY_DIRS).
+    const scriptsDir = path.join(shardDir, 'scripts');
+    await fsp.mkdir(scriptsDir, { recursive: true });
+    await fsp.writeFile(path.join(scriptsDir, 'asset.bin'), binary);
+
+    const schema = baseSchema();
+    const plan = await renderNewShard(schema, shardDir, { brain: 'included' }, renderCtx());
+    const entry = plan.outputs.find((o) => o.outputPath.endsWith('asset.bin'));
+    expect(entry).toBeDefined();
+    expect(entry!.copyFromSourcePath).toBe(path.join(scriptsDir, 'asset.bin'));
+    // The hash is the sha256 of the ORIGINAL bytes, not the UTF-8-
+    // round-tripped string. If renderNewShard ever lost this, hash
+    // mismatch would cause every update to re-write binary assets.
+    expect(entry!.hash).toBe(sha256(binary));
+  });
+
   it('surfaces per-file rollback failures instead of swallowing them', async () => {
     // Build a backup with a file that can't be restored because the
     // destination parent is a file (not a directory) — copyFile will

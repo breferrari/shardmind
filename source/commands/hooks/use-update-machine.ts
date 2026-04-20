@@ -406,6 +406,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       setPhase({ kind: 'writing', total: 0, current: 0, label: 'Preparing…', history });
       writingRef.current = true;
       addedPathsRef.current = [];
+      backupDirRef.current = null;
 
       try {
         const result = await runUpdate({
@@ -421,6 +422,17 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           tarballSha256: ctx.newTarballSha,
           newTempDir: ctx.newTempDir,
           dryRun,
+          // Populate the refs EAGERLY so a mid-write SIGINT can actually
+          // find the backup dir and the list of paths to erase. The
+          // post-runUpdate assignment below still runs for the
+          // non-cancelled success path; these streaming callbacks make
+          // the same values available while the run is in flight.
+          onBackupReady: (dir) => {
+            backupDirRef.current = dir;
+          },
+          onFileTouched: (_outputPath, introduced) => {
+            if (introduced) addedPathsRef.current.push(_outputPath);
+          },
           onProgress: (ev) => {
             if (ev.kind === 'start') {
               setPhase((prev) =>
