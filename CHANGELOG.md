@@ -8,6 +8,63 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (harden pass)
+
+- **Binary assets no longer corrupt on `shardmind update`.** `detectDrift` was reading every tracked file as UTF-8 and hashing the decoded string, while install-executor hashed raw bytes. Copy-origin binaries (images, PDFs, any non-UTF-8 asset) hit an unpaired byte, Node replaced it with U+FFFD on decode, and the sha256 diverged from install-time — which classified the file as `modified` on first status check and then ran the three-way merge on corrupted UTF-8 projections, destroying the binary. `source/core/drift.ts` now reads as `Buffer` and hashes bytes; text files are byte-identical across both paths. Regression-guarded in `tests/unit/drift-classification.test.ts`.
+- **`shardmind update` no longer silently overwrites untracked user files** at paths the new shard newly introduces. The planner now detects on-disk collisions for `add` actions and routes them through `DiffView` with a `preexisting: true` flag; the executor's `keep_mine` / `skip` resolutions leave the user's file on disk AND untracked, so we never silently adopt content the user didn't opt in to manage. `source/core/update-planner.ts`, `source/core/update-executor.ts`.
+- **`hashValues` now terminates on cyclic value graphs** (YAML anchor cycles like `a: &x { self: *x }`). Previously the recursive `stableJson` walk would stack-overflow on hostile input. `source/core/install-planner.ts` adds a `WeakSet` cycle guard; matches the pattern `source/core/renderer.ts :: encodeStringLeaves` already uses for the Nunjucks recovery path.
+- **Frontmatter `path_match` glob honors shell semantics.** `brain/*.md` no longer matches `brain/sub/deep/note.md` — single `*` stops at `/` as every shell does. Opt in to recursive matching with `**`. `source/runtime/frontmatter.ts`.
+- **`sanitizeSlug` rewrites Windows-reserved device names** (`CON`, `PRN`, `AUX`, `NUL`, `COM[1-9]`, `LPT[1-9]`) by prefixing with `_`, and strips trailing `.` / space so NTFS can't silently rename the file out from under us. Previously a shard with `slug: "CON"` crashed install on Windows. `source/core/renderer.ts`.
+- **Three-way merge preserves `theirs`'s line ending on output** so `shardmind update` stops silently flipping CRLF↔LF on Windows users' managed files. `source/core/differ.ts` detects the dominant line ending of the user's file and joins merged output with it. `tests/unit/differ-line-endings.test.ts` + `tests/unit/merge-adversarial.test.ts` updated to pin the new invariant.
+- **Drift's orphan-scan uses bounded concurrency** via `mapConcurrent` — a vault with 200+ tracked directories would previously fire one `readdir` per directory in parallel and reliably hit EMFILE on macOS's 256-handle default. `source/core/drift.ts` (`ORPHAN_SCAN_CONCURRENCY = 32`).
+- **Status treats build-metadata-only version differences as up-to-date** per semver 2.0.0 §10. `1.0.0+build.1` vs `1.0.0+build.2` no longer surfaces as an available update (the previous strict `===` string compare did). Falls back to string equality for non-semver tag schemes. `source/core/status.ts`.
+- **Update-executor surfaces partial rollback via a new `ShardMindError` instead of mutating `err.message`.** Mutation throws on frozen/sealed third-party errors (a rare but real case) and compounds when the same error is caught further up the stack and logged twice. The wrapper preserves the original code and attaches both `rollbackFailures` and `cause` for introspection. `source/core/update-executor.ts`.
+- **`CollisionReview` and `ExistingInstallGate` guard against `Select` double-fire** with the same `firedRef` pattern `DiffView` already uses. A double-fire on `overwrite` would have launched two `rm -rf + runInstall` passes concurrently; on `update` it would have transitioned the state machine twice.
+- **`NewValuesPrompt` renders the human-readable group label** (`Setup`) instead of the raw group id (`setup`), matching `InstallWizard`'s lookup.
+- **Exhaustive switches** in `source/commands/install.tsx`, `source/commands/update.tsx`, and `source/commands/hooks/shared.ts`: adding a new `Phase` or `HookResult` variant is now a compile error, not a silent render-nothing bug.
+- **`ExistingInstallGate` drops the stale "Milestone 4" parenthetical** — `shardmind update` has shipped; the copy now points users at the command.
+- **Code-hygiene**: removed unused `_resolutions` parameter on `isDeleteAction` in `source/core/update-executor.ts`; rewrote the dangling `actionWrites` comment that referenced a long-deleted helper; annotated `MIGRATION_TRANSFORM_FAILED` in `source/runtime/errors.ts` as reserved for the v0.2 sandboxed-transform path (declared, unthrown — previous code comment was missing, so the reserved status wasn't machine-checkable).
+- **`NO_RELEASES_PUBLISHED`** — new typed error code in `source/runtime/errors.ts` fired by `registry.ts` when GitHub's `/releases/latest` returns 404 (the repo has no releases at all). Distinct from `VERSION_NOT_FOUND` (which fires when `verifyTag` 404s — a specific tag's tarball is missing). The update path rewrites the hint to point at the actual remediation instead of the install-path "retry / transient" phrasing that doesn't fit. Previously both cases collapsed into a single code with a misleading hint.
+- **Test suite: 551 → 567 (+16)**: binary-file drift + byte-identical round-trip, cycle-guarded hash, glob segment semantics (including regex-metacharacter literals inside `**`-tokenized globs), Windows-reserved slug rewrites + empty-slug fallback, add-path collision detection (plus plain-add control), binary-safe `theirsHash` for preexisting conflicts, semver build-metadata equality, CRLF preservation on output, and the NewValuesPrompt group-label regression.
+
+### Fixed (round-2 harden re-audit)
+
+Round-1 findings from a parallel 3-agent audit (adversarial + correctness + docs) landed above; a round-2 re-audit of the resulting diff surfaced three more live issues:
+
+- **`sanitizeSlug` fallback for empty collapsed slugs** — a slug of only spaces or empty rewrites to `""` after path-traversal + control-char scrubs, producing an output path like `notes/.md` (a dotfile on POSIX, hidden on Windows). `source/core/renderer.ts` now falls back to `_` so every valid shard produces at least one legible path component.
+- **`globToRegex` no longer uses a NUL sentinel token** — the `\0DS\0` placeholder that mediated `**` vs `*` expansion would have collided with a forged shard-schema containing literal NUL bytes. Rewritten to split on `**` and escape each segment separately, then join with `.*`. `source/runtime/frontmatter.ts`.
+- **`theirsHash` is now a bytewise hash for both modified-file and preexisting-add conflict paths** — `update-planner.ts` previously computed `sha256(actualContent-as-utf8-string)`, which for a non-UTF-8 user file (a copy-origin binary the user has drifted, or an image at an add-collision path) produces a hash that diverges from install-executor's byte-level `sha256(buffer)`. On `keep_mine` / `skip` resolutions the wrong hash would have been recorded in `state.files[path].rendered_hash`, making every subsequent drift report the file as modified on every update. A shared `readStringAndByteHash` helper now returns both the string view (for the line-oriented merge) and the byte hash (for state) from a single read.
+
+Round-2 also verified as clean: drift's Buffer read preserves hash parity with install-executor; CRLF preservation round-trips across repeat merges; exhaustive switches in install/update cover every `Phase` variant; `summarizeHook` covers every `HookResult` variant; the `conflict.preexisting` flag narrows correctly; module boundaries unchanged; the err-wrapper in `update-executor.ts` preserves original `code`/`hint` and attaches `cause` + `rollbackFailures` without mutating the original.
+
+### Fixed (round-3 harden re-audit)
+
+A third round of parallel audits surfaced three more issues the prior rounds missed. Fixed:
+
+- **`sanitizeSlug` reserved-name check now runs on the STEM**, not the whole filename. NTFS blocks `CON.txt`, `LPT1.md`, `AUX.foo.bar` exactly as hard as bare `CON`; the previous regex matched only the bare form, so a shard author writing `slug: "{{ item.name }}"` where `name: "CON.md"` would still crash install on Windows. `source/core/renderer.ts` now extracts the portion before the first dot and checks that. +2 tests in `tests/unit/renderer.test.ts`.
+- **`readStringAndByteHash` returns `null` on ENOENT; callers decide semantics.** The modified-file caller throws `UPDATE_CACHE_MISSING` (drift said file existed, now gone = race); the add-collision caller falls back to a plain `add` (file raced out of existence between `pathExists` and read, so no collision to report). The previous defensive "treat ENOENT as empty" posture contract-lied to the modified-file path — it would have merged the user's empty string against the new shard content and written the result to disk, silently destroying a file that was concurrently removed by another process. `source/core/update-planner.ts`.
+- **`ExistingInstallGate` TextInput `onSubmit` now arms the same `firedRef` guard** the `Select` onChange uses. Without it, a double-fire of Enter on the "REINSTALL" confirmation would have queued two destructive wipes. `source/components/ExistingInstallGate.tsx`.
+
+Round-3 code-quality cleanups:
+
+- **`MergeResult.hasConflicts` removed** — populated in two places, read nowhere (every consumer uses `conflicts.length > 0`). The `MergeResult` type in `source/runtime/types.ts`, the `conflict`-case emitter in `source/core/differ.ts`, the direct-conflict helper in `source/core/update-planner.ts`, `docs/IMPLEMENTATION.md §4.9`, and the DiffView test fixture all updated in lockstep.
+- **`CLAUDE.md` `any`-whitelist extended to `source/runtime/values.ts`** — the runtime module re-implements `buildValuesValidator` (runtime can't import from `core/` per the boundary rule), which means the same `z.ZodObject<any>` pattern appears there. Convention text was stale; code was right.
+- **`docs/ERRORS.md` `UPDATE_CACHE_MISSING` entry** now enumerates all three throw sites (cached-schema missing, drift/state disagreement, file vanished mid-update).
+- **`docs/IMPLEMENTATION.md §7` error-code table** updates the `UPDATE_CACHE_MISSING` row with both hint patterns.
+- **`source/core/update-planner.ts` `SchemaAdditions.dropped`** annotated as v0.2 reporting hook — pinned by tests, kept intentionally instead of silently populated-but-unused.
+
+### Added (round-3)
+
+- **Tests (567 → 571, +4):**
+  - `tests/unit/runtime.test.ts` — `assertNever` throws "Unhandled variant" at runtime (not just a compile-time check) so a JSON-decoded enum from a future schema version surfaces an actionable error instead of falling through.
+  - `tests/integration/update.test.ts::preexisting add-collision + keep_mine preserves user bytes and leaves them UNTRACKED` — end-to-end through `runUpdate` asserts the user's file bytes stay on disk AND `nextState.files` does NOT contain the path.
+  - `tests/integration/update.test.ts::preexisting add-collision + accept_new writes shard bytes and adopts as managed` — same flow with the opposite resolution: shard bytes land, state tracks `ownership: 'managed'`.
+  - `tests/integration/update.test.ts::throws a wrapped ShardMindError when write fails AND rollback is partial` — forces the outer catch via `vi.spyOn(fsp, 'writeFile')` + the rollback restore failure via `vi.spyOn(fsp, 'copyFile')`, asserts `err.code === 'UPDATE_WRITE_FAILED'`, `err.message` matches `/Rollback incomplete/`, `err.rollbackFailures` non-empty, `err.cause instanceof Error`.
+
+### Final count
+
+Test suite: **551 → 571** (+20 regression tests). `tsc --noEmit` clean; full suite green; build clean; zero `any` / `@ts-ignore` / `@ts-nocheck` / `as any` / `as unknown as` in `source/` outside the two documented zod-dynamic-generation exceptions.
+
 ### Added
 
 - **End-to-end test suite** — `tests/e2e/cli.test.ts` closes Milestone 4's last bullet (ROADMAP v0.1 §Milestone 4). 30 scenarios spawn `dist/cli.js` as a real subprocess and exercise the CLI the way a user would — no core-module shortcuts, no vitest mocks. Hermetic: a local HTTP server (`tests/e2e/helpers/github-stub.ts`) emulates the three GitHub endpoints the CLI consumes (`releases/latest`, `HEAD tarball`, `GET tarball`) and is pointed at by `SHARDMIND_GITHUB_API_BASE`. No public network hits; no rate-limit flake; no real repository needed. See `docs/ARCHITECTURE.md §19.7` for the full methodology.
