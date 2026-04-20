@@ -56,7 +56,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - `docs/IMPLEMENTATION.md` §3 — Update data flow diagram rewritten to match the actual `useUpdateMachine` phase progression, including the three discrete prompt phases (new values, new modules, removed files) and the explicit rollback branch.
 - `docs/IMPLEMENTATION.md` §4.10 — corrected migration filter rule (`currentVersion < from_version ≤ targetVersion`), added the "rename refuses to clobber existing target" invariant, added the `MIGRATION_INVALID_VERSION` throw.
 - `docs/IMPLEMENTATION.md` §4.11, §4.12, §4.13 — new module specs for `update-planner.ts`, `update-executor.ts`, `values-io.ts` matching the §4.x style of the existing engine modules.
-- `docs/IMPLEMENTATION.md` §6.5 — DiffView props updated to reflect `index` / `total` / `result` (not `mergeResult`), the `DiffAction` union, CRLF handling, and the v0.2 editor stub.
+- `docs/IMPLEMENTATION.md` §6.5 — DiffView props updated to reflect `index` / `total` / `result` (not `mergeResult`), the `DiffAction` union, CRLF handling, and the disabled-editor placeholder (full integration tracked in issue #50).
 - `docs/IMPLEMENTATION.md` §7 — error handling table adds the six new update + migration error codes.
 - `docs/ARCHITECTURE.md` §10.5 — update flow expanded to cover the new flags (`--yes`, `--verbose`, `--dry-run`), the removed-files decision prompt, and the snapshot/rollback guarantee. References `§4.11` / `§4.12` in IMPLEMENTATION for detailed algorithms.
 - `CLAUDE.md` — module table includes `update-planner.ts` / `update-executor.ts` / `values-io.ts`; source tree diagram updated with new components and the `commands/hooks/` directory.

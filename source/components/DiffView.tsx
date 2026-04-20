@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import { Select } from './ui.js';
 import type { ConflictRegion, MergeResult } from '../runtime/types.js';
 
-/** Actions the user can take for each conflict. `open_editor` is v0.2. */
+/** Conflict-resolution choices returned to the state machine. */
 export type DiffAction = 'accept_new' | 'keep_mine' | 'skip';
 
 /** Matches differ.ts's canonical splitter: tolerate CR, accept LF. */

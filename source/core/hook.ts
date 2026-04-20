@@ -9,16 +9,12 @@ export type HookResult =
   | { kind: 'failed'; message: string };
 
 /**
- * Locate and optionally invoke a post-install hook.
- *
- * v0.1 implementation: detects the hook file from the shard manifest's
- * `hooks.post-install` pointer. Execution is deferred — we do not yet
- * have a TypeScript runtime bundled with shardmind. Returns a
- * `deferred` result so the Summary component can surface the skip
- * to the user.
- *
- * The execution mechanism (tsx spawn vs jiti dynamic import) will be
- * decided in #30, linked from ROADMAP Milestone 5.
+ * Locate the post-install hook declared by the shard manifest and
+ * return a `HookResult` the command layer can surface. Execution is
+ * decoupled from lookup — a `deferred` result says "the hook exists
+ * and is sandbox-valid; whoever runs hooks should handle this one".
+ * Execution mechanism (tsx spawn vs jiti dynamic import) is tracked
+ * in #30.
  */
 export async function runPostInstallHook(
   tempDir: string,
@@ -28,8 +24,8 @@ export async function runPostInstallHook(
 }
 
 /**
- * Post-update sibling of `runPostInstallHook`. Same deferred-execution
- * contract as the install hook — execution mechanism is tracked in #30.
+ * Post-update sibling of `runPostInstallHook`. Same contract and
+ * sandbox invariants.
  */
 export async function runPostUpdateHook(
   tempDir: string,
@@ -38,9 +34,29 @@ export async function runPostUpdateHook(
   return lookupHook(tempDir, manifest.hooks?.['post-update']);
 }
 
+/**
+ * Resolve `hookRelPath` inside `tempDir` and verify it stays within.
+ * Rejects absolute paths and any path that normalizes to a location
+ * outside the shard's extracted directory (e.g. `../../etc/shadow`).
+ * A shard that declares a traversing hook path is treated as if the
+ * hook is absent — the engine does not probe filesystem paths outside
+ * the shard, even for existence detection.
+ */
 async function lookupHook(tempDir: string, hookRelPath: string | undefined): Promise<HookResult> {
   if (!hookRelPath) return { kind: 'absent' };
-  const hookPath = path.join(tempDir, hookRelPath);
+  const normalized = path.normalize(hookRelPath);
+  if (
+    path.isAbsolute(normalized) ||
+    normalized.startsWith('..') ||
+    normalized.split(/[\\/]/).includes('..')
+  ) {
+    return { kind: 'absent' };
+  }
+  const hookPath = path.resolve(tempDir, normalized);
+  const resolvedRoot = path.resolve(tempDir);
+  if (!hookPath.startsWith(resolvedRoot + path.sep) && hookPath !== resolvedRoot) {
+    return { kind: 'absent' };
+  }
   if (!(await pathExists(hookPath))) return { kind: 'absent' };
   return { kind: 'deferred', hookPath };
 }

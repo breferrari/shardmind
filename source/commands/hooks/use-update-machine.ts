@@ -161,12 +161,16 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
   // If we're mid-write, walk the executor's snapshot back before exiting.
   // Tempdir cleanup fires on every Ctrl-C — otherwise cancelling during the
   // download/plan phase would leak the extracted shard on disk.
+  // `rollbackUpdate` returns a failure list; we ignore it here (the
+  // process is about to exit), but SIGINT-mid-write is rare enough that
+  // the silent path is acceptable — the disk state is best-effort anyway.
   useSigintRollback({
     isActive: () => !dryRun && writingRef.current && backupDirRef.current !== null,
-    rollback: () =>
-      backupDirRef.current
-        ? rollbackUpdate(vaultRoot, backupDirRef.current, addedPathsRef.current)
-        : Promise.resolve(),
+    rollback: async () => {
+      if (backupDirRef.current) {
+        await rollbackUpdate(vaultRoot, backupDirRef.current, addedPathsRef.current);
+      }
+    },
     cleanup: () => (ctxCleanupRef.current ? ctxCleanupRef.current() : Promise.resolve()),
   });
 
@@ -208,7 +212,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 
         setPhase({ kind: 'loading', message: 'Loading current values…' });
         const oldValues = await loadCurrentValues(vaultRoot);
-        const oldSchema = await loadCachedSchema(vaultRoot);
+        const oldSchema = await loadCachedSchema(vaultRoot, state);
 
         setPhase({ kind: 'loading', message: 'Applying migrations…' });
         const migration = applyMigrations(
@@ -545,14 +549,15 @@ function loadCurrentValues(vaultRoot: string): Promise<Record<string, unknown>> 
   });
 }
 
-async function loadCachedSchema(vaultRoot: string): Promise<ShardSchema> {
+async function loadCachedSchema(vaultRoot: string, state: ShardState): Promise<ShardSchema> {
   try {
     return await parseSchema(path.join(vaultRoot, '.shardmind', 'shard-schema.yaml'));
   } catch (err) {
     throw new ShardMindError(
-      'Cached schema missing — re-install the shard',
+      'Cached schema missing or corrupt',
       'UPDATE_CACHE_MISSING',
-      err instanceof Error ? err.message : String(err),
+      `Re-run \`shardmind install ${state.source}\` to regenerate .shardmind/. ` +
+        `Original error: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }

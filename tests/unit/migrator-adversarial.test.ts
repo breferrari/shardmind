@@ -92,12 +92,13 @@ describe('applyMigrations — hostile inputs', () => {
     expect(typeof result.values['x']).toBe('function');
   });
 
-  it('does not hang when a transform loops — runs to completion but warns on timeout-style issues', () => {
-    // A pathological `while(true)` transform would wedge the engine. We
-    // don't sandbox (that's out of scope for v0.1), but we demonstrate
-    // that a transform which *eventually returns* after a big loop is
-    // still handled correctly, bounding the test at 200ms via a cap on
-    // iterations inside the transform expression.
+  it('completes a transform with a bounded loop without hanging', () => {
+    // A pathological `while(true)` transform would wedge the engine.
+    // The engine does not sandbox — the threat model is "buggy
+    // transform", not "hostile transform" (shard authors can already
+    // ship arbitrary hook code). What this test locks: a transform
+    // that eventually returns after a big loop still completes and
+    // the result is assigned.
     const result = applyMigrations({ x: 1 }, '1.0.0', '2.0.0', [
       {
         from_version: '2.0.0',

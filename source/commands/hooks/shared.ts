@@ -12,7 +12,7 @@
  * summary shape or the rollback policy.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { HookResult } from '../../core/hook.js';
 
 export interface HookSummary {
@@ -42,27 +42,38 @@ export function summarizeHook(result: HookResult): HookSummary | null {
  *
  * `cleanup` runs on every Ctrl-C (active or not) — use it for things
  * like deleting the downloaded-shard tempdir that must die regardless
- * of whether writes had started. All callbacks are swallow-failures:
- * the process is about to exit anyway.
+ * of whether writes had started. All callbacks swallow failures: the
+ * process is about to exit anyway.
  *
- * Returns nothing; the effect registers + cleans up the listener for
- * as long as the component is mounted.
+ * The handler registers ONCE on mount and deregisters on unmount. The
+ * callbacks are reached through refs so React doesn't thrash
+ * process.on/off on every render when the caller passes inline arrows.
  */
 export function useSigintRollback(opts: {
   isActive: () => boolean;
   rollback: () => Promise<void>;
   cleanup?: () => Promise<void>;
 }): void {
-  const { isActive, rollback, cleanup } = opts;
+  // Refs hold the latest callbacks; the handler reads through them so
+  // it always sees current vaultRoot / backupDir / addedPaths state
+  // even though the handler itself is registered only once.
+  const isActiveRef = useRef(opts.isActive);
+  const rollbackRef = useRef(opts.rollback);
+  const cleanupRef = useRef(opts.cleanup);
+  isActiveRef.current = opts.isActive;
+  rollbackRef.current = opts.rollback;
+  cleanupRef.current = opts.cleanup;
+
   useEffect(() => {
     const handler = async () => {
       try {
-        if (isActive()) await rollback();
+        if (isActiveRef.current()) await rollbackRef.current();
       } catch {
         // swallow; process is about to exit
       }
       try {
-        if (cleanup) await cleanup();
+        const c = cleanupRef.current;
+        if (c) await c();
       } catch {
         // swallow
       }
@@ -72,5 +83,5 @@ export function useSigintRollback(opts: {
     return () => {
       process.off('SIGINT', handler);
     };
-  }, [isActive, rollback, cleanup]);
+  }, []);
 }

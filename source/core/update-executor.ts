@@ -202,7 +202,30 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     return { state: nextState, summary, backupDir };
   } catch (err) {
     if (!dryRun && backupDir) {
-      await rollbackUpdate(vaultRoot, backupDir, addedPaths).catch(() => {});
+      try {
+        const rollbackFailures = await rollbackUpdate(vaultRoot, backupDir, addedPaths);
+        if (rollbackFailures.length > 0) {
+          // Attach rollback failures to the thrown error so the command
+          // layer can surface "update failed AND rollback was partial" —
+          // silently swallowing would tell the user the vault is back
+          // to pre-update when it isn't.
+          const summary = rollbackFailures
+            .slice(0, 5)
+            .map((f) => `  - ${f.path}: ${f.reason}`)
+            .join('\n');
+          const more = rollbackFailures.length > 5
+            ? `\n  …and ${rollbackFailures.length - 5} more`
+            : '';
+          (err as Error & { rollbackFailures?: RollbackFailure[] }).rollbackFailures =
+            rollbackFailures;
+          if (err instanceof Error) {
+            err.message = `${err.message}\nRollback incomplete (${rollbackFailures.length} files):\n${summary}${more}`;
+          }
+        }
+      } catch {
+        // rollback itself crashed — swallow and re-throw the original
+        // so we don't mask the underlying failure cause
+      }
     }
     throw err;
   }
@@ -490,29 +513,49 @@ async function copyOptional(src: string, dst: string): Promise<void> {
   }
 }
 
+export interface RollbackFailure {
+  path: string;
+  reason: string;
+}
+
+/**
+ * Restore from a snapshot. Returns a list of per-file failures so the
+ * caller can surface them — silently swallowing rollback errors would
+ * tell the user "rollback done" while the vault sat in a partially-
+ * restored state. Best-effort across every file: one failure does not
+ * abort the rest of the restore.
+ */
 export async function rollbackUpdate(
   vaultRoot: string,
   backupDir: string,
   addedPaths: string[],
-): Promise<void> {
+): Promise<RollbackFailure[]> {
+  const failures: RollbackFailure[] = [];
+
   // Remove anything we newly introduced first so the restore-step can't
   // spuriously "succeed" by landing a snapshot on top of a brand-new file.
   for (const rel of addedPaths) {
     try {
       await fsp.rm(path.join(vaultRoot, rel), { force: true });
-    } catch {
-      // ignore
+    } catch (err) {
+      failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
     }
   }
 
   const filesDir = path.join(backupDir, 'files');
-  await restoreTree(filesDir, vaultRoot);
+  await restoreTree(filesDir, vaultRoot, failures);
 
   const cacheDir = path.join(backupDir, 'cache');
-  await restoreTree(cacheDir, vaultRoot);
+  await restoreTree(cacheDir, vaultRoot, failures);
+
+  return failures;
 }
 
-async function restoreTree(srcRoot: string, destRoot: string): Promise<void> {
+async function restoreTree(
+  srcRoot: string,
+  destRoot: string,
+  failures: RollbackFailure[],
+): Promise<void> {
   if (!(await pathExists(srcRoot))) return;
   const walk = async (dir: string): Promise<string[]> => {
     const entries = await fsp.readdir(dir, { withFileTypes: true });
@@ -528,9 +571,18 @@ async function restoreTree(srcRoot: string, destRoot: string): Promise<void> {
   for (const abs of files) {
     const rel = path.relative(srcRoot, abs);
     const dst = path.join(destRoot, rel);
-    await fsp.mkdir(path.dirname(dst), { recursive: true });
-    await fsp.copyFile(abs, dst);
+    try {
+      await fsp.mkdir(path.dirname(dst), { recursive: true });
+      await fsp.copyFile(abs, dst);
+    } catch (err) {
+      failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}` });
+    }
   }
+}
+
+function reasonOf(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
 
 // ---------------------------------------------------------------------------

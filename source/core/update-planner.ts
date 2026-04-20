@@ -470,10 +470,11 @@ function conflictFromDirect(
   theirsHash: string,
   newTempDir: string,
 ): UpdateAction {
-  // Synthesize a conflict region covering the whole file when we can't
-  // reconstruct a proper three-way base (missing cached template, pre-v0.1
-  // install, or corrupted cache). Better than silently losing the user's
-  // edits — surface the file to the DiffView so the user decides.
+  // Synthesize a conflict region covering the whole file when the
+  // cached old template is absent — usually a corrupted or manually
+  // modified `.shardmind/templates/` directory. Without a base we
+  // can't do a real three-way merge, so the whole file becomes one
+  // conflict region and the user decides in DiffView.
   const theirsLines = actualContent.split(/\r?\n/);
   const oursLines = target.content.split(/\r?\n/);
   return {

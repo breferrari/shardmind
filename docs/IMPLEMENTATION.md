@@ -617,7 +617,7 @@ interface MigrationResult {
    - `rename`: if `values[old]` present and `values[new]` absent, copy and delete the old key. If the target is already occupied, warn + skip (never overwrite — that would destroy user data). If the source is missing, warn + skip.
    - `added`: if `values[key]` is absent, set to `default`. If already present, no-op (no warning).
    - `removed`: delete `values[key]` and warn (users deserve to know a key they set is being discarded). No-op when already absent.
-   - `type_changed`: evaluate `transform` in a `new Function('value', 'return (<expr>)')` sandbox. Catch and warn on any throw, preserving the original value. Out-of-scope for v0.1: sandboxing untrusted shards; the threat model is "buggy transform", not "hostile transform" (see ARCHITECTURE §8).
+   - `type_changed`: evaluate `transform` in a `new Function('value', 'return (<expr>)')` sandbox. Catch and warn on any throw, preserving the original value. Sandboxing untrusted shards is not a goal of this layer — the threat model is "buggy transform", not "hostile transform" (shard authors can already ship arbitrary hook code; see ARCHITECTURE §8).
 4. Return transformed values + changelog + warnings.
 
 **Error cases**:
@@ -824,11 +824,11 @@ interface DiffViewProps {
 }
 ```
 
-Renders: file-path header with `(N of M)` counter, each `ConflictRegion` with ±3 context lines and color-coded `yours`/`shard update` sides, a merge-stats summary (`linesUnchanged · linesAutoMerged · N regions conflicted`), and a `Select` with four options: Accept new · Keep mine · Skip · (Open in editor · v0.2, disabled).
+Renders: file-path header with `(N of M)` counter, each `ConflictRegion` with ±3 context lines and color-coded `yours`/`shard update` sides, a merge-stats summary (`linesUnchanged · linesAutoMerged · N regions conflicted`), and a `Select` with three active options and one disabled placeholder: Accept new · Keep mine · Skip · (Open in editor · disabled).
 
 CRLF-tolerant — all splits use `/\r?\n/` so a Windows-saved user file does not render `\r` characters that would corrupt the terminal.
 
-The "Open in editor" option is rendered disabled for v0.1 and its choice value is filtered by a `Set<DiffAction>` allowlist so an accidental activation never reaches `onChoice`. Full editor integration is tracked in issue #50.
+The "Open in editor" option is rendered disabled; its choice value is filtered by a `Set<DiffAction>` allowlist so an accidental activation never reaches `onChoice`. Editor integration is tracked in issue #50.
 
 ### 6.6 `Header.tsx`
 

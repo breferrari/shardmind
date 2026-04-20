@@ -442,12 +442,13 @@ describe('rollbackUpdate — idempotency + partial snapshots', () => {
     await fsp.rm(tempRoot, { recursive: true, force: true });
   });
 
-  it('does not error when called against a non-existent backup directory', async () => {
+  it('returns an empty failure list when called against a non-existent backup directory', async () => {
     const nonExistent = path.join(tempRoot, 'never-created');
-    await expect(rollbackUpdate(tempRoot, nonExistent, [])).resolves.toBeUndefined();
+    const failures = await rollbackUpdate(tempRoot, nonExistent, []);
+    expect(failures).toEqual([]);
   });
 
-  it('is idempotent: running twice produces the same vault state', async () => {
+  it('is idempotent: running twice produces the same vault state and returns no failures either time', async () => {
     const vault = path.join(tempRoot, 'vault');
     await fsp.mkdir(vault, { recursive: true });
     const target = path.join(vault, 'note.md');
@@ -458,16 +459,37 @@ describe('rollbackUpdate — idempotency + partial snapshots', () => {
     await fsp.mkdir(path.dirname(backupTarget), { recursive: true });
     await fsp.writeFile(backupTarget, 'original\n', 'utf-8');
 
-    // Mutate the file as if an update was in progress.
     await fsp.writeFile(target, 'mid-update\n', 'utf-8');
 
-    await rollbackUpdate(vault, backupDir, []);
+    const firstFailures = await rollbackUpdate(vault, backupDir, []);
     const first = await fsp.readFile(target, 'utf-8');
-    await rollbackUpdate(vault, backupDir, []);
+    const secondFailures = await rollbackUpdate(vault, backupDir, []);
     const second = await fsp.readFile(target, 'utf-8');
 
     expect(first).toBe('original\n');
     expect(second).toBe('original\n');
+    expect(firstFailures).toEqual([]);
+    expect(secondFailures).toEqual([]);
+  });
+
+  it('surfaces per-file rollback failures instead of swallowing them', async () => {
+    // Build a backup with a file that can't be restored because the
+    // destination parent is a file (not a directory) — copyFile will
+    // fail with ENOTDIR / EEXIST depending on platform.
+    const vault = path.join(tempRoot, 'vault');
+    await fsp.mkdir(vault, { recursive: true });
+    // Place a regular file where the restore expects a directory.
+    await fsp.writeFile(path.join(vault, 'blocker'), 'im-not-a-dir', 'utf-8');
+
+    const backupDir = path.join(vault, SHARDMIND_DIR, 'backups', 'update-test');
+    const blockedBackup = path.join(backupDir, 'files', 'blocker', 'note.md');
+    await fsp.mkdir(path.dirname(blockedBackup), { recursive: true });
+    await fsp.writeFile(blockedBackup, 'restore me\n', 'utf-8');
+
+    const failures = await rollbackUpdate(vault, backupDir, []);
+    expect(failures.length).toBeGreaterThan(0);
+    expect(failures[0]!.path).toMatch(/blocker[\\/]note\.md/);
+    expect(failures[0]!.reason).toMatch(/restore failed/);
   });
 });
 
