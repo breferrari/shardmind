@@ -96,40 +96,52 @@ graph TD
 
 ## 3. Data Flow: Update
 
+Concretely driven by the `useUpdateMachine` hook in `source/commands/hooks/use-update-machine.ts`. Each node below corresponds to a phase variant in the machine's `Phase` union.
+
 ```mermaid
 graph TD
     A["shardmind update"] --> B
 
-    B["state.ts<br/>Read state.json → source, version, modules, files"] --> C
-    C["registry + download<br/>Check GitHub tags → compare semver<br/>If no newer version → exit<br/>If newer → download tarball"] --> D
-    D["schema.ts<br/>Parse new shard-schema.yaml<br/>Diff against cached schema"] --> E
-    E["migrator.ts<br/>Apply migrations (renames, additions, removals)<br/>Report changes to user"] --> F
-    F["Prompt — Ink TUI<br/>New values only + new modules offered"] --> G
+    B["state.ts<br/>Read state.json → source, version, modules, files<br/>Absent → no-install phase, exit"] --> C
+    C["registry + download<br/>Resolve state.source → tarball<br/>version + tarball_sha match state → up-to-date, exit"] --> D
+    D["manifest + schema<br/>Parse new shard.yaml, shard-schema.yaml"] --> E
+    E["values-io + migrator<br/>Load shard-values.yaml → applyMigrations<br/>(rename/added/removed/type_changed)"] --> F
 
-    G["drift.ts<br/>For each file: sha256(disk) vs state hash<br/>Classify: managed | modified | volatile | missing"] --> H
+    F["computeSchemaAdditions<br/>newRequiredKeys[], newOptionalModules[]"] --> G1
+    G1{New required<br/>values?}
+    G1 -->|Yes| G2["prompt-new-values<br/>NewValuesPrompt — Ink TUI"]
+    G1 -->|No| H1
+    G2 --> H1
+    H1{New optional<br/>modules?}
+    H1 -->|Yes| H2["prompt-new-modules<br/>NewModulesReview — Ink TUI"]
+    H1 -->|No| I
+    H2 --> I
 
-    H{Ownership?}
-    H -->|MANAGED| I["old_rendered == new_rendered?<br/>Yes → skip<br/>No → silent overwrite"]
-    H -->|MODIFIED| J["Three-way merge via node-diff3<br/>base: cached template + old values<br/>theirs: user's file on disk<br/>ours: new template + new values"]
-    H -->|VOLATILE| K["Skip. Update hash in state<br/>for future reference."]
+    I["detectDrift + renderNewShard (parallel)<br/>Classify files; render new shard once"] --> J1
 
-    J --> L{Conflicts?}
-    L -->|No| M["Auto-merge. Apply silently."]
-    L -->|Yes| N["DiffView — Ink TUI<br/>Accept new | Keep mine | Editor | Skip"]
+    J1{Modified files<br/>no longer in new shard?}
+    J1 -->|Yes| J2["prompt-removed-files<br/>RemovedFilesReview — Ink TUI<br/>keep / delete per file"]
+    J1 -->|No| K
+    J2 --> K
 
-    I --> O
-    M --> O
-    N --> O
-    K --> O
+    K["planUpdate<br/>Per-file UpdateAction + pendingConflicts<br/>(modified-file merges run in parallel, bounded 16)"] --> L1
 
-    O["state.ts<br/>Update state.json + cached templates"] --> P
-    P["hooks<br/>Run post-update.ts (non-fatal)"] --> Q
-    Q["Summary — Ink<br/>Updated 3.5.0 → 4.0.0<br/>43 silent · 2 merged · 1 skipped"]
+    L1{Pending<br/>conflicts?}
+    L1 -->|Yes| L2["resolving-conflicts loop<br/>DiffView per file<br/>accept_new / keep_mine / skip"]
+    L1 -->|No| M
+    L2 --> M
+
+    M["writing — update-executor<br/>Snapshot → write pass → delete pass<br/>Re-cache templates + manifest + schema<br/>writeState"] --> N
+    N["post-update hook<br/>(non-fatal, deferred runtime per #30)"] --> O
+    O["summary — UpdateSummary<br/>Counts, conflict resolutions,<br/>migration warnings, hook output"]
+
+    M -->|Any failure| R["rollbackUpdate<br/>Restore snapshot + erase added paths"]
 
     style A fill:#e94560,stroke:#e94560,color:#fff
-    style H fill:#f5a623,stroke:#f5a623,color:#000
-    style N fill:#e94560,stroke:#e94560,color:#fff
-    style Q fill:#0f9d58,stroke:#0f9d58,color:#fff
+    style L2 fill:#e94560,stroke:#e94560,color:#fff
+    style M fill:#f5a623,stroke:#f5a623,color:#000
+    style O fill:#0f9d58,stroke:#0f9d58,color:#fff
+    style R fill:#777,stroke:#777,color:#fff
 ```
 
 ---
@@ -584,8 +596,8 @@ Shard update version of conflicting lines
 
 **Inputs**:
 ```typescript
-migrate(
-  currentValues: Record<string, unknown>,
+applyMigrations(
+  values: Record<string, unknown>,
   currentVersion: string,
   targetVersion: string,
   migrations: Migration[],
@@ -599,20 +611,115 @@ interface MigrationResult {
 ```
 
 **Algorithm**:
-1. Filter migrations where `semver.gt(targetVersion, migration.from_version)` and `semver.gte(migration.from_version, currentVersion)`
-2. Sort by `from_version` ascending
-3. For each migration, for each change:
-   - `rename`: copy `values[old]` to `values[new]`, delete `values[old]`
-   - `added`: if key doesn't exist, set `values[key] = default`
-   - `removed`: delete `values[key]`, add warning
-   - `type_changed`: apply transform expression (simple JS eval with value as input)
-4. Return transformed values + changelog
+1. Filter migrations where `semver.gt(migration.from_version, currentVersion)` and `semver.lte(migration.from_version, targetVersion)` — i.e. `currentVersion < from_version ≤ targetVersion`. This makes migrations idempotent: re-running an upgrade at the same target version picks up nothing.
+2. Sort by `from_version` ascending.
+3. For each migration in order, for each change:
+   - `rename`: if `values[old]` present and `values[new]` absent, copy and delete the old key. If the target is already occupied, warn + skip (never overwrite — that would destroy user data). If the source is missing, warn + skip.
+   - `added`: if `values[key]` is absent, set to `default`. If already present, no-op (no warning).
+   - `removed`: delete `values[key]` and warn (users deserve to know a key they set is being discarded). No-op when already absent.
+   - `type_changed`: evaluate `transform` in a `new Function('value', 'return (<expr>)')` sandbox. Catch and warn on any throw, preserving the original value. Sandboxing untrusted shards is not a goal of this layer — the threat model is "buggy transform", not "hostile transform" (shard authors can already ship arbitrary hook code; see ARCHITECTURE §8).
+4. Return transformed values + changelog + warnings.
 
 **Error cases**:
-- Migration references key that doesn't exist → warning, skip
-- Transform expression fails → warning, keep original value
+- `currentVersion` or `targetVersion` not valid semver → throw `MIGRATION_INVALID_VERSION`.
+- Migration references key that doesn't exist → warning, skip.
+- Transform expression throws → warning, keep original value.
+- Rename target already has a value → warning, both keys preserved.
 
 **Dependencies**: `semver`.
+
+---
+
+### 4.11 `update-planner.ts`
+
+**Purpose**: Pure planner that consumes the drift report + new shard + user decisions and emits a complete `UpdatePlan` describing every per-file action the executor will perform.
+
+**Inputs** (grouped to prevent cross-shard field mixing):
+```typescript
+planUpdate(input: PlanUpdateInput): Promise<UpdatePlan>
+
+interface PlanUpdateInput {
+  vault:   { root: string; state: ShardState; drift: DriftReport };
+  values:  { old: Record<string, unknown>; new: Record<string, unknown> };
+  newShard: {
+    schema: ShardSchema;
+    selections: ModuleSelections;
+    tempDir: string;
+    renderContext: RenderContext;
+    filePlan?: NewFilePlan; // if already rendered, reuse to skip a pass
+  };
+  removedFileDecisions: Record<string, 'delete' | 'keep'>;
+}
+```
+
+**Algorithm**:
+1. If `newShard.filePlan` is supplied, reuse; otherwise call `renderNewShard` to produce the new-shard output set. Build a `Map<outputPath, NewFileEntry>` for O(1) lookup.
+2. For each `drift.volatile` entry → emit `skip_volatile`.
+3. For each `drift.managed` entry:
+   - Not produced by the new shard → emit `delete`.
+   - Produced with the same rendered hash → emit `noop`.
+   - Produced with a different hash → emit `overwrite` with new content.
+4. For each `drift.missing` entry:
+   - Not in new shard → emit `delete` (state cleanup).
+   - In new shard → emit `restore_missing` with new content.
+5. For each `drift.modified` entry (run in parallel with bounded concurrency of 16):
+   - Not in new shard → respect `removedFileDecisions[path]` (default `'keep'`). Emit `keep_as_user` or `delete`.
+   - Cached old template missing → fall back to `conflictFromDirect` (single-region full-file conflict).
+   - Otherwise → call `computeMergeAction`. Translate its four outcomes to `noop`/`overwrite`/`auto_merge`/`conflict` actions. Record `theirsHash` on conflict so the executor can skip re-hashing.
+6. For every file in the new-shard plan not in `state.files` → emit `add`.
+7. Return `{ actions, pendingConflicts, counts }`. `pendingConflicts` is the subset of `conflict` actions the state machine will drive through DiffView.
+
+**Key invariants**:
+- Pure: no writes, no network. Only reads.
+- Deterministic: same inputs → same output. Locked by a property-based test.
+- Correctness of `theirsHash`: captured at plan time, used at write time — if the user edits the file between plan and write, the executor treats the captured hash as ground truth (the write has already been planned).
+
+**Error cases**:
+- Drift reports a modified file not in `state.files` → `UPDATE_CACHE_MISSING`. Inconsistent inputs should surface loudly.
+
+**Dependencies**: `differ.ts`, `renderer.ts`, `modules.ts`, `fs-utils.ts` (`sha256`, `mapConcurrent`), `drift.ts` (type only).
+
+---
+
+### 4.12 `update-executor.ts`
+
+**Purpose**: Apply an `UpdatePlan` against a real vault, with snapshot-based rollback.
+
+**Flow**:
+1. Allocate a unique backup directory under `.shardmind/backups/update-<ISO-timestamp>[-N]/`. The millisecond-precision timestamp and numeric suffix together guarantee no collisions between concurrent or near-simultaneous updates.
+2. **Snapshot**: copy every file the plan touches (modified content + `.shardmind/state.json` + cached `manifest.yaml`/`shard-schema.yaml`/`templates/`) into `files/` and `cache/` subdirectories of the backup dir. Parallel copies bounded by `SNAPSHOT_CONCURRENCY=16`.
+3. **Write pass**: for each non-delete action, fire progress event, write content, update in-memory `nextFiles` map, record summary stat. `overwrite` never adds to `addedPaths` (rollback erasure list); `add` and `restore_missing` do. `keep_as_user` untracks the path from `nextFiles` so the engine stops considering it managed.
+4. **Delete pass**: runs after all writes so a rename-style move (delete + add at a different path) can't clobber the incoming file.
+5. **Cache + state**: call `initShardDir`, `cacheTemplates`, `cacheManifest`, `writeValuesFile`, `writeState`. Order matters — state is the last thing we touch.
+6. **Hook**: call `runPostUpdateHook`. Non-fatal per Helm pattern; stdout is surfaced in the summary but does not affect exit status.
+7. **Rollback**: any exception between snapshot and state-write triggers `rollbackUpdate(vaultRoot, backupDir, addedPaths)`. Removes every file in `addedPaths` (files we newly introduced), then restores every snapshotted file from `files/` and `cache/`. Idempotent — running it twice has no observable effect.
+
+**Dry-run mode**:
+- Skips backup allocation (`backupDir` in the result is `null`).
+- Skips all disk writes.
+- Still computes counts and summary so the user can see "what would happen".
+
+**Dependencies**: `fs-utils.ts`, `state.ts` (`writeState`, `cacheTemplates`, `cacheManifest`, `initShardDir`), `install-planner.ts` (`hashValues`), `hook.ts` (`runPostUpdateHook`).
+
+---
+
+### 4.13 `values-io.ts`
+
+**Purpose**: Single YAML-load path for both install's optional `--values` prefill file and update's canonical `shard-values.yaml` read. Subtle behavioral difference — install filters unknown keys against the schema, update keeps everything so migrations can handle the shape change — is a parameter, not a fork.
+
+**Inputs**:
+```typescript
+loadValuesYaml(
+  filePath: string,
+  opts: {
+    label: string;                     // embedded in error messages
+    schemaFilter?: ShardSchema;        // filter unknown keys if set
+    errors: { readFailed: ErrorCode; invalid: ErrorCode };
+  },
+): Promise<Record<string, unknown>>
+```
+
+Returns a plain object. Caller-supplied error codes keep each call site's hint contextual.
 
 ---
 
@@ -702,18 +809,26 @@ interface ModuleReviewProps {
 
 ### 6.5 `DiffView.tsx`
 
-Shows a three-way diff for a single file. Used during update for modified files with upstream changes.
+Shows a three-way diff for a single file. Used during update for modified files with upstream changes. Driven one conflict at a time by the update state machine's `resolving-conflicts` phase.
 
 Props:
 ```typescript
+export type DiffAction = 'accept_new' | 'keep_mine' | 'skip';
+
 interface DiffViewProps {
   path: string;
-  mergeResult: MergeResult;
-  onChoice: (choice: 'accept_new' | 'keep_mine' | 'open_editor' | 'skip') => void;
+  index: number;       // 1-based position in the pending-conflicts queue
+  total: number;       // total conflicts for this update
+  result: MergeResult;
+  onChoice: (action: DiffAction) => void;
 }
 ```
 
-Renders: file path header, conflict regions with color-coded sides, action buttons.
+Renders: file-path header with `(N of M)` counter, each `ConflictRegion` with ±3 context lines and color-coded `yours`/`shard update` sides, a merge-stats summary (`linesUnchanged · linesAutoMerged · N regions conflicted`), and a `Select` with three active options and one disabled placeholder: Accept new · Keep mine · Skip · (Open in editor · disabled).
+
+CRLF-tolerant — all splits use `/\r?\n/` so a Windows-saved user file does not render `\r` characters that would corrupt the terminal.
+
+The "Open in editor" option is rendered disabled; its choice value is filtered by a `Set<DiffAction>` allowlist so an accidental activation never reaches `onChoice`. Editor integration is tracked in issue #50.
 
 ### 6.6 `Header.tsx`
 
@@ -740,7 +855,7 @@ All core functions throw typed errors:
 class ShardMindError extends Error {
   constructor(
     message: string,
-    public code: string,
+    public code: ErrorCode,
     public hint?: string,
   ) {
     super(message);
@@ -754,6 +869,19 @@ throw new ShardMindError(
   "Check spelling or use github:owner/repo for direct install",
 );
 ```
+
+`ErrorCode` is a typed union exported from `source/runtime/errors.ts`. Adding a code there forces every `new ShardMindError(msg, 'X', hint)` call site to compile-check against the union — typos surface at build time.
+
+Update + migration codes (added in Milestone 4):
+
+| Code | Thrown by | Hint pattern |
+|------|-----------|--------------|
+| `UPDATE_NO_INSTALL` | use-update-machine | "Run `shardmind install <shard>` first." |
+| `UPDATE_SOURCE_MISMATCH` | reserved for registry-drift detection | — |
+| `UPDATE_CACHE_MISSING` | update-planner | "State and drift report disagree — re-install the shard." |
+| `UPDATE_WRITE_FAILED` | update-executor | OS error message + permission / space hint |
+| `MIGRATION_INVALID_VERSION` | migrator | "currentVersion and targetVersion must be valid semver." |
+| `MIGRATION_TRANSFORM_FAILED` | reserved for sandbox-enforcement path | — |
 
 Commands catch errors and render them in Ink with `StatusMessage variant="error"`.
 

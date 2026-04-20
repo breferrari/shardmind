@@ -1,7 +1,12 @@
 import { Box, Text } from 'ink';
 import { ProgressBar, Spinner } from './ui.js';
 
-interface InstallProgressProps {
+/**
+ * Progress indicator shared by install and update commands: spinner +
+ * counter + ProgressBar, with an optional rolling history footer for
+ * verbose mode.
+ */
+interface CommandProgressProps {
   current: number;
   total: number;
   label: string;
@@ -9,13 +14,13 @@ interface InstallProgressProps {
   history?: string[];
 }
 
-export default function InstallProgress({
+export default function CommandProgress({
   current,
   total,
   label,
   verbose,
   history,
-}: InstallProgressProps) {
+}: CommandProgressProps) {
   const percent = total === 0 ? 0 : Math.min(100, Math.round((current / total) * 100));
 
   return (

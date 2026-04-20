@@ -12,7 +12,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { useApp } from 'ink';
-import { parse as parseYaml } from 'yaml';
+import { loadValuesYaml } from '../../core/values-io.js';
 
 import type {
   ShardManifest,
@@ -42,8 +42,9 @@ import {
   rollbackInstall,
   type BackupRecord,
 } from '../../core/install-executor.js';
-import { runPostInstallHook, type HookResult } from '../../core/hook.js';
+import { runPostInstallHook } from '../../core/hook.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
+import { summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
 
 import type { WizardResult } from '../../components/InstallWizard.js';
 import type { CollisionAction } from '../../components/CollisionReview.js';
@@ -59,12 +60,6 @@ export interface PreparedContext {
   prefillValues: Record<string, unknown>;
   moduleFileCounts: Record<string, number>;
   alwaysIncludedFileCount: number;
-}
-
-export interface HookSummary {
-  deferred?: boolean;
-  stdout?: string;
-  exitCode?: number;
 }
 
 export type Phase =
@@ -108,6 +103,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   const writtenPathsRef = useRef<string[]>([]);
   const backupsRef = useRef<BackupRecord[]>([]);
   const installingRef = useRef(false);
+  // Shard tempdir cleanup, populated once the shard download completes.
+  // A SIGINT between download and wizard-submit needs to run this.
+  const ctxCleanupRef = useRef<(() => Promise<void>) | null>(null);
   // Mutable pointer to the latest handleWizardComplete closure so
   // runNonInteractive can call it without circular useCallback deps.
   const handleWizardCompleteRef = useRef<(r: WizardResult, c: PreparedContext) => Promise<void>>(
@@ -124,29 +122,18 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     [exit],
   );
 
-  // SIGINT handler: if a render is in progress when the user hits Ctrl+C,
-  // roll back partial writes and restore backups before exiting. Default
-  // Ink behavior exits without knowing about our bookkeeping.
-  useEffect(() => {
-    const handler = () => {
-      if (installingRef.current && !dryRun) {
-        // Fire-and-forget; process is about to exit anyway.
-        rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current)
-          .catch(() => {})
-          .finally(() => process.exit(130));
-      } else {
-        process.exit(130);
-      }
-    };
-    process.on('SIGINT', handler);
-    return () => {
-      process.off('SIGINT', handler);
-    };
-  }, [dryRun, vaultRoot]);
+  // If a render is in progress when the user hits Ctrl+C, roll back
+  // partial writes and restore backups before exiting. `cleanup` drops
+  // the shard tempdir regardless of phase — without it, cancelling at
+  // the wizard or collision screens leaks the extracted shard on disk.
+  useSigintRollback({
+    isActive: () => !dryRun && installingRef.current,
+    rollback: () => rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current),
+    cleanup: () => (ctxCleanupRef.current ? ctxCleanupRef.current() : Promise.resolve()),
+  });
 
   useEffect(() => {
     let disposed = false;
-    let ctxForCleanup: PreparedContext | null = null;
 
     (async () => {
       try {
@@ -155,6 +142,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
         setPhase({ kind: 'loading', message: `Downloading ${resolved.namespace}/${resolved.name}@${resolved.version}…` });
         const temp = await downloadShard(resolved.tarballUrl);
+        ctxCleanupRef.current = temp.cleanup;
 
         setPhase({ kind: 'loading', message: 'Parsing manifest and schema…' });
         const manifest = await parseManifest(temp.manifest);
@@ -180,7 +168,6 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           moduleFileCounts,
           alwaysIncludedFileCount,
         };
-        ctxForCleanup = ctx;
 
         const existing = await readState(vaultRoot);
         if (existing) {
@@ -203,8 +190,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
     return () => {
       disposed = true;
-      if (ctxForCleanup) {
-        ctxForCleanup.cleanup().catch(() => {});
+      if (ctxCleanupRef.current) {
+        ctxCleanupRef.current().catch(() => {});
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -400,7 +387,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       if (choice === 'update') {
         finish({
           kind: 'cancelled',
-          reason: 'Existing install preserved. `shardmind update` is not yet available (Milestone 4); re-run `install` and pick Reinstall when you want a fresh start.',
+          reason: 'Existing install preserved. Run `shardmind update` to pick up a newer version, or re-run `install` and pick Reinstall for a fresh start.',
         });
         return;
       }
@@ -464,56 +451,10 @@ async function loadValuesFile(
   filePath: string,
   schema: ShardSchema,
 ): Promise<Record<string, unknown>> {
-  let raw: string;
-  try {
-    raw = await fsp.readFile(filePath, 'utf-8');
-  } catch (err) {
-    throw new ShardMindError(
-      `Could not read --values file: ${filePath}`,
-      'VALUES_FILE_READ_FAILED',
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = parseYaml(raw);
-  } catch (err) {
-    throw new ShardMindError(
-      `--values file is not valid YAML: ${filePath}`,
-      'VALUES_FILE_INVALID',
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new ShardMindError(
-      `--values file must be a YAML mapping: ${filePath}`,
-      'VALUES_FILE_INVALID',
-      'Top level must be { key: value } entries matching shard schema value IDs.',
-    );
-  }
-
-  // Unknown keys are silently ignored so a values file can be reused
-  // across shard versions that have added or removed entries.
-  const filtered: Record<string, unknown> = {};
-  for (const key of Object.keys(schema.values)) {
-    if (key in (parsed as Record<string, unknown>)) {
-      filtered[key] = (parsed as Record<string, unknown>)[key];
-    }
-  }
-  return filtered;
+  return loadValuesYaml(filePath, {
+    label: '--values file',
+    schemaFilter: schema,
+    errors: { readFailed: 'VALUES_FILE_READ_FAILED', invalid: 'VALUES_FILE_INVALID' },
+  });
 }
 
-function summarizeHook(result: HookResult): HookSummary | null {
-  switch (result.kind) {
-    case 'absent':
-      return null;
-    case 'deferred':
-      return { deferred: true };
-    case 'ran':
-      return { stdout: result.stdout, exitCode: result.exitCode };
-    case 'failed':
-      return { stdout: result.message, exitCode: 1 };
-  }
-}

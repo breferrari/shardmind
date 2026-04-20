@@ -39,9 +39,9 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 
 ### Milestone 4: Update Command + Status (Day 4)
 
-- [ ] `commands/update.tsx` — upgrade flow with drift detection + DiffView ([#12](https://github.com/breferrari/shardmind/issues/12))
+- [x] `commands/update.tsx` — upgrade flow with drift detection + DiffView ([#12](https://github.com/breferrari/shardmind/issues/12))
 - [ ] `commands/index.tsx` — status display + --verbose diagnostics ([#13](https://github.com/breferrari/shardmind/issues/13))
-- [ ] Integration test: install → modify files → update → verify merge behavior
+- [x] Integration test: install → modify files → update → verify merge behavior
 - [ ] E2E test: all 3 commands via CLI invocation
 
 ### Milestone 5: Flagship Shard (Day 5)
@@ -112,6 +112,8 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
 - [ ] Re-evaluate `@inkjs/ui` dependency (upstream frozen; shim at `source/components/ui.ts` keeps swap cheap) ([#43](https://github.com/breferrari/shardmind/issues/43))
 - [ ] Drop `LineInterner` workaround once `node-diff3` releases the prototype-lookup fix ([#49](https://github.com/breferrari/shardmind/issues/49), upstream [bhousel/node-diff3#87](https://github.com/bhousel/node-diff3/pull/87))
+- [ ] `$EDITOR` integration for DiffView conflict resolution ([#50](https://github.com/breferrari/shardmind/issues/50))
+- [ ] 24h update-check cache shared between status + update ([#51](https://github.com/breferrari/shardmind/issues/51))
 
 ---
 

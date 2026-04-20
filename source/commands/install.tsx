@@ -1,4 +1,3 @@
-import { type ReactNode } from 'react';
 import { Box, Text } from 'ink';
 import { Spinner, StatusMessage, Alert } from '../components/ui.js';
 import zod from 'zod';
@@ -8,8 +7,9 @@ import { ShardMindError } from '../runtime/types.js';
 import InstallWizard from '../components/InstallWizard.js';
 import CollisionReview from '../components/CollisionReview.js';
 import ExistingInstallGate from '../components/ExistingInstallGate.js';
-import InstallProgress from '../components/InstallProgress.js';
+import CommandProgress from '../components/CommandProgress.js';
 import Summary from '../components/Summary.js';
+import CommandFrame from '../components/CommandFrame.js';
 
 import { useInstallMachine } from './hooks/use-install-machine.js';
 
@@ -52,26 +52,26 @@ export default function Install({ args, options }: Props) {
   if (phase.kind === 'booting' || phase.kind === 'loading') {
     const msg = phase.kind === 'loading' ? phase.message : 'Starting…';
     return (
-      <RootFrame dryRun={dryRun} showLegend={false}>
+      <CommandFrame dryRun={dryRun} showLegend={false}>
         <Box gap={1}>
           <Spinner />
           <Text>{msg}</Text>
         </Box>
-      </RootFrame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'gate') {
     return (
-      <RootFrame dryRun={dryRun}>
+      <CommandFrame dryRun={dryRun}>
         <ExistingInstallGate state={phase.state} onChoice={onGateChoice} />
-      </RootFrame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'wizard') {
     return (
-      <RootFrame dryRun={dryRun}>
+      <CommandFrame dryRun={dryRun}>
         <InstallWizard
           manifest={phase.ctx.manifest}
           schema={phase.ctx.schema}
@@ -82,35 +82,35 @@ export default function Install({ args, options }: Props) {
           onCancel={onWizardCancel}
           onError={onWizardError}
         />
-      </RootFrame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'collision') {
     return (
-      <RootFrame dryRun={dryRun}>
+      <CommandFrame dryRun={dryRun}>
         <CollisionReview collisions={phase.collisions} onChoice={onCollisionChoice} />
-      </RootFrame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'installing') {
     return (
-      <RootFrame dryRun={dryRun} showLegend={false}>
-        <InstallProgress
+      <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandProgress
           current={phase.current}
           total={phase.total}
           label={phase.label}
           verbose={verbose}
           history={phase.history}
         />
-      </RootFrame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'summary') {
     return (
-      <RootFrame dryRun={dryRun} showLegend={false}>
+      <CommandFrame dryRun={dryRun} showLegend={false}>
         <Summary
           manifest={phase.manifest}
           vaultRoot={phase.vaultRoot}
@@ -120,18 +120,18 @@ export default function Install({ args, options }: Props) {
           hookOutput={phase.hook}
           dryRun={phase.dryRun}
         />
-      </RootFrame>
+      </CommandFrame>
     );
   }
 
   if (phase.kind === 'cancelled') {
     return (
-      <RootFrame dryRun={dryRun} showLegend={false}>
+      <CommandFrame dryRun={dryRun} showLegend={false}>
         <Box flexDirection="column">
           <Alert variant="info">Cancelled</Alert>
           <Text dimColor>{phase.reason}</Text>
         </Box>
-      </RootFrame>
+      </CommandFrame>
     );
   }
 
@@ -139,45 +139,14 @@ export default function Install({ args, options }: Props) {
   const code = err instanceof ShardMindError ? err.code : null;
   const hint = err instanceof ShardMindError ? err.hint : null;
   return (
-    <RootFrame dryRun={dryRun} showLegend={false}>
+    <CommandFrame dryRun={dryRun} showLegend={false}>
       <Box flexDirection="column" gap={1}>
         <StatusMessage variant="error">{err.message}</StatusMessage>
         {code && <Text dimColor>code: {code}</Text>}
         {hint && <Text>{hint}</Text>}
         {phase.detail && <Text dimColor>{phase.detail}</Text>}
       </Box>
-    </RootFrame>
-  );
-}
-
-function RootFrame({
-  children,
-  dryRun,
-  showLegend = true,
-}: {
-  children: ReactNode;
-  dryRun: boolean;
-  showLegend?: boolean;
-}) {
-  return (
-    <Box flexDirection="column" gap={1}>
-      {dryRun && (
-        <Box>
-          <Text backgroundColor="yellow" color="black">
-            {' DRY RUN '}
-          </Text>
-          <Text dimColor> no files will be written</Text>
-        </Box>
-      )}
-      {children}
-      {showLegend && (
-        <Box marginTop={1}>
-          <Text dimColor>
-            ↑↓ navigate · Space select (multi) · Enter confirm · Esc back · Ctrl+C cancel
-          </Text>
-        </Box>
-      )}
-    </Box>
+    </CommandFrame>
   );
 }
 

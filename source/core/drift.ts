@@ -15,7 +15,7 @@ import fsp from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import type { ShardState, DriftReport, DriftEntry, FileState } from '../runtime/types.js';
-import { sha256 } from './fs-utils.js';
+import { sha256, mapConcurrent } from './fs-utils.js';
 import { isEnoent } from '../runtime/errno.js';
 import { SHARDMIND_DIR, VALUES_FILE, GIT_DIR, OBSIDIAN_DIR } from '../runtime/vault-paths.js';
 
@@ -207,25 +207,3 @@ function toPosix(p: string): string {
   return p.replace(/\\/g, '/');
 }
 
-/**
- * Bounded-concurrency `map`. Runs `fn` over `items` with at most
- * `concurrency` in flight at once, preserving the input order in the
- * returned array. Used to cap file-descriptor pressure during drift reads.
- */
-async function mapConcurrent<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (true) {
-      const i = cursor++;
-      if (i >= items.length) return;
-      results[i] = await fn(items[i]!);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
