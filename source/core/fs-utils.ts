@@ -1,6 +1,7 @@
 import fsp from 'node:fs/promises';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { SHARD_TEMPLATES_DIR } from '../runtime/vault-paths.js';
 
 export async function pathExists(absolutePath: string): Promise<boolean> {
   try {
@@ -17,6 +18,22 @@ export function sha256(input: string | Buffer): string {
 
 export function toPosix(from: string, to: string): string {
   return path.relative(from, to).replace(/\\/g, '/');
+}
+
+/**
+ * `state.files[x].template` stores the template path relative to the
+ * downloaded temp dir at install time (e.g. `templates/brain/Index.md.njk`).
+ * The cached copy lives under `.shardmind/templates/brain/Index.md.njk` —
+ * same tail, different root. Strip the leading `templates/` segment if
+ * present so callers can join against the cache dir cleanly.
+ *
+ * Shared between the update planner (which reads cached templates to
+ * compute three-way merges) and the status command's verbose per-file
+ * diff pass (which reads the same templates to compute `+N/−M`).
+ */
+export function stripTemplatePrefix(templateKey: string): string {
+  const prefix = `${SHARD_TEMPLATES_DIR}/`;
+  return templateKey.startsWith(prefix) ? templateKey.slice(prefix.length) : templateKey;
 }
 
 /**
