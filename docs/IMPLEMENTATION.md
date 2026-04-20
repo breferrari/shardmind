@@ -175,10 +175,10 @@ interface ResolvedShard {
 **Algorithm**:
 1. Parse `shardRef` into namespace, name, and optional version
 2. If `shardRef` starts with `github:` → direct mode, skip registry
-3. Else → fetch registry index from `https://raw.githubusercontent.com/shardmind/registry/main/index.json`
+3. Else → fetch registry index from `${REGISTRY_INDEX_URL}` (defaults to `https://raw.githubusercontent.com/shardmind/registry/main/index.json`; see env-var overrides below)
 4. Look up `namespace/name` in registry
 5. If version not specified → use `latest` field from registry
-6. Construct tarball URL: `https://api.github.com/repos/{owner}/{repo}/tarball/v{version}`
+6. Construct tarball URL: `${GITHUB_API_BASE}/repos/{owner}/{repo}/tarball/v{version}` (defaults to `https://api.github.com`; see env-var overrides below)
 7. Verify the tag exists (HEAD request to GitHub API). 404 → error.
 
 **Env-var overrides** (read once at module load, overridable for testing,

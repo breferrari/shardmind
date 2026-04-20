@@ -608,10 +608,24 @@ export async function resolveRefForUpdate(source: string): Promise<ResolvedShard
         );
       }
       if (err.code === 'VERSION_NOT_FOUND') {
+        // registry.ts throws VERSION_NOT_FOUND in two distinct cases:
+        //   1. GitHub's /releases/latest returns 404 — the repo has no
+        //      releases at all ("No releases found for <owner>/<repo>").
+        //   2. verifyTag's HEAD probe on the tarball URL returns 404 —
+        //      the tag exists in /releases/latest but the tarball isn't
+        //      fetchable (transient GitHub state or deleted tag).
+        // The "tarball missing upstream" hint only fits case 2. Rewriting
+        // case 1 with it is actively misleading — the user has no tarball
+        // to retry, they need to cut a release upstream. Detect by the
+        // message prefix registry.ts emits and preserve the original
+        // "publish a GitHub release" hint there instead.
+        const isNoReleases = err.message.startsWith('No releases found');
         throw new ShardMindError(
           err.message,
           'VERSION_NOT_FOUND',
-          `The latest version of '${source}' reports a tag whose tarball is missing upstream — usually a transient GitHub state or a deleted tag. Retry in a minute, or reinstall if the issue persists.`,
+          isNoReleases
+            ? `'${source}' has no published releases — someone uninstalled or deleted them upstream since the shard was installed. Check the repository's releases page, or reinstall from a different source.`
+            : `The latest version of '${source}' reports a tag whose tarball is missing upstream — usually a transient GitHub state or a deleted tag. Retry in a minute, or reinstall if the issue persists.`,
         );
       }
     }

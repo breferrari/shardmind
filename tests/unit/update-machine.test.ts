@@ -88,7 +88,10 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
     expect((err as ShardMindError).hint).toContain('ghost/shard');
   });
 
-  it('keeps VERSION_NOT_FOUND but rewrites the hint for update audience', async () => {
+  it('VERSION_NOT_FOUND from a missing tarball gets the "transient / deleted tag" hint', async () => {
+    // verifyTag branch: /releases/latest succeeds with a tag, then the
+    // HEAD on the tarball 404s — the tag exists in the API but the
+    // tarball is unreachable. "Retry in a minute" is the right hint.
     globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const u = typeof url === 'string' ? url : url.toString();
       if (u.endsWith('/releases/latest')) {
@@ -105,6 +108,28 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
     expect((err as ShardMindError).hint).not.toMatch(/pick an available version/i);
     // Update-path hint mentions transient GitHub state or deleted tag.
     expect((err as ShardMindError).hint).toMatch(/transient|deleted/i);
+    // And NOT the "no published releases" hint — that's the other branch.
+    expect((err as ShardMindError).hint).not.toMatch(/no published releases/i);
+  });
+
+  it('VERSION_NOT_FOUND from a repo with no releases gets the "no published releases" hint', async () => {
+    // fetchLatestRelease branch: /releases/latest 404s — the upstream
+    // repo has no releases at all. "Retry in a minute" is misleading;
+    // the user needs a different remediation. This test pins the split.
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      if (u.endsWith('/releases/latest')) return new Response(null, { status: 404 });
+      throw new Error(`Unexpected fetch: ${u}`);
+    }) as typeof fetch;
+
+    const err = await resolveRefForUpdate('github:acme/widget').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ShardMindError);
+    expect((err as ShardMindError).code).toBe('VERSION_NOT_FOUND');
+    // Install-path hint must not surface.
+    expect((err as ShardMindError).hint).not.toMatch(/publish a GitHub release/i);
+    // Update-path "no releases" branch hint — and not the tarball-missing hint.
+    expect((err as ShardMindError).hint).toMatch(/no published releases/i);
+    expect((err as ShardMindError).hint).not.toMatch(/transient/i);
   });
 
   it('passes REGISTRY_NETWORK through unchanged — hint is already context-agnostic', async () => {

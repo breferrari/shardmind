@@ -114,7 +114,7 @@ export async function backupCollisions(
         : `${rootMessage}. Earlier backups were restored; the vault is unchanged. Check permissions on the collision target and retry.`;
 
       throw new ShardMindError(
-        `Could not back up existing file: ${collision.absolutePath}`,
+        `Could not back up existing ${collision.kind}: ${collision.absolutePath}`,
         'BACKUP_FAILED',
         hint,
       );

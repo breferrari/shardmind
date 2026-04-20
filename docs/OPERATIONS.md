@@ -56,7 +56,7 @@ None are required; all have sensible defaults that match the public GitHub / reg
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `GITHUB_TOKEN` | *(unset)* | Authenticates GitHub API calls. Unauthenticated requests are rate-limited to 60/hour; setting a token gets 5,000/hour. Any classic or fine-grained token with `public_repo` read access works. Set via `~/.bashrc`, shell-specific `.env`, or the CI runner's secret store. |
-| `SHARDMIND_GITHUB_API_BASE` | `https://api.github.com` | Route GitHub REST calls to an alternate host. Useful for GitHub Enterprise (e.g. `https://github.acme.corp/api/v3`), mirror proxies (e.g. an internal caching layer), or local testing. Trailing slashes are trimmed. |
+| `SHARDMIND_GITHUB_API_BASE` | `https://api.github.com` | Route GitHub REST calls to an alternate host. Useful for GitHub Enterprise (e.g. `https://github.acme.corp/api/v3`), mirror proxies (e.g. an internal caching layer), or local testing. Surrounding whitespace and trailing slashes are stripped. |
 | `SHARDMIND_REGISTRY_INDEX_URL` | `https://raw.githubusercontent.com/shardmind/registry/main/index.json` | Override the shard registry index. Only affects non-`github:` references (the `namespace/name` shorthand); `github:owner/repo` direct installs skip the registry entirely. |
 
 All variables are read **once at CLI startup** and captured as module-level constants. Changing them mid-run has no effect — fork a new process with the desired environment instead.

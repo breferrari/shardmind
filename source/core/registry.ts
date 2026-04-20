@@ -14,23 +14,26 @@ import { ShardMindError } from '../runtime/types.js';
  * the real internet; future work (#34 validate, #39 alternate registries,
  * GHE support) also consumes it.
  *
- * Trailing slashes are stripped so downstream path joins like
- * `${GITHUB_API_BASE}/repos/...` always produce well-formed URLs
- * regardless of how the env var was written.
+ * Surrounding whitespace is trimmed and trailing slashes are stripped —
+ * env values copied from docs or a CI secret store frequently pick up
+ * leading newlines or a stray trailing `/`, and `safeFetch`'s error path
+ * calls `new URL(url).host`, which throws on garbage input and turns a
+ * network error into a confusing second exception.
  */
-const GITHUB_API_BASE = (process.env['SHARDMIND_GITHUB_API_BASE'] ?? 'https://api.github.com').replace(
-  /\/+$/,
-  '',
-);
+const GITHUB_API_BASE = (process.env['SHARDMIND_GITHUB_API_BASE'] ?? 'https://api.github.com')
+  .trim()
+  .replace(/\/+$/, '');
 
 /**
  * URL for the shared shard registry index. Overridable via
  * `SHARDMIND_REGISTRY_INDEX_URL` — same rationale as `GITHUB_API_BASE`.
- * Non-direct `namespace/name` refs go through this file.
+ * Non-direct `namespace/name` refs go through this file. Whitespace is
+ * trimmed for the same reason as above.
  */
-const REGISTRY_INDEX_URL =
+const REGISTRY_INDEX_URL = (
   process.env['SHARDMIND_REGISTRY_INDEX_URL'] ??
-  'https://raw.githubusercontent.com/shardmind/registry/main/index.json';
+  'https://raw.githubusercontent.com/shardmind/registry/main/index.json'
+).trim();
 
 // Provisional index.json shape. Not yet ratified in IMPLEMENTATION.md §4.1 —
 // the registry repo is created at Milestone 6 and the format will be finalized
