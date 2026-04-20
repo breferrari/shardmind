@@ -266,6 +266,23 @@ describe('registry.resolve', () => {
   });
 
   describe('tag verification', () => {
+    it('accepts a HEAD 302 as valid (GitHub tarball redirect)', async () => {
+      // GitHub's /tarball/v<ver> 302s to codeload.github.com; verifyTag's
+      // `response.ok || response.status === 302` branch pins this contract.
+      // Never covered until now — a silent regression here would break
+      // every real install against the public API.
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u.endsWith('/releases/latest')) return jsonResponse({ tag_name: 'v1.0.0' });
+        if (init?.method === 'HEAD') return new Response(null, { status: 302 });
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolve('github:acme/widget');
+      expect(result.version).toBe('1.0.0');
+      expect(result.tarballUrl).toContain('/tarball/v1.0.0');
+    });
+
     it('throws VERSION_NOT_FOUND when HEAD returns 404', async () => {
       globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' ? url : url.toString();
@@ -287,6 +304,83 @@ describe('registry.resolve', () => {
       await expect(resolve('breferrari/obsidian-mind')).rejects.toMatchObject({
         code: 'VERSION_NOT_FOUND',
       });
+    });
+  });
+
+  describe('env overrides', () => {
+    // Module-level constants (GITHUB_API_BASE, REGISTRY_INDEX_URL) are read
+    // once at import. Prove the override path by resetting the module cache,
+    // setting the env var, and dynamic-importing a fresh registry module.
+    const originalApiBase = process.env['SHARDMIND_GITHUB_API_BASE'];
+    const originalIndexUrl = process.env['SHARDMIND_REGISTRY_INDEX_URL'];
+
+    afterEach(() => {
+      if (originalApiBase === undefined) delete process.env['SHARDMIND_GITHUB_API_BASE'];
+      else process.env['SHARDMIND_GITHUB_API_BASE'] = originalApiBase;
+      if (originalIndexUrl === undefined) delete process.env['SHARDMIND_REGISTRY_INDEX_URL'];
+      else process.env['SHARDMIND_REGISTRY_INDEX_URL'] = originalIndexUrl;
+    });
+
+    it('SHARDMIND_GITHUB_API_BASE reroutes release + tarball calls', async () => {
+      process.env['SHARDMIND_GITHUB_API_BASE'] = 'http://127.0.0.1:12345';
+      vi.resetModules();
+      const { resolve: resolveFresh } = await import('../../source/core/registry.js');
+
+      const seen: string[] = [];
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        seen.push(u);
+        if (u.endsWith('/releases/latest')) return jsonResponse({ tag_name: 'v1.2.3' });
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolveFresh('github:acme/widget');
+      expect(result.tarballUrl).toBe('http://127.0.0.1:12345/repos/acme/widget/tarball/v1.2.3');
+      expect(seen.every((u) => u.startsWith('http://127.0.0.1:12345'))).toBe(true);
+      expect(seen.some((u) => u.includes('api.github.com'))).toBe(false);
+    });
+
+    it('strips trailing slashes from SHARDMIND_GITHUB_API_BASE', async () => {
+      process.env['SHARDMIND_GITHUB_API_BASE'] = 'http://127.0.0.1:12345///';
+      vi.resetModules();
+      const { resolve: resolveFresh } = await import('../../source/core/registry.js');
+
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        expect(u.startsWith('http://127.0.0.1:12345/')).toBe(true);
+        expect(u.includes('//repos')).toBe(false);
+        if (u.endsWith('/releases/latest')) return jsonResponse({ tag_name: 'v1.0.0' });
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      await resolveFresh('github:acme/widget');
+    });
+
+    it('SHARDMIND_REGISTRY_INDEX_URL reroutes registry index lookup', async () => {
+      process.env['SHARDMIND_REGISTRY_INDEX_URL'] = 'http://127.0.0.1:12345/index.json';
+      vi.resetModules();
+      const { resolve: resolveFresh } = await import('../../source/core/registry.js');
+
+      const seen: string[] = [];
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        seen.push(u);
+        if (u === 'http://127.0.0.1:12345/index.json') {
+          return indexResponse({
+            shards: {
+              'ns/name': { repo: 'ns/name', latest: '1.0.0', versions: ['1.0.0'] },
+            },
+          });
+        }
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      await resolveFresh('ns/name');
+      expect(seen[0]).toBe('http://127.0.0.1:12345/index.json');
+      expect(seen.some((u) => u.includes('raw.githubusercontent.com'))).toBe(false);
     });
   });
 
