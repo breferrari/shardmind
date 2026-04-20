@@ -55,8 +55,14 @@ export interface GitHubStub {
   close: () => Promise<void>;
 }
 
-const TARBALL_RE = /^\/repos\/([a-z0-9][a-z0-9-]*)\/([a-z0-9][a-z0-9-]*)\/tarball\/v(.+)$/i;
-const LATEST_RE = /^\/repos\/([a-z0-9][a-z0-9-]*)\/([a-z0-9][a-z0-9-]*)\/releases\/latest$/i;
+// Widened to `[a-z0-9._-]` so the stub matches real GitHub's owner/repo
+// URL space. ShardMind's own ref parser (`source/core/registry.ts:27`)
+// is stricter and rejects `.`/`_` in slugs today, but a future loosening
+// or a hand-written request via `SHARDMIND_GITHUB_API_BASE` must not be
+// 404'd by the stub for cosmetic reasons. Matches the URL grammar GitHub
+// documents for tarball downloads.
+const TARBALL_RE = /^\/repos\/([a-z0-9][a-z0-9._-]*)\/([a-z0-9][a-z0-9._-]*)\/tarball\/v(.+)$/i;
+const LATEST_RE = /^\/repos\/([a-z0-9][a-z0-9._-]*)\/([a-z0-9][a-z0-9._-]*)\/releases\/latest$/i;
 
 export async function createGitHubStub(options: GitHubStubOptions): Promise<GitHubStub> {
   const shards = new Map<string, ShardSpec>();
@@ -64,6 +70,12 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
     shards.set(slug.toLowerCase(), { ...spec });
   }
   let tarballDelayMs = options.tarballDelayMs ?? 0;
+  // Outstanding tarball-delay timers. Tracked so `close()` can clear them
+  // synchronously — otherwise a slow test firing SIGINT mid-download
+  // leaves pending timers that keep the vitest worker alive past
+  // `afterAll`, and the eventual callback tries to `res.write` a socket
+  // the client has already destroyed.
+  const pendingTimers = new Set<NodeJS.Timeout>();
 
   const server = http.createServer((req, res) => {
     const method = req.method ?? 'GET';
@@ -97,6 +109,10 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
           return sendJson(res, 500, { message: `Fixture missing on disk: ${tarPath}` });
         }
         const sendTarball = () => {
+          // Client may have disconnected during the delay (test signalled
+          // SIGINT, download tempdir torn down). Don't try to write
+          // headers or data into a destroyed response.
+          if (res.destroyed || res.writableEnded) return;
           res.writeHead(200, { 'content-type': 'application/gzip' });
           const stream = createReadStream(tarPath);
           stream.pipe(res);
@@ -104,8 +120,22 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
             res.destroy();
           });
         };
-        if (tarballDelayMs > 0) setTimeout(sendTarball, tarballDelayMs);
-        else sendTarball();
+        if (tarballDelayMs > 0) {
+          const timer = setTimeout(() => {
+            pendingTimers.delete(timer);
+            sendTarball();
+          }, tarballDelayMs);
+          // `.unref()` so a forgotten client request doesn't keep the
+          // worker alive past suite teardown.
+          timer.unref();
+          pendingTimers.add(timer);
+          // Also clean up if the client disconnects mid-delay.
+          res.once('close', () => {
+            if (pendingTimers.delete(timer)) clearTimeout(timer);
+          });
+        } else {
+          sendTarball();
+        }
         return;
       }
 
@@ -140,6 +170,10 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
     },
     close: () =>
       new Promise<void>((resolve, reject) => {
+        // Drain any tarball-delay timers first so the close callback isn't
+        // blocked on an in-flight delayed send.
+        for (const t of pendingTimers) clearTimeout(t);
+        pendingTimers.clear();
         server.close((err) => (err ? reject(err) : resolve()));
       }),
   };

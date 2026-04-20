@@ -48,10 +48,19 @@ export function installStdinCancellation(): void {
   // later — see the raw stream unchanged. Explicit `.resume()` is a
   // belt-and-suspenders guard for Windows pipe stdin, where auto-resume
   // behavior has historically been inconsistent across Node minors.
+  //
+  // Fallback: SIGINT handlers are only registered by interactive machines
+  // (useSigintRollback in install / update). Commands without rollback
+  // — `--version`, `--help`, status — never install a listener, and
+  // `process.emit('SIGINT')` with zero listeners is a no-op that violates
+  // the documented "ETX cancels cleanly" contract. If no handler is
+  // present at emit time, exit 130 directly so cancellation is always
+  // observable to the parent.
   process.stdin.on('data', (chunk: Buffer) => {
     for (let i = 0; i < chunk.length; i++) {
       if (chunk[i] === ETX) {
-        process.emit('SIGINT');
+        const fired = process.emit('SIGINT');
+        if (!fired) process.exit(130);
         return;
       }
     }

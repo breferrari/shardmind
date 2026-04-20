@@ -8,8 +8,12 @@
  * SIGINT-during-installing coverage without timing-dependent sleeps.
  *
  * Non-TTY environment variables (`CI=1`, `TERM=dumb`, `NO_COLOR=1`) are
- * applied by default so Ink produces stable, ANSI-clean output we can
- * grep against. Tests that need TTY semantics can override.
+ * applied so Ink produces stable, ANSI-clean output we can grep against.
+ * The child's stdio is always piped — `stdout.isTTY` is false in the
+ * subprocess regardless of what env vars we set, so genuine TTY
+ * semantics (alt-screen rendering, cursor control, streaming frames)
+ * aren't reachable from this harness. A true PTY wrapper would be a
+ * separate helper.
  *
  * The CLI is invoked as `node dist/cli.js <args>` — we don't rely on the
  * package.json bin shim because that requires `npm link` or an install
@@ -34,10 +38,12 @@ export interface CliResult {
 export interface SignalAt {
   signal: NodeJS.Signals;
   /**
-   * Fire the signal when stdout matches this pattern. Works in TTY mode
-   * where Ink streams intermediate frames. In non-TTY mode Ink renders
-   * once at the end, so pattern-based firing is unreliable for mid-run
-   * signals — use `afterMs` instead.
+   * Fire the signal when stdout matches this pattern. Stdout here is
+   * the child's piped output — Ink in non-TTY mode renders once at
+   * the end, so pattern-based firing only helps for commands that
+   * produce their own progress lines outside Ink. For mid-run
+   * cancellation of an Ink command, use `afterMs` + a slowed-down
+   * stub so there's actually an active phase to signal.
    */
   afterPattern?: RegExp;
   /**
@@ -59,8 +65,6 @@ export interface SpawnCliOptions {
   timeoutMs?: number;
   /** Deliver a signal after a stdout regex matches. */
   signalAt?: SignalAt;
-  /** Override the default CI=1 / TERM=dumb non-TTY defaults (escape hatch). */
-  ttyLike?: boolean;
 }
 
 const DEFAULT_TIMEOUT = 15_000;
@@ -81,9 +85,13 @@ export async function spawnCli(args: string[], opts: SpawnCliOptions): Promise<C
   for (const key of Object.keys(env)) {
     if (key.startsWith('SHARDMIND_')) delete env[key];
   }
+  // Non-TTY defaults: stdio is always piped below, so stdout.isTTY is
+  // false in the child regardless. These env vars tell Ink / other
+  // color-aware libraries to stay monochrome, producing deterministic
+  // stdout we can assert against.
   Object.assign(
     env,
-    opts.ttyLike ? {} : { CI: '1', TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '0' },
+    { CI: '1', TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '0' },
     opts.env ?? {},
   );
 

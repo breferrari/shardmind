@@ -35,9 +35,16 @@ export function ensureBuilt(): Promise<void> {
   return builtOncePromise;
 }
 
+// Build-input files outside `source/` that change the generated `dist/`.
+// Forgetting these in the mtime set means editing tsup.config.ts or
+// tsconfig.json won't trigger a local-dev rebuild, and the E2E suite
+// will spawn a stale `dist/cli.js` with the old toolchain settings.
+const BUILD_CONFIG_FILES = ['tsup.config.ts', 'tsconfig.json', 'package.json'];
+
 async function doBuild(): Promise<void> {
   const distMtime = await latestMtime([DIST_CLI, DIST_RUNTIME]);
-  const srcMtime = await latestMtime(await walkSources());
+  const configPaths = BUILD_CONFIG_FILES.map((f) => path.join(REPO_ROOT, f));
+  const srcMtime = await latestMtime([...(await walkSources()), ...configPaths]);
 
   // Cache hit requires EVERY required artifact to exist on disk — not
   // just that something in dist/ is newer than source. Using
