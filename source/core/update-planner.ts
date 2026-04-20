@@ -62,7 +62,6 @@ export type UpdateAction =
   | { kind: 'keep_as_user'; path: string };
 
 export interface PendingConflict {
-  index: number;
   path: string;
   result: MergeResult;
 }
@@ -212,9 +211,15 @@ export function removedFilesNeedingDecision(
   return paths.sort();
 }
 
+export interface RenderedFileEntry {
+  outputPath: string;
+  entry: FileEntry;
+  content: string;
+  hash: string;
+}
+
 export interface NewFilePlan {
-  outputs: Array<{ outputPath: string; entry: FileEntry; content: string; hash: string }>;
-  entriesByPath: Map<string, FileEntry>;
+  outputs: RenderedFileEntry[];
 }
 
 /**
@@ -232,8 +237,7 @@ export async function renderNewShard(
   const env = createRenderer(path.join(newTempDir, SHARD_TEMPLATES_DIR));
 
   // Render and copy in parallel (bounded by PLAN_IO_CONCURRENCY) since
-  // each entry is independent. Output order is stabilized by sorting
-  // the final list so downstream diffing is deterministic across runs.
+  // each entry is independent.
   const [renderedPairs, copiedPairs] = await Promise.all([
     mapConcurrent(resolution.render, PLAN_IO_CONCURRENCY, async (entry) => {
       const rendered = await renderFile(entry, newRenderContext, env);
@@ -256,11 +260,7 @@ export async function renderNewShard(
     }),
   ]);
 
-  const outputs = [...renderedPairs.flat(), ...copiedPairs];
-  const entriesByPath = new Map<string, FileEntry>(
-    outputs.map((o) => [o.outputPath, o.entry] as const),
-  );
-  return { outputs, entriesByPath };
+  return { outputs: [...renderedPairs.flat(), ...copiedPairs] };
 }
 
 /**
@@ -438,7 +438,6 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       case 'auto_merge': counts.autoMerged++; break;
       case 'conflict':
         pendingConflicts.push({
-          index: pendingConflicts.length,
           path: action.path,
           result: action.result,
         });
@@ -466,7 +465,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
 
 function conflictFromDirect(
   filePath: string,
-  target: NewFilePlan['outputs'][number],
+  target: RenderedFileEntry,
   actualContent: string,
   theirsHash: string,
   newTempDir: string,

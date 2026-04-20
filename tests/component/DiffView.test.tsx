@@ -213,6 +213,31 @@ describe('DiffView', () => {
     expect(frame).toContain('user line 2');
   });
 
+  it('does not fire onChoice a second time on the same mount', async () => {
+    // Defensive: `Select` may re-fire onChange if Ink re-focuses; each
+    // DiffView mount should fire onChoice at most once.
+    const onChoice = vi.fn<(a: DiffAction) => void>();
+    const { stdin } = render(
+      <DiffView
+        path="a.md"
+        index={1}
+        total={1}
+        result={makeResult()}
+        onChoice={onChoice}
+      />,
+    );
+    await tick(30);
+    stdin.write(ENTER);
+    await waitFor(
+      () => (onChoice.mock.calls.length > 0 ? 'ok' : ''),
+      (f) => f === 'ok',
+    );
+    stdin.write(ENTER);
+    stdin.write(ENTER);
+    await tick(80);
+    expect(onChoice).toHaveBeenCalledTimes(1);
+  });
+
   it('does not show context lines when the conflict starts at line 1', () => {
     const fromStart = makeResult({
       content: ['<<<<<<< yours', 'u', '=======', 's', '>>>>>>> shard update', 'after', ''].join('\n'),

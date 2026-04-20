@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { Box, Text } from 'ink';
 import { Select } from './ui.js';
 import type { ConflictRegion, MergeResult } from '../runtime/types.js';
@@ -36,6 +36,11 @@ interface DiffViewProps {
 
 export default function DiffView({ path: filePath, index, total, result, onChoice }: DiffViewProps) {
   const mergedLines = useMemo(() => result.content.split(LINE_SPLIT), [result.content]);
+  // `Select` may fire onChange more than once if Ink re-focuses the
+  // instance; once the user's pick is in, ignore everything else for
+  // this mount. `key={filePath}` below forces a fresh ref per file so
+  // this only blocks same-file duplicates.
+  const firedRef = useRef(false);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -61,9 +66,13 @@ export default function DiffView({ path: filePath, index, total, result, onChoic
       </Text>
 
       <Select
+        key={filePath}
         options={SELECT_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
         onChange={(choice) => {
-          if (DIFF_ACTIONS.has(choice as DiffAction)) onChoice(choice as DiffAction);
+          if (firedRef.current) return;
+          if (!DIFF_ACTIONS.has(choice as DiffAction)) return;
+          firedRef.current = true;
+          onChoice(choice as DiffAction);
         }}
       />
     </Box>
