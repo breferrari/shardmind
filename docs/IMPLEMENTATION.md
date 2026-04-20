@@ -749,18 +749,22 @@ Returns `null` when the vault has no `.shardmind/state.json` — the "not in a s
    - `detectDrift(vaultRoot, state)` (failure → empty drift + warning).
    - Resolve update availability via `core/update-check.getLatestVersion(vaultRoot, state.source, now)`, unless `skipUpdateCheck` (then report `unknown`).
    - Validate `shard-values.yaml` via `buildValuesValidator(schema).safeParse()`.
-3. If `verbose` → walk drift's `managed + modified` buckets, read each `.md` file with `mapConcurrent(16, …)`, run `validateFrontmatter()`, collect missing-key rows (capped at 20).
-4. If `verbose` → probe environment: `process.version` for Node, PATH scan for an `obsidian`/`Obsidian.exe` binary.
-5. Format `installed_at` / `updated_at` via `relativeTimeAgo(fromIso, now)` with buckets `just now → minutes → hours → days → weeks → months → over a year ago`.
-6. Emit section warnings (`update available`, `N modified`, `M missing`, `values invalid`, `N frontmatter issues`) and return the aggregated `StatusReport`.
+3. If `verbose`, fan three independent passes out via `Promise.all`:
+   - **Per-modified-file diff.** For each entry in `drift.modified` (capped at 20), read the cached template from `.shardmind/templates/<relative>`, render with current values + selections via `renderString(...)`, diff rendered base against actual disk content via `diffLines` (CRLF + UTF-8-BOM normalized first), and record `{ linesAdded, linesRemoved }`. Every failure step (missing template / render throw / unreadable file) surfaces as a `skipped` variant. Bounded by `MODIFIED_DIFF_CONCURRENCY = 8` to cap disk + heap pressure.
+   - **Frontmatter lint.** Walk drift's `managed + modified` `.md` files with `mapConcurrent(16, …)`, run `validateFrontmatter()`, collect missing-key rows (capped at 20).
+   - **Environment probe.** Report `process.version` and a parallel PATH scan for an `obsidian`/`Obsidian.exe` binary.
+4. Format `installed_at` / `updated_at` via `relativeTimeAgo(fromIso, now)` with buckets `just now → minutes → hours → days → weeks → months → over a year ago`.
+5. Emit section warnings (`update available`, `N modified`, `M missing`, `values invalid`, `N frontmatter issues`, and — in verbose mode — `UPDATE_CHECK_CACHE_CORRUPT` if the cache layer healed a corrupt entry during the run) and return the aggregated `StatusReport`.
 
 **Caps**:
 - `MAX_PATHS_PER_BUCKET = 20` on every `*Paths` list (counts are full; lists are capped, `truncated` flag set when clamped).
 - `MAX_FRONTMATTER_ISSUES = 20`.
+- `MAX_INVALID_VALUE_KEYS = 20` with `invalidCount` preserving the pre-cap total.
 - `FRONTMATTER_READ_CONCURRENCY = 16` (matches `SNAPSHOT_CONCURRENCY` in update-executor).
+- `MODIFIED_DIFF_CONCURRENCY = 8` for the per-file render + diff pass.
 
 **Deviations from the spec** (`docs/ARCHITECTURE.md §10.2–10.3`):
-- Flavor text like `"you added a custom section"` is rendered as a plain path without a natural-language summary — semantic diff of user edits would require an LLM.
+- Flavor text like `"you added a custom section"` is rendered as a plain path without a natural-language summary — semantic diff of user edits would require an LLM. Numeric `+N/−M` counts **are** shipped.
 - Shard-specific environment checks (e.g. `"QMD not installed"`) are absent because no `status` hook exists yet (hooks are post-install/post-update only); this remains a future shard-author feature.
 
 **Dependencies**: `core/state`, `core/drift`, `core/manifest`, `core/schema`, `core/values-io`, `core/update-check`, `runtime/frontmatter`, `core/fs-utils`.
@@ -784,10 +788,25 @@ primeLatestVersion(
   now?: number,
 ): Promise<void>
 
-type UpdateCheckResult =
+readCache(vaultRoot: string): Promise<ReadCacheResult>
+
+interface ReadCacheResult {
+  cache: UpdateCheck | null;
+  /** True when a prior cache file was corrupt (bad JSON, wrong shape,
+   *  or a directory at the cache path) and has been auto-deleted. */
+  corruptHealed: boolean;
+}
+
+type UpdateCheckResult = (
   | { kind: 'fresh'; latest_version: string; checked_at: string }
   | { kind: 'stale'; latest_version: string; checked_at: string; reason: 'no-network' }
-  | { kind: 'unknown'; reason: 'no-network' | 'unsupported-source' };
+  | { kind: 'unknown'; reason: 'no-network' | 'unsupported-source' }
+) & {
+  /** Set when a prior corrupt cache entry was detected and auto-healed
+   *  on the way in. Verbose callers surface it as the typed
+   *  `UPDATE_CHECK_CACHE_CORRUPT` warning. */
+  cacheHealed?: boolean;
+};
 ```
 
 **Storage**: `.shardmind/update-check.json`. Vault-local; shipped next to `state.json`; written atomically via `writeFile(tmp) → rename(tmp, final)`.
