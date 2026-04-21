@@ -776,7 +776,13 @@ describe('install — property-based invariants', () => {
           }
         },
       ),
-      { numRuns: 5, timeout: 20_000 },
+      // Per-case budget 45s: a single case spawns TWO concurrent CLI
+      // subprocesses, each doing a full install against the stub. macOS
+      // CI runners occasionally hit 20-25s under contention — same class
+      // of variance PR #59 compensated for by bumping the default E2E
+      // test timeout 15s → 45s (commit f14f1066). Keeping numRuns at 5
+      // so the outer test budget (120s below) still bounds wall-clock.
+      { numRuns: 5, timeout: 45_000 },
     );
   }, 120_000);
 
@@ -810,7 +816,12 @@ describe('install — property-based invariants', () => {
           }
         },
       ),
-      { numRuns: 5, timeout: 20_000 },
+      // 45s per case for macOS CI variance parity — see the sibling
+      // property test above for rationale. This property spawns only
+      // ONE install per case (vs. the sibling's two), so it's unlikely
+      // to hit the 20s ceiling, but keeping the budget consistent
+      // prevents future drift when the test body grows.
+      { numRuns: 5, timeout: 45_000 },
     );
   }, 120_000);
 });
