@@ -28,7 +28,7 @@ Follow `docs/IMPLEMENTATION.md` §9 (Build Plan). Day-by-day, morning/afternoon 
 | 2 | Install command with full Ink wizard + module review |
 | 3 | Merge engine — TDD with 17 fixtures (write fixtures FIRST, then implement) |
 | 4 | Update command + status display + verbose mode |
-| 5 | obsidian-mind v4 conversion (shard.yaml, .njk templates, TS hooks) |
+| 5 | obsidian-mind v6 conversion (shard.yaml, .njk templates, TS hooks) |
 | 6 | Research-wiki shard, E2E tests, polish, npm publish |
 
 ## Tech Stack

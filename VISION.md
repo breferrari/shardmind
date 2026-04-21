@@ -12,7 +12,7 @@ This document explains where the project came from, why it exists, and where it'
 
 ## Origin
 
-ShardMind started from a pattern observed in [obsidian-mind](https://github.com/breferrari/obsidian-mind), an Obsidian vault template for Claude Code that hit 1.3k stars in 3 days.
+ShardMind started from a pattern observed in [obsidian-mind](https://github.com/breferrari/obsidian-mind), an Obsidian vault template for Claude Code that has grown past 2k stars.
 
 Within the first week, 169 forks appeared. Three of them were analyzed in depth — a solo Rails developer at a research hospital, a Codex/OpenClaw agent-layer adaptation, and the author's own reshape from company-engineer to creator-builder. All three performed the same 8-category surgery independently:
 

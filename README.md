@@ -46,7 +46,7 @@ shardmind install breferrari/obsidian-mind
 ```
 shardmind update
 
-  breferrari/obsidian-mind v3.5.0 -> v4.0.0
+  breferrari/obsidian-mind v5.1.0 -> v6.0.0
 
   43 files unchanged (silent re-render)
    2 files updated (no conflict)
@@ -199,7 +199,7 @@ The `shardmind/runtime` module is available to any TypeScript hook script. Claud
 
 ## Author
 
-Created by **[Brenno Ferrari](https://brennoferrari.com)** — Senior iOS Engineer in Berlin. Creator of [obsidian-mind](https://github.com/breferrari/obsidian-mind) (1.3k+ stars).
+Created by **[Brenno Ferrari](https://brennoferrari.com)** — Senior iOS Engineer in Berlin. Creator of [obsidian-mind](https://github.com/breferrari/obsidian-mind) (2k+ stars).
 
 ---
 

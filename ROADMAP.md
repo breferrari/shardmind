@@ -46,7 +46,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 
 ### Milestone 5: Flagship Shard (Day 5)
 
-- [ ] obsidian-mind v4 — convert to shard format ([#14](https://github.com/breferrari/shardmind/issues/14))
+- [ ] obsidian-mind v6 — convert to shard format ([#14](https://github.com/breferrari/shardmind/issues/14))
 - [x] Finalize post-install hook runtime ([#30](https://github.com/breferrari/shardmind/issues/30)) — subprocess-backed via bundled `tsx`; ships with #30 so obsidian-mind (#14) can carry a real `post-install.ts`
 - [ ] Verify: `shardmind install github:breferrari/obsidian-mind` (direct mode) produces identical vault to git clone — the registry repo isn't created until Milestone 6
 
@@ -119,6 +119,9 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] Byte-identical preexisting add-collision adopts silently ([#62](https://github.com/breferrari/shardmind/issues/62))
 - [ ] Binary files bypass three-way merge entirely ([#63](https://github.com/breferrari/shardmind/issues/63))
 - [ ] `docs/IMPLEMENTATION.md` §4.11a / §4.11b for install-planner + install-executor ([#64](https://github.com/breferrari/shardmind/issues/64))
+- [ ] Enforce tarball size cap in `downloadShard` ([#32](https://github.com/breferrari/shardmind/issues/32))
+- [ ] `--force` flag on install for scripted collision overwrite without backup ([#55](https://github.com/breferrari/shardmind/issues/55))
+- [ ] E2E: bridge SIGINT delivery reliably on GH Actions Windows runner ([#57](https://github.com/breferrari/shardmind/issues/57))
 
 ---
 

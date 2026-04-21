@@ -1253,7 +1253,7 @@ Afternoon:
   correctly signal success/failure for scripting.
 ```
 
-### Day 5: obsidian-mind v4
+### Day 5: obsidian-mind v6
 
 ```
 In the obsidian-mind repo:

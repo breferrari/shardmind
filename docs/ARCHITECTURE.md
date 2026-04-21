@@ -11,7 +11,7 @@
 
 ## 1. Vision
 
-Markdown vaults are the dominant memory substrate for AI coding agents. obsidian-mind proved the format — 1.3k stars in 3 days, 169 forks performing the same structural surgery to reshape it for their domain. Karpathy's LLM Wiki pattern (April 2, 2026) validated the architecture from a completely different starting point.
+Markdown vaults are the dominant memory substrate for AI coding agents. obsidian-mind proved the format — 2k+ stars, 169 forks performing the same structural surgery to reshape it for their domain. Karpathy's LLM Wiki pattern (April 2, 2026) validated the architecture from a completely different starting point.
 
 The problem: there is no standardized way to discover, install, version, compose, or upgrade vault templates. Every project ships as a monolithic git clone with manual setup. Fork authors diverge from upstream with no path back. Users who edit rendered files lose the ability to pull template updates.
 
@@ -1395,7 +1395,7 @@ staying hermetic. No test reaches the public internet.
 | 2 | `commands/install.tsx`: 4-value wizard + module review multiselect. State file. First E2E install of obsidian-mind. |
 | 3 | Write all 16 merge fixtures. Implement drift.ts + differ.ts (TDD). node-diff3 integration. All scenarios passing. |
 | 4 | `commands/update.tsx` wired to drift engine + DiffView. `commands/index.tsx` status display + verbose mode. |
-| 5 | obsidian-mind v4: shard.yaml, shard-schema.yaml, .njk templates, CLAUDE.md partials, TypeScript hooks. |
+| 5 | obsidian-mind v6: shard.yaml, shard-schema.yaml, .njk templates, CLAUDE.md partials, TypeScript hooks. |
 | 6 | Research-wiki shard. E2E tests. README. npm publish. Announce. |
 
 ---
