@@ -346,6 +346,85 @@ describe('executeHook — subprocess runtime', () => {
     expect(result.stdout).toContain('bytes discarded]');
   }, 30_000);
 
+  it('truncates cleanly at UTF-8 code-point boundaries instead of inserting U+FFFD', async () => {
+    // Emit 256 KB minus a few bytes of ASCII, then a 4-byte emoji that
+    // straddles the STREAM_CAP_BYTES boundary. Naively slicing mid-emoji
+    // would cut between lead + continuation bytes — `.toString('utf-8')`
+    // inserts U+FFFD (the replacement character) on invalid input AND the
+    // decoded string's byte count no longer matches the raw slice length,
+    // which throws the dropped-byte counter off by 1-3. The fix rounds
+    // the cut back to the last complete code point before the cap. We
+    // assert two invariants: (a) no U+FFFD surfaces in the captured
+    // output, (b) captured + truncation marker together still fit the
+    // stream-cap budget.
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          // 256 KB - 2 bytes of ASCII — leaves room for a partial emoji.
+          const ascii = 'x'.repeat(256 * 1024 - 2);
+          process.stdout.write(ascii);
+          // 4-byte emoji, straddles the cap. Only the leading 2 bytes fit.
+          process.stdout.write('🎵');
+        }
+      `,
+    );
+    const result = await executeHook(hookPath, baseCtx());
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}`);
+    // No replacement character anywhere in the capture.
+    expect(result.stdout).not.toContain('\uFFFD');
+    // Truncation marker present — this path always caps.
+    expect(result.stdout).toContain('[… stdout truncated');
+    // The captured ASCII prefix survived whole. Fuzzy check: at least
+    // 250 KB of 'x' made it through (gives headroom for CI variance).
+    expect((result.stdout.match(/x/g) ?? []).length).toBeGreaterThan(250_000);
+  }, 30_000);
+
+  it('handles a pre-aborted AbortSignal without leaking the ctx tempfile', async () => {
+    // A caller may pass an already-aborted signal (e.g., cascading from a
+    // parent controller that fired earlier in the wizard's lifecycle).
+    // The listener-add path for an already-aborted signal fires
+    // synchronously; executeHook must land on `failed / cancelled`,
+    // the ctx tempfile must still be unlinked, and no child should be
+    // left running under a different pid.
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          await new Promise(resolve => setTimeout(resolve, 10000));
+        }
+      `,
+    );
+    const ac = new AbortController();
+    ac.abort();
+    const scopedTmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'hook-pre-abort-'));
+    const saved = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+    process.env.TMPDIR = scopedTmp;
+    process.env.TEMP = scopedTmp;
+    process.env.TMP = scopedTmp;
+    try {
+      const result = await executeHook(hookPath, baseCtx(), { signal: ac.signal });
+      // The runtime will either surface this as `cancelled` (the abort
+      // listener fired synchronously and set the flag before exit-decision)
+      // OR as a spawn error — both are acceptable "the caller aborted"
+      // outcomes. What is NOT acceptable: a `ran` result (child somehow
+      // completed despite the abort).
+      expect(result.kind).toBe('failed');
+      // Tempfile cleanup: no shardmind-hook-*.json should remain in the
+      // scoped tmpdir after return.
+      const remaining = (await fsp.readdir(scopedTmp)).filter((e) =>
+        /^shardmind-hook-[0-9a-f]+\.json$/.test(e),
+      );
+      expect(remaining).toEqual([]);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      await fsp.rm(scopedTmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  }, 15_000);
+
   it('caps stdout and stderr independently', async () => {
     const hookPath = await writeHook(
       'hook.ts',

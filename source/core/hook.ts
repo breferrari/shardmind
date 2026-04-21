@@ -46,6 +46,33 @@ import { pathExists } from './fs-utils.js';
 const STREAM_CAP_BYTES = 256 * 1024;
 
 /**
+ * Back a byte-offset cut up to the last complete UTF-8 code point that
+ * ends at or before `offset`. Used by `appendCapped` to avoid slicing
+ * mid-multibyte when saturating the stream cap — a naive cut on an
+ * emoji's 4-byte sequence would produce a U+FFFD replacement char on
+ * decode AND would throw the dropped-byte accounting off by 1-3.
+ *
+ * UTF-8 encoding: leading byte has high bits `0xxxxxxx`, `110xxxxx`,
+ * `1110xxxx`, or `11110xxx`; continuation bytes are `10xxxxxx`. The
+ * walk-back is bounded by 3 bytes (longest continuation sequence in
+ * modern UTF-8; older 5-6 byte sequences are no longer valid UTF-8 per
+ * RFC 3629) so the loop is O(1).
+ */
+function lastCompleteUtf8Boundary(buf: Buffer, offset: number): number {
+  if (offset <= 0) return 0;
+  if (offset >= buf.length) return buf.length;
+  // If the byte AT `offset` is a continuation (`10xxxxxx`), the code
+  // point starting before `offset` is incomplete — back up.
+  let cut = offset;
+  for (let i = 0; i < 3 && cut > 0; i++) {
+    const byte = buf[cut];
+    if (byte === undefined || (byte & 0b1100_0000) !== 0b1000_0000) break;
+    cut--;
+  }
+  return cut;
+}
+
+/**
  * Grace period between the first termination signal (SIGTERM / Windows
  * TerminateProcess via `child.kill()`) and the hard SIGKILL when a hook
  * times out or the parent aborts. Gives the hook a chance to flush
@@ -235,12 +262,19 @@ export async function executeHook(
   // because Windows env has a 32KB per-var cap and large `values` payloads
   // would truncate silently; stdin would entangle with the cancellation
   // bridge in `source/core/cancellation.ts`.
+  //
+  // `flag: 'wx'` opens with O_EXCL: the write fails atomically if anything
+  // exists at the path, which closes the TOCTOU window an attacker would
+  // otherwise have to race-symlink a tempfile at the resolved name before
+  // our write. An 8-byte random suffix makes collisions astronomically
+  // unlikely on its own; wx is belt-and-braces against a hostile
+  // multi-user `os.tmpdir()`.
   const ctxPath = path.join(
     os.tmpdir(),
     `shardmind-hook-${crypto.randomBytes(8).toString('hex')}.json`,
   );
   try {
-    await fsp.writeFile(ctxPath, JSON.stringify(ctx), { mode: 0o600 });
+    await fsp.writeFile(ctxPath, JSON.stringify(ctx), { mode: 0o600, flag: 'wx' });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
@@ -323,9 +357,20 @@ export async function executeHook(
         stream.bytes += chunkBytes;
         return;
       }
+      // Truncation boundary: `remaining` bytes fit; everything past that is
+      // dropped. A naive `Buffer.from(chunk).slice(0, remaining).toString('utf-8')`
+      // would insert a U+FFFD replacement character whenever `remaining`
+      // falls mid-multibyte (common around emoji / CJK output) AND the
+      // resulting string's byte count would no longer match `remaining`,
+      // throwing the `dropped` accounting off by 1-3 bytes. Back the cut
+      // up to the last complete UTF-8 code point we can keep, measure
+      // keptBytes from the final slice, and charge the full input minus
+      // kept to `dropped`.
       const remaining = STREAM_CAP_BYTES - stream.bytes;
-      const kept = remaining > 0 ? Buffer.from(chunk).slice(0, remaining).toString('utf-8') : '';
-      const keptBytes = Buffer.byteLength(kept);
+      const chunkBuffer = Buffer.from(chunk);
+      const safeCut = remaining > 0 ? lastCompleteUtf8Boundary(chunkBuffer, remaining) : 0;
+      const kept = safeCut > 0 ? chunkBuffer.slice(0, safeCut).toString('utf-8') : '';
+      const keptBytes = safeCut;
       stream.out += kept;
       stream.bytes += keptBytes;
       stream.truncated = true;

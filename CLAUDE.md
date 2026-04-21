@@ -78,6 +78,7 @@ shardmind/
 │   │   ├── NewModulesReview.tsx       # Update: offer newly optional modules
 │   │   ├── RemovedFilesReview.tsx     # Update: per-file keep/delete decision
 │   │   ├── HookProgress.tsx           # Live output tail while a post-install/-update hook runs
+│   │   ├── HookSummarySection.tsx     # Four-branch hook outcome render, shared by Summary + UpdateSummary
 │   │   ├── Summary.tsx                # Final install report
 │   │   ├── UpdateSummary.tsx          # Final update report
 │   │   ├── ValueInput.tsx             # Typed input widget (string/number/select…)
