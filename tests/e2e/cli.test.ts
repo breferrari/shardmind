@@ -436,12 +436,13 @@ describe('shardmind install', () => {
 describe('shardmind install — post-install hook', () => {
   let hookStub: GitHubStub;
   let hookTarball: string;
+  let hookScratch: string;
   let vault: Vault;
 
   beforeAll(async () => {
     const tar = await import('tar');
     const os = await import('node:os');
-    const hookScratch = await fs.mkdtemp(path.join(os.tmpdir(), 'shardmind-e2e-hook-'));
+    hookScratch = await fs.mkdtemp(path.join(os.tmpdir(), 'shardmind-e2e-hook-'));
     const prefix = 'hook-demo-0.1.0';
     const workRoot = path.join(hookScratch, 'work');
     const workDir = path.join(workRoot, prefix);
@@ -482,6 +483,17 @@ describe('shardmind install — post-install hook', () => {
 
   afterAll(async () => {
     await hookStub?.close();
+    // Clean up the tarball staging dir. Without this, repeated test runs
+    // leak %TEMP%\shardmind-e2e-hook-* directories (~200 KB each) that
+    // Windows CI eventually fails to open new temp dirs inside.
+    if (hookScratch) {
+      await fs.rm(hookScratch, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    }
   });
 
   afterEach(async () => {

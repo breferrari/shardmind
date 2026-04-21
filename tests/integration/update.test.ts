@@ -923,8 +923,11 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       expect(echoed.previousVersion).toBe('0.1.0');
       expect(echoed.shard.version).toBe('0.2.0');
     } finally {
-      await fsp.rm(vault, { recursive: true, force: true });
-      await fsp.rm(shardDir, { recursive: true, force: true });
+      // Windows: hook child holding cwd handle may delay rmdir; mirror
+      // the retry convention unit + install-integration tests use.
+      const rmOpts = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
+      await fsp.rm(vault, rmOpts);
+      await fsp.rm(shardDir, rmOpts);
     }
   }, 45_000);
 });

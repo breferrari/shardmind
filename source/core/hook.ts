@@ -73,6 +73,39 @@ function lastCompleteUtf8Boundary(buf: Buffer, offset: number): number {
 }
 
 /**
+ * Return the last `capBytes` bytes of `s` as valid UTF-8 — adjusted
+ * forward from the byte cut to the next complete code point boundary
+ * so the returned string never starts with an orphaned continuation
+ * byte.
+ *
+ * Used by the UI-side streaming buffer in `source/commands/hooks/shared.ts`,
+ * where we want to keep the MOST RECENT N bytes (tail-trim) rather than
+ * the prefix. A naive `s.slice(s.length - N)` trims by JS character
+ * count, which drifts 2-4× wide for mostly-multibyte output and can
+ * blow past the byte budget. A `Buffer`-based trim on a mid-multibyte
+ * boundary produces U+FFFD like the prefix-trim case.
+ *
+ * Exported so the UI-side appendHookOutput can share the UTF-8 walker
+ * with `appendCapped` above.
+ */
+export function tailAtUtf8Boundary(s: string, capBytes: number): string {
+  if (capBytes <= 0) return '';
+  const buf = Buffer.from(s, 'utf-8');
+  if (buf.length <= capBytes) return s;
+  // Initial cut: keep the last `capBytes` bytes. If that cut lands on a
+  // continuation byte, walk FORWARD to the next lead byte so the tail
+  // starts with a complete code point. Bounded by 3 bytes for the same
+  // reason as `lastCompleteUtf8Boundary`.
+  let cut = buf.length - capBytes;
+  for (let i = 0; i < 3 && cut < buf.length; i++) {
+    const byte = buf[cut];
+    if (byte === undefined || (byte & 0b1100_0000) !== 0b1000_0000) break;
+    cut++;
+  }
+  return buf.slice(cut).toString('utf-8');
+}
+
+/**
  * Grace period between the first termination signal (SIGTERM / Windows
  * TerminateProcess via `child.kill()`) and the hard SIGKILL when a hook
  * times out or the parent aborts. Gives the hook a chance to flush

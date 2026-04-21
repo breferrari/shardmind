@@ -348,8 +348,14 @@ describe('install + post-install hook integration', () => {
   });
 
   afterEach(async () => {
-    await fsp.rm(vault, { recursive: true, force: true });
-    await fsp.rm(shardDir, { recursive: true, force: true });
+    // Windows: a child process that was SIGTERM'd mid-hook may still hold
+    // a handle on `cwd: vault` for a few milliseconds after the parent's
+    // promise resolves. `{ maxRetries, retryDelay }` tolerates that
+    // window instead of flaking the test with EBUSY. Mirrors the
+    // convention the unit-hook tests adopted in the harden round.
+    const rmOpts = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
+    await fsp.rm(vault, rmOpts);
+    await fsp.rm(shardDir, rmOpts);
   });
 
   it('runs the post-install hook after state.json is written', async () => {

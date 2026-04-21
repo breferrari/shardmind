@@ -22,6 +22,7 @@ import {
   runPostInstallHook,
   runPostUpdateHook,
   executeHook,
+  tailAtUtf8Boundary,
 } from '../../source/core/hook.js';
 import type { HookContext, ShardManifest } from '../../source/runtime/types.js';
 
@@ -35,6 +36,56 @@ function makeManifest(hooks: ShardManifest['hooks']): ShardManifest {
     hooks,
   };
 }
+
+describe('tailAtUtf8Boundary', () => {
+  it('returns the whole string when byte length is under the cap', () => {
+    expect(tailAtUtf8Boundary('hello', 100)).toBe('hello');
+  });
+
+  it('returns empty for capBytes <= 0', () => {
+    expect(tailAtUtf8Boundary('hello', 0)).toBe('');
+    expect(tailAtUtf8Boundary('hello', -5)).toBe('');
+  });
+
+  it('trims ASCII strings at the exact byte boundary', () => {
+    // All ASCII: byte count == char count, no adjustment needed.
+    expect(tailAtUtf8Boundary('abcdefghij', 3)).toBe('hij');
+  });
+
+  it('steps forward past orphaned continuation bytes at the cut', () => {
+    // "a🎵b" = 1 + 4 + 1 = 6 bytes. Trim to 4 bytes: initial cut at
+    // byte 2 (middle of 🎵's continuation sequence). Must walk forward
+    // to the next lead byte — in this case, past all 3 continuation
+    // bytes to 🎵's last continuation boundary, then to 'b'. Valid
+    // outcome: drop the partial emoji and keep only 'b' (1 byte).
+    const result = tailAtUtf8Boundary('a🎵b', 4);
+    expect(result).not.toContain('\uFFFD');
+    // Either we kept the whole emoji + b (5 bytes, over cap — shouldn't
+    // happen), or we dropped into a valid tail. Assert it's valid UTF-8
+    // by round-tripping through Buffer.
+    expect(Buffer.byteLength(result)).toBeLessThanOrEqual(4);
+  });
+
+  it('preserves the full tail when the cap lands on a lead byte', () => {
+    // "ab🎵" = 1 + 1 + 4 = 6 bytes. Trim to 4 bytes: cut at byte 2,
+    // which is the lead byte of 🎵. No continuation byte at the cut,
+    // so no walk-forward — keep "🎵" (4 bytes).
+    const result = tailAtUtf8Boundary('ab🎵', 4);
+    expect(result).toBe('🎵');
+  });
+
+  it('handles a buffer of only continuation bytes gracefully', () => {
+    // Pathological: input that's invalid UTF-8 (all continuation bytes).
+    // Walk-forward is bounded by 3; returns whatever's past those 3.
+    // The result should NOT throw, must not contain replacement chars
+    // from the input (since input was already invalid).
+    const raw = Buffer.from([0x80, 0x80, 0x80, 0x80, 0x80]).toString('utf-8');
+    const result = tailAtUtf8Boundary(raw, 2);
+    // No assertion on content — just assert it returns a string without
+    // throwing. The input is malformed; output is best-effort.
+    expect(typeof result).toBe('string');
+  });
+});
 
 describe('lookupHook — path traversal guards', () => {
   let tempDir: string;

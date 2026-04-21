@@ -14,7 +14,7 @@
 
 import type React from 'react';
 import { useEffect, useRef } from 'react';
-import type { HookResult, RunningHookPhase } from '../../core/hook.js';
+import { tailAtUtf8Boundary, type HookResult, type RunningHookPhase } from '../../core/hook.js';
 import { assertNever } from '../../runtime/types.js';
 
 /**
@@ -89,11 +89,13 @@ export function appendHookOutput<P extends { kind: string }>(
   setPhase((prev) => {
     if (prev.kind !== 'running-hook') return prev;
     const rh = prev as unknown as RunningHookPhase;
+    // Tail-trim in BYTES not JS `.length` — the latter is UTF-16 code
+    // units, which drift 2-4× wider than bytes for multibyte output
+    // (emoji / CJK) and would let the buffer exceed the cap. `tailAtUtf8Boundary`
+    // also steps past any orphaned continuation bytes at the cut so the
+    // trimmed tail is always a valid UTF-8 string (no U+FFFD).
     const combined = rh.output + chunk;
-    const trimmed =
-      combined.length > HOOK_OUTPUT_UI_CAP_BYTES
-        ? combined.slice(combined.length - HOOK_OUTPUT_UI_CAP_BYTES)
-        : combined;
+    const trimmed = tailAtUtf8Boundary(combined, HOOK_OUTPUT_UI_CAP_BYTES);
     return { ...prev, output: trimmed };
   });
 }
