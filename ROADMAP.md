@@ -122,6 +122,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] Enforce tarball size cap in `downloadShard` ([#32](https://github.com/breferrari/shardmind/issues/32))
 - [ ] `--force` flag on install for scripted collision overwrite without backup ([#55](https://github.com/breferrari/shardmind/issues/55))
 - [ ] E2E: bridge SIGINT delivery reliably on GH Actions Windows runner ([#57](https://github.com/breferrari/shardmind/issues/57))
+- [ ] Branch/ref install: `github:owner/repo#<ref>` syntax for shard-author dev loop ([#67](https://github.com/breferrari/shardmind/issues/67))
 
 ---
 
