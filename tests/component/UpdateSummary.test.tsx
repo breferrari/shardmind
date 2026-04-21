@@ -140,7 +140,7 @@ describe('UpdateSummary', () => {
     expect(frame).toContain('and 4 more');
   });
 
-  it('mentions the deferred hook when hookOutput.deferred is set', () => {
+  it('renders "skipped" note when hookOutput.deferred is set', () => {
     const { lastFrame } = render(
       <UpdateSummary
         summary={summary()}
@@ -149,21 +149,48 @@ describe('UpdateSummary', () => {
         hookOutput={{ deferred: true }}
       />,
     );
-    expect(lastFrame()).toContain('Post-update hook detected but not executed');
+    // Dry-run's only path into the hook section: hook declared but
+    // suppressed. Shown as a dim "skipped" note, not a warning.
+    expect(lastFrame()).toContain('Post-update hook skipped (dry run).');
   });
 
-  it('renders hook stdout when present', () => {
+  it('renders "completed" + stdout/stderr when hook ran cleanly', () => {
     const { lastFrame } = render(
       <UpdateSummary
         summary={summary()}
         durationMs={0}
         migrationWarnings={[]}
-        hookOutput={{ stdout: 'hook output text', exitCode: 0 }}
+        hookOutput={{ stdout: 'hook output text', stderr: '', exitCode: 0 }}
       />,
     );
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('Post-update output');
+    expect(frame).toContain('Post-update hook completed.');
+    expect(frame).toContain('Hook stdout:');
     expect(frame).toContain('hook output text');
+    // Empty stderr should not render the stderr label.
+    expect(frame).not.toContain('Hook stderr:');
+  });
+
+  it('renders yellow warning when hook exited non-zero', () => {
+    const { lastFrame } = render(
+      <UpdateSummary
+        summary={summary()}
+        durationMs={0}
+        migrationWarnings={[]}
+        hookOutput={{
+          stdout: 'partial work',
+          stderr: 'hook boom\n    at hook.ts:3:11',
+          exitCode: 1,
+        }}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    // Warning copy is explicit about update still succeeding — Helm
+    // semantics, hook failure does not roll back the update.
+    expect(frame).toContain('Post-update hook exited with code 1');
+    expect(frame).toContain("Update succeeded; the hook's work may be incomplete.");
+    expect(frame).toContain('partial work');
+    expect(frame).toContain('hook boom');
   });
 
   it('shows dry-run phrasing when dryRun is true', () => {

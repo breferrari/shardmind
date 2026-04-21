@@ -1,12 +1,38 @@
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import type { UpdateSummary as Summary } from '../core/update-executor.js';
+import type { HookSummary } from '../commands/hooks/shared.js';
 
+/**
+ * Final update report.
+ *
+ * Shows the version delta, per-category counts, conflict-resolution
+ * breakdown, migration warnings, and the post-update hook outcome
+ * with separate stdout / stderr blocks when present.
+ *
+ * The hook section is a four-way render keyed off the `HookSummary`
+ * produced by `summarizeHook` in `commands/hooks/shared.ts`:
+ *
+ *   - null           — hook was never declared OR this was a dry run;
+ *                      nothing rendered.
+ *   - deferred       — hook exists but execution was suppressed (e.g.
+ *                      --dry-run explicitly asked); dim "skipped" note.
+ *   - ran, exit 0    — hook completed cleanly; green "completed"
+ *                      headline + captured stdout + stderr (labeled,
+ *                      only if non-empty).
+ *   - ran, exit !=0  — hook ran but exited non-zero (or timed out /
+ *                      cancelled / threw); yellow warning with exit
+ *                      code + both captured streams.
+ *
+ * Update success is independent of the hook outcome (Helm semantics,
+ * per ARCHITECTURE.md §9.3) — a failing hook does not roll back the
+ * update; it surfaces here as a warning.
+ */
 interface UpdateSummaryProps {
   summary: Summary;
   durationMs: number;
   migrationWarnings: string[];
-  hookOutput: { deferred?: boolean; stdout?: string; exitCode?: number } | null;
+  hookOutput: HookSummary | null;
   dryRun?: boolean;
 }
 
@@ -65,17 +91,50 @@ export default function UpdateSummary({
         </Box>
       )}
 
-      {hookOutput?.deferred && (
-        <Box flexDirection="column">
-          <Text color="yellow">Post-update hook detected but not executed.</Text>
-          <Text dimColor>Hook runtime is deferred (see #30).</Text>
+      {renderHookSection(hookOutput)}
+    </Box>
+  );
+}
+
+/**
+ * Render the four possible hook outcomes. Returns `null` when there is
+ * nothing to show (absent hook or dry run).
+ */
+function renderHookSection(hookOutput: HookSummary | null) {
+  if (hookOutput === null) return null;
+
+  if (hookOutput.deferred) {
+    return (
+      <Box flexDirection="column">
+        <Text dimColor>Post-update hook skipped (dry run).</Text>
+      </Box>
+    );
+  }
+
+  const exitCode = hookOutput.exitCode ?? 0;
+  const succeeded = exitCode === 0;
+  const stdout = hookOutput.stdout?.trim();
+  const stderr = hookOutput.stderr?.trim();
+
+  return (
+    <Box flexDirection="column">
+      {succeeded ? (
+        <Text color="green">Post-update hook completed.</Text>
+      ) : (
+        <StatusMessage variant="warning">
+          Post-update hook exited with code {exitCode}. Update succeeded; the hook's work may be incomplete.
+        </StatusMessage>
+      )}
+      {stdout && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>Hook stdout:</Text>
+          <Text>{stdout}</Text>
         </Box>
       )}
-
-      {hookOutput?.stdout && (
-        <Box flexDirection="column">
-          <Text bold>Post-update output:</Text>
-          <Text>{hookOutput.stdout}</Text>
+      {stderr && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>Hook stderr:</Text>
+          <Text>{stderr}</Text>
         </Box>
       )}
     </Box>

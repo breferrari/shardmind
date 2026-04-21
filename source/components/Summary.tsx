@@ -3,14 +3,40 @@ import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import type { ShardManifest } from '../runtime/types.js';
 import type { BackupRecord } from '../core/install-executor.js';
+import type { HookSummary } from '../commands/hooks/shared.js';
 
+/**
+ * Final install report.
+ *
+ * Renders the count of installed files, any pre-install backups that
+ * were taken to avoid overwriting user content, and the post-install
+ * hook outcome with separate stdout / stderr blocks when present.
+ *
+ * The hook section is a four-way render keyed off the `HookSummary`
+ * produced by `summarizeHook` in `commands/hooks/shared.ts`:
+ *
+ *   - null           — hook was never declared OR this was a dry run;
+ *                      nothing rendered.
+ *   - deferred       — hook exists but execution was suppressed (e.g.
+ *                      --dry-run explicitly asked); dim "skipped" note.
+ *   - ran, exit 0    — hook completed cleanly; "completed" headline +
+ *                      captured stdout + stderr (labeled, only if
+ *                      non-empty).
+ *   - ran, exit !=0  — hook ran but exited non-zero (or timed out /
+ *                      cancelled / threw); yellow warning with exit
+ *                      code + both captured streams.
+ *
+ * Install success is independent of the hook outcome (Helm semantics,
+ * per ARCHITECTURE.md §9.3) — a failing hook does not roll back the
+ * install; it surfaces here as a warning.
+ */
 interface SummaryProps {
   manifest: ShardManifest;
   vaultRoot: string;
   fileCount: number;
   durationMs: number;
   backups: BackupRecord[];
-  hookOutput: { deferred?: boolean; stdout?: string; exitCode?: number } | null;
+  hookOutput: HookSummary | null;
   dryRun?: boolean;
 }
 
@@ -46,26 +72,57 @@ export default function Summary({
         </Box>
       )}
 
-      {hookOutput?.deferred && (
-        <Box flexDirection="column">
-          <Text color="yellow">Post-install hook detected but not executed.</Text>
-          <Text dimColor>
-            Hook runtime is deferred (see #30). Install succeeded without running it.
-          </Text>
-        </Box>
-      )}
-
-      {hookOutput?.stdout && (
-        <Box flexDirection="column">
-          <Text bold>Post-install output:</Text>
-          <Text>{hookOutput.stdout}</Text>
-        </Box>
-      )}
+      {renderHookSection(hookOutput)}
 
       {!dryRun && (
         <Box flexDirection="column">
           <Text bold>Next:</Text>
           <Text>  {openCmd}</Text>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+/**
+ * Render the four possible hook outcomes. Returns `null` when there is
+ * nothing to show (absent hook or dry run).
+ */
+function renderHookSection(hookOutput: HookSummary | null) {
+  if (hookOutput === null) return null;
+
+  if (hookOutput.deferred) {
+    return (
+      <Box flexDirection="column">
+        <Text dimColor>Post-install hook skipped (dry run).</Text>
+      </Box>
+    );
+  }
+
+  const exitCode = hookOutput.exitCode ?? 0;
+  const succeeded = exitCode === 0;
+  const stdout = hookOutput.stdout?.trim();
+  const stderr = hookOutput.stderr?.trim();
+
+  return (
+    <Box flexDirection="column">
+      {succeeded ? (
+        <Text color="green">Post-install hook completed.</Text>
+      ) : (
+        <StatusMessage variant="warning">
+          Post-install hook exited with code {exitCode}. Install succeeded; the hook's work may be incomplete.
+        </StatusMessage>
+      )}
+      {stdout && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>Hook stdout:</Text>
+          <Text>{stdout}</Text>
+        </Box>
+      )}
+      {stderr && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>Hook stderr:</Text>
+          <Text>{stderr}</Text>
         </Box>
       )}
     </Box>

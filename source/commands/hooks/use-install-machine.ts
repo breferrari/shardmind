@@ -8,6 +8,7 @@
  * reuse the same machine with a few added phase variants.
  */
 
+import type React from 'react';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -62,6 +63,34 @@ export interface PreparedContext {
   alwaysIncludedFileCount: number;
 }
 
+/**
+ * Maximum bytes of hook output we keep in the live-progress buffer before
+ * dropping the oldest. The final `HookResult` has its own 256 KB cap per
+ * stream (see source/core/hook.ts); this is a tighter UI-side budget so a
+ * runaway `console.log` loop doesn't fill React state and thrash Ink.
+ */
+const HOOK_OUTPUT_UI_CAP_BYTES = 64 * 1024;
+
+/**
+ * Append a chunk of subprocess output into the running-hook phase's
+ * `output` buffer. No-op if the phase changed out from under us (e.g.
+ * Ctrl+C landed between `onData` and this setPhase call).
+ */
+function appendHookOutput(
+  setPhase: React.Dispatch<React.SetStateAction<Phase>>,
+  chunk: string,
+): void {
+  setPhase((prev) => {
+    if (prev.kind !== 'running-hook') return prev;
+    const combined = prev.output + chunk;
+    const trimmed =
+      combined.length > HOOK_OUTPUT_UI_CAP_BYTES
+        ? combined.slice(combined.length - HOOK_OUTPUT_UI_CAP_BYTES)
+        : combined;
+    return { ...prev, output: trimmed };
+  });
+}
+
 export type Phase =
   | { kind: 'booting' }
   | { kind: 'loading'; message: string }
@@ -69,6 +98,16 @@ export type Phase =
   | { kind: 'wizard'; ctx: PreparedContext }
   | { kind: 'collision'; collisions: Collision[]; result: WizardResult; ctx: PreparedContext }
   | { kind: 'installing'; total: number; current: number; label: string; history: string[]; ctx: PreparedContext; result: WizardResult; backups: BackupRecord[] }
+  | {
+      // Subprocess-backed post-install hook is streaming output. We are
+      // already past the point-of-no-return (state.json written); a Ctrl+C
+      // in this phase kills the child but does NOT roll the install back.
+      // See docs/ARCHITECTURE.md §9.3 for the Helm-style contract.
+      kind: 'running-hook';
+      stage: 'post-install';
+      output: string;
+      manifest: ShardManifest;
+    }
   | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; fileCount: number; durationMs: number; backups: BackupRecord[]; hook: HookSummary | null; dryRun: boolean }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
@@ -103,6 +142,12 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   const writtenPathsRef = useRef<string[]>([]);
   const backupsRef = useRef<BackupRecord[]>([]);
   const installingRef = useRef(false);
+  // AbortController that owns the currently-executing post-install hook.
+  // Null when no hook is in flight. Ctrl+C in the running-hook phase
+  // aborts the subprocess but does NOT roll back the install (we're
+  // already past the point-of-no-return — see the running-hook phase
+  // docstring for the Helm-style contract).
+  const hookAbortRef = useRef<AbortController | null>(null);
   // Shard tempdir cleanup, populated once the shard download completes.
   // A SIGINT between download and wizard-submit needs to run this.
   const ctxCleanupRef = useRef<(() => Promise<void>) | null>(null);
@@ -133,7 +178,15 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   useSigintRollback({
     isActive: () => !dryRun && installingRef.current,
     rollback: () => rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current),
-    cleanup: () => (ctxCleanupRef.current ? ctxCleanupRef.current() : Promise.resolve()),
+    cleanup: async () => {
+      // Abort any in-flight post-install hook subprocess. Intentionally
+      // runs on every Ctrl+C, regardless of `isActive` — during the
+      // running-hook phase `isActive` is already false (state.json has
+      // been written) so the install-rollback path won't fire, and we
+      // still need the child to die so the parent process exits.
+      hookAbortRef.current?.abort();
+      if (ctxCleanupRef.current) await ctxCleanupRef.current();
+    },
   });
 
   useEffect(() => {
@@ -288,12 +341,49 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         });
         written = runResult.writtenPaths;
 
-        const hookResult = dryRun
-          ? { kind: 'absent' as const }
-          : await runPostInstallHook(ctx.tempDir, ctx.manifest);
-        const hookSummary = summarizeHook(hookResult);
-
+        // State.json is now on disk — we're past the point-of-no-return.
+        // Clear the rollback guard BEFORE firing the hook so a SIGINT
+        // during hook execution can't walk the install back. The only
+        // remaining work (hook subprocess) is non-fatal per spec §9.3.
         installingRef.current = false;
+
+        let hookSummary: HookSummary | null = null;
+        if (dryRun) {
+          // Dry run: report the hook as absent (we don't ran it, and we
+          // don't want a `deferred` marker in the summary either — the
+          // whole run is theoretical).
+          hookSummary = null;
+        } else if (!ctx.manifest.hooks?.['post-install']) {
+          // No hook declared — nothing to render.
+          hookSummary = null;
+        } else {
+          // Live-output phase while the hook runs. A fresh AbortController
+          // per run; cleared in a finally so repeat installs (test harness)
+          // get a clean slate.
+          hookAbortRef.current = new AbortController();
+          setPhase({
+            kind: 'running-hook',
+            stage: 'post-install',
+            output: '',
+            manifest: ctx.manifest,
+          });
+          try {
+            const hookCtx = {
+              vaultRoot,
+              values: result.values,
+              modules: result.selections,
+              shard: { name: ctx.manifest.name, version: ctx.manifest.version },
+            };
+            const hookResult = await runPostInstallHook(ctx.tempDir, ctx.manifest, hookCtx, {
+              signal: hookAbortRef.current.signal,
+              onStdout: (chunk) => appendHookOutput(setPhase, chunk),
+              onStderr: (chunk) => appendHookOutput(setPhase, chunk),
+            });
+            hookSummary = summarizeHook(hookResult);
+          } finally {
+            hookAbortRef.current = null;
+          }
+        }
 
         finish({
           kind: 'summary',

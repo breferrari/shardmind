@@ -32,7 +32,7 @@ import fsp from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import type { HookContext, ShardManifest } from '../runtime/types.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
 import { pathExists } from './fs-utils.js';
@@ -175,13 +175,27 @@ export async function executeHook(
   }
 
   // Locate the sibling hook-runner emitted by tsup at `dist/internal/hook-runner.js`.
-  // `import.meta.url` resolves to `dist/core/hook.js` at runtime under the package's
-  // own layout; `../internal/hook-runner.js` is stable under tsup's `entry` map.
-  const hookRunnerPath = fileURLToPath(new URL('../internal/hook-runner.js', import.meta.url));
+  // Resolve via the package's own `exports` map rather than a relative path —
+  // tsup's chunk-splitting places core/hook.ts's compiled output in a hashed
+  // chunk under `dist/`, so a relative `new URL(...)` would drift with each
+  // build. `require.resolve('shardmind/internal/hook-runner')` self-resolves
+  // against our package.json regardless of how the consumer installed us.
+  let hookRunnerPath: string;
+  try {
+    const require_ = createRequire(import.meta.url);
+    hookRunnerPath = require_.resolve('shardmind/internal/hook-runner');
+  } catch {
+    return {
+      kind: 'failed',
+      message: 'hook-runner not found in shardmind install. Did `npm run build` fail to emit the internal bundle?',
+      stdout: '',
+      stderr: '',
+    };
+  }
   if (!(await pathExists(hookRunnerPath))) {
     return {
       kind: 'failed',
-      message: `hook-runner not found at ${hookRunnerPath}. Did \`npm run build\` fail to emit the internal bundle?`,
+      message: `hook-runner resolved to ${hookRunnerPath} but the file is missing. Reinstall shardmind.`,
       stdout: '',
       stderr: '',
     };
@@ -350,10 +364,18 @@ export async function executeHook(
     if (stdoutTruncated) stdout += `\n[… stdout truncated, ${stdoutDropped} bytes discarded]`;
     if (stderrTruncated) stderr += `\n[… stderr truncated, ${stderrDropped} bytes discarded]`;
 
-    if (exitInfo.spawnErr) {
+    // Result-decision order: cancel > timeout > spawn-error > exit. When
+    // `spawn({ signal })` auto-kills on abort, node emits both an 'error'
+    // event on the child (our `spawnErr` path) AND fires the abort listener
+    // (our `cancelled = true` path). Checking `cancelled` first keeps the
+    // user-facing message honest about the reason — the spawn error is a
+    // symptom of the cancel, not an independent failure. Same reasoning
+    // for timeout: the post-SIGTERM exit looks like a close-with-null-code,
+    // but we want the user-facing message to name the timeout.
+    if (cancelled) {
       return {
         kind: 'failed',
-        message: `spawn failed: ${exitInfo.spawnErr.message}`,
+        message: 'cancelled',
         stdout,
         stderr,
       };
@@ -368,10 +390,10 @@ export async function executeHook(
       };
     }
 
-    if (cancelled) {
+    if (exitInfo.spawnErr) {
       return {
         kind: 'failed',
-        message: 'cancelled',
+        message: `spawn failed: ${exitInfo.spawnErr.message}`,
         stdout,
         stderr,
       };

@@ -15,6 +15,7 @@
  * rollback via the executor's snapshot before surfacing an error phase.
  */
 
+import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import path from 'node:path';
 import { useApp } from 'ink';
@@ -50,7 +51,7 @@ import {
 } from '../../core/update-planner.js';
 import { runUpdate, rollbackUpdate, type UpdateSummary } from '../../core/update-executor.js';
 import { runPostUpdateHook } from '../../core/hook.js';
-import { summarizeHook, useSigintRollback } from './shared.js';
+import { summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
 import { buildRenderContext } from '../../core/renderer.js';
 import { VALUES_FILE } from '../../runtime/vault-paths.js';
 import type { DiffAction } from '../../components/DiffView.js';
@@ -77,6 +78,35 @@ export interface PreparedContext {
   migrationWarnings: string[];
   newRequiredKeys: string[];
   newOptionalModules: Array<{ id: string; def: ModuleDefinition }>;
+}
+
+/**
+ * Maximum bytes of hook output we keep in the live-progress buffer
+ * before dropping the oldest. The final `HookResult` has its own 256 KB
+ * cap per stream (see source/core/hook.ts); this is a tighter UI-side
+ * budget so a runaway `console.log` loop doesn't fill React state and
+ * thrash Ink. Matches the install machine's budget.
+ */
+const HOOK_OUTPUT_UI_CAP_BYTES = 64 * 1024;
+
+/**
+ * Append a chunk of subprocess output into the running-hook phase's
+ * `output` buffer. No-op if the phase changed out from under us (e.g.
+ * abort landed between `onData` and this setPhase call).
+ */
+function appendHookOutput(
+  setPhase: React.Dispatch<React.SetStateAction<Phase>>,
+  chunk: string,
+): void {
+  setPhase((prev) => {
+    if (prev.kind !== 'running-hook') return prev;
+    const combined = prev.output + chunk;
+    const trimmed =
+      combined.length > HOOK_OUTPUT_UI_CAP_BYTES
+        ? combined.slice(combined.length - HOOK_OUTPUT_UI_CAP_BYTES)
+        : combined;
+    return { ...prev, output: trimmed };
+  });
 }
 
 export type Phase =
@@ -110,10 +140,21 @@ export type Phase =
       history: string[];
     }
   | {
+      // Subprocess-backed post-update hook is streaming output. We are
+      // already past the point-of-no-return (state.json written by
+      // `runUpdate`); Ctrl+C in this phase kills the child but does NOT
+      // roll the update back — the contract matches post-install (Helm
+      // semantics, see docs/ARCHITECTURE.md §9.3).
+      kind: 'running-hook';
+      stage: 'post-update';
+      output: string;
+      shardLabel: string;
+    }
+  | {
       kind: 'summary';
       summary: UpdateSummary;
       migrationWarnings: string[];
-      hook: { deferred?: boolean; stdout?: string; exitCode?: number } | null;
+      hook: HookSummary | null;
       durationMs: number;
       dryRun: boolean;
     }
@@ -141,6 +182,11 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
   const backupDirRef = useRef<string | null>(null);
   const writingRef = useRef(false);
   const addedPathsRef = useRef<string[]>([]);
+  // AbortController that owns the currently-executing post-update hook.
+  // Null when no hook is in flight. Ctrl+C in the running-hook phase
+  // aborts the subprocess but does NOT roll the update back — by the
+  // time we reach the hook, `runUpdate` has already written state.json.
+  const hookAbortRef = useRef<AbortController | null>(null);
 
   const finish = useCallback(
     (next: Phase) => {
@@ -174,7 +220,15 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         await rollbackUpdate(vaultRoot, backupDirRef.current, addedPathsRef.current);
       }
     },
-    cleanup: () => (ctxCleanupRef.current ? ctxCleanupRef.current() : Promise.resolve()),
+    cleanup: async () => {
+      // Abort any in-flight post-update hook subprocess. Runs on every
+      // Ctrl+C regardless of `isActive` — during the running-hook phase
+      // `isActive` is already false (state.json written) so the
+      // update-rollback path won't fire, and we still need the child
+      // to die so the parent process exits.
+      hookAbortRef.current?.abort();
+      if (ctxCleanupRef.current) await ctxCleanupRef.current();
+    },
   });
 
   // Boot pipeline: state → resolve → download → parse → migrate → branch.
@@ -465,17 +519,54 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         });
         backupDirRef.current = result.backupDir;
 
-        const hookResult = dryRun
-          ? { kind: 'absent' as const }
-          : await runPostUpdateHook(ctx.newTempDir, ctx.newManifest);
-
+        // State.json is now on disk — we're past the point-of-no-return.
+        // Clear the write guard BEFORE firing the hook so a SIGINT during
+        // hook execution can't walk the update back. The only remaining
+        // work (hook subprocess) is non-fatal per spec §9.3.
         writingRef.current = false;
+
+        let hookSummary: HookSummary | null = null;
+        if (dryRun) {
+          hookSummary = null;
+        } else if (!ctx.newManifest.hooks?.['post-update']) {
+          hookSummary = null;
+        } else {
+          hookAbortRef.current = new AbortController();
+          setPhase({
+            kind: 'running-hook',
+            stage: 'post-update',
+            output: '',
+            shardLabel: `${ctx.newManifest.namespace}/${ctx.newManifest.name}`,
+          });
+          try {
+            const hookCtx = {
+              vaultRoot,
+              values,
+              modules: selections,
+              shard: { name: ctx.newManifest.name, version: ctx.newManifest.version },
+              previousVersion: ctx.state.version,
+            };
+            const hookResult = await runPostUpdateHook(
+              ctx.newTempDir,
+              ctx.newManifest,
+              hookCtx,
+              {
+                signal: hookAbortRef.current.signal,
+                onStdout: (chunk) => appendHookOutput(setPhase, chunk),
+                onStderr: (chunk) => appendHookOutput(setPhase, chunk),
+              },
+            );
+            hookSummary = summarizeHook(hookResult);
+          } finally {
+            hookAbortRef.current = null;
+          }
+        }
 
         finish({
           kind: 'summary',
           summary: result.summary,
           migrationWarnings: ctx.migrationWarnings,
-          hook: summarizeHook(hookResult),
+          hook: hookSummary,
           durationMs: Date.now() - start,
           dryRun,
         });
