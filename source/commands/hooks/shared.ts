@@ -19,9 +19,25 @@ import { assertNever } from '../../runtime/types.js';
 export interface HookSummary {
   deferred?: boolean;
   stdout?: string;
+  stderr?: string;
   exitCode?: number;
 }
 
+/**
+ * Collapse a `HookResult` into the `HookSummary` shape the install and
+ * update summary views both render.
+ *
+ * - `absent` → null (nothing happened; render nothing).
+ * - `deferred` → `{ deferred: true }` (hook exists but was suppressed,
+ *   e.g. dry run; UI shows a "skipped" note).
+ * - `ran` → `{ stdout, stderr, exitCode }` (subprocess completed; the UI
+ *   renders stdout + stderr separately with an exit-code-dependent headline).
+ * - `failed` → `{ stdout, stderr, exitCode: 1 }` where `stderr` is prefixed
+ *   with the failure reason (timeout / cancel / spawn error). The UI treats
+ *   `failed` identically to a non-zero `ran` — from the user's perspective
+ *   the hook didn't complete, and the message belongs in stderr alongside
+ *   any output the child produced before dying.
+ */
 export function summarizeHook(result: HookResult): HookSummary | null {
   switch (result.kind) {
     case 'absent':
@@ -29,9 +45,12 @@ export function summarizeHook(result: HookResult): HookSummary | null {
     case 'deferred':
       return { deferred: true };
     case 'ran':
-      return { stdout: result.stdout, exitCode: result.exitCode };
-    case 'failed':
-      return { stdout: result.message, exitCode: 1 };
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+    case 'failed': {
+      const prefix = `hook ${result.message}`;
+      const stderr = result.stderr ? `${prefix}\n${result.stderr}` : prefix;
+      return { stdout: result.stdout, stderr, exitCode: 1 };
+    }
     default:
       return assertNever(result);
   }

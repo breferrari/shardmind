@@ -21,6 +21,12 @@ export interface ShardManifest {
   hooks: {
     'post-install'?: string;
     'post-update'?: string;
+    /**
+     * Per-shard override for the hook execution timeout (milliseconds).
+     * Defaults to 30_000 when absent. Valid range: 1_000..600_000.
+     * See docs/ARCHITECTURE.md §9.3 for the hook contract.
+     */
+    timeout_ms?: number;
   };
 }
 
