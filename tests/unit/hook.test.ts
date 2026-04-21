@@ -351,6 +351,39 @@ describe('executeHook — subprocess runtime', () => {
     expect(elapsed).toBeLessThan(5_000);
   }, 15_000);
 
+  it('fires SIGKILL when the hook traps SIGTERM and ignores it', async () => {
+    // Regression guard for the liveness-check fix: the old
+    // `if (!child.killed)` guard short-circuited the grace-window SIGKILL
+    // because `child.killed` flips true on ANY kill attempt (not just
+    // on exit). A hook that ignored SIGTERM would hang indefinitely.
+    // The current code checks `child.exitCode === null && signalCode === null`
+    // — both are populated only on the `close`/`exit` event. This test
+    // would have failed on the old implementation: the elapsed time
+    // would exceed the KILL_GRACE_MS budget by many seconds.
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        process.on('SIGTERM', () => {
+          // Trap and swallow — simulates a hook with its own cleanup
+          // logic that doesn't respect SIGTERM's "please exit" meaning.
+        });
+        export default async function () {
+          await new Promise(resolve => setTimeout(resolve, 30000));
+        }
+      `,
+    );
+    const start = Date.now();
+    const result = await executeHook(hookPath, baseCtx(), { timeoutMs: 500 });
+    const elapsed = Date.now() - start;
+    expect(result.kind).toBe('failed');
+    if (result.kind !== 'failed') throw new Error('narrowing');
+    expect(result.message).toMatch(/timed out after 0\.5s/);
+    // Budget: 500 ms timeout + 2_000 ms SIGKILL grace + spawn cold-start
+    // + CI jitter. Generous upper bound; the failure signal is "took ~30s"
+    // which the old broken code would have produced.
+    expect(elapsed).toBeLessThan(10_000);
+  }, 15_000);
+
   it('treats an AbortSignal abort as failed / cancelled', async () => {
     const hookPath = await writeHook(
       'hook.ts',

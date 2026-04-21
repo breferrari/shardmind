@@ -518,6 +518,34 @@ describe('shardmind install — post-install hook', () => {
     expect(result.stdout).toMatch(/Post-install hook completed/);
     expect(result.stdout).toMatch(/HOOK_RAN_FOR_minimal/);
   }, 60_000);
+
+  it('surfaces "skipped (dry run)" when a hook is declared under --dry-run', async () => {
+    // Pins the machine-level dry-run→deferred routing fix from Copilot
+    // review commit a82db6b. Previously both install + update machines
+    // set `hookSummary = null` under dryRun, silently defeating the
+    // four-branch Summary renderer's `deferred` note — which contradicted
+    // docs/ARCHITECTURE.md §9.3's statement that `deferred` is the
+    // dry-run shape. Without this E2E guard, a future refactor could
+    // silently regress back to the null-in-dry-run shape and the unit
+    // tests wouldn't notice (they test the render given `deferred: true`,
+    // not the machine's production of it).
+    vault = await createEmptyVault('install-hook-dryrun');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['install', 'github:acme/hook-demo', '--dry-run', '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: hookStub.url } },
+    );
+    expect(result.exitCode).toBe(0);
+    // Dry run: no writes.
+    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+    expect(await vault.exists('post-install-marker.txt')).toBe(false);
+    // But the summary must ANNOUNCE the hook would have fired — even
+    // though its body didn't execute. Ink soft-wraps; collapse whitespace
+    // before the substring check so terminal width can't flake the
+    // assertion.
+    const collapsed = result.stdout.replace(/\s+/g, ' ');
+    expect(collapsed).toContain('Post-install hook skipped (dry run).');
+  }, 60_000);
 });
 
 // Local tree-copy helper for the hook tarball build. Kept inline so the

@@ -1,3 +1,7 @@
+// REPO-ONLY — imports from `tests/e2e/helpers/` which do not ship to
+// npm. Run from a checkout of the repository only, after `npm run build`.
+// Not reachable from a published shardmind install.
+//
 // Smoke driver for the post-install / post-update hook runtime (#30).
 // Stands up three local github-stubs, each serving a custom tarball
 // that embeds a different kind of hook — happy / throwing / hanging —
