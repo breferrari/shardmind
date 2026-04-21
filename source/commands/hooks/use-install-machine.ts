@@ -320,14 +320,17 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         installingRef.current = false;
 
         let hookSummary: HookSummary | null = null;
-        if (dryRun) {
-          // Dry run: report the hook as absent (we don't ran it, and we
-          // don't want a `deferred` marker in the summary either — the
-          // whole run is theoretical).
-          hookSummary = null;
-        } else if (!ctx.manifest.hooks?.['post-install']) {
+        if (!ctx.manifest.hooks?.['post-install']) {
           // No hook declared — nothing to render.
           hookSummary = null;
+        } else if (dryRun) {
+          // Dry run: call runPostInstallHook WITHOUT a ctx so the hook
+          // module surfaces `deferred` (its "lookup only" shape). The
+          // summary renders this as a dim "skipped (dry run)" note per
+          // the contract in docs/ARCHITECTURE.md §9.3. A dry run must
+          // still tell the user the hook WOULD have fired — going
+          // silent here contradicts the rest of the dry-run UX.
+          hookSummary = summarizeHook(await runPostInstallHook(ctx.tempDir, ctx.manifest));
         } else {
           // Live-output phase while the hook runs. A fresh AbortController
           // per run; cleared in a finally so repeat installs (test harness)

@@ -1,8 +1,7 @@
 import type { ReactElement } from 'react';
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
-import type { HookStage } from '../core/hook.js';
-import type { HookSummary } from '../commands/hooks/shared.js';
+import type { HookStage, HookSummary } from '../core/hook.js';
 
 /**
  * Shared hook-outcome renderer used by both `Summary.tsx` (install) and

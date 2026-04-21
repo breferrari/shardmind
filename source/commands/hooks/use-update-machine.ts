@@ -497,10 +497,17 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         writingRef.current = false;
 
         let hookSummary: HookSummary | null = null;
-        if (dryRun) {
+        if (!ctx.newManifest.hooks?.['post-update']) {
+          // No hook declared — nothing to render.
           hookSummary = null;
-        } else if (!ctx.newManifest.hooks?.['post-update']) {
-          hookSummary = null;
+        } else if (dryRun) {
+          // Dry run: call runPostUpdateHook WITHOUT a ctx so the hook
+          // module surfaces `deferred` (its "lookup only" shape). The
+          // UpdateSummary renders this as a dim "skipped (dry run)" note
+          // per docs/ARCHITECTURE.md §9.3. Mirrors the install path so a
+          // shard-author's dry-run sees hook presence announced even
+          // though the hook body doesn't execute.
+          hookSummary = summarizeHook(await runPostUpdateHook(ctx.newTempDir, ctx.newManifest));
         } else {
           hookAbortRef.current = new AbortController();
           setPhase({

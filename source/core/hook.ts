@@ -142,6 +142,30 @@ export type HookResult =
   | { kind: 'failed'; message: string; stdout: string; stderr: string };
 
 /**
+ * UI-layer summary of a `HookResult`. Produced by `summarizeHook` in
+ * `source/commands/hooks/shared.ts` and consumed by `Summary.tsx` /
+ * `UpdateSummary.tsx` / `HookSummarySection.tsx`. Declared here — in
+ * core — so the components can reach it without breaching CLAUDE.md's
+ * module-boundary rule (components can import from core, not from
+ * commands).
+ *
+ * Four shapes in practice:
+ *   - `null` (no hook declared / absent)
+ *   - `{ deferred: true }` (hook exists but was suppressed, e.g. dry run)
+ *   - `{ stdout, stderr, exitCode }` (subprocess completed — UI branches
+ *     on exitCode: 0 renders "completed", !=0 renders a yellow warning)
+ *   - `{ stdout, stderr: "hook <reason>\n<captured>", exitCode: 1 }`
+ *     (execution failed: timeout / cancel / spawn error / thrown hook —
+ *     indistinguishable from a non-zero exit at the UI layer by design).
+ */
+export interface HookSummary {
+  deferred?: boolean;
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number;
+}
+
+/**
  * Options forwarded from the command machine down into `executeHook`.
  *
  * `onStdout` / `onStderr` fire on every chunk the child emits, so the
@@ -436,7 +460,16 @@ export async function executeHook(
       }
       setTimeout(() => {
         try {
-          if (!child.killed) child.kill('SIGKILL');
+          // `child.killed` flips to true as soon as ANY signal is sent,
+          // not when the child actually exits — so `if (!child.killed)`
+          // would short-circuit this grace-window SIGKILL even for a
+          // hook that ignored the SIGTERM and is still running.
+          // `exitCode === null && signalCode === null` is the real
+          // liveness check: both fields are populated only on the
+          // `close` / `exit` event.
+          if (child.exitCode === null && child.signalCode === null) {
+            child.kill('SIGKILL');
+          }
         } catch {
           // swallow
         }

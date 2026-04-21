@@ -14,8 +14,22 @@
 
 import type React from 'react';
 import { useEffect, useRef } from 'react';
-import { tailAtUtf8Boundary, type HookResult, type RunningHookPhase } from '../../core/hook.js';
+import {
+  tailAtUtf8Boundary,
+  type HookResult,
+  type HookSummary,
+  type RunningHookPhase,
+} from '../../core/hook.js';
 import { assertNever } from '../../runtime/types.js';
+
+/**
+ * Re-export so existing callers that reach for `HookSummary` via this
+ * module (install/update machines) don't need to update their imports.
+ * The canonical home is `source/core/hook.ts` — components must import
+ * from there directly per CLAUDE.md §Module Boundaries (components
+ * can import from core, not from commands).
+ */
+export type { HookSummary };
 
 /**
  * Maximum bytes of hook output we keep in the UI live-progress buffer
@@ -26,13 +40,6 @@ import { assertNever } from '../../runtime/types.js';
  * for Ink's renderer at 256 KB but fine at 64 KB.
  */
 export const HOOK_OUTPUT_UI_CAP_BYTES = 64 * 1024;
-
-export interface HookSummary {
-  deferred?: boolean;
-  stdout?: string;
-  stderr?: string;
-  exitCode?: number;
-}
 
 /**
  * Collapse a `HookResult` into the `HookSummary` shape the install and

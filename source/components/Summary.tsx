@@ -4,7 +4,7 @@ import { StatusMessage } from './ui.js';
 import HookSummarySection from './HookSummarySection.js';
 import type { ShardManifest } from '../runtime/types.js';
 import type { BackupRecord } from '../core/install-executor.js';
-import type { HookSummary } from '../commands/hooks/shared.js';
+import type { HookSummary } from '../core/hook.js';
 
 /**
  * Final install report.

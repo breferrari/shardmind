@@ -2,7 +2,7 @@ import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import HookSummarySection from './HookSummarySection.js';
 import type { UpdateSummary as Summary } from '../core/update-executor.js';
-import type { HookSummary } from '../commands/hooks/shared.js';
+import type { HookSummary } from '../core/hook.js';
 
 /**
  * Final update report.
