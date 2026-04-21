@@ -776,9 +776,20 @@ describe('install — property-based invariants', () => {
           }
         },
       ),
-      { numRuns: 5, timeout: 20_000 },
+      // Per-case budget 45s: a single case spawns TWO concurrent CLI
+      // subprocesses, each doing a full install against the stub. macOS
+      // CI runners occasionally hit 20-25s under contention — same class
+      // of variance PR #59 compensated for by bumping the default E2E
+      // test timeout 15s → 45s (commit f14f1066).
+      { numRuns: 5, timeout: 45_000 },
     );
-  }, 120_000);
+    // Outer budget must envelope the fast-check worst case:
+    // numRuns(5) × per-case(45s) = 225s theoretical max + ~15s for
+    // setup/teardown/fast-check overhead. 240s sized to absorb that
+    // without the outer vitest timeout racing the fast-check ceiling.
+    // Typical-case wall-clock is ~20s; the outer budget is a
+    // safety-catch for CI variance, not the expected runtime.
+  }, 240_000);
 
   it('--dry-run never creates .shardmind/ or shard-values.yaml', async () => {
     await fc.assert(
@@ -810,7 +821,14 @@ describe('install — property-based invariants', () => {
           }
         },
       ),
-      { numRuns: 5, timeout: 20_000 },
+      // 45s per case for macOS CI variance parity — see the sibling
+      // property test above for rationale. This property spawns only
+      // ONE install per case (vs. the sibling's two), so it's unlikely
+      // to hit the 20s ceiling, but keeping the budget consistent
+      // prevents future drift when the test body grows.
+      { numRuns: 5, timeout: 45_000 },
     );
-  }, 120_000);
+    // Outer budget envelopes the fast-check worst case: 5 × 45s + overhead.
+    // Same sizing as the sibling property above.
+  }, 240_000);
 });
