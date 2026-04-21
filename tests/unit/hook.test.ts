@@ -114,8 +114,13 @@ describe('executeHook — subprocess runtime', () => {
   });
 
   afterEach(async () => {
-    await fsp.rm(scratchDir, { recursive: true, force: true });
-    await fsp.rm(vaultDir, { recursive: true, force: true });
+    // Windows: a child process that was SIGTERM'd mid-hook may still hold
+    // a handle on `cwd: vaultDir` for a few milliseconds after the parent's
+    // promise resolves. `{ maxRetries, retryDelay }` tolerates that window
+    // instead of flaking the test with EBUSY.
+    const rmOpts = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
+    await fsp.rm(scratchDir, rmOpts);
+    await fsp.rm(vaultDir, rmOpts);
   });
 
   async function writeHook(name: string, source: string): Promise<string> {
@@ -305,7 +310,12 @@ describe('executeHook — subprocess runtime', () => {
       `,
     );
     const ac = new AbortController();
-    setTimeout(() => ac.abort(), 300);
+    // 1500 ms so that under full-suite concurrent-subprocess contention
+    // on a loaded Windows CI runner, the child reliably finishes tsx
+    // startup (cold ~400-800 ms) before the abort fires. A tighter budget
+    // races with the child "error" event node emits on auto-kill and can
+    // surface a `ran` result with no stdout/stderr captured yet.
+    setTimeout(() => ac.abort(), 1_500);
     const result = await executeHook(hookPath, baseCtx(), {
       timeoutMs: 30_000,
       signal: ac.signal,

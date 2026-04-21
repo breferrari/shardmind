@@ -42,6 +42,7 @@ Follow `docs/IMPLEMENTATION.md` §9 (Build Plan). Day-by-day, morning/afternoon 
 | **yaml** (eemeli/yaml) | YAML parsing. TypeScript-typed, comment-preserving |
 | **tar** (node-tar) | Tarball download + extraction |
 | **semver** | Version parsing, range checking |
+| **tsx** | TypeScript loader for post-install / post-update hook subprocess execution |
 | **zod** | Schema validation. Shared with Pastel for arg parsing |
 | **diff** | Unified diff generation for update previews |
 | **node-diff3** | Three-way merge (Khanna-Myers algorithm) |
@@ -76,6 +77,7 @@ shardmind/
 │   │   ├── NewValuesPrompt.tsx        # Update: prompt for newly required values
 │   │   ├── NewModulesReview.tsx       # Update: offer newly optional modules
 │   │   ├── RemovedFilesReview.tsx     # Update: per-file keep/delete decision
+│   │   ├── HookProgress.tsx           # Live output tail while a post-install/-update hook runs
 │   │   ├── Summary.tsx                # Final install report
 │   │   ├── UpdateSummary.tsx          # Final update report
 │   │   ├── ValueInput.tsx             # Typed input widget (string/number/select…)
@@ -101,8 +103,10 @@ shardmind/
 │   │   ├── update-check.ts            # 24h cached latest-version lookup (status + update)
 │   │   ├── status.ts                  # Pure StatusReport builder for the status command
 │   │   ├── cancellation.ts            # Cross-platform SIGINT bridge (Windows stdin-ETX)
-│   │   ├── hook.ts                    # Post-install / post-update hook lookup
+│   │   ├── hook.ts                    # Post-install / post-update hook lookup + subprocess execution
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
+│   ├── internal/                      # NOT public API — runtime-spawned helpers
+│   │   └── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
 │   ├── runtime/                       # Exported for hook scripts
 │   │   ├── index.ts                   # Re-exports
 │   │   ├── values.ts                  # loadValues(), validateValues()
@@ -120,7 +124,7 @@ shardmind/
 │   ├── component/                     # Ink components via ink-testing-library
 │   ├── integration/                   # Multi-module pipeline tests
 │   ├── e2e/                           # Full CLI invocation tests (subprocess)
-│   │   ├── cli.test.ts                # 30 scenarios covering all 3 commands
+│   │   ├── cli.test.ts                # 31 scenarios covering all 3 commands + post-install hook
 │   │   └── helpers/                   # build-once, tarball, github-stub,
 │   │                                  # spawn-cli, vault factories
 │   ├── helpers/                       # Shared test utilities (factories)
@@ -171,6 +175,7 @@ npm run typecheck     # tsc --noEmit
 - `source/components/` — Ink/React components. Import from `core/` for logic.
 - `source/commands/` — Pastel command files (.tsx). Thin orchestration: read args, call core, render components.
 - `source/runtime/` — exported for hook scripts. **Zero dependency on Ink, React, or Pastel.** If you import from `ink` or `react` here, the build is broken.
+- `source/internal/` — NOT public API. Contains the hook-runner subprocess entry (`hook-runner.ts`) that `core/hook.ts` spawns via `node --import tsx`. Must not be imported at module scope by anything in `source/`; only spawn-paths touch it. Exported from package.json's `exports` under `./internal/hook-runner` so `createRequire` can resolve it at runtime.
 - `source/types/` — re-exports from `runtime/types.ts`. Both CLI and runtime import from here.
 
 Do not cross these boundaries:
@@ -223,7 +228,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `update-check.ts` | §4.15 | 24h cached GitHub latest-version lookup shared by status + update |
 | `cancellation.ts` | ARCHITECTURE §19.7 | Cross-platform SIGINT bridge (Windows stdin-ETX → process.emit SIGINT) |
 | `state-migrator.ts` | §4.7 (v0.2 hook) | Forward-migration framework for `.shardmind/state.json`; scaffolding in v0.1 |
-| `hook.ts` | (runtime glue) | Resolve + invoke post-install / post-update hook scripts (non-fatal) |
+| `hook.ts` | §4.16 | Resolve + execute post-install / post-update hook scripts via bundled `tsx` subprocess (non-fatal) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent, stripTemplatePrefix |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.

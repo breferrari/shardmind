@@ -132,7 +132,7 @@ graph TD
     L2 --> M
 
     M["writing — update-executor<br/>Snapshot → write pass → delete pass<br/>Re-cache templates + manifest + schema<br/>writeState"] --> N
-    N["post-update hook<br/>(non-fatal, deferred runtime per #30)"] --> O
+    N["post-update hook<br/>(subprocess via tsx, non-fatal)"] --> O
     O["summary — UpdateSummary<br/>Counts, conflict resolutions,<br/>migration warnings, hook output"]
 
     M -->|Any failure| R["rollbackUpdate<br/>Restore snapshot + erase added paths"]
@@ -280,6 +280,9 @@ const ShardManifestSchema = z.object({
   hooks: z.object({
     'post-install': z.string().optional(),
     'post-update': z.string().optional(),
+    // Per-shard hook execution timeout in milliseconds. Default 30_000
+    // when absent; clamped to 1_000..600_000 at validation time.
+    timeout_ms: z.number().int().min(1_000).max(600_000).optional(),
   }).default({}),
 });
 ```
@@ -703,7 +706,7 @@ interface PlanUpdateInput {
 3. **Write pass**: for each non-delete action, fire progress event, write content, update in-memory `nextFiles` map, record summary stat. `overwrite` never adds to `addedPaths` (rollback erasure list); `add` and `restore_missing` do. `keep_as_user` untracks the path from `nextFiles` so the engine stops considering it managed.
 4. **Delete pass**: runs after all writes so a rename-style move (delete + add at a different path) can't clobber the incoming file.
 5. **Cache + state**: call `initShardDir`, `cacheTemplates`, `cacheManifest`, `writeValuesFile`, `writeState`. Order matters — state is the last thing we touch.
-6. **Hook**: call `runPostUpdateHook`. Non-fatal per Helm pattern; stdout is surfaced in the summary but does not affect exit status.
+6. **Hook**: call `runPostUpdateHook` with a built `HookContext` and an `AbortController` signal. Behavior is full-execution (spawn the hook through the bundled `tsx` loader via `source/internal/hook-runner.ts`), capture stdout + stderr separately (256 KB per-stream cap), enforce the shard's `hooks.timeout_ms` (default 30 s). Non-fatal per Helm pattern: a throw / non-zero exit / timeout / cancel surface as `HookResult.failed` with captured output, the update summary renders a yellow warning, and the process exit code stays 0. No rollback past this point. See §4.14a for the execution algorithm.
 7. **Rollback**: any exception between snapshot and state-write triggers `rollbackUpdate(vaultRoot, backupDir, addedPaths)`. Removes every file in `addedPaths` (files we newly introduced), then restores every snapshotted file from `files/` and `cache/`. Idempotent — running it twice has no observable effect.
 
 **Dry-run mode**:
@@ -845,6 +848,66 @@ type UpdateCheckResult = (
 - Every failure mode degrades to a `StatusReport.update` discriminant the UI handles — status never throws on cache pathology.
 
 **Dependencies**: `core/registry` (for `fetchLatestVersion`), `runtime/vault-paths`, `runtime/errno`.
+
+### 4.16 `hook.ts` (execution)
+
+**Purpose**: Locate and execute a shard's post-install / post-update TypeScript hook in a subprocess, capture its output, and surface the outcome to the command UI without ever throwing. The execution half of this file is the pair to `lookupHook`'s sandbox (§4.16's lookup is inherited from the prior ARCHITECTURE §9.3 contract — path traversal rejects happen before any `spawn`). See ARCHITECTURE.md §9.3 for the full hook contract.
+
+**Inputs**:
+```typescript
+executeHook(
+  hookPath: string,
+  ctx: HookContext,
+  opts: HookExecOpts = {},
+): Promise<HookResult>
+
+interface HookExecOpts {
+  timeoutMs?: number;
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
+  signal?: AbortSignal;
+}
+
+type HookResult =
+  | { kind: 'absent' }
+  | { kind: 'deferred'; hookPath: string }
+  | { kind: 'ran'; stdout: string; stderr: string; exitCode: number }
+  | { kind: 'failed'; message: string; stdout: string; stderr: string };
+```
+
+**Algorithm**:
+1. **Resolve tsx loader**: `createRequire(import.meta.url).resolve('tsx')`. If it throws (node_modules pruned) → return `failed` with reinstall hint.
+2. **Resolve hook-runner**: first try `require.resolve('shardmind/internal/hook-runner')` against the package's own `exports` map. Fall back to the source path `../internal/hook-runner.ts` (dev / vitest with no dist). If neither exists → return `failed`.
+3. **Write ctx tempfile**: `os.tmpdir() / shardmind-hook-<rand>.json`, mode 0o600. JSON-serialize the ctx. Register a `process.once('SIGINT', unlinkSync)` fallback in case a parent interrupt lands between write and unlink.
+4. **Spawn**: `process.execPath` with argv `['--import', pathToFileURL(tsxLoaderPath).href, hookRunnerPath, hookPath, ctxPath]`. Options: `cwd: ctx.vaultRoot`, `stdio: ['ignore', 'pipe', 'pipe']`, `env: { ...process.env, SHARDMIND_HOOK: '1', SHARDMIND_HOOK_PHASE: phase }`, and the caller-supplied `signal`. The phase is derived from `ctx.previousVersion === undefined ? 'post-install' : 'post-update'`.
+5. **Stream capture**: attach `utf-8`-decoded data listeners on stdout and stderr. Each chunk appends into a per-stream buffer capped at 256 KB — overflow truncates and records a dropped-byte count used in the final marker. Chunks are forwarded live via `onStdout` / `onStderr` callbacks so the command TUI can render a tail-only "running-hook" phase.
+6. **Timeout + abort**: `setTimeout(timeoutMs)` and the caller's `AbortSignal` both land in a `terminate(reason)` closure that sets `timedOut` / `cancelled` and issues `child.kill('SIGTERM')`. A 2-second grace setTimeout follows with `child.kill('SIGKILL')` if the child hasn't exited.
+7. **Await exit**: `Promise<{ code, signalName, spawnErr? }>` races `child.on('error')` vs `child.on('close')`. Clear the timeout; remove the abort listener.
+8. **Result-decision order** (order matters): `cancelled` → `failed / "cancelled"` first — node emits a spawn `'error'` AND fires the abort listener on auto-kill, and the user-facing message must name the cancel, not the symptom. `timedOut` → `failed / "timed out after Ns"` next. `spawnErr` → `failed / "spawn failed: <msg>"` after. Otherwise → `ran` with `exitCode ?? -1` (signal-terminated children report `code: null, signal: 'SIGTERM'` on POSIX; we fold that to `-1`).
+9. **Cleanup**: in a `finally`, remove the SIGINT listener and `fsp.unlink(ctxPath)` — swallow ENOENT (the SIGINT handler may have unlinked already).
+
+**Error modes**:
+- `tsx` not resolvable → `failed` with reinstall hint. Only possible if someone manually pruned node_modules.
+- Hook-runner not resolvable in either prod or dev paths → `failed`. Indicates a broken install OR a running-from-source configuration neither path recognizes.
+- ctx tempfile write ENOSPC / permission denied → `failed` with the OS message.
+- Hook throws → runner catches, writes stack to stderr, exits 1 → `ran` with exitCode 1. Treated identically to a non-zero `process.exit` from the UI's perspective.
+- Hook hangs past `timeoutMs` → `failed / "timed out after Ns"` with any captured output so far preserved.
+- Parent SIGINT (via caller's AbortSignal) → `failed / "cancelled"`.
+
+**Why JSON-temp-file for ctx transport** (decision rationale):
+- Env var — Windows process-env has a 32 KB per-var cap; a `values` object larger than that truncates silently.
+- Stdin — conflicts with the cancellation bridge in `source/core/cancellation.ts` (which treats ETX bytes on stdin as SIGINT surrogates).
+- Temp file — no cap, 0o600 mode, cleanable via `finally` + SIGINT belt-and-braces. Winner.
+
+**Output caps**:
+- 256 KB per stream (stdout, stderr independently) inside `executeHook`. Prevents a pathological `console.log` loop from filling Ink's render buffer.
+- 64 KB tail-only budget inside the command machines' `running-hook` phase (`HOOK_OUTPUT_UI_CAP_BYTES`). Tighter than the core cap because this buffer lives in React state and re-renders on every chunk.
+
+**Non-fatal semantics**: `executeHook` never throws. The command machines clear `installingRef` / `writingRef` BEFORE invoking the hook so a Ctrl+C during execution cannot walk the install back — state.json is already on disk when the hook fires. The Summary / UpdateSummary components render `failed` identically to a `ran` with non-zero exit: yellow warning with captured output, install/update still reported successful.
+
+**Dependencies**: `core/manifest` (for `DEFAULT_HOOK_TIMEOUT_MS`), `core/fs-utils`, `tsx` (runtime), `node:child_process`, `node:crypto`, `node:fs`, `node:fs/promises`, `node:module`, `node:os`, `node:path`, `node:url`.
+
+**Subprocess entry**: `source/internal/hook-runner.ts` — compiled to `dist/internal/hook-runner.js` via a dedicated tsup entry block. Reads argv[2] (hook path) + argv[3] (ctx tempfile), dynamic-imports the hook via `pathToFileURL`, awaits `mod.default(ctx)`, exits 0 / 1. Any throw reaches the stderr stream with a stack trace. Zero Ink / React / Pastel imports — this is the cold-start path.
 
 ---
 
