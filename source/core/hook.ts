@@ -54,6 +54,27 @@ const STREAM_CAP_BYTES = 256 * 1024;
  */
 const KILL_GRACE_MS = 2_000;
 
+/**
+ * Which lifecycle slot fired the hook. Exported so the command machines,
+ * the HookProgress component, and the hook-runner wrapper can all share
+ * one source of truth for the two allowed phase strings (and so a future
+ * third phase becomes a compile-time update rather than a search-and-fix).
+ */
+export type HookStage = 'post-install' | 'post-update';
+
+/**
+ * The shape of a command-machine `Phase` variant while a hook subprocess
+ * is running. Each machine's full Phase union intersects this — sharing
+ * the variant here lets `appendHookOutput` in shared.ts typecheck
+ * generically without either machine leaking its internal phases.
+ */
+export interface RunningHookPhase {
+  kind: 'running-hook';
+  stage: HookStage;
+  output: string;
+  shardLabel: string;
+}
+
 export type HookResult =
   | { kind: 'absent' }
   | { kind: 'deferred'; hookPath: string }
@@ -248,7 +269,7 @@ export async function executeHook(
   process.once('SIGINT', sigintCleanup);
 
   try {
-    const phase = ctx.previousVersion === undefined ? 'post-install' : 'post-update';
+    const phase: HookStage = ctx.previousVersion === undefined ? 'post-install' : 'post-update';
 
     // `node --import file:///.../tsx/dist/loader.mjs runner.js hookPath ctxPath`
     // The `--import` specifier is resolved via file:// URL so Windows
@@ -277,50 +298,48 @@ export async function executeHook(
     // Capture stdout + stderr into separate buffers. `appendCapped` enforces
     // the per-stream 256 KB cap; anything beyond gets a single trailing
     // truncation marker so the author can tell output was cut.
-    let stdout = '';
-    let stderr = '';
-    let stdoutTruncated = false;
-    let stderrTruncated = false;
-    let stdoutDropped = 0;
-    let stderrDropped = 0;
+    //
+    // Byte counts are tracked incrementally in the closure below rather
+    // than recomputed via `Buffer.byteLength(current)` per chunk. At a
+    // stream saturating the 256 KB cap in small chunks, the naive
+    // recompute would be O(n²) on the combined byte size; tracking the
+    // running total is O(1) per chunk.
+    const streams = {
+      stdout: { out: '', bytes: 0, truncated: false, dropped: 0 },
+      stderr: { out: '', bytes: 0, truncated: false, dropped: 0 },
+    };
 
     const appendCapped = (
-      current: string,
+      stream: { out: string; bytes: number; truncated: boolean; dropped: number },
       chunk: string,
-      truncated: boolean,
-      dropped: number,
-    ): { out: string; truncated: boolean; dropped: number } => {
-      if (truncated) {
-        return { out: current, truncated: true, dropped: dropped + Buffer.byteLength(chunk) };
+    ): void => {
+      if (stream.truncated) {
+        stream.dropped += Buffer.byteLength(chunk);
+        return;
       }
-      const currentBytes = Buffer.byteLength(current);
       const chunkBytes = Buffer.byteLength(chunk);
-      if (currentBytes + chunkBytes <= STREAM_CAP_BYTES) {
-        return { out: current + chunk, truncated: false, dropped: 0 };
+      if (stream.bytes + chunkBytes <= STREAM_CAP_BYTES) {
+        stream.out += chunk;
+        stream.bytes += chunkBytes;
+        return;
       }
-      const remaining = STREAM_CAP_BYTES - currentBytes;
+      const remaining = STREAM_CAP_BYTES - stream.bytes;
       const kept = remaining > 0 ? Buffer.from(chunk).slice(0, remaining).toString('utf-8') : '';
-      return {
-        out: current + kept,
-        truncated: true,
-        dropped: chunkBytes - Buffer.byteLength(kept),
-      };
+      const keptBytes = Buffer.byteLength(kept);
+      stream.out += kept;
+      stream.bytes += keptBytes;
+      stream.truncated = true;
+      stream.dropped = chunkBytes - keptBytes;
     };
 
     child.stdout?.setEncoding('utf-8');
     child.stderr?.setEncoding('utf-8');
     child.stdout?.on('data', (chunk: string) => {
-      const r = appendCapped(stdout, chunk, stdoutTruncated, stdoutDropped);
-      stdout = r.out;
-      stdoutTruncated = r.truncated;
-      stdoutDropped = r.dropped;
+      appendCapped(streams.stdout, chunk);
       onStdout?.(chunk);
     });
     child.stderr?.on('data', (chunk: string) => {
-      const r = appendCapped(stderr, chunk, stderrTruncated, stderrDropped);
-      stderr = r.out;
-      stderrTruncated = r.truncated;
-      stderrDropped = r.dropped;
+      appendCapped(streams.stderr, chunk);
       onStderr?.(chunk);
     });
 
@@ -370,8 +389,14 @@ export async function executeHook(
 
     // Append truncation markers AFTER capture — if both happen they read
     // in stream-order rather than interleaving with live output.
-    if (stdoutTruncated) stdout += `\n[… stdout truncated, ${stdoutDropped} bytes discarded]`;
-    if (stderrTruncated) stderr += `\n[… stderr truncated, ${stderrDropped} bytes discarded]`;
+    let stdout = streams.stdout.out;
+    let stderr = streams.stderr.out;
+    if (streams.stdout.truncated) {
+      stdout += `\n[… stdout truncated, ${streams.stdout.dropped} bytes discarded]`;
+    }
+    if (streams.stderr.truncated) {
+      stderr += `\n[… stderr truncated, ${streams.stderr.dropped} bytes discarded]`;
+    }
 
     // Result-decision order: cancel > timeout > spawn-error > exit. When
     // `spawn({ signal })` auto-kills on abort, node emits both an 'error'

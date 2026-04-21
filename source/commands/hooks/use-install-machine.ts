@@ -8,7 +8,6 @@
  * reuse the same machine with a few added phase variants.
  */
 
-import type React from 'react';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -43,9 +42,9 @@ import {
   rollbackInstall,
   type BackupRecord,
 } from '../../core/install-executor.js';
-import { runPostInstallHook } from '../../core/hook.js';
+import { runPostInstallHook, type RunningHookPhase } from '../../core/hook.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
-import { summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
+import { appendHookOutput, summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
 
 import type { WizardResult } from '../../components/InstallWizard.js';
 import type { CollisionAction } from '../../components/CollisionReview.js';
@@ -63,34 +62,6 @@ export interface PreparedContext {
   alwaysIncludedFileCount: number;
 }
 
-/**
- * Maximum bytes of hook output we keep in the live-progress buffer before
- * dropping the oldest. The final `HookResult` has its own 256 KB cap per
- * stream (see source/core/hook.ts); this is a tighter UI-side budget so a
- * runaway `console.log` loop doesn't fill React state and thrash Ink.
- */
-const HOOK_OUTPUT_UI_CAP_BYTES = 64 * 1024;
-
-/**
- * Append a chunk of subprocess output into the running-hook phase's
- * `output` buffer. No-op if the phase changed out from under us (e.g.
- * Ctrl+C landed between `onData` and this setPhase call).
- */
-function appendHookOutput(
-  setPhase: React.Dispatch<React.SetStateAction<Phase>>,
-  chunk: string,
-): void {
-  setPhase((prev) => {
-    if (prev.kind !== 'running-hook') return prev;
-    const combined = prev.output + chunk;
-    const trimmed =
-      combined.length > HOOK_OUTPUT_UI_CAP_BYTES
-        ? combined.slice(combined.length - HOOK_OUTPUT_UI_CAP_BYTES)
-        : combined;
-    return { ...prev, output: trimmed };
-  });
-}
-
 export type Phase =
   | { kind: 'booting' }
   | { kind: 'loading'; message: string }
@@ -98,16 +69,17 @@ export type Phase =
   | { kind: 'wizard'; ctx: PreparedContext }
   | { kind: 'collision'; collisions: Collision[]; result: WizardResult; ctx: PreparedContext }
   | { kind: 'installing'; total: number; current: number; label: string; history: string[]; ctx: PreparedContext; result: WizardResult; backups: BackupRecord[] }
-  | {
+  | (RunningHookPhase & {
       // Subprocess-backed post-install hook is streaming output. We are
       // already past the point-of-no-return (state.json written); a Ctrl+C
       // in this phase kills the child but does NOT roll the install back.
       // See docs/ARCHITECTURE.md §9.3 for the Helm-style contract.
-      kind: 'running-hook';
+      //
+      // The variant's shape is defined in `source/core/hook.ts` as
+      // `RunningHookPhase` and shared between install and update so
+      // `appendHookOutput` in shared.ts can narrow generically.
       stage: 'post-install';
-      output: string;
-      manifest: ShardManifest;
-    }
+    })
   | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; fileCount: number; durationMs: number; backups: BackupRecord[]; hook: HookSummary | null; dryRun: boolean }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
@@ -365,7 +337,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
             kind: 'running-hook',
             stage: 'post-install',
             output: '',
-            manifest: ctx.manifest,
+            shardLabel: `${ctx.manifest.namespace}/${ctx.manifest.name}`,
           });
           try {
             const hookCtx = {

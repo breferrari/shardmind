@@ -12,9 +12,20 @@
  * summary shape or the rollback policy.
  */
 
+import type React from 'react';
 import { useEffect, useRef } from 'react';
-import type { HookResult } from '../../core/hook.js';
+import type { HookResult, RunningHookPhase } from '../../core/hook.js';
 import { assertNever } from '../../runtime/types.js';
+
+/**
+ * Maximum bytes of hook output we keep in the UI live-progress buffer
+ * before dropping the oldest. The final `HookResult` has its own 256 KB
+ * cap per stream (see source/core/hook.ts::STREAM_CAP_BYTES); this is a
+ * tighter UI-side budget because the buffer lives in React state and
+ * re-renders on every chunk. A runaway `console.log` loop is pathological
+ * for Ink's renderer at 256 KB but fine at 64 KB.
+ */
+export const HOOK_OUTPUT_UI_CAP_BYTES = 64 * 1024;
 
 export interface HookSummary {
   deferred?: boolean;
@@ -54,6 +65,37 @@ export function summarizeHook(result: HookResult): HookSummary | null {
     default:
       return assertNever(result);
   }
+}
+
+/**
+ * Append a chunk of subprocess output into a running-hook phase's `output`
+ * buffer. Called once per chunk by the `onStdout` / `onStderr` callbacks
+ * the install and update machines hand to `executeHook`.
+ *
+ * No-op when the current phase is not `running-hook` — the machine may
+ * have advanced past the hook (clean exit), or an abort may have landed
+ * between the child's `'data'` event and this `setPhase` call.
+ *
+ * The updater preserves React's same-reference "no change" signal on the
+ * non-`running-hook` branch so `useState` doesn't queue a redundant
+ * render. Generic over the full Phase union of whichever machine calls
+ * this — both machines' unions include `RunningHookPhase`, so the
+ * narrowing is sound.
+ */
+export function appendHookOutput<P extends { kind: string }>(
+  setPhase: React.Dispatch<React.SetStateAction<P>>,
+  chunk: string,
+): void {
+  setPhase((prev) => {
+    if (prev.kind !== 'running-hook') return prev;
+    const rh = prev as unknown as RunningHookPhase;
+    const combined = rh.output + chunk;
+    const trimmed =
+      combined.length > HOOK_OUTPUT_UI_CAP_BYTES
+        ? combined.slice(combined.length - HOOK_OUTPUT_UI_CAP_BYTES)
+        : combined;
+    return { ...prev, output: trimmed };
+  });
 }
 
 /**

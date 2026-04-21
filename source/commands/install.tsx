@@ -110,7 +110,7 @@ export default function Install({ args, options }: Props) {
           <HookProgress
             stage={phase.stage}
             output={phase.output}
-            shardLabel={`${phase.manifest.namespace}/${phase.manifest.name}`}
+            shardLabel={phase.shardLabel}
           />
         </CommandFrame>
       );

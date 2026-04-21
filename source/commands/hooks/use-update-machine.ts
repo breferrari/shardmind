@@ -15,7 +15,6 @@
  * rollback via the executor's snapshot before surfacing an error phase.
  */
 
-import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import path from 'node:path';
 import { useApp } from 'ink';
@@ -50,8 +49,8 @@ import {
   type NewFilePlan,
 } from '../../core/update-planner.js';
 import { runUpdate, rollbackUpdate, type UpdateSummary } from '../../core/update-executor.js';
-import { runPostUpdateHook } from '../../core/hook.js';
-import { summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
+import { runPostUpdateHook, type RunningHookPhase } from '../../core/hook.js';
+import { appendHookOutput, summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
 import { buildRenderContext } from '../../core/renderer.js';
 import { VALUES_FILE } from '../../runtime/vault-paths.js';
 import type { DiffAction } from '../../components/DiffView.js';
@@ -78,35 +77,6 @@ export interface PreparedContext {
   migrationWarnings: string[];
   newRequiredKeys: string[];
   newOptionalModules: Array<{ id: string; def: ModuleDefinition }>;
-}
-
-/**
- * Maximum bytes of hook output we keep in the live-progress buffer
- * before dropping the oldest. The final `HookResult` has its own 256 KB
- * cap per stream (see source/core/hook.ts); this is a tighter UI-side
- * budget so a runaway `console.log` loop doesn't fill React state and
- * thrash Ink. Matches the install machine's budget.
- */
-const HOOK_OUTPUT_UI_CAP_BYTES = 64 * 1024;
-
-/**
- * Append a chunk of subprocess output into the running-hook phase's
- * `output` buffer. No-op if the phase changed out from under us (e.g.
- * abort landed between `onData` and this setPhase call).
- */
-function appendHookOutput(
-  setPhase: React.Dispatch<React.SetStateAction<Phase>>,
-  chunk: string,
-): void {
-  setPhase((prev) => {
-    if (prev.kind !== 'running-hook') return prev;
-    const combined = prev.output + chunk;
-    const trimmed =
-      combined.length > HOOK_OUTPUT_UI_CAP_BYTES
-        ? combined.slice(combined.length - HOOK_OUTPUT_UI_CAP_BYTES)
-        : combined;
-    return { ...prev, output: trimmed };
-  });
 }
 
 export type Phase =
@@ -139,17 +109,18 @@ export type Phase =
       label: string;
       history: string[];
     }
-  | {
+  | (RunningHookPhase & {
       // Subprocess-backed post-update hook is streaming output. We are
       // already past the point-of-no-return (state.json written by
       // `runUpdate`); Ctrl+C in this phase kills the child but does NOT
       // roll the update back — the contract matches post-install (Helm
       // semantics, see docs/ARCHITECTURE.md §9.3).
-      kind: 'running-hook';
+      //
+      // Shape is shared with install's running-hook variant via
+      // `RunningHookPhase` in source/core/hook.ts — keeps the `setPhase`
+      // updater in `shared.ts::appendHookOutput` generic across machines.
       stage: 'post-update';
-      output: string;
-      shardLabel: string;
-    }
+    })
   | {
       kind: 'summary';
       summary: UpdateSummary;

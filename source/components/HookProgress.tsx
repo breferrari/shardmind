@@ -1,5 +1,6 @@
 import { Box, Text } from 'ink';
 import { Spinner } from './ui.js';
+import type { HookStage } from '../core/hook.js';
 
 /**
  * Live display for the `running-hook` phase in the install and update
@@ -18,7 +19,7 @@ import { Spinner } from './ui.js';
 const TAIL_LINES = 12;
 
 interface HookProgressProps {
-  stage: 'post-install' | 'post-update';
+  stage: HookStage;
   output: string;
   shardLabel: string;
 }
