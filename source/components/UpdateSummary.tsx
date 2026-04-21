@@ -1,12 +1,27 @@
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
+import HookSummarySection from './HookSummarySection.js';
 import type { UpdateSummary as Summary } from '../core/update-executor.js';
+import type { HookSummary } from '../core/hook.js';
 
+/**
+ * Final update report.
+ *
+ * Shows the version delta, per-category counts, conflict-resolution
+ * breakdown, migration warnings, and the post-update hook outcome.
+ *
+ * The hook section is delegated to `HookSummarySection` — the same
+ * component `Summary.tsx` uses — so the four-branch rendering
+ * (absent / deferred / success / warning) can't drift between install
+ * and update views. Update success is independent of the hook outcome
+ * (Helm semantics, per ARCHITECTURE.md §9.3) — a failing hook does not
+ * roll back the update.
+ */
 interface UpdateSummaryProps {
   summary: Summary;
   durationMs: number;
   migrationWarnings: string[];
-  hookOutput: { deferred?: boolean; stdout?: string; exitCode?: number } | null;
+  hookOutput: HookSummary | null;
   dryRun?: boolean;
 }
 
@@ -65,19 +80,7 @@ export default function UpdateSummary({
         </Box>
       )}
 
-      {hookOutput?.deferred && (
-        <Box flexDirection="column">
-          <Text color="yellow">Post-update hook detected but not executed.</Text>
-          <Text dimColor>Hook runtime is deferred (see #30).</Text>
-        </Box>
-      )}
-
-      {hookOutput?.stdout && (
-        <Box flexDirection="column">
-          <Text bold>Post-update output:</Text>
-          <Text>{hookOutput.stdout}</Text>
-        </Box>
-      )}
+      <HookSummarySection stage="post-update" hookOutput={hookOutput} />
     </Box>
   );
 }

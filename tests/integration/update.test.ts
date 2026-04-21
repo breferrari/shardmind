@@ -36,6 +36,7 @@ import {
   renderNewShard,
 } from '../../source/core/update-planner.js';
 import { runUpdate } from '../../source/core/update-executor.js';
+import { runPostUpdateHook } from '../../source/core/hook.js';
 import {
   defaultModuleSelections,
   resolveComputedDefaults,
@@ -827,4 +828,120 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     expect(nextState.files[newPath]).toBeDefined();
     expect(nextState.files[newPath]!.ownership).toBe('managed');
   });
+
+  /**
+   * Hook integration for the update path: verify that the post-update
+   * hook receives `previousVersion` equal to the pre-update shard version.
+   * The unit tests pin ctx round-trip generically; this test pins the
+   * one field the update path is specifically responsible for — the
+   * pre-migration state.version being threaded through correctly.
+   */
+  it('post-update hook receives previousVersion from the pre-update state', async () => {
+    const vault = path.join(os.tmpdir(), `shardmind-update-hook-${crypto.randomUUID()}`);
+    const shardDir = path.join(os.tmpdir(), `shardmind-shard-${crypto.randomUUID()}`);
+    await fsp.mkdir(vault, { recursive: true });
+    await cloneShard(MINIMAL_SHARD, shardDir);
+    // The minimal-shard fixture only declares a post-install hook; the
+    // update-path test needs a post-update declaration too. Append it
+    // to the copied shard.yaml so the lookup finds the file below.
+    const shardYamlInit = await fsp.readFile(path.join(shardDir, 'shard.yaml'), 'utf-8');
+    await fsp.writeFile(
+      path.join(shardDir, 'shard.yaml'),
+      shardYamlInit + '  post-update: hooks/post-update.ts\n',
+      'utf-8',
+    );
+    await fsp.mkdir(path.join(shardDir, 'hooks'), { recursive: true });
+    await fsp.writeFile(
+      path.join(shardDir, 'hooks', 'post-update.ts'),
+      `
+        import { writeFile } from 'node:fs/promises';
+        import { join } from 'node:path';
+        export default async function (ctx) {
+          await writeFile(
+            join(ctx.vaultRoot, '.hook-ctx.json'),
+            JSON.stringify(ctx),
+          );
+        }
+      `,
+      'utf-8',
+    );
+
+    try {
+      const { manifest, schema, values } = await installBaseline(vault, shardDir, 'sha-0.1.0');
+
+      // Bump the shard version to 0.2.0 and re-parse so planUpdate runs.
+      const shardYaml = await fsp.readFile(path.join(shardDir, 'shard.yaml'), 'utf-8');
+      await fsp.writeFile(
+        path.join(shardDir, 'shard.yaml'),
+        shardYaml.replace('version: 0.1.0', 'version: 0.2.0'),
+        'utf-8',
+      );
+
+      const state = (await readState(vault)) as ShardState;
+      const newManifest = await parseManifest(path.join(shardDir, 'shard.yaml'));
+      const selections = defaultModuleSelections(schema);
+      const renderCtx = buildRenderContext(newManifest, values, selections);
+      const drift = await detectDrift(vault, state);
+      const plan = await planUpdate({
+        vault: { root: vault, state, drift },
+        values: { old: values, new: values },
+        newShard: {
+          schema,
+          selections,
+          tempDir: shardDir,
+          renderContext: renderCtx,
+        },
+        removedFileDecisions: {},
+      });
+
+      await runUpdate({
+        vaultRoot: vault,
+        plan,
+        conflictResolutions: {},
+        currentState: state,
+        newManifest,
+        newSchema: schema,
+        newValues: values,
+        newSelections: selections,
+        resolved: { ...RESOLVED, version: '0.2.0' },
+        tarballSha256: 'sha-0.2.0',
+        newTempDir: shardDir,
+      });
+
+      const hookResult = await runPostUpdateHook(shardDir, newManifest, {
+        vaultRoot: vault,
+        values,
+        modules: selections,
+        shard: { name: newManifest.name, version: newManifest.version },
+        previousVersion: state.version,
+      });
+      expect(hookResult.kind).toBe('ran');
+      if (hookResult.kind !== 'ran') throw new Error('narrowing');
+      expect(hookResult.exitCode).toBe(0);
+
+      const echoed = JSON.parse(await fsp.readFile(path.join(vault, '.hook-ctx.json'), 'utf-8'));
+      expect(echoed.previousVersion).toBe('0.1.0');
+      expect(echoed.shard.version).toBe('0.2.0');
+    } finally {
+      // Windows: hook child holding cwd handle may delay rmdir; mirror
+      // the retry convention unit + install-integration tests use.
+      const rmOpts = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
+      await fsp.rm(vault, rmOpts);
+      await fsp.rm(shardDir, rmOpts);
+    }
+  }, 45_000);
 });
+
+// Shard copy helper for the hook integration test. Mirrors the one in
+// install.test.ts rather than abstracting to a shared helper — the trees
+// are tiny and the dependency direction stays flat.
+async function cloneShard(src: string, dst: string): Promise<void> {
+  await fsp.mkdir(dst, { recursive: true });
+  const entries = await fsp.readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const from = path.join(src, entry.name);
+    const to = path.join(dst, entry.name);
+    if (entry.isDirectory()) await cloneShard(from, to);
+    else if (entry.isFile()) await fsp.copyFile(from, to);
+  }
+}

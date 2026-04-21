@@ -144,3 +144,68 @@ describe('ShardManifestSchema', () => {
     expect(ShardManifestSchema.parse).toBeTypeOf('function');
   });
 });
+
+describe('hooks.timeout_ms validation', () => {
+  const base = {
+    apiVersion: 'v1' as const,
+    name: 'test',
+    namespace: 'ns',
+    version: '1.0.0',
+  };
+
+  it('accepts a valid integer inside 1_000..600_000', () => {
+    const parsed = ShardManifestSchema.parse({
+      ...base,
+      hooks: { 'post-install': 'h.ts', timeout_ms: 60_000 },
+    });
+    expect(parsed.hooks.timeout_ms).toBe(60_000);
+  });
+
+  it('accepts the lower bound (1_000) and the upper bound (600_000)', () => {
+    expect(
+      ShardManifestSchema.parse({ ...base, hooks: { timeout_ms: 1_000 } }).hooks.timeout_ms,
+    ).toBe(1_000);
+    expect(
+      ShardManifestSchema.parse({ ...base, hooks: { timeout_ms: 600_000 } }).hooks.timeout_ms,
+    ).toBe(600_000);
+  });
+
+  it('rejects a value below the 1_000 ms floor', () => {
+    // Below one second is almost always an authoring bug — even a warm-cache
+    // `git init` hits ~50ms but cold runs are ~200ms. Blocking these keeps
+    // authors from shipping a shard that flakes on cold-start machines.
+    expect(() =>
+      ShardManifestSchema.parse({ ...base, hooks: { timeout_ms: 500 } }),
+    ).toThrow();
+  });
+
+  it('rejects a value above the 600_000 ms ceiling', () => {
+    // Anything over ten minutes exceeds any legitimate first-run setup we
+    // want to block the install TUI on. Authors who need more should run
+    // their work in a background process and return.
+    expect(() =>
+      ShardManifestSchema.parse({ ...base, hooks: { timeout_ms: 700_000 } }),
+    ).toThrow();
+  });
+
+  it('rejects a non-integer value', () => {
+    expect(() =>
+      ShardManifestSchema.parse({ ...base, hooks: { timeout_ms: 1500.5 } }),
+    ).toThrow();
+  });
+
+  it('rejects a negative value', () => {
+    expect(() =>
+      ShardManifestSchema.parse({ ...base, hooks: { timeout_ms: -1 } }),
+    ).toThrow();
+  });
+
+  it('accepts hooks block without timeout_ms (the field is optional)', () => {
+    const parsed = ShardManifestSchema.parse({
+      ...base,
+      hooks: { 'post-install': 'h.ts' },
+    });
+    expect(parsed.hooks['post-install']).toBe('h.ts');
+    expect(parsed.hooks.timeout_ms).toBeUndefined();
+  });
+});

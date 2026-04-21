@@ -286,7 +286,7 @@ export default async function(ctx: HookContext): Promise<void> {
 Hooks **can**:
 - Read / write files anywhere in `vaultRoot`
 - Run shell commands (`git init`, `qmd setup`, etc.)
-- Log to stdout (captured and surfaced in the install summary)
+- Log to stdout AND stderr (both captured and surfaced in the install summary as separate labeled blocks)
 - Import `shardmind/runtime` for helpers (`loadValues`, `loadState`, `validateFrontmatter`)
 
 Hooks **cannot**:
@@ -294,9 +294,40 @@ Hooks **cannot**:
 - Modify `shard-values.yaml` (user-owned)
 - Affect the install/update flow by throwing — exceptions become warnings, not fatal errors
 
-### Runtime status
+### Runtime environment
 
-As of v0.1, the engine **detects** hook files but **does not execute them** yet. Execution is tracked in [#30](https://github.com/breferrari/shardmind/issues/30) and lands before Milestone 5 (obsidian-mind conversion). The contract above is stable; a `post-install.ts` written today will run unchanged when the runtime ships.
+Hooks run in a subprocess via the bundled `tsx` TypeScript loader; your `.ts` file is transpiled on load and executed with the same Node that's running `shardmind`. No separate build step on the shard-author side.
+
+The child process receives:
+- `cwd` = `ctx.vaultRoot` (so `git init` / `qmd setup` act on the installed vault).
+- The parent's environment, plus:
+  - `SHARDMIND_HOOK=1` — tag for "running under shardmind" detection.
+  - `SHARDMIND_HOOK_PHASE=post-install` | `post-update` — the lifecycle stage.
+- `ctx` (the `HookContext` above) as the single argument to your default export.
+
+### Timeouts
+
+The default hook timeout is **30 seconds**. Override per-shard by adding `hooks.timeout_ms` to `shard.yaml`:
+
+```yaml
+hooks:
+  post-install: hooks/post-install.ts
+  timeout_ms: 60000    # 60 seconds; valid range: 1_000..600_000
+```
+
+A hook that exceeds its budget is sent `SIGTERM` (Windows: `TerminateProcess`), given a 2-second grace period to flush buffered output, then hard-killed with `SIGKILL`. The install / update itself still completes — a timed-out hook is a warning, not a rollback trigger.
+
+### Output limits
+
+Each stream (stdout and stderr) is captured up to **256 KB**. Beyond that the capture truncates and appends a `[… truncated, N bytes discarded]` marker. The UI's live "running-hook" view additionally caps the displayed tail at 64 KB so Ink's render buffer can't be wedged by a runaway `console.log` loop.
+
+Ordering is preserved *within* each stream but not *across* stdout and stderr — if you need strict interleaving, funnel everything through one stream in your hook.
+
+### Cancellation
+
+If the user hits Ctrl+C while your hook is running, the child receives a termination signal and the parent exits 130. Install / update are **not** rolled back — state.json is already on disk when the hook fires, so a cancelled hook leaves the vault fully installed but with whatever setup your hook was still doing left incomplete.
+
+On Windows, `SIGTERM` is emulated as `TerminateProcess`, which skips the hook's own cleanup handlers. Treat your hooks as interruptible at any line; don't rely on try/finally running to completion on Windows cancel.
 
 ## 7. Testing your shard locally
 
@@ -316,7 +347,7 @@ Before tagging a release:
 - [ ] Every value in `shard-schema.yaml` has a clear `message`
 - [ ] Computed defaults work against at least two realistic answer sets
 - [ ] Removable modules produce no files when excluded
-- [ ] Hook scripts either work or are clearly scoped "coming soon" (hook execution is deferred in v0.1)
+- [ ] Hook scripts complete within their `hooks.timeout_ms` budget on a cold machine (or within 30 s if unset)
 - [ ] README in your shard repo explains: what it installs, who it's for, how to upgrade
 
 ## 9. Common errors

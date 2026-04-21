@@ -27,8 +27,20 @@ export const ShardManifestSchema = z.object({
   hooks: z.object({
     'post-install': z.string().optional(),
     'post-update': z.string().optional(),
+    // Per-shard hook execution timeout in milliseconds. Default 30_000 when
+    // absent. Clamped to 1_000..600_000 — below one second is almost always a
+    // bug (even a trivial `git init` hits ~50ms with warm caches but 200ms
+    // cold); above ten minutes exceeds any legitimate first-run setup we want
+    // to block the install TUI on.
+    timeout_ms: z.number().int().min(1_000).max(600_000).optional(),
   }).default({}),
 });
+
+/**
+ * Default hook execution timeout when a manifest doesn't override
+ * `hooks.timeout_ms`. See docs/ARCHITECTURE.md §9.3.
+ */
+export const DEFAULT_HOOK_TIMEOUT_MS = 30_000;
 
 export async function parseManifest(filePath: string): Promise<ShardManifest> {
   let raw: string;

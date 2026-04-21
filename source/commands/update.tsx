@@ -9,6 +9,7 @@ import NewValuesPrompt from '../components/NewValuesPrompt.js';
 import NewModulesReview from '../components/NewModulesReview.js';
 import RemovedFilesReview from '../components/RemovedFilesReview.js';
 import CommandProgress from '../components/CommandProgress.js';
+import HookProgress from '../components/HookProgress.js';
 import UpdateSummary from '../components/UpdateSummary.js';
 import CommandFrame from '../components/CommandFrame.js';
 import Header from '../components/Header.js';
@@ -121,6 +122,16 @@ export default function Update({ options }: Props) {
             label={phase.label}
             verbose={verbose}
             history={phase.history}
+          />
+        </CommandFrame>
+      );
+    case 'running-hook':
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false}>
+          <HookProgress
+            stage={phase.stage}
+            output={phase.output}
+            shardLabel={phase.shardLabel}
           />
         </CommandFrame>
       );

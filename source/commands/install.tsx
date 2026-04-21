@@ -8,6 +8,7 @@ import InstallWizard from '../components/InstallWizard.js';
 import CollisionReview from '../components/CollisionReview.js';
 import ExistingInstallGate from '../components/ExistingInstallGate.js';
 import CommandProgress from '../components/CommandProgress.js';
+import HookProgress from '../components/HookProgress.js';
 import Summary from '../components/Summary.js';
 import CommandFrame from '../components/CommandFrame.js';
 
@@ -100,6 +101,16 @@ export default function Install({ args, options }: Props) {
             label={phase.label}
             verbose={verbose}
             history={phase.history}
+          />
+        </CommandFrame>
+      );
+    case 'running-hook':
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false}>
+          <HookProgress
+            stage={phase.stage}
+            output={phase.output}
+            shardLabel={phase.shardLabel}
           />
         </CommandFrame>
       );

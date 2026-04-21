@@ -546,11 +546,21 @@ interface HookContext {
 export default async function(ctx: HookContext): Promise<void>;
 ```
 
-**Hooks CAN**: read/write files in vaultRoot, run shell commands (`git init`, `qmd setup`), log to stdout (shown in TUI).
+**Hooks CAN**: read/write files in vaultRoot, run shell commands (`git init`, `qmd setup`), log to stdout and stderr (both shown in TUI as separate labeled blocks).
 
 **Hooks CANNOT**: modify `.shardmind/` (ShardMind owns it), modify `shard-values.yaml` (user owns it), return values that affect install/update flow.
 
-**If a hook throws**: ShardMind logs the error, shows a warning ("post-install hook failed: {message}"), does NOT rollback. Non-fatal. Same pattern as Helm post-install hooks.
+**If a hook throws**: ShardMind logs the error, shows a warning ("post-install hook exited with code N. Install succeeded; the hook's work may be incomplete."), does NOT rollback. Non-fatal. Same pattern as Helm post-install hooks.
+
+**Execution runtime**: hooks run in a subprocess spawned by `source/core/hook.ts:executeHook`. The engine ships the `tsx` TypeScript loader (~6 MB) bundled as a runtime dependency so authors can write plain `.ts` without a compile step on their side. An internal wrapper at `source/internal/hook-runner.ts` (emitted to `dist/internal/hook-runner.js`) imports the hook and invokes its default export with the typed `HookContext`.
+
+**Execution environment**: child `cwd` is `ctx.vaultRoot`; env inherits from the parent plus `SHARDMIND_HOOK=1` and `SHARDMIND_HOOK_PHASE=post-install|post-update` for the hook to branch on.
+
+**Output capture**: stdout and stderr are captured into separate 256 KB-capped buffers. Overflow truncates with a `[… truncated, N bytes discarded]` marker rather than dropping the hook. The command TUI additionally renders a tail-only (last 12 lines) live view during execution; the full captured output surfaces in the final summary.
+
+**Timeout**: 30-second default. Per-shard override via `shard.yaml` `hooks.timeout_ms` (valid range 1_000..600_000). Enforcement is soft-SIGTERM + 2 s grace window + SIGKILL; timeouts surface as a warning identical to the non-zero-exit path.
+
+**Cancellation**: the command machine's AbortController aborts the subprocess on Ctrl+C. Since the hook runs strictly after `writeState()` in both install and update executors, a cancelled or timed-out hook does not roll back the install — state.json is already on disk.
 
 ### 9.4 Git Tracking
 

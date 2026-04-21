@@ -42,9 +42,9 @@ import {
   rollbackInstall,
   type BackupRecord,
 } from '../../core/install-executor.js';
-import { runPostInstallHook } from '../../core/hook.js';
+import { runPostInstallHook, type RunningHookPhase } from '../../core/hook.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
-import { summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
+import { appendHookOutput, summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
 
 import type { WizardResult } from '../../components/InstallWizard.js';
 import type { CollisionAction } from '../../components/CollisionReview.js';
@@ -69,6 +69,17 @@ export type Phase =
   | { kind: 'wizard'; ctx: PreparedContext }
   | { kind: 'collision'; collisions: Collision[]; result: WizardResult; ctx: PreparedContext }
   | { kind: 'installing'; total: number; current: number; label: string; history: string[]; ctx: PreparedContext; result: WizardResult; backups: BackupRecord[] }
+  | (RunningHookPhase & {
+      // Subprocess-backed post-install hook is streaming output. We are
+      // already past the point-of-no-return (state.json written); a Ctrl+C
+      // in this phase kills the child but does NOT roll the install back.
+      // See docs/ARCHITECTURE.md §9.3 for the Helm-style contract.
+      //
+      // The variant's shape is defined in `source/core/hook.ts` as
+      // `RunningHookPhase` and shared between install and update so
+      // `appendHookOutput` in shared.ts can narrow generically.
+      stage: 'post-install';
+    })
   | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; fileCount: number; durationMs: number; backups: BackupRecord[]; hook: HookSummary | null; dryRun: boolean }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
@@ -103,6 +114,12 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   const writtenPathsRef = useRef<string[]>([]);
   const backupsRef = useRef<BackupRecord[]>([]);
   const installingRef = useRef(false);
+  // AbortController that owns the currently-executing post-install hook.
+  // Null when no hook is in flight. Ctrl+C in the running-hook phase
+  // aborts the subprocess but does NOT roll back the install (we're
+  // already past the point-of-no-return — see the running-hook phase
+  // docstring for the Helm-style contract).
+  const hookAbortRef = useRef<AbortController | null>(null);
   // Shard tempdir cleanup, populated once the shard download completes.
   // A SIGINT between download and wizard-submit needs to run this.
   const ctxCleanupRef = useRef<(() => Promise<void>) | null>(null);
@@ -133,7 +150,15 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   useSigintRollback({
     isActive: () => !dryRun && installingRef.current,
     rollback: () => rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current),
-    cleanup: () => (ctxCleanupRef.current ? ctxCleanupRef.current() : Promise.resolve()),
+    cleanup: async () => {
+      // Abort any in-flight post-install hook subprocess. Intentionally
+      // runs on every Ctrl+C, regardless of `isActive` — during the
+      // running-hook phase `isActive` is already false (state.json has
+      // been written) so the install-rollback path won't fire, and we
+      // still need the child to die so the parent process exits.
+      hookAbortRef.current?.abort();
+      if (ctxCleanupRef.current) await ctxCleanupRef.current();
+    },
   });
 
   useEffect(() => {
@@ -288,12 +313,52 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         });
         written = runResult.writtenPaths;
 
-        const hookResult = dryRun
-          ? { kind: 'absent' as const }
-          : await runPostInstallHook(ctx.tempDir, ctx.manifest);
-        const hookSummary = summarizeHook(hookResult);
-
+        // State.json is now on disk — we're past the point-of-no-return.
+        // Clear the rollback guard BEFORE firing the hook so a SIGINT
+        // during hook execution can't walk the install back. The only
+        // remaining work (hook subprocess) is non-fatal per spec §9.3.
         installingRef.current = false;
+
+        let hookSummary: HookSummary | null = null;
+        if (!ctx.manifest.hooks?.['post-install']) {
+          // No hook declared — nothing to render.
+          hookSummary = null;
+        } else if (dryRun) {
+          // Dry run: call runPostInstallHook WITHOUT a ctx so the hook
+          // module surfaces `deferred` (its "lookup only" shape). The
+          // summary renders this as a dim "skipped (dry run)" note per
+          // the contract in docs/ARCHITECTURE.md §9.3. A dry run must
+          // still tell the user the hook WOULD have fired — going
+          // silent here contradicts the rest of the dry-run UX.
+          hookSummary = summarizeHook(await runPostInstallHook(ctx.tempDir, ctx.manifest));
+        } else {
+          // Live-output phase while the hook runs. A fresh AbortController
+          // per run; cleared in a finally so repeat installs (test harness)
+          // get a clean slate.
+          hookAbortRef.current = new AbortController();
+          setPhase({
+            kind: 'running-hook',
+            stage: 'post-install',
+            output: '',
+            shardLabel: `${ctx.manifest.namespace}/${ctx.manifest.name}`,
+          });
+          try {
+            const hookCtx = {
+              vaultRoot,
+              values: result.values,
+              modules: result.selections,
+              shard: { name: ctx.manifest.name, version: ctx.manifest.version },
+            };
+            const hookResult = await runPostInstallHook(ctx.tempDir, ctx.manifest, hookCtx, {
+              signal: hookAbortRef.current.signal,
+              onStdout: (chunk) => appendHookOutput(setPhase, chunk),
+              onStderr: (chunk) => appendHookOutput(setPhase, chunk),
+            });
+            hookSummary = summarizeHook(hookResult);
+          } finally {
+            hookAbortRef.current = null;
+          }
+        }
 
         finish({
           kind: 'summary',

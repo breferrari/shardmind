@@ -1,16 +1,32 @@
 import os from 'node:os';
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
+import HookSummarySection from './HookSummarySection.js';
 import type { ShardManifest } from '../runtime/types.js';
 import type { BackupRecord } from '../core/install-executor.js';
+import type { HookSummary } from '../core/hook.js';
 
+/**
+ * Final install report.
+ *
+ * Renders the count of installed files, any pre-install backups that
+ * were taken to avoid overwriting user content, and the post-install
+ * hook outcome.
+ *
+ * The hook section is delegated to `HookSummarySection`, which is
+ * shared with `UpdateSummary.tsx` so the four-branch rendering
+ * (absent / deferred / success / warning) can't drift between the two
+ * views. Install success is independent of the hook outcome (Helm
+ * semantics, per ARCHITECTURE.md §9.3) — a failing hook does not roll
+ * back the install; it surfaces as a warning in the hook section.
+ */
 interface SummaryProps {
   manifest: ShardManifest;
   vaultRoot: string;
   fileCount: number;
   durationMs: number;
   backups: BackupRecord[];
-  hookOutput: { deferred?: boolean; stdout?: string; exitCode?: number } | null;
+  hookOutput: HookSummary | null;
   dryRun?: boolean;
 }
 
@@ -46,21 +62,7 @@ export default function Summary({
         </Box>
       )}
 
-      {hookOutput?.deferred && (
-        <Box flexDirection="column">
-          <Text color="yellow">Post-install hook detected but not executed.</Text>
-          <Text dimColor>
-            Hook runtime is deferred (see #30). Install succeeded without running it.
-          </Text>
-        </Box>
-      )}
-
-      {hookOutput?.stdout && (
-        <Box flexDirection="column">
-          <Text bold>Post-install output:</Text>
-          <Text>{hookOutput.stdout}</Text>
-        </Box>
-      )}
+      <HookSummarySection stage="post-install" hookOutput={hookOutput} />
 
       {!dryRun && (
         <Box flexDirection="column">

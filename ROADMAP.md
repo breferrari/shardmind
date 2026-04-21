@@ -47,7 +47,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 ### Milestone 5: Flagship Shard (Day 5)
 
 - [ ] obsidian-mind v4 — convert to shard format ([#14](https://github.com/breferrari/shardmind/issues/14))
-- [ ] Finalize post-install hook runtime ([#30](https://github.com/breferrari/shardmind/issues/30)) — first real hook arrives with obsidian-mind
+- [x] Finalize post-install hook runtime ([#30](https://github.com/breferrari/shardmind/issues/30)) — subprocess-backed via bundled `tsx`; ships with #30 so obsidian-mind (#14) can carry a real `post-install.ts`
 - [ ] Verify: `shardmind install github:breferrari/obsidian-mind` (direct mode) produces identical vault to git clone — the registry repo isn't created until Milestone 6
 
 ### Milestone 6: Ship (Day 6)
