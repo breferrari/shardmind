@@ -32,7 +32,7 @@ import fsp from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { HookContext, ShardManifest } from '../runtime/types.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
 import { pathExists } from './fs-utils.js';
@@ -174,28 +174,37 @@ export async function executeHook(
     };
   }
 
-  // Locate the sibling hook-runner emitted by tsup at `dist/internal/hook-runner.js`.
-  // Resolve via the package's own `exports` map rather than a relative path —
-  // tsup's chunk-splitting places core/hook.ts's compiled output in a hashed
-  // chunk under `dist/`, so a relative `new URL(...)` would drift with each
-  // build. `require.resolve('shardmind/internal/hook-runner')` self-resolves
-  // against our package.json regardless of how the consumer installed us.
-  let hookRunnerPath: string;
+  // Locate the sibling hook-runner. Two resolution paths:
+  //
+  //   (prod) `require.resolve('shardmind/internal/hook-runner')` against the
+  //     package's own `exports` map — stable across install layouts and
+  //     tsup's chunk hashing (core/hook.ts's compiled output lives in a
+  //     hashed `dist/chunk-*.js`, so a relative URL would drift per build).
+  //
+  //   (dev)  walk from `import.meta.url` to the adjacent source file at
+  //     `../internal/hook-runner.ts`. This covers vitest runs where the
+  //     package has not been built yet — tsx transpiles the runner on
+  //     subprocess load either way, so the .ts path works identically to
+  //     the .js one from the spawn's perspective.
+  //
+  // Both paths tolerate failure: if neither finds a usable runner we surface
+  // a `failed` result with a reinstall hint rather than throwing.
+  let hookRunnerPath: string | null = null;
   try {
     const require_ = createRequire(import.meta.url);
-    hookRunnerPath = require_.resolve('shardmind/internal/hook-runner');
+    const candidate = require_.resolve('shardmind/internal/hook-runner');
+    if (await pathExists(candidate)) hookRunnerPath = candidate;
   } catch {
+    // Fall through to the dev-mode attempt.
+  }
+  if (hookRunnerPath === null) {
+    const devCandidate = fileURLToPath(new URL('../internal/hook-runner.ts', import.meta.url));
+    if (await pathExists(devCandidate)) hookRunnerPath = devCandidate;
+  }
+  if (hookRunnerPath === null) {
     return {
       kind: 'failed',
       message: 'hook-runner not found in shardmind install. Did `npm run build` fail to emit the internal bundle?',
-      stdout: '',
-      stderr: '',
-    };
-  }
-  if (!(await pathExists(hookRunnerPath))) {
-    return {
-      kind: 'failed',
-      message: `hook-runner resolved to ${hookRunnerPath} but the file is missing. Reinstall shardmind.`,
       stdout: '',
       stderr: '',
     };

@@ -28,6 +28,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import fc from 'fast-check';
 
 // Read package.json for the expected --version assertion so the test
@@ -425,7 +426,104 @@ describe('shardmind install', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Update — every reachable terminal phase from a real subprocess.
+// 4. Install — post-install hook execution.
+// One scenario, its own stub mount because the main stub's shard roster is
+// frozen at suite-start. Builds a custom tarball that adds
+// hooks/post-install.ts on top of the minimal-shard tree, then installs
+// `github:acme/hook-demo` through the real CLI binary.
+// ---------------------------------------------------------------------------
+
+describe('shardmind install — post-install hook', () => {
+  let hookStub: GitHubStub;
+  let hookTarball: string;
+  let vault: Vault;
+
+  beforeAll(async () => {
+    const tar = await import('tar');
+    const os = await import('node:os');
+    const hookScratch = await fs.mkdtemp(path.join(os.tmpdir(), 'shardmind-e2e-hook-'));
+    const prefix = 'hook-demo-0.1.0';
+    const workRoot = path.join(hookScratch, 'work');
+    const workDir = path.join(workRoot, prefix);
+    // Clone the minimal-shard fixture into the tar staging directory so
+    // the custom tarball shares the same template + schema shape as the
+    // other install scenarios — the only delta is the hook addition.
+    const minimalShard = fileURLToPath(new URL('../../examples/minimal-shard', import.meta.url));
+    await copyTree(minimalShard, workDir);
+    await fs.mkdir(path.join(workDir, 'hooks'), { recursive: true });
+    // Hook writes a marker and logs a known string so the assertions can
+    // key off both disk state and the captured stdout block the Summary
+    // renders.
+    await fs.writeFile(
+      path.join(workDir, 'hooks', 'post-install.ts'),
+      [
+        "import { writeFile } from 'node:fs/promises';",
+        "import { join } from 'node:path';",
+        'export default async function (ctx) {',
+        "  console.log('HOOK_RAN_FOR_' + ctx.shard.name);",
+        "  await writeFile(join(ctx.vaultRoot, 'post-install-marker.txt'), 'hook ran');",
+        '}',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    hookTarball = path.join(hookScratch, `${prefix}.tar.gz`);
+    await tar.c({ file: hookTarball, gzip: true, cwd: workRoot }, [prefix]);
+
+    hookStub = await createGitHubStub({
+      shards: {
+        'acme/hook-demo': {
+          versions: { '0.1.0': hookTarball },
+          latest: '0.1.0',
+        },
+      },
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    await hookStub?.close();
+  });
+
+  afterEach(async () => {
+    await vault?.cleanup();
+  });
+
+  it('runs the hook and surfaces its stdout in the Summary', async () => {
+    vault = await createEmptyVault('install-hook');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['install', 'github:acme/hook-demo', '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: hookStub.url } },
+    );
+    expect(result.exitCode).toBe(0);
+    // Install itself completed.
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+    // Hook side effect landed — both the marker on disk and the stdout
+    // block in the captured Summary.
+    expect(await vault.exists('post-install-marker.txt')).toBe(true);
+    const marker = await vault.readFile('post-install-marker.txt');
+    expect(marker).toBe('hook ran');
+    expect(result.stdout).toMatch(/Post-install hook completed/);
+    expect(result.stdout).toMatch(/HOOK_RAN_FOR_minimal/);
+  }, 60_000);
+});
+
+// Local tree-copy helper for the hook tarball build. Kept inline so the
+// scenario stays self-contained; tarball.ts has a richer version with
+// symlink detection that this path doesn't need.
+async function copyTree(src: string, dst: string): Promise<void> {
+  await fs.mkdir(dst, { recursive: true });
+  const entries = await fs.readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const from = path.join(src, entry.name);
+    const to = path.join(dst, entry.name);
+    if (entry.isDirectory()) await copyTree(from, to);
+    else if (entry.isFile()) await fs.copyFile(from, to);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Update — every reachable terminal phase from a real subprocess.
 
 // ---------------------------------------------------------------------------
 
