@@ -9,7 +9,8 @@
 1. Open this file.
 2. Find the first unchecked (`[ ]`) item in the earliest uncompleted milestone.
 3. Open the linked issue; read its description for scope + acceptance.
-4. Execute. Check the box here + close the issue on merge.
+4. **Before touching code**: read [`CLAUDE.md §Working Agreement`](CLAUDE.md#working-agreement-v6-execution-standard) — spec-before-code, tests-before-implementation, adversarial enumeration, quality gate, and session hygiene. Non-negotiable for v6 sub-issues.
+5. Execute. Check the box here + close the issue on merge.
 
 ---
 

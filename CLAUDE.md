@@ -32,6 +32,53 @@ This project is **spec-driven**. The architecture and implementation are fully d
 | 5 | obsidian-mind v6 conversion (`.shardmind/` sidecar, dotfolder `.njk`, hooks) + `shardmind adopt` command |
 | 6 | Research-wiki shard, Invariant 1 E2E test, polish, npm publish |
 
+## Working Agreement (v6 execution standard)
+
+Every v6 sub-issue (#73–#78, #14, #15, #85) passes these gates before merge. These practices are what this project has used from day one — spec-driven, fixture-first, adversarial. This section makes them explicit so any session picking up work knows the bar.
+
+### 1. Spec before code
+
+- Read the relevant section of [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md) AND the linked issue body before touching code.
+- If the spec is silent or ambiguous on a decision you need, **update the spec first via a separate commit** — do not invent behavior in the implementation.
+- If your implementation reveals a spec mistake, fix the spec and submit the fix alongside the code change.
+
+### 2. Tests before implementation
+
+- Write the failing test first for every new behavior or bug fix. No code without a test.
+- For merge-engine-class work (`drift.ts`, `differ.ts`, `renderer.ts`), write **fixtures first** — the pattern used for the 20 merge fixtures in `tests/fixtures/merge/`.
+- Prefer property-based tests via `fast-check` when the input space is wide: ref-syntax parsing, `.shardmindignore` glob matching, hash-equivalence under whitespace.
+- Right test type for the work: unit for pure functions in `source/core/*.ts`; component via `ink-testing-library` for `source/components/*.tsx`; integration for multi-module pipelines; E2E via `tests/e2e/cli.test.ts` spawning `dist/cli.js`.
+
+### 3. Adversarial cases enumerated
+
+Before coding, list adversarial scenarios in the issue thread or PR description. Every listed case gets a test. Starter enumeration per v0.1 track:
+
+- **#73 walk**: symlinks pointing outside vault, paths with Unicode + spaces, missing `.shardmind/`, empty `.shardmind/`, `.shardmindignore` with thousands of patterns, tarball with Windows path separators.
+- **#74 schema**: defaults of `null` / `""` / `0` / `false` / nested objects; required-without-default must reject at parse time.
+- **#75 hooks**: hook crashes mid-edit (state.json must still reflect actual content), hook exceeds timeout, hook writes to unmanaged paths, `valuesAreDefaults` deep-equal vs. near-equal (whitespace, case, type coercion).
+- **#76 update**: ref moves between install and update, tag force-moved upstream, non-existent ref, rate-limited GitHub API, `--version` + `--include-prerelease` combined, beta-only repos (no stable release).
+- **#77 adopt**: adopt into dir with partial vault, adopt with existing `.shardmind/`, adopt with user files byte-equivalent to shard paths, adopt mid-failure recovery, adopt when shard can't be fetched.
+- **#78 Invariant 1**: shard with all-defaults empty strings, shard with zero modules, `.shardmindignore` excluding everything, byte-equivalence on case-insensitive filesystems (macOS), clone of shard vs. install includes/excludes parity.
+
+### 4. Quality gate (PR-merge requirements)
+
+Every PR for a v6 issue must demonstrate in its description:
+
+- [ ] `npm run typecheck` passes.
+- [ ] `npm test` passes (all scopes).
+- [ ] New behavior has new tests (§2) — no code without tests.
+- [ ] Adversarial cases from §3 are enumerated and covered.
+- [ ] Copilot review requested and addressed (or each flag explicitly justified as false-positive in PR conversation).
+- [ ] Once [#78](https://github.com/breferrari/shardmind/issues/78) lands: Invariant 1 E2E test still green.
+- [ ] Issue's acceptance criteria checked off with evidence.
+- [ ] Roadmap checkbox updated in the same PR.
+
+### 5. Session hygiene
+
+- **Start**: read this file, then `ROADMAP.md` (find first unchecked), then the linked issue, then `docs/SHARD-LAYOUT.md` (relevant section). In that order. Don't skip ahead.
+- **During**: run `npm run typecheck` and `npm test` frequently, not just at the end. If a test that should stay green goes red, stop and investigate before continuing — don't paper over.
+- **End**: if work is complete, open a PR referencing the issue (`closes #N`) with the quality-gate evidence. If incomplete, push the branch and comment on the issue with where you stopped, why, and what blocks progress — so the next session can resume.
+
 ## Tech Stack
 
 | Tool | Purpose |
