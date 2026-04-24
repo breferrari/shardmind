@@ -1,8 +1,15 @@
 # ShardMind Roadmap
 
-> Living document. Updated as priorities shift and milestones land.
+> Living document. Every item links to a GitHub issue so a fresh session can pick up the next unchecked task without context from prior conversations.
 >
-> Context: [`VISION.md`](VISION.md) | Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Implementation: [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) | Dev guide: [`CLAUDE.md`](CLAUDE.md)
+> Context: [`VISION.md`](VISION.md) | Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Implementation: [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) | **v6 layout spec**: [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md) | Dev guide: [`CLAUDE.md`](CLAUDE.md)
+
+## How to use this roadmap
+
+1. Open this file.
+2. Find the first unchecked (`[ ]`) item in the earliest uncompleted milestone.
+3. Open the linked issue; read its description for scope + acceptance.
+4. Execute. Check the box here + close the issue on merge.
 
 ---
 
@@ -10,7 +17,7 @@
 
 Ship the core: install, update, status. Prove that vault template upgrades work where every other tool failed.
 
-### Milestone 1: Foundation (Day 1)
+### Milestone 1: Foundation (Day 1) — shipped
 
 - [x] Scaffold with `create-pastel-app` ([#1](https://github.com/breferrari/shardmind/issues/1))
 - [x] `source/core/manifest.ts` — parse + validate shard.yaml with zod ([#2](https://github.com/breferrari/shardmind/issues/2))
@@ -23,81 +30,72 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 - [x] Unit tests: manifest, schema, renderer (5 fixture scenarios), modules
 - [x] `shardmind --version` works
 
-### Milestone 2: Install Command (Day 2)
+### Milestone 2: Install Command (Day 2) — shipped
 
 - [x] `source/core/state.ts` + `source/core/registry.ts` ([#9](https://github.com/breferrari/shardmind/issues/9))
 - [x] `commands/install.tsx` — full install flow with Ink wizard ([#8](https://github.com/breferrari/shardmind/issues/8))
 - [x] Integration test: install pipeline against `examples/minimal-shard` (real obsidian-mind shard verified at Milestone 5)
 - [x] `ink-testing-library` component tests for ValueInput, ModuleReview, ExistingInstallGate, InstallWizard ([#38](https://github.com/breferrari/shardmind/issues/38) — pulled forward from v0.2)
 
-### Milestone 3: Merge Engine (Day 3)
+### Milestone 3: Merge Engine (Day 3) — shipped
 
 - [x] Write all 17 merge fixture directories — fixtures before code ([#10](https://github.com/breferrari/shardmind/issues/10))
 - [x] `core/drift.ts` + `core/differ.ts` — three-way merge engine ([#11](https://github.com/breferrari/shardmind/issues/11))
 - [x] Iterate until all 17 scenarios pass
-- [x] Add edge case fixtures: empty file (18), UTF-8 non-ASCII (19), frontmatter merge on modified ownership (20). Hash-identical behavior already covered by scenarios 01 and 05 (both hit the `sha256(base) === sha256(ours)` shortcut)
+- [x] Add edge case fixtures: empty file (18), UTF-8 non-ASCII (19), frontmatter merge on modified ownership (20). Hash-identical behavior already covered by scenarios 01 and 05
 
-### Milestone 4: Update Command + Status (Day 4)
+### Milestone 4: Update Command + Status (Day 4) — shipped
 
 - [x] `commands/update.tsx` — upgrade flow with drift detection + DiffView ([#12](https://github.com/breferrari/shardmind/issues/12))
-- [x] `commands/index.tsx` — status display + --verbose diagnostics ([#13](https://github.com/breferrari/shardmind/issues/13))
+- [x] `commands/index.tsx` — status display + `--verbose` diagnostics ([#13](https://github.com/breferrari/shardmind/issues/13))
 - [x] Integration test: install → modify files → update → verify merge behavior
 - [x] E2E test: all 3 commands via CLI invocation ([#54](https://github.com/breferrari/shardmind/issues/54))
 
-### Milestone 5: Flagship Shard (Day 5)
+### Milestone 4.5: v6 Layout Integration — **active** (tracked in [#70](https://github.com/breferrari/shardmind/issues/70))
 
-- [ ] obsidian-mind v6 — convert to shard format ([#14](https://github.com/breferrari/shardmind/issues/14))
-- [x] Finalize post-install hook runtime ([#30](https://github.com/breferrari/shardmind/issues/30)) — subprocess-backed via bundled `tsx`; ships with #30 so obsidian-mind (#14) can carry a real `post-install.ts`
-- [ ] Verify: `shardmind install github:breferrari/obsidian-mind` (direct mode) produces identical vault to git clone — the registry repo isn't created until Milestone 6
+Engine rework required by the v6 shard-layout contract. Must land before Milestone 5. Spec: [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md).
 
-### Milestone 6: Ship (Day 6)
+- [ ] Flat shard-root walk + Tier 1 exclusions + `.shardmindignore` parser ([#73](https://github.com/breferrari/shardmind/issues/73))
+- [ ] Schema defaults enforcement + drop `partials` field ([#74](https://github.com/breferrari/shardmind/issues/74))
+- [ ] `HookContext` extensions (`valuesAreDefaults`, `newFiles`, `removedFiles`) + post-hook re-hash ([#75](https://github.com/breferrari/shardmind/issues/75))
+- [ ] Ref installs (`github:owner/repo#<ref>`) + update semantics (`--version`, `--include-prerelease`, ref re-resolution) ([#76](https://github.com/breferrari/shardmind/issues/76))
+- [ ] `shardmind adopt` command (2-way diff UI + adopt-planner + adopt-executor) ([#77](https://github.com/breferrari/shardmind/issues/77))
+- [ ] `install --defaults` flag + **Invariant 1 byte-equivalence CI test** ([#78](https://github.com/breferrari/shardmind/issues/78))
+
+### Milestone 5: Flagship Shard (Day 5) — blocked on Milestone 4.5
+
+- [ ] obsidian-mind v6 conversion — `.shardmind/` sidecar, hooks, `.shardmindignore` ([#14](https://github.com/breferrari/shardmind/issues/14), under [#70](https://github.com/breferrari/shardmind/issues/70))
+- [x] Finalize post-install hook runtime ([#30](https://github.com/breferrari/shardmind/issues/30))
+- [ ] Verify: `shardmind install github:breferrari/obsidian-mind` (direct mode) produces a vault byte-equivalent to git clone under Invariant 1
+
+### Milestone 6: Ship (Day 6) — blocked on Milestone 5
 
 - [ ] Research-wiki shard + E2E tests + npm publish ([#15](https://github.com/breferrari/shardmind/issues/15))
 - [ ] Create `shardmind/registry` repo with index.json (2 shards) — finalize schema per [#29](https://github.com/breferrari/shardmind/issues/29)
-- [ ] Final test: fresh machine → `npm install -g shardmind` → `shardmind install breferrari/obsidian-mind` (registry mode, proves #29 shape works end-to-end)
+- [ ] Final test: fresh machine → `npm install -g shardmind` → `shardmind install breferrari/obsidian-mind` (registry mode, proves [#29](https://github.com/breferrari/shardmind/issues/29) shape works end-to-end)
 
 ---
 
 ## v0.2.0 — Composition & Polish (Q2–Q3 2026)
 
-Deferred from v0.1. Build only after v0.1 is stable and adoption signals are real.
+Deferred from v0.1 per [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-scope--deferred-to-v02) + [`VISION.md §Current Priorities`](VISION.md). Build only after v0.1 is stable and adoption signals are real. Each feature has an umbrella issue tracking its sub-tasks.
 
-### Guided File Creation
+### Core features
 
-- [ ] `guided_files` section in shard-schema.yaml
-- [ ] Third install phase: guided prompts for files like SOUL.md
-- [ ] Render partially populated files from wizard answers + template structure
+- [ ] Guided file creation (`guided_files` schema + third install phase) ([#79](https://github.com/breferrari/shardmind/issues/79))
+- [ ] Structural variants (`modules.structure` + `vault_purpose`) ([#80](https://github.com/breferrari/shardmind/issues/80))
+- [ ] Shard composition (multi-shard per vault) ([#81](https://github.com/breferrari/shardmind/issues/81))
+- [ ] Dependency fetching (recursive + lock file) ([#82](https://github.com/breferrari/shardmind/issues/82))
+- [ ] `shardmind eject` command ([#83](https://github.com/breferrari/shardmind/issues/83))
+- [ ] `shardmind init` command for shard authors ([#84](https://github.com/breferrari/shardmind/issues/84))
 
-### Structural Variants
+### Layout / contract extensions (deferred from v0.1)
 
-- [ ] `modules.structure` field with purpose-driven folder variants
-- [ ] `vault_purpose` drives folder structure, not just CLAUDE.md framing
-- [ ] Design doc: the Vigil Mind Reshape decision record
+Tracked in [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-scope--deferred-to-v02). Parent issues to be created when scoped.
 
-### Shard Composition
-
-- [ ] `state.json` schema_version 2 with `shards[]`
-- [ ] Multiple shards in one vault (base shard + overlay shard)
-- [ ] Module conflict resolution between shards
-- [ ] `shardmind list` command (now useful with multiple shards)
-
-### Dependency Fetching
-
-- [ ] `registry.ts` gains `fetchDependencies()` method
-- [ ] Recursive download loop for declared dependencies
-- [ ] Lock file for transitive dependency resolution
-
-### Eject
-
-- [ ] `shardmind eject` command
-- [ ] Clean removal of `.shardmind/` and `shard-values.yaml`
-- [ ] Confirm prompt with file count
-
-### Init
-
-- [ ] `shardmind init` command for shard authors
-- [ ] Scaffold `shard.yaml`, `shard-schema.yaml`, `templates/` from prompts
-- [ ] Generate starter module structure
+- [ ] `rendered_files` opt-in (Nunjucks at vault-visible paths) — driver: research-wiki or other shard that needs `{{ values.X }}` in user-facing markdown
+- [ ] `.shardmindignore` negation (`!pattern`) — driver: a shard whose author needs to override broader patterns
+- [ ] Rename migrations + `shardmind adopt --from-version` — **must ship before any obsidian-mind release that introduces path renames**
 
 ### Engine polish (from v0.1 review)
 
@@ -110,27 +108,26 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] `NO_COLOR` / `FORCE_COLOR` respect across Ink components ([#37](https://github.com/breferrari/shardmind/issues/37))
 - [ ] Alternate registry configurability (GHE, private, custom URL) ([#39](https://github.com/breferrari/shardmind/issues/39))
 - [ ] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
-- [ ] Re-evaluate `@inkjs/ui` dependency (upstream frozen; shim at `source/components/ui.ts` keeps swap cheap) ([#43](https://github.com/breferrari/shardmind/issues/43))
-- [ ] Drop `LineInterner` workaround once `node-diff3` releases the prototype-lookup fix ([#49](https://github.com/breferrari/shardmind/issues/49), upstream [bhousel/node-diff3#87](https://github.com/bhousel/node-diff3/pull/87))
+- [ ] Re-evaluate `@inkjs/ui` dependency ([#43](https://github.com/breferrari/shardmind/issues/43))
+- [ ] Drop `LineInterner` workaround once `node-diff3` releases the prototype-lookup fix ([#49](https://github.com/breferrari/shardmind/issues/49))
 - [ ] `$EDITOR` integration for DiffView conflict resolution ([#50](https://github.com/breferrari/shardmind/issues/50))
 - [x] 24h update-check cache shared between status + update ([#51](https://github.com/breferrari/shardmind/issues/51) — shipped with #13)
 - [ ] DiffView: distinguish preexisting add-collision from modified-file conflict ([#60](https://github.com/breferrari/shardmind/issues/60))
-- [ ] `--yes` policy for preexisting add-collisions (currently churns every update) ([#61](https://github.com/breferrari/shardmind/issues/61))
+- [ ] `--yes` policy for preexisting add-collisions ([#61](https://github.com/breferrari/shardmind/issues/61))
 - [ ] Byte-identical preexisting add-collision adopts silently ([#62](https://github.com/breferrari/shardmind/issues/62))
 - [ ] Binary files bypass three-way merge entirely ([#63](https://github.com/breferrari/shardmind/issues/63))
 - [ ] `docs/IMPLEMENTATION.md` §4.11a / §4.11b for install-planner + install-executor ([#64](https://github.com/breferrari/shardmind/issues/64))
 - [ ] Enforce tarball size cap in `downloadShard` ([#32](https://github.com/breferrari/shardmind/issues/32))
 - [ ] `--force` flag on install for scripted collision overwrite without backup ([#55](https://github.com/breferrari/shardmind/issues/55))
 - [ ] E2E: bridge SIGINT delivery reliably on GH Actions Windows runner ([#57](https://github.com/breferrari/shardmind/issues/57))
-- [ ] Branch/ref install: `github:owner/repo#<ref>` syntax for shard-author dev loop ([#67](https://github.com/breferrari/shardmind/issues/67))
 
 ---
 
 ## v1.0.0 — Ecosystem (2026–2027)
 
-Only after the engine is proven, the flagship shard is stable, and community shards exist.
+Only after the engine is proven, the flagship shard is stable, and community shards exist. Issues to be created when v1.0 scoping begins — this section is aspirational.
 
-### Registry
+### Registry (hosted)
 
 - [ ] Hosted registry (shardmind.dev) with shard discovery and search
 - [ ] Shard metadata indexing from GitHub repos
@@ -164,6 +161,8 @@ Only after the engine is proven, the flagship shard is stable, and community sha
 **The moat is the update engine.** Every feature decision should be evaluated against: "does this make upgrades better?" If not, it can wait.
 
 **Agent-agnostic engine, agent-specific shards.** ShardMind renders templates. Shard authors decide which AIs to support. Don't couple the engine to any agent.
+
+**Invariant 1 is law.** `shardmind install --defaults <shard>` produces a vault byte-equivalent to `git clone <shard>` (modulo Tier 1 exclusions + `.shardmind/` engine metadata + vault-root `shard-values.yaml`). If CI catches a diff, the shard or the engine is wrong.
 
 ---
 
