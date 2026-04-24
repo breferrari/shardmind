@@ -48,6 +48,10 @@ export type ErrorCode =
   | 'WALK_SYMLINK_REJECTED'
   | 'WALK_INVALID_ENTRY'
 
+  // .shardmindignore parser
+  | 'SHARDMINDIGNORE_READ_FAILED'
+  | 'SHARDMINDIGNORE_NEGATION_UNSUPPORTED'
+
   // Registry / download
   | 'SHARD_NOT_FOUND'
   | 'VERSION_NOT_FOUND'
