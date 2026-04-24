@@ -60,20 +60,27 @@ my-shard/                             ← git repo root; also opens cleanly as a
 ```
 my-vault/
 │
-├── .shardmind/
-│   ├── state.json                    ← ownership + hashes + modules + agents + version + ref (if applicable)
-│   ├── shard-values.yaml             ← user's answers from the wizard
-│   └── templates/                    ← cached source files; merge base on update
+├── .shardmind/                       ← engine metadata (installed-side)
+│   ├── state.json                    ← ownership hashes + module/agent selections + version + resolved ref
+│   ├── shard.yaml                    ← cached manifest (runtime reads without re-extracting the tarball)
+│   ├── shard-schema.yaml             ← cached values schema
+│   └── templates/                    ← cached source files; merge base for three-way merge on update
+│
+├── shard-values.yaml                 ← user's answers from the wizard; vault-root (not under .shardmind/);
+│                                       named separately from .shardmind/ in VISION.md line 85
 │
 ├── <same vault content as source, with:>
 │   ├── .njk files in dotfolders rendered with user values (suffix stripped)
 │   ├── optional modules/agents included per wizard (default: all)
 │   └── hook may have personalized managed files (bound by Invariants 2 + 3)
 │
+├── .shardmindignore                  ← installed verbatim (Tier 2); inert post-install
 ├── README.md, LICENSE, CHANGELOG.md
 │
 └── (no .github/, no CONTRIBUTING.md, no translations, no demo media)
 ```
+
+The installed-side path constants are authoritative in [`source/runtime/vault-paths.ts`](../source/runtime/vault-paths.ts): `STATE_FILE`, `CACHED_MANIFEST`, `CACHED_SCHEMA`, `CACHED_TEMPLATES` all live under `.shardmind/`; `VALUES_FILE` lives at vault root.
 
 ## Personalization model
 
@@ -93,7 +100,7 @@ Three hard rules the engine + authors uphold. Enforced by CI.
 
 If a user runs `shardmind install <shard>` and accepts every default value, the resulting vault is byte-identical to `git clone <shard>`, modulo:
 - Tier 1 engine exclusions (absent from install)
-- `.shardmind/{state.json, shard-values.yaml, templates/}` (present in install)
+- Engine metadata (present in install): `.shardmind/state.json`, `.shardmind/shard.yaml` (cached manifest), `.shardmind/shard-schema.yaml` (cached schema), `.shardmind/templates/` (merge-base cache), and vault-root `shard-values.yaml`
 
 Enforced by a CI E2E test. Any other delta is a shard-design bug. Byte-equivalence = content hash + relative path; modes and mtimes are not compared.
 
@@ -120,7 +127,7 @@ Post-update hooks receive `ctx.newFiles: string[]` — managed files added in th
   - `valuesAreDefaults: boolean` — true iff every user value equals its schema default
   - `newFiles: string[]` — managed files added by this install/update (empty on clean install; populated on update with paths newly added in the new version)
   - `removedFiles: string[]` — managed files removed by this update (module deselection). Hooks use this to maintain external state (QMD collection refs, MCP registrations).
-- **`.shardmind/hooks/` is source-side only.** The installed-side `.shardmind/` holds state.json + shard-values.yaml + templates/ cache — not hooks. Engine reads hook scripts from the extracted source tarball during install/update; hook scripts never get copied into the installed vault.
+- **`.shardmind/hooks/` is source-side only.** The installed-side `.shardmind/` holds `state.json` + cached `shard.yaml` + cached `shard-schema.yaml` + `templates/` cache — not hooks. (User's `shard-values.yaml` lives at vault root, not inside `.shardmind/`.) Engine reads hook scripts from the extracted source tarball during install/update; hook scripts never get copied into the installed vault.
 - **Hook timeout** stays at the existing `DEFAULT_HOOK_TIMEOUT_MS` (non-fatal on timeout).
 
 ## Update semantics — spec rules
@@ -142,7 +149,7 @@ Flow:
    - Exists in user's vault but not in shard → left as user-created (not managed).
    - Exists in shard but not in user's vault → installed fresh, managed.
 3. Wizard collects values (same as install).
-4. Write `.shardmind/state.json` + `shard-values.yaml` + cache shard content to `.shardmind/templates/`.
+4. Write `.shardmind/state.json` + `.shardmind/shard.yaml` (cached) + `.shardmind/shard-schema.yaml` (cached) + vault-root `shard-values.yaml`; cache shard source files to `.shardmind/templates/`.
 5. Run post-install hook with `valuesAreDefaults` reflecting user's values, `newFiles` = files created in step 2d, `removedFiles` = [].
 6. Re-hash managed files per the usual post-hook semantics.
 
@@ -248,7 +255,7 @@ Paths reference current code. Detail to land in `ARCHITECTURE.md §3` + `IMPLEME
 16. New command: `source/commands/adopt.tsx` + `source/commands/hooks/use-adopt-machine.ts`.
 17. New component: 2-way diff UI (`source/components/AdoptDiffView.tsx`) + per-file prompt flow.
 18. `source/core/adopt-planner.ts` — walk existing vault, classify each file (matches-shard, differs-from-shard, user-created, shard-only), plan adoption operations.
-19. `source/core/adopt-executor.ts` — apply plan, write state.json + shard-values.yaml + templates/ cache; run post-install hook; re-hash managed files.
+19. `source/core/adopt-executor.ts` — apply plan; write installed-side metadata (`.shardmind/state.json` + cached `shard.yaml` + cached `shard-schema.yaml` + `.shardmind/templates/` cache) and vault-root `shard-values.yaml`; run post-install hook; re-hash managed files.
 
 ### Install non-interactive mode
 
@@ -256,7 +263,7 @@ Paths reference current code. Detail to land in `ARCHITECTURE.md §3` + `IMPLEME
 
 ### Testing
 
-21. **Invariant 1 byte-equivalence E2E test.** Clone shard repo to dir-A; run `shardmind install --defaults` to dir-B; recursively compare file trees. Expected delta: Tier 1 absent in B, `.shardmind/{state.json,shard-values.yaml,templates/}` present in B, content of all other files identical (content-hash match; modes and mtimes not compared). Any other diff fails.
+21. **Invariant 1 byte-equivalence E2E test.** Clone shard repo to dir-A; run `shardmind install --defaults` to dir-B; recursively compare file trees. Expected delta: Tier 1 absent in B; engine metadata present in B (`.shardmind/state.json`, `.shardmind/shard.yaml`, `.shardmind/shard-schema.yaml`, `.shardmind/templates/`, and vault-root `shard-values.yaml`); content of all other files identical (content-hash match; modes and mtimes not compared). Any other diff fails.
 22. **Unit tests**: `valuesAreDefaults` computation, `newFiles`/`removedFiles` diff, `.shardmindignore` glob matching, symlink rejection.
 23. Migrate `examples/minimal-shard/` to flat layout.
 24. Migrate `tests/fixtures/shards/` tarballs.
