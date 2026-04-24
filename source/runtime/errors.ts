@@ -44,6 +44,10 @@ export type ErrorCode =
   | 'STATE_UNSUPPORTED_VERSION'
   | 'STATE_CACHE_MISSING_TEMPLATES'
 
+  // Shard-source walk
+  | 'WALK_SYMLINK_REJECTED'
+  | 'WALK_INVALID_ENTRY'
+
   // Registry / download
   | 'SHARD_NOT_FOUND'
   | 'VERSION_NOT_FOUND'
