@@ -85,6 +85,15 @@ Every PR for a v6 issue must demonstrate in its description:
 - The quality-gate checklist above lives in [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) and auto-populates every new PR. Don't delete items — check them or justify their absence.
 - **Interim proxy for Invariant 1** while #73-#77 are in-flight: until [#78](https://github.com/breferrari/shardmind/issues/78) lands its CI test, each PR on #73-#77 should manually run `git clone <a fixture shard>` + `shardmind install --defaults` + `diff -r` and paste the result (or "no diff beyond Tier 1 + `.shardmind/` metadata") into the PR description.
 
+### 7. Commit hygiene — step-by-step, never one mega-commit
+
+- **A PR is a sequence of small, reviewable commits.** A single squashed commit on a multi-step change is a review-hostile artifact: reviewers can't bisect, can't read incrementally, can't revert the wrong piece. Always split.
+- **Commit at every coherent step.** A new module + its tests is a step. A test sweep that migrates N existing tests to a new contract is a step. A docs update is a step. A fixture regeneration is a step. Don't batch unrelated steps; don't fragment the same step across commits.
+- **Each commit must be self-consistent**: typecheck + the relevant test scope green at every commit. Reviewers (and `git bisect`) rely on this — a broken intermediate commit defeats the purpose. If a step needs a follow-up step to make tests green, fold them into the same commit.
+- **Conventional-commit prefixes** (`feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`). Subject ≤ 70 chars. Body explains *why* and links the issue. The issue tag goes in the *first* commit of the series; subsequent commits in the same PR don't repeat it unless they cite a sub-decision.
+- **Recommended split shape** for engine work: (1) new pure module(s) + their unit tests, (2) wire-up to existing modules, (3) call-site migrations + test sweep, (4) fixtures / examples, (5) docs (CHANGELOG, ROADMAP). Five commits is normal for a v6 sub-issue PR; one commit is wrong.
+- **Force-pushing the topic branch to fix history is fine** (and expected) before review starts. Once a reviewer has commented, prefer additive `fixup!` commits over rewriting their context. Auto-squash on merge if the maintainer prefers a squashed history at merge time — the *review* still happened against the granular series.
+
 ## Tech Stack
 
 | Tool | Purpose |
@@ -307,10 +316,12 @@ Read the spec section before implementing. It has inputs, outputs, algorithm ste
 
 ### Commits
 
-- Conventional commits: `feat:`, `fix:`, `test:`, `docs:`, `refactor:`.
-- One module per commit when building. Don't batch unrelated changes.
-- Reference the GitHub issue: `feat: core/manifest.ts — parse + validate shard.yaml (#2)`.
-- Tests pass before committing.
+See [`§Working Agreement §7 — Commit hygiene`](#7-commit-hygiene--step-by-step-never-one-mega-commit) for the binding rule. Quick reference:
+
+- Conventional commits: `feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`.
+- **Step-by-step always — never one mega-commit on a multi-step PR.** Splitting is what makes a PR reviewable; squashing is the maintainer's call at merge time.
+- Each commit must be self-consistent: typecheck + relevant tests green at every commit.
+- Reference the GitHub issue in the *first* commit of a PR series; subsequent commits cite the issue only when introducing a sub-decision.
 
 ## Key Architectural Decisions
 
