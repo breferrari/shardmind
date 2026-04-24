@@ -146,7 +146,8 @@ shardmind/
 ## Build, Test, and Development Commands
 
 ```bash
-npm install           # Install deps
+npm ci                # Install deps from lockfile (routine — see Lockfile discipline below)
+npm install           # Only when adding/bumping a dep (run after `rm -rf node_modules`)
 npm run build         # tsup build (cli + runtime)
 npm run dev           # tsup watch mode
 npm test              # vitest run (all tests)
@@ -155,9 +156,13 @@ npm run test:merge    # just the merge engine fixtures
 npm run typecheck     # tsc --noEmit
 ```
 
-- If deps are missing or a command fails with "module not found", run `npm install` first, then retry.
+- If deps are missing or a command fails with "module not found", run `npm ci` first, then retry.
 - Before pushing: `npm run typecheck && npm test` must both pass.
 - Before publishing: `npm run build` must produce clean output in `dist/`.
+
+### Lockfile discipline
+
+Use `npm ci` for routine syncing after `git pull` — it installs exactly what the lockfile specifies and never mutates it. When adding or bumping a dep, always `rm -rf node_modules` before `npm install`: npm has a [known bug](https://github.com/npm/cli/issues/4828) that prunes non-host platform binaries (e.g. `@esbuild/*`, `@rolldown/binding-*`) from `package-lock.json` when regenerating with `node_modules/` present. Starting from a clean `node_modules` avoids the prune on every platform. CI runs `npm ci` on all matrix runners, so a lockfile missing platform variants will fail the Windows or macOS job loudly instead of silently.
 
 ## Coding Style
 
