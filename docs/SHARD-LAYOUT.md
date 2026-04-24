@@ -67,7 +67,9 @@ my-vault/
 │   └── templates/                    ← cached source files; merge base for three-way merge on update
 │
 ├── shard-values.yaml                 ← user's answers from the wizard; vault-root (not under .shardmind/);
-│                                       named separately from .shardmind/ in VISION.md line 85
+│                                       named separately from .shardmind/ per VISION's
+│                                       "Delete .shardmind/ and shard-values.yaml — the vault
+│                                       continues to work" contract (§What ShardMind Is Not)
 │
 ├── <same vault content as source, with:>
 │   ├── .njk files in dotfolders rendered with user values (suffix stripped)
@@ -84,7 +86,7 @@ The installed-side path constants are authoritative in [`source/runtime/vault-pa
 
 ## Personalization model
 
-Three mechanisms. v0.1 deliberately does NOT ship Nunjucks rendering at vault-visible paths — hooks cover what obsidian-mind v6 needs. Adding rendered-content at visible paths is a v0.2 feature when a shard (likely research-wiki) pushes on it.
+Three mechanisms. v0.1 deliberately does NOT ship Nunjucks rendering at **user-visible vault paths** (root markdown, folder-level notes). The one rendering path v0.1 DOES ship is dotfolder `.njk` (item 2 below) — hidden from Obsidian's file view, so no clone-UX cost. Hooks cover any personalization that needs to touch user-visible content. Vault-visible `{{ values.X }}` is a v0.2 feature when a shard (likely research-wiki) pushes on it.
 
 1. **Module / agent selection.** Wizard values gate which files ship. Default wizard state is **all modules enabled, all agent files shipped** — per VISION's "ships complete" posture and Invariant 1. User deselects what they don't want.
 
@@ -294,7 +296,7 @@ Criterion: **obsidian-mind v6 does not need these to install, configure, or upgr
 | Dependency fetching | Shards vendor deps (obsidian-mind already does this) | `shard.yaml` gets `dependencies: []`; engine fetches on install. No break |
 | Structural variants | obsidian-mind is a single shard | Future feature; orthogonal to layout |
 | `shardmind init` | obsidian-mind author already has the shard; manual scaffolding works | New command; doesn't interact with existing install/update |
-| `shardmind eject` | Manual `rm -rf .shardmind/` works per additive principle (VISION.md line 85) | New command; orchestrates the manual delete + optional backup |
+| `shardmind eject` | Manual `rm -rf .shardmind/ shard-values.yaml` works per VISION's additive principle ("delete `.shardmind/` and `shard-values.yaml` — the vault continues to work ... ShardMind is additive, not load-bearing") | New command; orchestrates the manual delete + optional backup |
 | SOUL guided creation | Obsidian-mind product feature, not a shardmind engine concern | — |
 
 ## Transition

@@ -79,6 +79,12 @@ Every PR for a v6 issue must demonstrate in its description:
 - **During**: run `npm run typecheck` and `npm test` frequently, not just at the end. If a test that should stay green goes red, stop and investigate before continuing — don't paper over.
 - **End**: if work is complete, open a PR referencing the issue (`closes #N`) with the quality-gate evidence. If incomplete, push the branch and comment on the issue with where you stopped, why, and what blocks progress — so the next session can resume.
 
+### 6. PR hygiene
+
+- **One PR per issue** by default. Bundling multiple issues into one PR is discouraged — it tangles review, makes revert granularity worse, and confuses the roadmap-checkbox flow. If two issues are truly inseparable, comment on both issues explaining why before opening the combined PR.
+- The quality-gate checklist above lives in [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) and auto-populates every new PR. Don't delete items — check them or justify their absence.
+- **Interim proxy for Invariant 1** while #73-#77 are in-flight: until [#78](https://github.com/breferrari/shardmind/issues/78) lands its CI test, each PR on #73-#77 should manually run `git clone <a fixture shard>` + `shardmind install --defaults` + `diff -r` and paste the result (or "no diff beyond Tier 1 + `.shardmind/` metadata") into the PR description.
+
 ## Tech Stack
 
 | Tool | Purpose |
