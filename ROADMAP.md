@@ -66,13 +66,14 @@ Engine rework required by the v6 shard-layout contract. Must land before Milesto
 
 - [ ] obsidian-mind v6 conversion — `.shardmind/` sidecar, hooks, `.shardmindignore` ([#14](https://github.com/breferrari/shardmind/issues/14), under [#70](https://github.com/breferrari/shardmind/issues/70))
 - [x] Finalize post-install hook runtime ([#30](https://github.com/breferrari/shardmind/issues/30))
-- [ ] Verify: `shardmind install github:breferrari/obsidian-mind` (direct mode) produces a vault byte-equivalent to git clone under Invariant 1
+- [ ] Verify: `shardmind install github:breferrari/obsidian-mind` (direct mode) produces a vault byte-equivalent to git clone under Invariant 1 ([#78](https://github.com/breferrari/shardmind/issues/78))
 
 ### Milestone 6: Ship (Day 6) — blocked on Milestone 5
 
 - [ ] Research-wiki shard + E2E tests + npm publish ([#15](https://github.com/breferrari/shardmind/issues/15))
 - [ ] Create `shardmind/registry` repo with index.json (2 shards) — finalize schema per [#29](https://github.com/breferrari/shardmind/issues/29)
-- [ ] Final test: fresh machine → `npm install -g shardmind` → `shardmind install breferrari/obsidian-mind` (registry mode, proves [#29](https://github.com/breferrari/shardmind/issues/29) shape works end-to-end)
+- [ ] v6 docs rewrite: ARCHITECTURE §3, AUTHORING §2, IMPLEMENTATION §4.* / §9; fold SHARD-LAYOUT.md into ARCHITECTURE ([#85](https://github.com/breferrari/shardmind/issues/85))
+- [ ] Final test: fresh machine → `npm install -g shardmind` → `shardmind install breferrari/obsidian-mind` (registry mode, proves [#29](https://github.com/breferrari/shardmind/issues/29) shape works end-to-end) ([#15](https://github.com/breferrari/shardmind/issues/15))
 
 ---
 
@@ -91,11 +92,11 @@ Deferred from v0.1 per [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT
 
 ### Layout / contract extensions (deferred from v0.1)
 
-Tracked in [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-scope--deferred-to-v02). Parent issues to be created when scoped.
+Tracked in [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-scope--deferred-to-v02).
 
-- [ ] `rendered_files` opt-in (Nunjucks at vault-visible paths) — driver: research-wiki or other shard that needs `{{ values.X }}` in user-facing markdown
-- [ ] `.shardmindignore` negation (`!pattern`) — driver: a shard whose author needs to override broader patterns
-- [ ] Rename migrations + `shardmind adopt --from-version` — **must ship before any obsidian-mind release that introduces path renames**
+- [ ] `rendered_files` opt-in (Nunjucks at vault-visible paths) ([#86](https://github.com/breferrari/shardmind/issues/86))
+- [ ] `.shardmindignore` negation (`!pattern`) ([#87](https://github.com/breferrari/shardmind/issues/87))
+- [ ] Rename migrations + `shardmind adopt --from-version` — **must ship before any obsidian-mind release that introduces path renames** ([#88](https://github.com/breferrari/shardmind/issues/88))
 
 ### Engine polish (from v0.1 review)
 
@@ -125,28 +126,28 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 
 ## v1.0.0 — Ecosystem (2026–2027)
 
-Only after the engine is proven, the flagship shard is stable, and community shards exist. Issues to be created when v1.0 scoping begins — this section is aspirational.
+Only after the engine is proven, the flagship shard is stable, and community shards exist. Each area has a parent umbrella issue; sub-tasks detailed as scoping begins.
 
-### Registry (hosted)
+### Registry (hosted) ([#89](https://github.com/breferrari/shardmind/issues/89))
 
 - [ ] Hosted registry (shardmind.dev) with shard discovery and search
 - [ ] Shard metadata indexing from GitHub repos
 - [ ] Version history and changelog display
 - [ ] `shardmind search` command
 
-### Community
+### Community ([#90](https://github.com/breferrari/shardmind/issues/90))
 
 - [x] Shard authoring guide ([`docs/AUTHORING.md`](docs/AUTHORING.md), shipped in v0.1 polish pass)
 - [ ] Shard validation CI (GitHub Action for shard authors)
 - [ ] Community shard listing
 - [ ] Fork-to-shard conversion guide (for obsidian-mind fork authors)
 
-### Teams (if demand signals appear)
+### Teams (if demand signals appear) ([#91](https://github.com/breferrari/shardmind/issues/91))
 
 - [ ] Managed vault templates for organizations
 - [ ] Shared values with org-level defaults
 - [ ] Admin controls for module enforcement
-- [ ] Team sync for brain/ namespaces
+- [ ] Team sync for `brain/` namespaces
 
 ---
 
