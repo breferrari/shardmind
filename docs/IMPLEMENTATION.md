@@ -1107,6 +1107,13 @@ Decisions made during architecture that should be preserved:
 
 ## 9. Build Plan
 
+> **Superseded by [#70](https://github.com/breferrari/shardmind/issues/70) (2026-04-24).** This build plan predates the v6 shard-layout design. The six-day cadence is still a useful frame, but the **specific sub-tasks** in each day below assume the old `templates/`-walk contract, the `partials` field, and the Cookiecutter-style source/target split — all removed in the v6 contract. For the current work plan, engine change scope, invariants, and acceptance criteria, read:
+>
+> - [`docs/SHARD-LAYOUT.md`](SHARD-LAYOUT.md) — the v6 contract + three binding invariants (the spec).
+> - [#70](https://github.com/breferrari/shardmind/issues/70) — the task list mapped onto the six days (the plan).
+>
+> The day headings below stay; the bullet lists within each day do not reflect reality and should be cross-checked against SHARD-LAYOUT.md + #70 before being actioned. This section will be rewritten when the engine changes land.
+
 ### Day 1: Foundation
 
 ```

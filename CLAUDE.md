@@ -12,24 +12,78 @@ This project is **spec-driven**. The architecture and implementation are fully d
 |----------|------|-------------|
 | `VISION.md` | Origin story, architectural bets, scope guardrails, non-goals. | Before proposing features or scope changes. |
 | `ROADMAP.md` | v0.1 milestones linked to GitHub issues. Build order. | Before starting a new milestone. |
-| `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. | Before making any architectural decision. |
-| `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, 10 module specs with TypeScript signatures, algorithms as numbered steps, error cases, 17 merge test fixtures, 6-day build plan. | Before implementing any module. |
-| `examples/minimal-shard/` | Minimal test shard for development. 4 values, 2 modules (core + removable), signals, CLAUDE.md partials. | Use this for testing during Days 1-4 before the obsidian-mind shard conversion on Day 5. |
+| **`docs/SHARD-LAYOUT.md`** | **v6 shard-layout contract + three binding invariants. Active design spec.** Supersedes `ARCHITECTURE.md §3` (File Anatomy) and any stale `templates/`-walk assumptions in `IMPLEMENTATION.md §9` (Build Plan) + `§4.*` (module specs) until those docs are rewritten. | **Before implementing anything related to shard layout, install walk, hook context, adopt command, or obsidian-mind v6. Authoritative over ARCHITECTURE.md / IMPLEMENTATION.md where they conflict.** |
+| `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. **§3 (File Anatomy) is stale — see `docs/SHARD-LAYOUT.md` for the v6 contract. §10.7 `--version` gap is tracked in [#70](https://github.com/breferrari/shardmind/issues/70).** | Before making any architectural decision. |
+| `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, 10 module specs with TypeScript signatures, algorithms as numbered steps, error cases, 17 merge test fixtures, 6-day build plan. **§9 (Build Plan) is stale — see [#70](https://github.com/breferrari/shardmind/issues/70) for the current task list. §4.* module specs referencing `templates/` walk or `partials` field are superseded by `docs/SHARD-LAYOUT.md §Engine change scope`.** | Before implementing any module. |
+| `examples/minimal-shard/` | Minimal test shard for development. 4 values, 2 modules, signals. **Structure follows the flat v6 contract (`docs/SHARD-LAYOUT.md`) once migrated during Day 1-4; current committed state may still use the old `templates/` layout.** | Use this for testing during Days 1-4 before the obsidian-mind shard conversion on Day 5. |
 
 **Read the relevant spec section before writing code.** The specs define inputs, outputs, algorithms, error cases, and test expectations for every module. Don't improvise — implement what the spec says.
 
 ### Build Order
 
-Follow `docs/IMPLEMENTATION.md` §9 (Build Plan). Day-by-day, morning/afternoon splits, exact files to create, exact tests to write, verification steps. The order is designed so each piece has its dependencies ready.
+**Authoritative task list for v0.1: [#70](https://github.com/breferrari/shardmind/issues/70)** (engine changes, shard conversion, docs, tests, acceptance criteria). Spec for what to build: [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md). The day-by-day rhythm in `docs/IMPLEMENTATION.md §9` is preserved below for cadence reference, but the specific sub-tasks within each day are superseded by #70's tracks (the `templates/` walk, `partials` field, and Cookiecutter-style source/target split described in §9 do not reflect the v6 contract).
 
 | Day | Focus |
 |-----|-------|
-| 1 | Scaffold + core modules (manifest, schema, download, renderer, modules, runtime) |
-| 2 | Install command with full Ink wizard + module review |
+| 1 | Scaffold + core modules per #70 "Walk + discovery" and "Schema + values" tracks |
+| 2 | Install command with full Ink wizard + module review + `--defaults` flag |
 | 3 | Merge engine — TDD with 17 fixtures (write fixtures FIRST, then implement) |
-| 4 | Update command + status display + verbose mode |
-| 5 | obsidian-mind v6 conversion (shard.yaml, .njk templates, TS hooks) |
-| 6 | Research-wiki shard, E2E tests, polish, npm publish |
+| 4 | Update command + status display + verbose mode + ref re-resolution + `--version` / `--include-prerelease` |
+| 5 | obsidian-mind v6 conversion (`.shardmind/` sidecar, dotfolder `.njk`, hooks) + `shardmind adopt` command |
+| 6 | Research-wiki shard, Invariant 1 E2E test, polish, npm publish |
+
+## Working Agreement (v6 execution standard)
+
+Every v6 sub-issue (#73–#78, #14, #15, #85) passes these gates before merge. These practices are what this project has used from day one — spec-driven, fixture-first, adversarial. This section makes them explicit so any session picking up work knows the bar.
+
+### 1. Spec before code
+
+- Read the relevant section of [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md) AND the linked issue body before touching code.
+- If the spec is silent or ambiguous on a decision you need, **update the spec first via a separate commit** — do not invent behavior in the implementation.
+- If your implementation reveals a spec mistake, fix the spec and submit the fix alongside the code change.
+
+### 2. Tests before implementation
+
+- Write the failing test first for every new behavior or bug fix. No code without a test.
+- For merge-engine-class work (`drift.ts`, `differ.ts`, `renderer.ts`), write **fixtures first** — the pattern used for the 20 merge fixtures in `tests/fixtures/merge/`.
+- Prefer property-based tests via `fast-check` when the input space is wide: ref-syntax parsing, `.shardmindignore` glob matching, hash-equivalence under whitespace.
+- Right test type for the work: unit for pure functions in `source/core/*.ts`; component via `ink-testing-library` for `source/components/*.tsx`; integration for multi-module pipelines; E2E via `tests/e2e/cli.test.ts` spawning `dist/cli.js`.
+
+### 3. Adversarial cases enumerated
+
+Before coding, list adversarial scenarios in the issue thread or PR description. Every listed case gets a test. Starter enumeration per v0.1 track:
+
+- **#73 walk**: symlinks pointing outside vault, paths with Unicode + spaces, missing `.shardmind/`, empty `.shardmind/`, `.shardmindignore` with thousands of patterns, tarball with Windows path separators.
+- **#74 schema**: defaults of `null` / `""` / `0` / `false` / nested objects; required-without-default must reject at parse time.
+- **#75 hooks**: hook crashes mid-edit (state.json must still reflect actual content), hook exceeds timeout, hook writes to unmanaged paths, `valuesAreDefaults` deep-equal vs. near-equal (whitespace, case, type coercion).
+- **#76 update**: ref moves between install and update, tag force-moved upstream, non-existent ref, rate-limited GitHub API, `--version` + `--include-prerelease` combined, beta-only repos (no stable release).
+- **#77 adopt**: adopt into dir with partial vault, adopt with existing `.shardmind/`, adopt with user files byte-equivalent to shard paths, adopt mid-failure recovery, adopt when shard can't be fetched.
+- **#78 Invariant 1**: shard with all-defaults empty strings, shard with zero modules, `.shardmindignore` excluding everything, byte-equivalence on case-insensitive filesystems (macOS), clone of shard vs. install includes/excludes parity.
+
+### 4. Quality gate (PR-merge requirements)
+
+Every PR for a v6 issue must demonstrate in its description:
+
+- [ ] `npm run typecheck` passes.
+- [ ] `npm test` passes (all scopes).
+- [ ] New behavior has new tests (§2) — no code without tests.
+- [ ] Adversarial cases from §3 are enumerated and covered.
+- [ ] Copilot review requested and addressed (or each flag explicitly justified as false-positive in PR conversation).
+- [ ] Once [#78](https://github.com/breferrari/shardmind/issues/78) lands: Invariant 1 E2E test still green.
+- [ ] Issue's acceptance criteria checked off with evidence.
+- [ ] Roadmap checkbox updated in the same PR.
+
+### 5. Session hygiene
+
+- **Start**: read this file, then `ROADMAP.md` (find first unchecked), then the linked issue, then `docs/SHARD-LAYOUT.md` (relevant section). In that order. Don't skip ahead.
+- **During**: run `npm run typecheck` and `npm test` frequently, not just at the end. If a test that should stay green goes red, stop and investigate before continuing — don't paper over.
+- **End**: if work is complete, open a PR referencing the issue (`closes #N`) with the quality-gate evidence. If incomplete, push the branch and comment on the issue with where you stopped, why, and what blocks progress — so the next session can resume.
+
+### 6. PR hygiene
+
+- **One PR per issue** by default. Bundling multiple issues into one PR is discouraged — it tangles review, makes revert granularity worse, and confuses the roadmap-checkbox flow. If two issues are truly inseparable, comment on both issues explaining why before opening the combined PR.
+- The quality-gate checklist above lives in [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) and auto-populates every new PR. Don't delete items — check them or justify their absence.
+- **Interim proxy for Invariant 1** while #73-#77 are in-flight: until [#78](https://github.com/breferrari/shardmind/issues/78) lands its CI test, each PR on #73-#77 should manually run `git clone <a fixture shard>` + `shardmind install --defaults` + `diff -r` and paste the result (or "no diff beyond Tier 1 + `.shardmind/` metadata") into the PR description.
 
 ## Tech Stack
 
