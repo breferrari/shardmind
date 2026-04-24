@@ -12,24 +12,25 @@ This project is **spec-driven**. The architecture and implementation are fully d
 |----------|------|-------------|
 | `VISION.md` | Origin story, architectural bets, scope guardrails, non-goals. | Before proposing features or scope changes. |
 | `ROADMAP.md` | v0.1 milestones linked to GitHub issues. Build order. | Before starting a new milestone. |
-| `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. | Before making any architectural decision. |
-| `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, 10 module specs with TypeScript signatures, algorithms as numbered steps, error cases, 17 merge test fixtures, 6-day build plan. | Before implementing any module. |
-| `examples/minimal-shard/` | Minimal test shard for development. 4 values, 2 modules (core + removable), signals, CLAUDE.md partials. | Use this for testing during Days 1-4 before the obsidian-mind shard conversion on Day 5. |
+| **`docs/SHARD-LAYOUT.md`** | **v6 shard-layout contract + three binding invariants. Active design spec.** Supersedes `ARCHITECTURE.md §3` (File Anatomy) and any stale `templates/`-walk assumptions in `IMPLEMENTATION.md §9` (Build Plan) + `§4.*` (module specs) until those docs are rewritten. | **Before implementing anything related to shard layout, install walk, hook context, adopt command, or obsidian-mind v6. Authoritative over ARCHITECTURE.md / IMPLEMENTATION.md where they conflict.** |
+| `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. **§3 (File Anatomy) is stale — see `docs/SHARD-LAYOUT.md` for the v6 contract. §10.7 `--version` gap is tracked in [#70](https://github.com/breferrari/shardmind/issues/70).** | Before making any architectural decision. |
+| `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, 10 module specs with TypeScript signatures, algorithms as numbered steps, error cases, 17 merge test fixtures, 6-day build plan. **§9 (Build Plan) is stale — see [#70](https://github.com/breferrari/shardmind/issues/70) for the current task list. §4.* module specs referencing `templates/` walk or `partials` field are superseded by `docs/SHARD-LAYOUT.md §Engine change scope`.** | Before implementing any module. |
+| `examples/minimal-shard/` | Minimal test shard for development. 4 values, 2 modules, signals. **Structure follows the flat v6 contract (`docs/SHARD-LAYOUT.md`) once migrated during Day 1-4; current committed state may still use the old `templates/` layout.** | Use this for testing during Days 1-4 before the obsidian-mind shard conversion on Day 5. |
 
 **Read the relevant spec section before writing code.** The specs define inputs, outputs, algorithms, error cases, and test expectations for every module. Don't improvise — implement what the spec says.
 
 ### Build Order
 
-Follow `docs/IMPLEMENTATION.md` §9 (Build Plan). Day-by-day, morning/afternoon splits, exact files to create, exact tests to write, verification steps. The order is designed so each piece has its dependencies ready.
+**Authoritative task list for v0.1: [#70](https://github.com/breferrari/shardmind/issues/70)** (engine changes, shard conversion, docs, tests, acceptance criteria). Spec for what to build: [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md). The day-by-day rhythm in `docs/IMPLEMENTATION.md §9` is preserved below for cadence reference, but the specific sub-tasks within each day are superseded by #70's tracks (the `templates/` walk, `partials` field, and Cookiecutter-style source/target split described in §9 do not reflect the v6 contract).
 
 | Day | Focus |
 |-----|-------|
-| 1 | Scaffold + core modules (manifest, schema, download, renderer, modules, runtime) |
-| 2 | Install command with full Ink wizard + module review |
+| 1 | Scaffold + core modules per #70 "Walk + discovery" and "Schema + values" tracks |
+| 2 | Install command with full Ink wizard + module review + `--defaults` flag |
 | 3 | Merge engine — TDD with 17 fixtures (write fixtures FIRST, then implement) |
-| 4 | Update command + status display + verbose mode |
-| 5 | obsidian-mind v6 conversion (shard.yaml, .njk templates, TS hooks) |
-| 6 | Research-wiki shard, E2E tests, polish, npm publish |
+| 4 | Update command + status display + verbose mode + ref re-resolution + `--version` / `--include-prerelease` |
+| 5 | obsidian-mind v6 conversion (`.shardmind/` sidecar, dotfolder `.njk`, hooks) + `shardmind adopt` command |
+| 6 | Research-wiki shard, Invariant 1 E2E test, polish, npm publish |
 
 ## Tech Stack
 
