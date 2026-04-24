@@ -146,7 +146,8 @@ shardmind/
 ## Build, Test, and Development Commands
 
 ```bash
-npm install           # Install deps
+npm ci                # Install deps from lockfile (routine — see Lockfile discipline below)
+npm install           # Only when adding/bumping a dep (run after `rm -rf node_modules`)
 npm run build         # tsup build (cli + runtime)
 npm run dev           # tsup watch mode
 npm test              # vitest run (all tests)
