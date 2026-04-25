@@ -459,11 +459,22 @@ describe('shardmind install — post-install hook', () => {
     await fs.writeFile(
       path.join(workDir, 'hooks', 'post-install.ts'),
       [
-        "import { writeFile } from 'node:fs/promises';",
+        "import { writeFile, appendFile } from 'node:fs/promises';",
         "import { join } from 'node:path';",
         'export default async function (ctx) {',
         "  console.log('HOOK_RAN_FOR_' + ctx.shard.name);",
         "  await writeFile(join(ctx.vaultRoot, 'post-install-marker.txt'), 'hook ran');",
+        // Always echo the full ctx so the new-fields tests below can
+        // assert what the hook actually received. Existing tests don't
+        // read this file, so they're unaffected.
+        "  await writeFile(join(ctx.vaultRoot, '.hook-ctx.json'), JSON.stringify(ctx));",
+        // Re-hash test marker: when SHARDMIND_REHASH_TEST=1 is set in
+        // the hook's env, edit a managed file (Home.md). The post-hook
+        // re-hash should pick up the new bytes and update state.json's
+        // hash so a subsequent `shardmind` status reports zero drift.
+        "  if (process.env.SHARDMIND_REHASH_TEST === '1') {",
+        "    await appendFile(join(ctx.vaultRoot, 'Home.md'), '\\n<!-- POST-HOOK-EDIT -->\\n');",
+        '  }',
         '}',
         '',
       ].join('\n'),
@@ -518,6 +529,60 @@ describe('shardmind install — post-install hook', () => {
     expect(marker).toBe('hook ran');
     expect(result.stdout).toMatch(/Post-install hook completed/);
     expect(result.stdout).toMatch(/HOOK_RAN_FOR_minimal/);
+  }, 60_000);
+
+  it('passes valuesAreDefaults / newFiles / removedFiles into the hook ctx (#75)', async () => {
+    // DEFAULT_VALUES diverges from the schema's literal defaults
+    // (user_name: 'Alice' vs '', qmd_enabled: true vs false) so the
+    // hook receives valuesAreDefaults: false. newFiles + removedFiles
+    // are empty on every clean install per spec line 130.
+    vault = await createEmptyVault('install-hook-ctx');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['install', 'github:acme/hook-demo', '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: hookStub.url } },
+    );
+    expect(result.exitCode).toBe(0);
+    const ctx = JSON.parse(await vault.readFile('.hook-ctx.json')) as {
+      valuesAreDefaults: boolean;
+      newFiles: string[];
+      removedFiles: string[];
+      values: Record<string, unknown>;
+    };
+    expect(ctx.valuesAreDefaults).toBe(false);
+    expect(ctx.newFiles).toEqual([]);
+    expect(ctx.removedFiles).toEqual([]);
+    expect(ctx.values).toMatchObject({ user_name: 'Alice', qmd_enabled: true });
+  }, 60_000);
+
+  it('re-hashes managed files after a hook that edits one (#75)', async () => {
+    // Hook appends to Home.md under SHARDMIND_REHASH_TEST=1. After
+    // install completes, state.json's `rendered_hash` for Home.md must
+    // reflect the post-edit bytes so `shardmind` status sees zero
+    // drift — that's the spec's enforceable claim
+    // (docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics).
+    vault = await createEmptyVault('install-hook-rehash');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['install', 'github:acme/hook-demo', '--yes', '--values', valuesPath],
+      {
+        cwd: vault.root,
+        env: { SHARDMIND_GITHUB_API_BASE: hookStub.url, SHARDMIND_REHASH_TEST: '1' },
+      },
+    );
+    expect(result.exitCode).toBe(0);
+
+    const homeContent = await vault.readFile('Home.md');
+    expect(homeContent).toContain('<!-- POST-HOOK-EDIT -->');
+
+    const { createHash } = await import('node:crypto');
+    const expectedHash = createHash('sha256').update(homeContent, 'utf-8').digest('hex');
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      files: Record<string, { rendered_hash: string }>;
+    };
+    expect(state.files['Home.md']).toBeDefined();
+    expect(state.files['Home.md']!.rendered_hash).toBe(expectedHash);
   }, 60_000);
 
   it('surfaces "skipped (dry run)" when a hook is declared under --dry-run', async () => {
