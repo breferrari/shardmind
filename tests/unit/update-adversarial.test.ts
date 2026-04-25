@@ -167,9 +167,10 @@ describe('planUpdate — hostile inputs', () => {
     expect(conflict.result.conflicts).toHaveLength(1);
     expect(conflict.result.conflicts[0]!.theirs).toBe(onDisk);
     expect(conflict.result.conflicts[0]!.ours).toBe(newContent);
-    // The templateKey is relative to the new tempdir (templates/<...>),
-    // not an absolute path (the previous bug in conflictFromDirect
-    // passed '' for tempDir which produced an absolute path).
+    // The templateKey is shard-root-relative under v6 (no `templates/`
+    // prefix), not an absolute path. Pinning the exact value here is the
+    // regression guard for the conflictFromDirect bug that previously
+    // passed '' for tempDir and produced an absolute path.
     expect(conflict.templateKey).toBe(`brain/Index.md.njk`);
   });
 

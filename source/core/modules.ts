@@ -40,7 +40,7 @@ function getResourceType(parentDirName: string): AgentResourceType | null {
  *  - applies the root-level `.shardmindignore` (`shardmindignore.ts`)
  *  - rejects symlinks anywhere (security baseline — an untrusted shard
  *    could symlink outside the install target)
- *  - classifies each file: dotfolder `.njk` → render; everything else → copy
+ *  - classifies each file: any `.njk` → render (suffix stripped); everything else → copy. The dotfolder convention is the recommended author pattern (zero clone-UX cost); the engine doesn't restrict by location since iterator templates and tagged vault-visible `.njk` legitimately produce vault-visible output.
  *  - gates by module via `mod.paths` prefix, `mod.bases` exact match, or the
  *    per-name `mod.commands` / `mod.agents` heuristic (parent dir is
  *    `commands` / `agents`, basename-no-ext in the list)
@@ -161,8 +161,17 @@ function stripNjk(relPath: string): string {
 function classifyModule(relPath: string, schema: ShardSchema): string | null {
   for (const [moduleId, mod] of Object.entries(schema.modules)) {
     for (const modPath of mod.paths) {
-      if (relPath === modPath || relPath.startsWith(modPath)) {
+      // Prefix match must respect path-segment boundaries: a paths entry
+      // `work/Index.md` should NOT claim `work/Index.md.backup`. Trailing
+      // slash → dir prefix; no trailing slash → either exact file/dir or a
+      // prefix anchored at the next `/`.
+      if (relPath === modPath) {
         return moduleId;
+      }
+      if (relPath.startsWith(modPath)) {
+        if (modPath.endsWith('/') || relPath[modPath.length] === '/') {
+          return moduleId;
+        }
       }
     }
     if (mod.bases) {

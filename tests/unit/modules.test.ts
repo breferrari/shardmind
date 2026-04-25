@@ -187,6 +187,51 @@ describe('resolveModules — v6 shard-root walker', () => {
     }
   });
 
+  it('mod.paths prefix match respects path-segment boundaries', async () => {
+    // `paths: ['work/Index.md']` must claim `work/Index.md` itself — but
+    // not `work/Index.md.backup` or `work/Index.mdx`. Same for trailing-
+    // slash prefixes: `paths: ['brain/']` claims `brain/X` but not
+    // `brainstorm/X` (trailing slash already protects that).
+    const tmpShard = await makeTempShard('modules-paths-boundary');
+    try {
+      await fs.mkdir(path.join(tmpShard, 'work'), { recursive: true });
+      await fs.mkdir(path.join(tmpShard, 'brain'), { recursive: true });
+      await fs.mkdir(path.join(tmpShard, 'brainstorm'), { recursive: true });
+      await fs.writeFile(path.join(tmpShard, 'work', 'Index.md'), 'a');
+      await fs.writeFile(path.join(tmpShard, 'work', 'Index.md.backup'), 'b');
+      await fs.writeFile(path.join(tmpShard, 'brain', 'Note.md'), 'c');
+      await fs.writeFile(path.join(tmpShard, 'brainstorm', 'Idea.md'), 'd');
+
+      const schema: ShardSchema = {
+        ...EMPTY_SCHEMA,
+        modules: {
+          // No trailing slash, exact-or-segment-prefix.
+          work: { label: 'Work', paths: ['work/Index.md'], removable: true },
+          brain: { label: 'Brain', paths: ['brain/'], removable: true },
+        },
+      };
+      const result = await resolveModules(
+        schema,
+        { work: 'excluded', brain: 'excluded' },
+        tmpShard,
+      );
+      const skipPaths = result.skip.map((f) => f.outputPath);
+      const copyPaths = result.copy.map((f) => f.outputPath);
+
+      // Specific-file paths entry must claim only the exact file.
+      expect(skipPaths).toContain('work/Index.md');
+      expect(skipPaths).not.toContain('work/Index.md.backup');
+      expect(copyPaths).toContain('work/Index.md.backup');
+
+      // Trailing-slash prefix must respect the segment boundary too.
+      expect(skipPaths).toContain('brain/Note.md');
+      expect(skipPaths).not.toContain('brainstorm/Idea.md');
+      expect(copyPaths).toContain('brainstorm/Idea.md');
+    } finally {
+      await fs.rm(tmpShard, { recursive: true, force: true });
+    }
+  });
+
   it('per-name commands gating only fires when parent dir is `commands`', async () => {
     const tmpShard = await makeTempShard('modules-commands-collision');
     try {
