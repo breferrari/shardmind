@@ -12,6 +12,7 @@ import {
 } from '../../source/core/state.js';
 import type { ShardState, ShardManifest, ShardSchema } from '../../source/runtime/types.js';
 import { ShardMindError } from '../../source/runtime/types.js';
+import { makeShardSource } from '../helpers/index.js';
 
 function makeState(overrides: Partial<ShardState> = {}): ShardState {
   return {
@@ -128,16 +129,12 @@ describe('core/state', () => {
   });
 
   describe('cacheTemplates', () => {
-    async function makeShardSource(): Promise<string> {
-      const tempDir = path.join(os.tmpdir(), `shardmind-src-${crypto.randomUUID()}`);
-      // v6: shard root holds vault content directly + .shardmind/shard.yaml.
-      await fsp.mkdir(path.join(tempDir, '.shardmind'), { recursive: true });
-      await fsp.writeFile(path.join(tempDir, '.shardmind', 'shard.yaml'), '', 'utf-8');
-      return tempDir;
+    async function makeTempShardSource(): Promise<string> {
+      return makeShardSource(path.join(os.tmpdir(), `shardmind-src-${crypto.randomUUID()}`));
     }
 
     it('copies the post-walk source set into .shardmind/templates/', async () => {
-      const tempDir = await makeShardSource();
+      const tempDir = await makeTempShardSource();
       await fsp.mkdir(path.join(tempDir, 'nested'), { recursive: true });
       await fsp.writeFile(path.join(tempDir, 'a.md'), 'hello', 'utf-8');
       await fsp.writeFile(path.join(tempDir, 'nested', 'b.md'), 'world', 'utf-8');
@@ -160,7 +157,7 @@ describe('core/state', () => {
     });
 
     it('clears existing .shardmind/templates/ before copying', async () => {
-      const tempDir = await makeShardSource();
+      const tempDir = await makeTempShardSource();
       await fsp.writeFile(path.join(tempDir, 'new.md'), 'new', 'utf-8');
 
       await fsp.mkdir(path.join(vault, '.shardmind', 'templates'), { recursive: true });
@@ -181,7 +178,7 @@ describe('core/state', () => {
     });
 
     it('skips Tier 1 paths when caching', async () => {
-      const tempDir = await makeShardSource();
+      const tempDir = await makeTempShardSource();
       await fsp.writeFile(path.join(tempDir, 'keep.md'), 'keep', 'utf-8');
       await fsp.mkdir(path.join(tempDir, '.git'), { recursive: true });
       await fsp.writeFile(path.join(tempDir, '.git', 'HEAD'), 'ref', 'utf-8');

@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { resolveModules } from '../../source/core/modules.js';
 import { parseSchema } from '../../source/core/schema.js';
 import type { ShardSchema } from '../../source/runtime/types.js';
+import { makeShardSource } from '../helpers/index.js';
 
 const EXAMPLE_SHARD = path.resolve('examples/minimal-shard');
 
@@ -14,10 +15,7 @@ async function loadSchema() {
 }
 
 async function makeTempShard(name: string): Promise<string> {
-  const dir = path.join(os.tmpdir(), `${name}-${crypto.randomUUID()}`);
-  await fs.mkdir(path.join(dir, '.shardmind'), { recursive: true });
-  await fs.writeFile(path.join(dir, '.shardmind', 'shard.yaml'), '', 'utf-8');
-  return dir;
+  return makeShardSource(path.join(os.tmpdir(), `${name}-${crypto.randomUUID()}`));
 }
 
 const EMPTY_SCHEMA: ShardSchema = {

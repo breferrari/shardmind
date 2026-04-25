@@ -26,7 +26,7 @@ import type {
 } from '../../source/runtime/types.js';
 import { sha256 } from '../../source/core/fs-utils.js';
 import { SHARDMIND_DIR, CACHED_TEMPLATES } from '../../source/runtime/vault-paths.js';
-import { makeShardState, makeFileState } from '../helpers/index.js';
+import { makeShardState, makeFileState, makeShardSource } from '../helpers/index.js';
 
 const NOW = new Date('2026-04-20T00:00:00Z');
 
@@ -176,17 +176,10 @@ describe('planUpdate', () => {
   async function buildShardTempDir(
     files: Record<string, string>,
   ): Promise<string> {
-    const shardDir = path.join(tempRoot, 'shard-' + Math.random().toString(36).slice(2, 8));
-    await fsp.mkdir(shardDir, { recursive: true });
-    // v6: every shard requires `.shardmind/shard.yaml` for `cacheTemplates`.
-    await fsp.mkdir(path.join(shardDir, '.shardmind'), { recursive: true });
-    await fsp.writeFile(path.join(shardDir, '.shardmind', 'shard.yaml'), '', 'utf-8');
-    for (const [rel, content] of Object.entries(files)) {
-      const abs = path.join(shardDir, rel);
-      await fsp.mkdir(path.dirname(abs), { recursive: true });
-      await fsp.writeFile(abs, content, 'utf-8');
-    }
-    return shardDir;
+    return makeShardSource(
+      path.join(tempRoot, 'shard-' + Math.random().toString(36).slice(2, 8)),
+      files,
+    );
   }
 
   async function buildVault(opts: {

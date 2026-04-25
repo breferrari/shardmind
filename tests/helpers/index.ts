@@ -5,3 +5,4 @@
  */
 
 export { makeShardState, makeFileState } from './shard-state.js';
+export { makeShardSource } from './make-shard-source.js';
