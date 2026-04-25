@@ -6,7 +6,7 @@
  * user reconcile differences via a 2-way diff, then writes the engine
  * metadata an install would have produced.
  *
- * Phase ordering (see docs/IMPLEMENTATION.md §2.x — Data Flow: Adopt):
+ * Phase ordering (see docs/IMPLEMENTATION.md §3.5 — Data Flow: Adopt):
  *   booting → loading → wizard → planning →
  *   diff-review (loop over `differs`) → executing →
  *   running-hook → summary
