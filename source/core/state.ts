@@ -27,6 +27,14 @@ import { errnoCode } from '../runtime/errno.js';
 import { migrateState } from './state-migrator.js';
 import { walkShardSource } from './modules.js';
 import { loadShardmindignore } from './shardmindignore.js';
+import { mapConcurrent } from './fs-utils.js';
+
+/**
+ * Cap on parallel `copyFile` operations during cache population. Same budget
+ * the update planner uses for read fan-out — keeps file-descriptor pressure
+ * bounded while shaving wall-clock on shards with hundreds of files.
+ */
+const CACHE_COPY_CONCURRENCY = 16;
 
 const STATE_SCHEMA_VERSION = 1;
 
@@ -140,11 +148,11 @@ export async function cacheTemplates(vaultRoot: string, tempDir: string): Promis
 
   await fsp.rm(dest, { recursive: true, force: true });
   await fsp.mkdir(dest, { recursive: true });
-  for (const { relPath, absPath } of files) {
+  await mapConcurrent(files, CACHE_COPY_CONCURRENCY, async ({ relPath, absPath }) => {
     const destPath = path.join(dest, relPath);
     await fsp.mkdir(path.dirname(destPath), { recursive: true });
     await fsp.copyFile(absPath, destPath);
-  }
+  });
 }
 
 export async function cacheManifest(
