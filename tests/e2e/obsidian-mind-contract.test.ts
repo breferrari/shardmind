@@ -267,3 +267,267 @@ describe('install (obsidian-mind-like)', () => {
     expect(backedContent).toBe('# my pre-existing CLAUDE.md\n');
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// Update scenarios — see issue #92 §Update + docs/SHARD-LAYOUT.md
+// §Update semantics + §Hooks (Invariant 3 — post-update is additive-only).
+// ---------------------------------------------------------------------------
+
+describe('update (obsidian-mind-like)', () => {
+  let vault: Vault;
+  afterEach(async () => {
+    defaultLatest();
+    await vault?.cleanup();
+  });
+
+  it('6.0.0 → 6.0.1 silently re-renders with no diff prompts when there are no user edits', async () => {
+    // Scenario 7 — docs/SHARD-LAYOUT.md §Update semantics: a no-edit
+    // update against a non-conflicting bump silently re-renders, the
+    // managed file's state.hash advances to the new content.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-update-noedit',
+    });
+    stub.setLatest(SHARD_SLUG, '6.0.1');
+
+    const homeBefore = await vault.readFile('Home.md');
+    const stateBefore = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      files: Record<string, { rendered_hash: string }>;
+    };
+
+    const result = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+
+    const homeAfter = await vault.readFile('Home.md');
+    const stateAfter = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      version: string;
+      files: Record<string, { rendered_hash: string }>;
+    };
+    expect(stateAfter.version).toBe('6.0.1');
+    // Home.md's bytes shifted (extra trailing newline) so the hash advances.
+    expect(stateAfter.files['Home.md']?.rendered_hash).not.toBe(
+      stateBefore.files['Home.md']?.rendered_hash,
+    );
+    expect(homeAfter).not.toBe(homeBefore);
+  }, 90_000);
+
+  it('6.0.0 → 6.1.0 (--yes auto-includes new module) installs the new file and surfaces it as ctx.newFiles', async () => {
+    // Scenario 8 — docs/SHARD-LAYOUT.md §Update semantics +
+    // §Hooks/Invariant 3: under --yes, NewModulesReview auto-includes;
+    // research/Findings.md lands; ctx.newFiles names exactly that path
+    // so the post-update hook's additive-only marker is appended to it.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-update-newmodule',
+    });
+    stub.setLatest(SHARD_SLUG, '6.1.0');
+
+    const result = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+
+    expect(await vault.exists('research/Findings.md')).toBe(true);
+
+    const findings = await vault.readFile('research/Findings.md');
+    expect(findings).toContain('touched by post-update'); // Invariant 3 marker.
+
+    const ctx = JSON.parse(await vault.readFile('.hook-ctx-update.json')) as HookCtxSnapshot;
+    expect(ctx.newFiles).toContain('research/Findings.md');
+    expect(ctx.removedFiles).toEqual([]);
+    expect(ctx.previousVersion).toBe('6.0.0');
+  }, 90_000);
+
+  it('user-edited managed file is preserved when upstream did not change it', async () => {
+    // Scenario 9 — docs/SHARD-LAYOUT.md §Update semantics: when
+    // upstream did not modify a path the user edited, the user's
+    // bytes survive and state.hash reflects user content.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-update-useredit-noupstream',
+    });
+    // 6.0.1's mutate touches only Home.md.njk — CLAUDE.md is unchanged.
+    const myClaude = '# Claude — vault agent\n\nMy bespoke CLAUDE addition.\n';
+    await vault.writeFile('CLAUDE.md', myClaude);
+    stub.setLatest(SHARD_SLUG, '6.0.1');
+
+    const result = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+
+    const claudeAfter = await vault.readFile('CLAUDE.md');
+    expect(claudeAfter).toContain('My bespoke CLAUDE addition.');
+
+    const { sha256 } = await import('../../source/core/fs-utils.js');
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      files: Record<string, { rendered_hash: string }>;
+    };
+    expect(state.files['CLAUDE.md']?.rendered_hash).toBe(sha256(claudeAfter));
+  }, 90_000);
+
+  it('non-conflicting user edit (bottom of file) auto-merges with upstream top-of-file change', async () => {
+    // Scenario 10 — docs/SHARD-LAYOUT.md §Update semantics: 3-way
+    // merge auto-resolves when upstream and user touch disjoint
+    // regions. v6.1.0 changes only the top of CLAUDE.md; a user edit
+    // at the bottom must merge clean.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-update-automerge',
+    });
+    const claudeBefore = await vault.readFile('CLAUDE.md');
+    await vault.writeFile(
+      'CLAUDE.md',
+      claudeBefore + '\n## My bottom-of-file note\n',
+    );
+    stub.setLatest(SHARD_SLUG, '6.1.0');
+
+    const result = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+
+    const merged = await vault.readFile('CLAUDE.md');
+    // User's bottom edit survived AND upstream's top change is in.
+    expect(merged).toContain('My bottom-of-file note');
+    expect(merged).toContain('v6.1.0 update');
+  }, 90_000);
+
+  it('user-edited region collides with upstream; --yes resolves as keep_mine', async () => {
+    // Scenario 11 — docs/SHARD-LAYOUT.md §Update semantics + the
+    // Working Agreement's "user choice applied" wording. Under --yes
+    // the engine auto-resolves DiffView conflicts as keep_mine
+    // (use-update-machine.ts:473-477). Pin that contract: user bytes
+    // win, state.hash matches user content, no abort.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-update-conflict-keepmine',
+    });
+    // Edit the same top-of-file region v6.1.0 also changes.
+    const myTopEdit = '# Claude — MY OVERRIDE\n\nUser-side top-of-file rewrite.\n';
+    await vault.writeFile('CLAUDE.md', myTopEdit);
+    stub.setLatest(SHARD_SLUG, '6.1.0');
+
+    const result = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+
+    const claudeAfter = await vault.readFile('CLAUDE.md');
+    // keep_mine wins under --yes — exact user bytes survive.
+    expect(claudeAfter).toBe(myTopEdit);
+    expect(claudeAfter).not.toContain('v6.1.0 update');
+  }, 90_000);
+
+  it('user-deleted managed file is not re-created on update with --yes', async () => {
+    // Scenario 12 — docs/SHARD-LAYOUT.md §Update semantics +
+    // RemovedFilesReview semantics: under --yes, the prompt is
+    // bypassed (use-update-machine.ts:415) and a user-deleted file
+    // stays gone.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-update-userdelete',
+    });
+    await fs.rm(path.join(vault.root, 'brain', 'Patterns.md'));
+    expect(await vault.exists('brain/Patterns.md')).toBe(false);
+
+    // Run update at the same version (no bump) — purely exercises
+    // the user-deleted-file decision path.
+    const result = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+
+    expect(await vault.exists('brain/Patterns.md')).toBe(false);
+  }, 90_000);
+
+  it('user-renamed file: original path treated as removed, new path stays as user content', async () => {
+    // Scenario 13 — docs/SHARD-LAYOUT.md §Update semantics: until
+    // rename migrations ship (#88), the engine has no notion of a
+    // rename. Old path = removed; new path = user-created. The
+    // contract here is "no data loss" — the user's rewritten file
+    // survives.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-update-rename',
+    });
+    const original = await vault.readFile('brain/Patterns.md');
+    await fs.rename(
+      path.join(vault.root, 'brain', 'Patterns.md'),
+      path.join(vault.root, 'brain', 'MyPatterns.md'),
+    );
+
+    const result = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+
+    // User-renamed file content preserved.
+    const renamedAfter = await vault.readFile('brain/MyPatterns.md');
+    expect(renamedAfter).toBe(original);
+  }, 90_000);
+
+  it('value change via shard-values.yaml edit re-renders dotfolder templates on update', async () => {
+    // Scenario 14 — docs/SHARD-LAYOUT.md §Personalization model +
+    // §Update semantics: user edits shard-values.yaml between runs,
+    // update re-renders any .njk that depends on the changed value.
+    // The post-update hook receives ctx.newFiles=[] (no new managed
+    // files this run) so Invariant 3's additive-only contract isn't
+    // breached.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: { ...CUSTOM_VALUES, qmd_enabled: false },
+      prefix: 'obs-mind-update-valuechange',
+    });
+
+    const settingsBefore = JSON.parse(await vault.readFile('.claude/settings.json'));
+    expect(settingsBefore).toMatchObject({ qmd: false });
+
+    // Flip qmd_enabled in shard-values.yaml. The update machine reads
+    // values from this file (use-update-machine.ts:889). Bump latest
+    // to 6.0.1 so update has actual work to do — same-version updates
+    // short-circuit as no-ops and skip re-render entirely.
+    await vault.writeFile(
+      'shard-values.yaml',
+      stringifyYaml({ ...CUSTOM_VALUES, qmd_enabled: true }),
+    );
+    stub.setLatest(SHARD_SLUG, '6.0.1');
+
+    const result = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+
+    const settingsAfter = JSON.parse(await vault.readFile('.claude/settings.json'));
+    expect(settingsAfter).toMatchObject({ qmd: true });
+
+    const ctx = JSON.parse(await vault.readFile('.hook-ctx-update.json')) as HookCtxSnapshot;
+    // No new files — value-only change.
+    expect(ctx.newFiles).toEqual([]);
+  }, 90_000);
+});
