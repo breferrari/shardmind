@@ -27,6 +27,7 @@ import { downloadShard } from '../../core/download.js';
 import { parseManifest } from '../../core/manifest.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
 import { readState } from '../../core/state.js';
+import { valuesAreDefaults } from '../../core/values-defaults.js';
 import {
   planOutputs,
   detectCollisions,
@@ -44,7 +45,13 @@ import {
 } from '../../core/install-executor.js';
 import { runPostInstallHook, type RunningHookPhase } from '../../core/hook.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
-import { appendHookOutput, summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
+import {
+  appendHookOutput,
+  postHookRehash,
+  summarizeHook,
+  useSigintRollback,
+  type HookSummary,
+} from './shared.js';
 
 import type { WizardResult } from '../../components/InstallWizard.js';
 import type { CollisionAction } from '../../components/CollisionReview.js';
@@ -353,6 +360,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
               values: result.values,
               modules: result.selections,
               shard: { name: ctx.manifest.name, version: ctx.manifest.version },
+              valuesAreDefaults: valuesAreDefaults(result.values, ctx.schema),
+              newFiles: [],
+              removedFiles: [],
             };
             const hookResult = await runPostInstallHook(ctx.tempDir, ctx.manifest, hookCtx, {
               signal: hookAbortRef.current.signal,
@@ -363,6 +373,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           } finally {
             hookAbortRef.current = null;
           }
+
+          await postHookRehash(vaultRoot, runResult.state);
         }
 
         finish({

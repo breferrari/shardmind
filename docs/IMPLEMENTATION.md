@@ -805,7 +805,7 @@ interface PlanUpdateInput {
 **Flow**:
 1. Allocate a unique backup directory under `.shardmind/backups/update-<ISO-timestamp>[-N]/`. The millisecond-precision timestamp and numeric suffix together guarantee no collisions between concurrent or near-simultaneous updates.
 2. **Snapshot**: copy every file the plan touches (modified content + `.shardmind/state.json` + cached `manifest.yaml`/`shard-schema.yaml`/`templates/`) into `files/` and `cache/` subdirectories of the backup dir. Parallel copies bounded by `SNAPSHOT_CONCURRENCY=16`.
-3. **Write pass**: for each non-delete action, fire progress event, write content, update in-memory `nextFiles` map, record summary stat. `overwrite` never adds to `addedPaths` (rollback erasure list); `add` and `restore_missing` do. `keep_as_user` untracks the path from `nextFiles` so the engine stops considering it managed.
+3. **Write pass**: for each non-delete action, fire progress event, write content, update in-memory `nextFiles` map, record summary stat. `overwrite` never adds to `addedPaths` (rollback erasure list); `add` and `restore_missing` do. `keep_as_user` untracks the path from `nextFiles` so the engine stops considering it managed. The `add` branch also pushes the path to `summary.addedFiles` — the carve-out the update machine reads to populate `HookContext.newFiles` (Invariant 3, additive-only post-update hooks). `overwrite`, `auto_merge`, `restore_missing`, and `accept_new` are all excluded since those paths were already in `state.files` before this run.
 4. **Delete pass**: runs after all writes so a rename-style move (delete + add at a different path) can't clobber the incoming file.
 5. **Cache + state**: call `initShardDir`, `cacheTemplates`, `cacheManifest`, `writeValuesFile`, `writeState`. Order matters — state is the last thing we touch.
 6. **Hook**: call `runPostUpdateHook` with a built `HookContext` and an `AbortController` signal. Behavior is full-execution (spawn the hook through the bundled `tsx` loader via `source/internal/hook-runner.ts`), capture stdout + stderr separately (256 KB per-stream cap), enforce the shard's `hooks.timeout_ms` (default 30 s). Non-fatal per Helm pattern: a throw / non-zero exit / timeout / cancel surface as `HookResult.failed` with captured output, the update summary renders a yellow warning, and the process exit code stays 0. No rollback past this point. See §4.14a for the execution algorithm.
@@ -1010,6 +1010,29 @@ type HookResult =
 **Dependencies**: `core/manifest` (for `DEFAULT_HOOK_TIMEOUT_MS`), `core/fs-utils`, `tsx` (runtime), `node:child_process`, `node:crypto`, `node:fs`, `node:fs/promises`, `node:module`, `node:os`, `node:path`, `node:url`.
 
 **Subprocess entry**: `source/internal/hook-runner.ts` — compiled to `dist/internal/hook-runner.js` via a dedicated tsup entry block. Reads argv[2] (hook path) + argv[3] (ctx tempfile), dynamic-imports the hook via `pathToFileURL`, awaits `mod.default(ctx)`, exits 0 / 1. Any throw reaches the stderr stream with a stack trace. Zero Ink / React / Pastel imports — this is the cold-start path.
+
+#### v6 ctx fields + post-hook re-hash
+
+Two engine-side concerns sit *around* `executeHook` but aren't part of the spawn itself; they're owned by the command machines (`source/commands/hooks/use-{install,update}-machine.ts`).
+
+**Building the ctx (v6 fields)**:
+
+- `valuesAreDefaults` — computed by `source/core/values-defaults.ts::valuesAreDefaults(values, schema)`. Pure function: deep-equal the user values map against the schema's would-be-default map (literal defaults plus computed defaults resolved against the literal-default map first). Strict structural equality — array order is significant. Computed-default coercion failures are swallowed and the result is `false` (hook ctx construction is non-fatal).
+- `newFiles` — install: `[]` per spec line 130; update: `result.summary.addedFiles`, populated by `source/core/update-executor.ts` only on `UpdateAction.kind === 'add'`. `overwrite`, `auto_merge`, `restore_missing`, and conflict resolutions are excluded — those paths were already in `state.files`.
+- `removedFiles` — install: `[]`; update: `result.summary.deletedFiles`.
+
+**Post-hook re-hash** (`source/core/state.ts::rehashManagedFiles`):
+
+```typescript
+rehashManagedFiles(
+  vaultRoot: string,
+  state: ShardState,
+): Promise<{ state: ShardState; changed: string[]; missing: string[]; failed: Array<{ path: string; reason: string }> }>
+```
+
+Called by both machines after the hook subprocess returns — success OR failure. Reads each managed file under `mapConcurrent(REHASH_CONCURRENCY = 16)`, recomputes sha256, and returns a new `ShardState` with updated `rendered_hash` for changed entries. Per-file ENOENT and other I/O errors are tolerated (entry stays at the prior hash, surfaces on `missing` / `failed`); the function never throws. The machine writes the resulting state via `writeState` only when at least one path changed / went missing / failed — a fully-clean re-hash skips the redundant write. The whole call is wrapped in a defensive try/catch so a `writeState` failure can't propagate past the install/update boundary.
+
+This is what makes Invariant 2's claim observable: a hook that legitimately edited a managed file produces zero spurious drift on the next `shardmind` status run, because state.json's hash already reflects the post-hook bytes.
 
 ---
 

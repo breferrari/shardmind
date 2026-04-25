@@ -100,6 +100,16 @@ export interface UpdateSummary {
   autoMergeStats: MergeStats;
   wroteFiles: string[];
   deletedFiles: string[];
+  /**
+   * Subset of `wroteFiles`: paths whose state.files membership is *new*
+   * after this update — i.e. `UpdateAction.kind === 'add'`. Excludes
+   * `overwrite`, `auto_merge`, `conflict accept_new`, and
+   * `restore_missing` (the file was already managed; user had deleted
+   * it on disk). Source for `HookContext.newFiles`. See
+   * docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics for the
+   * additive-principle invariant the hook ctx encodes.
+   */
+  addedFiles: string[];
 }
 
 /**
@@ -170,6 +180,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       autoMergeStats: { linesUnchanged: 0, linesAutoMerged: 0 },
       wroteFiles: [],
       deletedFiles: [],
+      addedFiles: [],
     };
 
     // Two-pass: writes first, deletes second. Writes use mkdir -p so they
@@ -344,6 +355,15 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
       }
       ctx.nextFiles[action.path] = buildFileState(action, 'managed');
       ctx.summary.wroteFiles.push(action.path);
+      // Per the spec's "newly added in the new version" semantics, only
+      // genuine `add` actions count toward `HookContext.newFiles`.
+      // `overwrite` and `restore_missing` were already in state.files
+      // (overwrite: managed; restore_missing: managed-but-deleted-on-
+      // disk), so a hook's additive-only restriction (Invariant 3) does
+      // not apply to those paths.
+      if (action.kind === 'add') {
+        ctx.summary.addedFiles.push(action.path);
+      }
       return;
     }
     case 'auto_merge': {

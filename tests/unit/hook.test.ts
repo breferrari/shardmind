@@ -157,6 +157,9 @@ describe('executeHook — subprocess runtime', () => {
     values: { user_name: 'alice', vault_purpose: 'engineering' },
     modules: { core: 'included', perf: 'excluded' },
     shard: { name: 'test-shard', version: '1.0.0' },
+    valuesAreDefaults: false,
+    newFiles: [],
+    removedFiles: [],
   });
 
   beforeEach(async () => {

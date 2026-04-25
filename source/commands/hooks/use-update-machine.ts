@@ -36,6 +36,7 @@ import { downloadShard } from '../../core/download.js';
 import { parseManifest } from '../../core/manifest.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
 import { readState } from '../../core/state.js';
+import { valuesAreDefaults } from '../../core/values-defaults.js';
 import { detectDrift } from '../../core/drift.js';
 import { applyMigrations } from '../../core/migrator.js';
 import {
@@ -50,7 +51,13 @@ import {
 } from '../../core/update-planner.js';
 import { runUpdate, rollbackUpdate, type UpdateSummary } from '../../core/update-executor.js';
 import { runPostUpdateHook, type RunningHookPhase } from '../../core/hook.js';
-import { appendHookOutput, summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
+import {
+  appendHookOutput,
+  postHookRehash,
+  summarizeHook,
+  useSigintRollback,
+  type HookSummary,
+} from './shared.js';
 import { buildRenderContext } from '../../core/renderer.js';
 import { VALUES_FILE } from '../../runtime/vault-paths.js';
 import type { DiffAction } from '../../components/DiffView.js';
@@ -523,6 +530,9 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
               modules: selections,
               shard: { name: ctx.newManifest.name, version: ctx.newManifest.version },
               previousVersion: ctx.state.version,
+              valuesAreDefaults: valuesAreDefaults(values, ctx.newSchema),
+              newFiles: result.summary.addedFiles,
+              removedFiles: result.summary.deletedFiles,
             };
             const hookResult = await runPostUpdateHook(
               ctx.newTempDir,
@@ -538,6 +548,8 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           } finally {
             hookAbortRef.current = null;
           }
+
+          await postHookRehash(vaultRoot, result.state);
         }
 
         finish({

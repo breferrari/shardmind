@@ -20,7 +20,8 @@ import {
   type HookSummary,
   type RunningHookPhase,
 } from '../../core/hook.js';
-import { assertNever } from '../../runtime/types.js';
+import { rehashManagedFiles, writeState } from '../../core/state.js';
+import { assertNever, type ShardState } from '../../runtime/types.js';
 
 /**
  * Re-export so existing callers that reach for `HookSummary` via this
@@ -105,6 +106,43 @@ export function appendHookOutput<P extends { kind: string }>(
     const trimmed = tailAtUtf8Boundary(combined, HOOK_OUTPUT_UI_CAP_BYTES);
     return { ...prev, output: trimmed };
   });
+}
+
+/**
+ * Re-hash every managed file after a hook subprocess returns and persist
+ * the updated state.json — the post-hook contract documented in
+ * `docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics`.
+ *
+ * Runs on success OR failure of the hook (Helm-style non-fatal contract).
+ * Skips the `writeState` call when nothing changed so we don't burn a
+ * redundant fs.writeFile on the common case (most hooks edit unmanaged
+ * files, not managed ones).
+ *
+ * The wrapping try/catch is correct semantics, not paranoia: by the
+ * time we get here, the executor has already written `state.json` with
+ * pre-hook hashes. This function's job is to *update* that state with
+ * post-hook hashes. If `writeState` fails (disk full, permission flip),
+ * the pre-hook state.json survives, and drift detection surfaces the
+ * discrepancy on the next `shardmind` status run — the user's vault is
+ * never in a corrupted state, just an out-of-date one. Surfacing the
+ * error here would also be misleading: the install/update *succeeded*
+ * (state.json was written by the executor, hook ran past the point-of-
+ * no-return), and a yellow warning would conflate engine work that
+ * completed with a refinement that didn't.
+ */
+export async function postHookRehash(vaultRoot: string, state: ShardState): Promise<void> {
+  try {
+    const rehash = await rehashManagedFiles(vaultRoot, state);
+    // Only `changed` actually mutates the returned state; `missing` and
+    // `failed` paths retain their prior hash, so the serialized state
+    // would be byte-identical to what the executor already wrote. Skip
+    // the redundant fs.writeFile.
+    if (rehash.changed.length > 0) {
+      await writeState(vaultRoot, rehash.state);
+    }
+  } catch {
+    // see comment above — non-fatal by design
+  }
 }
 
 /**

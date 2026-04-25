@@ -29,6 +29,7 @@ function summary(overrides: Partial<Summary> = {}): Summary {
     autoMergeStats: { linesUnchanged: 150, linesAutoMerged: 12 },
     wroteFiles: [],
     deletedFiles: [],
+    addedFiles: [],
     ...overrides,
   };
 }

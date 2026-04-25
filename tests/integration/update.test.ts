@@ -833,6 +833,70 @@ describe('update pipeline (against examples/minimal-shard)', () => {
   });
 
   /**
+   * Pin `summary.addedFiles` semantics: only `UpdateAction.kind === 'add'`
+   * paths are surfaced. `summary.wroteFiles` (which lumps add + overwrite
+   * + auto_merge + accept_new together) is the wrong source for
+   * `HookContext.newFiles` per Invariant 3 (post-update hooks are
+   * additive-only). This test bumps the shard with a new file, runs
+   * update, and asserts the carve-out matches.
+   */
+  it('reports only `add` actions in summary.addedFiles, not overwrites', async () => {
+    const { state, oldValues, newManifest, newSchema } = await setUpUpdate({
+      bumpTo: '0.2.0',
+      newHomeTemplate: 'Hello {{ user_name }}, v2!\n',
+    });
+    // Add a new file in the bumped shard that didn't exist in 0.1.0 — the
+    // walker will surface it as an `add` action. Home.md is changed too,
+    // so the plan also has an `overwrite` action; the assertion below
+    // pins that overwrite is NOT in addedFiles.
+    await fsp.writeFile(
+      path.join(newShard, 'Changelog.md.njk'),
+      '# Changelog\n\n- v0.2.0 — added {{ shard.name }}\n',
+      'utf-8',
+    );
+
+    const migration = applyMigrations(oldValues, state.version, newManifest.version, newSchema.migrations);
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const drift = await detectDrift(vault, state);
+    const renderCtx = buildRenderContext(newManifest, migration.values, selections);
+
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: migration.values },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: renderCtx,
+      },
+      removedFileDecisions: {},
+    });
+
+    const result = await runUpdate({
+      vaultRoot: vault,
+      plan,
+      conflictResolutions: {},
+      currentState: state,
+      newManifest,
+      newSchema,
+      newValues: migration.values,
+      newSelections: selections,
+      resolved: { ...RESOLVED, version: newManifest.version },
+      tarballSha256: 'sha-0.2.0',
+      newTempDir: newShard,
+    });
+
+    expect(result.summary.addedFiles).toEqual(['Changelog.md']);
+    expect(result.summary.deletedFiles).toEqual([]);
+    // wroteFiles includes Changelog.md (add) + Home.md (overwrite); the
+    // carve-out keeps only the former. This is the assertion that pins
+    // `HookContext.newFiles` does not silently include overwrites.
+    expect(result.summary.wroteFiles).toContain('Home.md');
+    expect(result.summary.wroteFiles).toContain('Changelog.md');
+    expect(result.summary.addedFiles).not.toContain('Home.md');
+  });
+
+  /**
    * Hook integration for the update path: verify that the post-update
    * hook receives `previousVersion` equal to the pre-update shard version.
    * The unit tests pin ctx round-trip generically; this test pins the
@@ -917,6 +981,9 @@ describe('update pipeline (against examples/minimal-shard)', () => {
         modules: selections,
         shard: { name: newManifest.name, version: newManifest.version },
         previousVersion: state.version,
+        valuesAreDefaults: false,
+        newFiles: [],
+        removedFiles: [],
       });
       expect(hookResult.kind).toBe('ran');
       if (hookResult.kind !== 'ran') throw new Error('narrowing');

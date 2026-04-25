@@ -407,6 +407,9 @@ describe('install + post-install hook integration', () => {
         values,
         modules: selections,
         shard: { name: manifest.name, version: manifest.version },
+        valuesAreDefaults: false,
+        newFiles: [],
+        removedFiles: [],
       },
     );
     expect(hookResult.kind).toBe('ran');
@@ -462,6 +465,9 @@ describe('install + post-install hook integration', () => {
       values,
       modules: selections,
       shard: { name: manifest.name, version: manifest.version },
+      valuesAreDefaults: false,
+      newFiles: [],
+      removedFiles: [],
     });
     // A thrown hook exits 1 — the runner catches, writes stack to stderr,
     // and exits non-zero. We surface that as `ran` with the exit code so
