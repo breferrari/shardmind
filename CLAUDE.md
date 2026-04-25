@@ -105,6 +105,7 @@ Every PR for a v6 issue must demonstrate in its description:
 | **yaml** (eemeli/yaml) | YAML parsing. TypeScript-typed, comment-preserving |
 | **tar** (node-tar) | Tarball download + extraction |
 | **semver** | Version parsing, range checking |
+| **ignore** | gitignore-spec glob matcher for `.shardmindignore`. Negation pre-filtered by the wrapper (deferred to v0.2 per #87). |
 | **tsx** | TypeScript loader for post-install / post-update hook subprocess execution |
 | **zod** | Schema validation. Shared with Pastel for arg parsing |
 | **diff** | Unified diff generation for update previews |
@@ -158,7 +159,9 @@ shardmind/
 │   │   ├── drift.ts                   # Ownership detection + drift analysis
 │   │   ├── differ.ts                  # Three-way merge (node-diff3)
 │   │   ├── migrator.ts                # Apply schema migrations to values
-│   │   ├── modules.ts                 # Module resolution + file gating
+│   │   ├── modules.ts                 # Shard-root walker + module resolution + file gating
+│   │   ├── tier1.ts                   # Engine-enforced source-side path exclusions
+│   │   ├── shardmindignore.ts         # gitignore-spec glob matcher (negation rejected v0.1)
 │   │   ├── update-planner.ts          # Pure update plan from drift + new shard
 │   │   ├── update-executor.ts         # Apply update plan with rollback
 │   │   ├── install-planner.ts         # Pure install plan + collisions
@@ -192,6 +195,8 @@ shardmind/
 │   │   └── helpers/                   # build-once, tarball, github-stub,
 │   │                                  # spawn-cli, vault factories
 │   ├── helpers/                       # Shared test utilities (factories)
+│   │   ├── shard-state.ts             # makeShardState, makeFileState
+│   │   └── make-shard-source.ts       # makeShardSource — v6 temp-shard scaffold
 │   └── fixtures/                      # Test data
 │       ├── merge/                     # 20 three-way merge scenarios
 │       ├── shards/                    # Pre-built shard tarballs
@@ -283,7 +288,9 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `schema.ts` | §4.4 | Parse shard-schema.yaml → zod validator |
 | `download.ts` | §4.2 | Fetch + extract GitHub tarball |
 | `renderer.ts` | §4.6 | Nunjucks + frontmatter-aware rendering |
-| `modules.ts` | §4.5 | Module resolution + file gating |
+| `modules.ts` | §4.5 (v6: see SHARD-LAYOUT.md §Engine change scope §Walk + discovery) | Shard-root walker + module resolution + file gating |
+| `tier1.ts` | SHARD-LAYOUT.md §File disposition Tier 1 | Engine-enforced source-side path exclusions (`.git/`, `.github/`, `.shardmind/`, `.obsidian/{workspace,workspace-mobile,graph}.json`) |
+| `shardmindignore.ts` | SHARD-LAYOUT.md §Engine change scope item 6 | gitignore-spec glob matcher for the root `.shardmindignore` (negation rejected in v0.1, deferred to #87) |
 | `state.ts` | §4.7 | Read/write .shardmind/state.json |
 | `registry.ts` | §4.1 | Resolve shard ref → GitHub URL |
 | `drift.ts` | §4.8 | Ownership detection + drift analysis |
@@ -299,7 +306,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `cancellation.ts` | ARCHITECTURE §19.7 | Cross-platform SIGINT bridge (Windows stdin-ETX → process.emit SIGINT) |
 | `state-migrator.ts` | §4.7 (v0.2 hook) | Forward-migration framework for `.shardmind/state.json`; scaffolding in v0.1 |
 | `hook.ts` | §4.16 | Resolve + execute post-install / post-update hook scripts via bundled `tsx` subprocess (non-fatal) |
-| `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent, stripTemplatePrefix |
+| `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
 
