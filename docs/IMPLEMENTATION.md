@@ -309,6 +309,14 @@ parseSchema(filePath: string): Promise<ShardSchema>
 buildValuesValidator(schema: ShardSchema): z.ZodObject<any>
 ```
 
+**`parseSchema` validation chain** (after the zod safe-parse pass):
+
+1. **Reserved-name guard**: reject value keys that collide with the render context (`shard`, `install_date`, `year`, `included_modules`, `values`) → `SCHEMA_RESERVED_NAME`.
+2. **Group cross-ref**: every value's `group` must reference an entry in the `groups` array → `SCHEMA_VALIDATION_FAILED`.
+3. **`default` presence (v6 contract)**: every value MUST declare a `default` field. Sentinel values (`null`, `""`, `false`, `0`, `[]`, bare `default:` parsing as null) are accepted — the rule is *presence*, not *non-emptiness*. The check reads the **raw** parsed YAML, not the post-zod object: zod's `default: z.unknown().optional()` strips missing keys and collapses missing-vs-explicit-undefined. `null` is the universal sentinel; type-typed sentinels (`""`, `0`, `false`, `[]`) are valid for their respective types. Error lists every offending key, not just the first → `SCHEMA_VALIDATION_FAILED`.
+4. **`default` type-match + select-options match (v6)**: when `default` is non-null and not a `{{ }}` computed expression, validate `typeof default` against `type`. For `select`, the literal default must equal one of `options[].value`; for `multiselect`, every item in the array default must be in `options[].value`. Catches typos (`type: number, default: "fortytwo"` or `type: select, default: "engineerring"`) at parse time rather than failing later inside `buildValuesValidator`. Implemented as a `.check()` rule on `ValueDefinitionSchema` so the issues surface alongside `options`/`min`/`max` problems.
+5. **Frontmatter normalization**: shorthand arrays (`global: [date, tags]`) expand into `{ required: [...] }` objects.
+
 **Algorithm for `buildValuesValidator`**:
 1. For each entry in `schema.values`:
    - `string` → `z.string()`
