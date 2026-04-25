@@ -67,9 +67,14 @@ export interface UseUpdateMachineInput {
   yes: boolean;
   verbose: boolean;
   dryRun: boolean;
-  /** `--version <v>`: pin to an exact tag (stable or prerelease). */
-  version?: string;
-  /** `--include-prerelease`: widen latest-version resolution to all releases. */
+  /**
+   * `--release <v>`: pin to an exact tag (stable or prerelease). Named
+   * `--release` rather than `--version` because Pastel reserves the
+   * program-level `--version` for printing the package version
+   * (`shardmind --version`); a per-command `--version` would collide.
+   */
+  release?: string;
+  /** `--include-prerelease`: widen latest-release resolution to all releases. */
   includePrerelease: boolean;
 }
 
@@ -153,7 +158,7 @@ export interface UseUpdateMachineOutput {
 }
 
 export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachineOutput {
-  const { vaultRoot, yes, verbose, dryRun, version, includePrerelease } = input;
+  const { vaultRoot, yes, verbose, dryRun, release, includePrerelease } = input;
   const { exit } = useApp();
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
@@ -224,20 +229,20 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         if (!state) throwNoInstall();
 
         // Mutual-exclusion guard for the three resolution policies the
-        // update flow supports — latest-stable (default), pinned-tag
-        // (`--version`), widened (`--include-prerelease`), and ref
+        // update flow supports — latest-stable (default), pinned-release
+        // (`--release`), widened (`--include-prerelease`), and ref
         // re-resolution (`state.ref` set). The combinations rejected
         // here would silently choose one over the other; surfacing a
         // typed error keeps the contract obvious.
-        assertFlagsCompatible({ stateRef: state.ref ?? null, version, includePrerelease });
+        assertFlagsCompatible({ stateRef: state.ref ?? null, release, includePrerelease });
 
         // Assemble the resolution-source string. `state.ref` re-resolves
-        // HEAD of the tracked ref; `--version` pins to a tag; otherwise
+        // HEAD of the tracked ref; `--release` pins to a tag; otherwise
         // we go through the default-stable path.
         const resolveSource = state.ref
           ? `${state.source}#${state.ref}`
-          : version
-            ? `${state.source}@${version}`
+          : release
+            ? `${state.source}@${release}`
             : state.source;
 
         setPhase({ kind: 'loading', message: `Resolving ${resolveSource}…` });
@@ -245,11 +250,11 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 
         // The update-check cache stores "latest stable" for the status
         // command. Only prime when the run resolved through that exact
-        // policy: no prerelease widen, no version pin, no ref tracking.
+        // policy: no prerelease widen, no release pin, no ref tracking.
         // Otherwise the cache would report a prerelease / pinned tag /
         // ref-SHA-derived version as the latest stable on the next
         // status invocation, contradicting the cache's contract.
-        const primesStableCache = !state.ref && !version && !includePrerelease;
+        const primesStableCache = !state.ref && !release && !includePrerelease;
         if (primesStableCache) {
           void primeLatestVersion(vaultRoot, state.source, resolved.version).catch(() => {
             /* swallow */
@@ -729,13 +734,27 @@ export async function resolveRefForUpdate(
         );
       }
       if (err.code === 'NO_RELEASES_PUBLISHED') {
-        // registry.ts fires NO_RELEASES_PUBLISHED when `/releases/latest`
-        // returns 404 — the upstream repo has no releases at all. The
-        // "retry / transient state" hint doesn't fit: there's no tarball
-        // to retry. Point at the actual remediation without speculating
-        // about cause (the shard may have installed from a pinned
-        // @version tag that never had releases, which state.source can't
-        // retain).
+        // `registry.ts` emits NO_RELEASES_PUBLISHED for two sub-cases.
+        // (a) Empty list: the install-side hint mentions "publish a
+        //     GitHub release" which is unactionable for an updater
+        //     who doesn't own the upstream repo. Rewrite to focus on
+        //     reinstall remediations.
+        // (b) All-prereleases: the install-side hint already says
+        //     "use --include-prerelease" — that remediation is
+        //     identical for the update audience, so forward it.
+        // The discriminator is whether the original hint mentions the
+        // flag. Text-match here keeps the registry's API surface
+        // narrow (no extra error-shape fields) at the cost of a
+        // light-touch coupling between the two modules.
+        const inheritedHint = err.hint ?? '';
+        const isPrereleaseOnly = inheritedHint.includes('--include-prerelease');
+        if (isPrereleaseOnly) {
+          throw new ShardMindError(
+            err.message,
+            'NO_RELEASES_PUBLISHED',
+            `${inheritedHint} Or reinstall via \`shardmind install ${source}@<version>\` to switch this vault to a tag pin.`,
+          );
+        }
         throw new ShardMindError(
           err.message,
           'NO_RELEASES_PUBLISHED',
@@ -771,11 +790,11 @@ export async function resolveRefForUpdate(
  * Reject mutually-incompatible flag combinations at boot, before any
  * network call. Three rules:
  *
- *   1. `--version` + `--include-prerelease` — `--version` already
+ *   1. `--release` + `--include-prerelease` — `--release` already
  *      pins a specific tag, so widening latest-resolution is meaningless.
  *      Surfacing instead of silently accepting one over the other keeps
  *      the user from thinking they pinned a different tag than they did.
- *   2. ref install + `--version` — ref installs track a moving branch /
+ *   2. ref install + `--release` — ref installs track a moving branch /
  *      tag; the user has already chosen the "follow the ref" policy.
  *      Pinning a tag would silently abandon that policy. Reinstall via
  *      `shardmind install <ref>@<v>` (which rejects ref+`@`) is the
@@ -787,22 +806,22 @@ export async function resolveRefForUpdate(
  */
 function assertFlagsCompatible(opts: {
   stateRef: string | null;
-  version: string | undefined;
+  release: string | undefined;
   includePrerelease: boolean;
 }): void {
-  const { stateRef, version, includePrerelease } = opts;
-  if (version && includePrerelease) {
+  const { stateRef, release, includePrerelease } = opts;
+  if (release && includePrerelease) {
     throw new ShardMindError(
-      '--version and --include-prerelease cannot be combined',
+      '--release and --include-prerelease cannot be combined',
       'UPDATE_FLAG_CONFLICT',
-      '--version already pins a specific tag (stable or prerelease). Drop one of the flags.',
+      '--release already pins a specific tag (stable or prerelease). Drop one of the flags.',
     );
   }
-  if (stateRef && version) {
+  if (stateRef && release) {
     throw new ShardMindError(
-      `Cannot use --version on a ref-installed vault (state.ref='${stateRef}')`,
+      `Cannot use --release on a ref-installed vault (state.ref='${stateRef}')`,
       'UPDATE_FLAG_CONFLICT',
-      `This vault tracks ref '${stateRef}'. Drop --version to re-resolve the ref, or reinstall via \`shardmind install <source>@<version>\` to switch to a tag pin.`,
+      `This vault tracks ref '${stateRef}'. Drop --release to re-resolve the ref, or reinstall via \`shardmind install <source>@<version>\` to switch to a tag pin.`,
     );
   }
   if (stateRef && includePrerelease) {
@@ -827,19 +846,19 @@ function assertFlagsCompatible(opts: {
  */
 export async function lookupUpdateTarget(
   vaultRoot: string,
-  opts: { version?: string; includePrerelease?: boolean } = {},
+  opts: { release?: string; includePrerelease?: boolean } = {},
 ): Promise<{ state: ShardState; resolved: ResolvedShard }> {
   const state = await readState(vaultRoot);
   if (!state) throwNoInstall();
   assertFlagsCompatible({
     stateRef: state.ref ?? null,
-    version: opts.version,
+    release: opts.release,
     includePrerelease: opts.includePrerelease ?? false,
   });
   const source = state.ref
     ? `${state.source}#${state.ref}`
-    : opts.version
-      ? `${state.source}@${opts.version}`
+    : opts.release
+      ? `${state.source}@${opts.release}`
       : state.source;
   const resolved = await resolveRefForUpdate(source, {
     includePrerelease: opts.includePrerelease ?? false,

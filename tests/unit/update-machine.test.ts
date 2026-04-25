@@ -244,21 +244,21 @@ describe('lookupUpdateTarget — flag exclusivity + ref re-resolution', () => {
     await fsp.writeFile(path.join(vault, STATE_FILE), JSON.stringify(state));
   }
 
-  it('rejects --version + --include-prerelease combination', async () => {
+  it('rejects --release + --include-prerelease combination', async () => {
     await writeState();
     const err = await lookupUpdateTarget(vault, {
-      version: '1.0.0',
+      release: '1.0.0',
       includePrerelease: true,
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ShardMindError);
     expect((err as ShardMindError).code).toBe('UPDATE_FLAG_CONFLICT');
-    expect((err as ShardMindError).message).toContain('--version');
+    expect((err as ShardMindError).message).toContain('--release');
     expect((err as ShardMindError).message).toContain('--include-prerelease');
   });
 
-  it('rejects --version on a ref-installed vault', async () => {
+  it('rejects --release on a ref-installed vault', async () => {
     await writeState('main');
-    const err = await lookupUpdateTarget(vault, { version: '1.0.0' }).catch(
+    const err = await lookupUpdateTarget(vault, { release: '1.0.0' }).catch(
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(ShardMindError);
@@ -299,7 +299,7 @@ describe('lookupUpdateTarget — flag exclusivity + ref re-resolution', () => {
     expect(seen.some((u) => u.includes('/releases'))).toBe(false);
   });
 
-  it('constructs source@version when --version is used on a tag install', async () => {
+  it('constructs source@release when --release is used on a tag install', async () => {
     await writeState();
     const seen: string[] = [];
     globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -309,9 +309,9 @@ describe('lookupUpdateTarget — flag exclusivity + ref re-resolution', () => {
       throw new Error(`Unexpected fetch: ${u}`);
     }) as typeof fetch;
 
-    const { resolved } = await lookupUpdateTarget(vault, { version: '6.0.0-beta.2' });
+    const { resolved } = await lookupUpdateTarget(vault, { release: '6.0.0-beta.2' });
     expect(resolved.version).toBe('6.0.0-beta.2');
-    // No /releases call — explicit version skips latest-resolution.
+    // No /releases call — explicit release skips latest-resolution.
     expect(seen.some((u) => u.includes('/releases'))).toBe(false);
     // Tarball URL pins to the requested version.
     expect(seen.some((u) => u.includes('/tarball/v6.0.0-beta.2'))).toBe(true);

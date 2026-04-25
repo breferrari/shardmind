@@ -48,6 +48,19 @@ export interface ShardSpec {
    * scenarios, etc. `setLatest` is a no-op when `releases` is set.
    */
   releases?: ReleaseListEntry[];
+  /**
+   * Ref-name → 40-char hex SHA. Backs the `/commits/<ref>` endpoint.
+   * The same SHA also gates the `/tarball/<sha>` endpoint via
+   * `shaTarballs`, so a test can pin a ref to a tarball deterministically.
+   */
+  refs?: Record<string, string>;
+  /**
+   * 40-char hex SHA → absolute path to the fixture tarball. Used by the
+   * ref-install path: `resolve()` resolves a ref to a SHA, then HEADs
+   * `/tarball/<sha>` (no `v` prefix). The download path streams the
+   * fixture bytes the same way `versions` does for tag installs.
+   */
+  shaTarballs?: Record<string, string>;
 }
 
 export interface ReleaseListEntry {
@@ -72,6 +85,13 @@ export interface GitHubStub {
   url: string;
   /** Atomically change the "latest" for a shard. Takes effect on next request. */
   setLatest: (slug: string, version: string) => void;
+  /**
+   * Atomically point a ref at a SHA (and the SHA at a fixture tarball).
+   * Used by ref-install + branch-bump update scenarios. Both endpoints
+   * (`/commits/<ref>` and `/tarball/<sha>`) start serving the new
+   * mapping on the next request.
+   */
+  setRef: (slug: string, ref: string, sha: string, tarballPath: string) => void;
   /** Configure tarball GET latency. Takes effect on next request. */
   setTarballDelay: (ms: number) => void;
   /** Shut down the server. Always call in `afterEach` / `afterAll`. */
@@ -84,12 +104,18 @@ export interface GitHubStub {
 // or a hand-written request via `SHARDMIND_GITHUB_API_BASE` must not be
 // 404'd by the stub for cosmetic reasons. Matches the URL grammar GitHub
 // documents for tarball downloads.
-const TARBALL_RE = /^\/repos\/([a-z0-9][a-z0-9._-]*)\/([a-z0-9][a-z0-9._-]*)\/tarball\/v(.+)$/i;
+const TARBALL_TAG_RE = /^\/repos\/([a-z0-9][a-z0-9._-]*)\/([a-z0-9][a-z0-9._-]*)\/tarball\/v(.+)$/i;
+const TARBALL_SHA_RE =
+  /^\/repos\/([a-z0-9][a-z0-9._-]*)\/([a-z0-9][a-z0-9._-]*)\/tarball\/([a-f0-9]{40})$/i;
 // Matches the listing endpoint regardless of `?per_page=N`. The engine
 // requests `?per_page=100`; older transitional code paths or a future
 // pagination patch must not be 404'd here.
 const RELEASES_LIST_RE =
   /^\/repos\/([a-z0-9][a-z0-9._-]*)\/([a-z0-9][a-z0-9._-]*)\/releases(?:\?[^/]*)?$/i;
+// Mirrors the production `GET /repos/:o/:r/commits/:ref` endpoint. Refs
+// can carry slashes (`feature/foo` URL-encodes to `feature%2Ffoo`); the
+// regex captures everything after `/commits/` and the handler decodes.
+const COMMITS_RE = /^\/repos\/([a-z0-9][a-z0-9._-]*)\/([a-z0-9][a-z0-9._-]*)\/commits\/(.+)$/i;
 
 export async function createGitHubStub(options: GitHubStubOptions): Promise<GitHubStub> {
   const shards = new Map<string, ShardSpec>();
@@ -123,13 +149,33 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
         return sendJson(res, 200, list);
       }
 
-      const tarballMatch = TARBALL_RE.exec(pathname);
-      if (tarballMatch) {
-        const [, owner, repo, version] = tarballMatch;
+      const commitsMatch = COMMITS_RE.exec(pathname);
+      if (commitsMatch) {
+        const [, owner, repo, encodedRef] = commitsMatch;
         const spec = shards.get(`${owner!.toLowerCase()}/${repo!.toLowerCase()}`);
         if (!spec) return sendJson(res, 404, { message: 'Not Found' });
-        const tarPath = spec.versions[version!];
-        if (!tarPath) return sendJson(res, 404, { message: `Tag v${version} not found` });
+        const ref = decodeURIComponent(encodedRef!);
+        const sha = spec.refs?.[ref];
+        if (!sha) return sendJson(res, 404, { message: `Ref '${ref}' not found` });
+        return sendJson(res, 200, { sha });
+      }
+
+      // SHA-style tarball comes first: a 40-char hex looks like a "version"
+      // to the v-prefixed regex, so order matters.
+      const tarballShaMatch = TARBALL_SHA_RE.exec(pathname);
+      const tarballTagMatch = tarballShaMatch ? null : TARBALL_TAG_RE.exec(pathname);
+      const tarballMatch = tarballShaMatch ?? tarballTagMatch;
+      if (tarballMatch) {
+        const [, owner, repo, key] = tarballMatch;
+        const spec = shards.get(`${owner!.toLowerCase()}/${repo!.toLowerCase()}`);
+        if (!spec) return sendJson(res, 404, { message: 'Not Found' });
+        const tarPath = tarballShaMatch
+          ? spec.shaTarballs?.[key!.toLowerCase()]
+          : spec.versions[key!];
+        if (!tarPath) {
+          const subject = tarballShaMatch ? `Commit ${key}` : `Tag v${key}`;
+          return sendJson(res, 404, { message: `${subject} not found` });
+        }
         if (method === 'HEAD') {
           res.writeHead(200, { 'content-type': 'application/gzip' });
           res.end();
@@ -197,6 +243,15 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
       const spec = shards.get(slug.toLowerCase());
       if (!spec) throw new Error(`setLatest: unknown shard ${slug}`);
       spec.latest = version;
+    },
+    setRef: (slug, ref, sha, tarballPath) => {
+      const spec = shards.get(slug.toLowerCase());
+      if (!spec) throw new Error(`setRef: unknown shard ${slug}`);
+      // Coerce both ref→sha and sha→tarball maps lazily so existing
+      // shard specs that don't define refs at construction time keep
+      // working.
+      spec.refs = { ...(spec.refs ?? {}), [ref]: sha };
+      spec.shaTarballs = { ...(spec.shaTarballs ?? {}), [sha.toLowerCase()]: tarballPath };
     },
     setTarballDelay: (ms) => {
       tarballDelayMs = Math.max(0, ms);
