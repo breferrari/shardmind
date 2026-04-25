@@ -12,9 +12,10 @@
  *    plus a vault-root `shard-values.yaml`.
  *
  * The helper enumerates both sides under exactly the engine's filters
- * (Tier 1 from `core/tier1.ts` + `.shardmindignore` via `core/shardmindignore.ts`
- * for clone; engine-metadata exclusions for install), pairs every clone
- * path to its expected install path, and returns a structured report.
+ * (Tier 1 + `.shardmindignore` for clone via `walkShardSource`; engine-
+ * metadata exclusions for install) and pairs every clone path to its
+ * expected install path. Returns a structured report whose four fields
+ * are empty under "everything green".
  *
  * Used by `tests/e2e/cli.test.ts` for the CI E2E gate. Pure (read-only,
  * no spawning); reusable for future shard-author CI.
@@ -22,16 +23,16 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import {
-  loadShardmindignore,
-  type IgnoreFilter,
-} from '../../../source/core/shardmindignore.js';
-import { isTier1Excluded } from '../../../source/core/tier1.js';
-import { sha256 } from '../../../source/core/fs-utils.js';
+import { walkShardSource } from '../../../source/core/modules.js';
+import { loadShardmindignore } from '../../../source/core/shardmindignore.js';
+import { mapConcurrent } from '../../../source/core/fs-utils.js';
 import {
   SHARDMIND_DIR,
   VALUES_FILE,
 } from '../../../source/runtime/vault-paths.js';
+import { listRecursive } from './vault.js';
+
+const COMPARE_CONCURRENCY = 16;
 
 export interface InvariantOneInput {
   /** Absolute path to the clone-equivalent source tree. */
@@ -72,18 +73,27 @@ export interface InvariantOneReport {
 export async function verifyInvariant1(
   input: InvariantOneInput,
 ): Promise<InvariantOneReport> {
+  // Clone-side walk delegates to the engine's own walker (Tier 1 +
+  // `.shardmindignore` + symlink rejection) so the helper can never drift
+  // from what the install pipeline considers installable. A `.shardmindignore`
+  // with a `!pattern` entry rejects here exactly as it would inside the
+  // engine.
   const cloneFilter = await loadShardmindignore(input.cloneDir);
-  const cloneFiles = await listFiltered(input.cloneDir, '', cloneFilter);
+  const cloneWalk = await walkShardSource(input.cloneDir, cloneFilter);
+  const cloneFiles = cloneWalk.map((f) => f.relPath);
 
-  const installFiles = await listInstall(input.installDir);
+  const installFiles = (await listRecursive(input.installDir)).filter(
+    (rel) => !isEngineMetadata(rel),
+  );
 
   const expectedInstall = new Map<string, ExpectedEntry>();
   for (const cloneRel of cloneFiles) {
-    if (cloneRel.endsWith('.njk')) {
-      expectedInstall.set(stripNjk(cloneRel), { kind: 'rendered', cloneRel });
-    } else {
-      expectedInstall.set(cloneRel, { kind: 'static', cloneRel });
-    }
+    const isRendered = cloneRel.endsWith('.njk');
+    const installRel = isRendered ? cloneRel.slice(0, -4) : cloneRel;
+    expectedInstall.set(installRel, {
+      kind: isRendered ? 'rendered' : 'static',
+      cloneRel,
+    });
   }
 
   const installSet = new Set(installFiles);
@@ -91,22 +101,39 @@ export async function verifyInvariant1(
   const staticByteMismatches: string[] = [];
   let matched = 0;
 
-  for (const [installRel, entry] of expectedInstall) {
-    if (!installSet.has(installRel)) {
-      missingFromInstall.push(installRel);
-      continue;
-    }
-    if (entry.kind === 'static') {
-      const [cloneBytes, installBytes] = await Promise.all([
-        fsp.readFile(path.join(input.cloneDir, entry.cloneRel)),
-        fsp.readFile(path.join(input.installDir, installRel)),
-      ]);
-      if (sha256(cloneBytes) !== sha256(installBytes)) {
-        staticByteMismatches.push(installRel);
-        continue;
+  // Per-file byte comparison fans out under a fixed concurrency budget so
+  // larger shards don't open file handles linearly with tree size. Counts
+  // and mismatch lists are accumulated under a serial reduction at the end
+  // to keep the report deterministic.
+  type Outcome =
+    | { kind: 'matched' }
+    | { kind: 'missing'; installRel: string }
+    | { kind: 'mismatch'; installRel: string };
+
+  const outcomes = await mapConcurrent(
+    Array.from(expectedInstall.entries()),
+    COMPARE_CONCURRENCY,
+    async ([installRel, entry]): Promise<Outcome> => {
+      if (!installSet.has(installRel)) {
+        return { kind: 'missing', installRel };
       }
-    }
-    matched++;
+      if (entry.kind === 'static') {
+        const [cloneBytes, installBytes] = await Promise.all([
+          fsp.readFile(path.join(input.cloneDir, entry.cloneRel)),
+          fsp.readFile(path.join(input.installDir, installRel)),
+        ]);
+        if (!cloneBytes.equals(installBytes)) {
+          return { kind: 'mismatch', installRel };
+        }
+      }
+      return { kind: 'matched' };
+    },
+  );
+
+  for (const outcome of outcomes) {
+    if (outcome.kind === 'matched') matched++;
+    else if (outcome.kind === 'missing') missingFromInstall.push(outcome.installRel);
+    else staticByteMismatches.push(outcome.installRel);
   }
 
   const extrasInInstall: string[] = [];
@@ -134,79 +161,7 @@ interface ExpectedRendered {
 }
 type ExpectedEntry = ExpectedStatic | ExpectedRendered;
 
-/**
- * Recursive walk of the clone side, mirroring the engine's install walk:
- * Tier 1 + `.shardmindignore` + symlink rejection. Reuses the engine
- * filter modules directly so the helper can never drift from the
- * walker's interpretation of "what should be installed".
- *
- * Symlinks are skipped silently here (not rejected with an error) — the
- * helper's job is to compare; symlink rejection is the engine's
- * responsibility, exercised separately by the install path.
- */
-async function listFiltered(
-  rootDir: string,
-  relDir: string,
-  ignoreFilter: IgnoreFilter,
-): Promise<string[]> {
-  const out: string[] = [];
-  const dirAbs = relDir === '' ? rootDir : path.join(rootDir, relDir);
-  const entries = await fsp.readdir(dirAbs, { withFileTypes: true });
-
-  for (const entry of entries) {
-    if (entry.isSymbolicLink()) continue;
-    const relPath = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
-    const isDir = entry.isDirectory();
-    const isFile = entry.isFile();
-    if (!isDir && !isFile) continue;
-    if (isTier1Excluded(relPath)) continue;
-    if (ignoreFilter.ignores(relPath, isDir)) continue;
-    if (isDir) {
-      out.push(...(await listFiltered(rootDir, relPath, ignoreFilter)));
-    } else {
-      out.push(relPath);
-    }
-  }
-  return out;
-}
-
-/**
- * Enumerate every regular file under `installDir`, then drop engine
- * metadata: anything beneath `.shardmind/` and the vault-root
- * `shard-values.yaml`. The remainder is the install set Invariant 1
- * compares against the clone.
- */
-async function listInstall(installDir: string): Promise<string[]> {
-  const all = await listAll(installDir, '');
-  return all.filter((rel) => !isEngineMetadata(rel));
-}
-
-async function listAll(rootDir: string, relDir: string): Promise<string[]> {
-  const out: string[] = [];
-  const dirAbs = relDir === '' ? rootDir : path.join(rootDir, relDir);
-  let entries;
-  try {
-    entries = await fsp.readdir(dirAbs, { withFileTypes: true });
-  } catch {
-    return out;
-  }
-  for (const entry of entries) {
-    if (entry.isSymbolicLink()) continue;
-    const relPath = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
-    if (entry.isDirectory()) {
-      out.push(...(await listAll(rootDir, relPath)));
-    } else if (entry.isFile()) {
-      out.push(relPath);
-    }
-  }
-  return out;
-}
-
 function isEngineMetadata(relPath: string): boolean {
   if (relPath === VALUES_FILE) return true;
   return relPath === SHARDMIND_DIR || relPath.startsWith(`${SHARDMIND_DIR}/`);
-}
-
-function stripNjk(relPath: string): string {
-  return relPath.endsWith('.njk') ? relPath.slice(0, -4) : relPath;
 }

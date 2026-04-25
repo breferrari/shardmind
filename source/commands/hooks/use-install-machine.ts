@@ -96,16 +96,9 @@ export interface UseInstallMachineInput {
   valuesFile: string | undefined;
   yes: boolean;
   /**
-   * `--defaults` — Invariant 1 mode. Skips the wizard, ignores `--values`,
-   * uses schema defaults for every value and the default module selections.
-   * Mutually exclusive with `--values` (rejected at boot before any network
-   * call). Refuses to overwrite an existing install (state.json present)
-   * because the gate UI requires interactive input that a `--defaults` run
-   * cannot provide.
-   *
-   * Implies `yes` semantics internally — both flags route through the same
-   * `runNonInteractive` path. `--yes` is accepted alongside `--defaults`
-   * (redundant but harmless); only `--values` is rejected.
+   * `--defaults` — Invariant 1 mode. Mutually exclusive with `--values`;
+   * refuses to overwrite an existing install. Implies `--yes` semantics
+   * internally.
    */
   defaults: boolean;
   verbose: boolean;
@@ -191,9 +184,11 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
     (async () => {
       try {
-        // Flag-conflict + over-existing checks fire BEFORE any network call so
-        // a misconfigured invocation fails in milliseconds. Mirrors the
-        // pre-flight discipline `runUpdate` and `runAdopt` follow.
+        // Pre-flight rejections fire before any network call so a
+        // misconfigured invocation fails in milliseconds. The state read
+        // is shared with the existing-install gate further down — under
+        // `--defaults` the throw forecloses the gate, under non-defaults
+        // the gate consumes the same value.
         if (defaults && valuesFile !== undefined) {
           throw new ShardMindError(
             '--defaults and --values cannot be combined',
@@ -201,15 +196,13 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
             '--defaults uses schema defaults for every value; --values would override them. Drop one of the two flags.',
           );
         }
-        if (defaults) {
-          const existing = await readState(vaultRoot);
-          if (existing) {
-            throw new ShardMindError(
-              `Vault already shardmind-managed (${existing.shard}@${existing.version}); --defaults refuses to overwrite`,
-              'INSTALL_DEFAULTS_OVER_EXISTING',
-              'Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.',
-            );
-          }
+        const existing = await readState(vaultRoot);
+        if (defaults && existing) {
+          throw new ShardMindError(
+            `Vault already shardmind-managed (${existing.shard}@${existing.version}); --defaults refuses to overwrite`,
+            'INSTALL_DEFAULTS_OVER_EXISTING',
+            'Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.',
+          );
         }
 
         setPhase({ kind: 'loading', message: `Resolving ${shardRef}…` });
@@ -248,7 +241,6 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           alwaysIncludedFileCount,
         };
 
-        const existing = await readState(vaultRoot);
         if (existing) {
           if (disposed) return;
           setPhase({ kind: 'gate', state: existing, ctx });
