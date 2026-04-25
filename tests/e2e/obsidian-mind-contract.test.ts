@@ -238,7 +238,7 @@ describe('install (obsidian-mind-like)', () => {
     // Post-hook re-hash: state.json's rendered_hash for North Star.md
     // must match the post-edit bytes so a `shardmind` status reports
     // zero drift right after install.
-const expectedHash = sha256(northStar);
+    const expectedHash = sha256(northStar);
     const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
       files: Record<string, { rendered_hash: string }>;
     };
@@ -385,7 +385,7 @@ describe('update (obsidian-mind-like)', () => {
     const claudeAfter = await vault.readFile('CLAUDE.md');
     expect(claudeAfter).toContain('My bespoke CLAUDE addition.');
 
-const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
       files: Record<string, { rendered_hash: string }>;
     };
     expect(state.files['CLAUDE.md']?.rendered_hash).toBe(sha256(claudeAfter));
@@ -558,15 +558,19 @@ describe('adopt (obsidian-mind-like)', () => {
     await vault?.cleanup();
   });
 
-  it('adopts a clean clone — most files classified `matched`, state.json seeded', async () => {
-    // Scenario 15 — docs/SHARD-LAYOUT.md §Adopt semantics: a pristine
-    // clone with default values lands every static-content file as
-    // matched on first pass. Renderable templates with install_date
-    // legitimately classify as `differs` (the floating timestamp
-    // doesn't byte-equal any prior render); --yes resolves those as
-    // keep_mine. The contract clause being pinned is "first-pass
-    // adoption seeds state.json with managed entries for every
-    // shard-output path".
+  it('adopts a v5.1-style clone — static-content files classified `matched`, state.json seeded', async () => {
+    // Scenario 15 — docs/SHARD-LAYOUT.md §Adopt semantics: a v5.1-
+    // style clone (vault content already personalized, then engine
+    // metadata stripped to simulate "user cloned before shardmind
+    // support") classifies static-content files as `matched` on
+    // first pass. Renderable templates with install_date legitimately
+    // classify as `differs` (the floating timestamp doesn't byte-
+    // equal any prior render) and --yes resolves those as keep_mine.
+    // The contract clause being pinned is "first-pass adoption seeds
+    // state.json with managed entries for every shard-output path".
+    // The same custom values feed the install + the adopt re-render
+    // so any `differs` classification is purely the install_date /
+    // template-non-determinism story, not a values mismatch.
     vault = await createInstalledVault({
       stub,
       shardRef: SHARD_REF,
@@ -1104,7 +1108,7 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     const northStar = await vault.readFile('brain/North Star.md');
     expect(northStar).toContain('<!-- pre-throw edit -->');
 
-const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
       files: Record<string, { rendered_hash: string }>;
     };
     expect(state.files['brain/North Star.md']?.rendered_hash).toBe(sha256(northStar));

@@ -49,8 +49,18 @@ export default async function (ctx: HookCtx): Promise<void> {
     'utf-8',
   );
 
-  if (process.env.SHARDMIND_HOOK_SLEEP_MS) {
-    const ms = Number(process.env.SHARDMIND_HOOK_SLEEP_MS);
+  const rawSleep = process.env.SHARDMIND_HOOK_SLEEP_MS;
+  if (rawSleep) {
+    const ms = Number(rawSleep);
+    if (!Number.isFinite(ms) || ms < 0) {
+      // A non-numeric value (typo, accidental shell expansion) would
+      // otherwise produce setTimeout(NaN) — coerced to 0, silently
+      // skipping the intended sleep. Fail loudly so the timeout
+      // scenario can't pass for the wrong reason.
+      throw new Error(
+        `Invalid SHARDMIND_HOOK_SLEEP_MS: expected a finite ms >= 0, got ${JSON.stringify(rawSleep)}`,
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
