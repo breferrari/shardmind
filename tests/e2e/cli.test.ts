@@ -583,11 +583,12 @@ describe('shardmind install — Invariant 1', () => {
     // field, which lives under .shardmind/ on both sides and is therefore
     // Tier 1-excluded clone-side and engine-metadata-excluded install-side).
     //
-    // A clean report (all four arrays empty) means the engine produced
-    // exactly the file set the contract demands: every clone-side static
-    // file present byte-equivalent, every clone-side `.njk` present at
-    // the stripped install path, no Tier 1 leak, no `.shardmindignore`
-    // leak, no extras beyond engine metadata.
+    // A clean report — three mismatch arrays empty, with `matched`
+    // checked separately below — means the engine produced exactly the
+    // file set the contract demands: every clone-side static file present
+    // byte-equivalent, every clone-side `.njk` present at the stripped
+    // install path, no Tier 1 leak, no `.shardmindignore` leak, no
+    // extras beyond engine metadata.
     vault = await createEmptyVault('install-invariant1');
     const installResult = await spawnCli(
       ['install', SHARD_REF, '--defaults'],

@@ -98,14 +98,30 @@ export async function verifyInvariant1(
     (rel) => !isEngineMetadata(rel),
   );
 
+  // Two clone-side paths mapping to the same install path
+  // (`Foo.md` AND `Foo.md.njk`) is a shard-authoring violation: the
+  // install pipeline produces one path, but two clone sources claim it.
+  // A silent `Map.set` overwrite would leave the byte-comparison
+  // dirent-order-dependent and could skip a static byte-compare in
+  // favor of a rendered presence-only check. Fail fast with both
+  // colliding paths in the message so the author can locate the bug.
   const expectedInstall = new Map<string, ExpectedEntry>();
   for (const cloneRel of cloneFiles) {
     const isRendered = cloneRel.endsWith('.njk');
     const installRel = isRendered ? cloneRel.slice(0, -4) : cloneRel;
-    expectedInstall.set(installRel, {
+    const next: ExpectedEntry = {
       kind: isRendered ? 'rendered' : 'static',
       cloneRel,
-    });
+    };
+    const existing = expectedInstall.get(installRel);
+    if (existing) {
+      throw new Error(
+        `verifyInvariant1: source collision — multiple clone paths map to install path "${installRel}": ` +
+          `"${existing.cloneRel}" (${existing.kind}) and "${next.cloneRel}" (${next.kind}). ` +
+          'Shard authors must not ship both a static file and a `.njk` template that render to the same path.',
+      );
+    }
+    expectedInstall.set(installRel, next);
   }
 
   const installSet = new Set(installFiles);

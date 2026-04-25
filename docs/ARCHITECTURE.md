@@ -1518,8 +1518,9 @@ staying hermetic. No test reaches the public internet.
   (`isTier1Excluded`, `loadShardmindignore`) so the gate cannot disagree
   with the install walker on what "should be installed". A regression
   that drops a file, leaks a Tier 1 entry, or corrupts a static byte
-  trips the gate via the four-array report (`staticByteMismatches`,
-  `missingFromInstall`, `extrasInInstall`, plus the `matched` count).
+  trips the gate via the three mismatch arrays (`staticByteMismatches`,
+  `missingFromInstall`, `extrasInInstall`); `matched` is a non-zero
+  count under "everything green" rather than an array.
 
 ---
 

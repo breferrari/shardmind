@@ -512,31 +512,22 @@ describe('verifyInvariant1 — robustness', () => {
     }
   });
 
-  it('detects a clone source-side path collision (`Foo.md` AND `Foo.md.njk`) — install-side win is reported as bytes', async () => {
-    // If a shard author ships both a static `Foo.md` and a renderable
-    // `Foo.md.njk`, both clone-side paths map to the same install path
-    // (`Foo.md`). The helper's `Map.set` keeps whichever cloneRel was
-    // walked second; in practice the install pipeline writes whichever
-    // module ordering produced, and the byte-comparison surfaces the
-    // mismatch. Pins the behavior so a future regression that silently
-    // dropped one source path would be caught — and documents the
-    // shard-authoring constraint (don't ship both forms of the same
-    // path).
+  it('throws on a clone source-side path collision (`Foo.md` AND `Foo.md.njk`)', async () => {
+    // A shard that ships both a static `Foo.md` and a renderable
+    // `Foo.md.njk` would have two clone-side paths claim the same
+    // install path. Silent overwrite would leave the byte-comparison
+    // dirent-order-dependent, which is a real correctness footgun
+    // (the rendered entry could overwrite the static one, skipping
+    // the byte-compare). The helper fails fast with both colliding
+    // paths in the message so the author can locate the bug.
     const pair = await makePair('source-collision');
     try {
       await writeFile(pair.cloneDir, 'Foo.md', 'static body\n');
       await writeFile(pair.cloneDir, 'Foo.md.njk', '{{ values.x }}\n');
-      // Whatever the install actually wrote at Foo.md
-      await writeFile(pair.installDir, 'Foo.md', 'static body\n');
-      const report = await verifyInvariant1(pair);
-      // The walk visits both paths; the second `Map.set` wins. Whether
-      // that's the static or the renderable is dirent-order-dependent,
-      // but the report is always self-consistent: either matched=1 +
-      // empty mismatches, or staticByteMismatches names Foo.md (if the
-      // renderable was walked second, comparison was skipped — match).
-      // The defensive contract: no crash, no spurious extras.
-      expect(report.extrasInInstall).toEqual([]);
-      expect(report.missingFromInstall).toEqual([]);
+      await writeFile(pair.installDir, 'Foo.md', 'whatever the install wrote\n');
+      await expect(verifyInvariant1(pair)).rejects.toThrow(
+        /source collision.*Foo\.md/,
+      );
     } finally {
       await pair.cleanup();
     }
@@ -585,8 +576,8 @@ describe('verifyInvariant1 — fast-check property', () => {
       ),
       // Per-case 45s budget for macOS CI variance parity (PR #66 set the
       // pattern). Each property run does up to 6 file-pair writes plus the
-      // helper's recursive walk + sha256 over both sides — well below the
-      // ceiling, but the shared budget keeps future growth honest.
+      // helper's recursive walk + Buffer.equals on both sides — well below
+      // the ceiling, but the shared budget keeps future growth honest.
       { numRuns: 25, timeout: 45_000 },
     );
   }, 240_000);
