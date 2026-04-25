@@ -291,13 +291,37 @@ import type { HookContext } from 'shardmind/runtime';
 
 export default async function(ctx: HookContext): Promise<void> {
   console.log(`Welcome, ${ctx.values.user_name}. Installed ${ctx.shard.name}@${ctx.shard.version}.`);
-  // ctx.vaultRoot       — absolute path to the installed vault
-  // ctx.values          — the answered values
-  // ctx.modules         — { moduleId: 'included' | 'excluded' }
-  // ctx.shard           — { name, version }
-  // ctx.previousVersion — only set on post-update
+  // ctx.vaultRoot         — absolute path to the installed vault
+  // ctx.values            — the answered values
+  // ctx.modules           — { moduleId: 'included' | 'excluded' }
+  // ctx.shard             — { name, version }
+  // ctx.previousVersion   — only set on post-update
+  // ctx.valuesAreDefaults — true iff every user value equals the schema default
+  // ctx.newFiles          — managed paths newly added by this run
+  // ctx.removedFiles      — managed paths removed by this run
 }
 ```
+
+### v6 invariants the hook ctx encodes
+
+The three v6 ctx fields (`valuesAreDefaults`, `newFiles`, `removedFiles`) are how shards encode the additive-principle invariants documented in `docs/SHARD-LAYOUT.md`. Use them as gates, not as suggestions:
+
+- **`valuesAreDefaults: true`** — every user value equals the schema default. **Hooks that modify managed files (tracked in `state.json`) must no-op in this branch.** Otherwise an `install --defaults` produces a vault that diverges from `git clone` byte-for-byte, breaking Invariant 1. Hooks that create *unmanaged* files (QMD indexes, MCP caches, `.git`) may run unconditionally — they don't enter `state.files`.
+
+  Example pattern:
+  ```ts
+  if (!ctx.valuesAreDefaults) {
+    await fs.writeFile(join(ctx.vaultRoot, 'brain', 'North Star.md'), personalize(ctx.values));
+  }
+  // QMD bootstrap runs unconditionally — it touches .qmd/, not managed paths.
+  await runQmdBootstrap(ctx.vaultRoot);
+  ```
+
+  The deep-equal is strict: array order is significant. `multiselect` with schema default `[a, b]` vs user-selected `[b, a]` answers `false`. The wizard preserves option order on `--defaults` runs and on no-op multiselect submissions, so the strict rule fires only when the user genuinely re-ordered.
+
+- **`newFiles: string[]`** — managed paths newly added by this run. Empty on clean install (every path is new — uninformative); empty on a no-op update; populated on update with paths from `UpdateAction.kind === 'add'` (excluding `overwrite`, `auto_merge`, `restore_missing`, and conflict resolutions, since those paths were already managed). Restrict your post-update hook's writes to these paths by default — clobbering an existing managed file risks overwriting the three-way-merge resolution that just ran.
+
+- **`removedFiles: string[]`** — managed paths removed by this update (`UpdateAction.kind === 'delete'`). Empty on install. Use to maintain external state — QMD collection refs, MCP registrations — that referenced now-removed paths. The vault file is already gone by the time your hook runs.
 
 ### Capabilities
 
@@ -311,6 +335,10 @@ Hooks **cannot**:
 - Modify `.shardmind/` (engine-owned)
 - Modify `shard-values.yaml` (user-owned)
 - Affect the install/update flow by throwing — exceptions become warnings, not fatal errors
+
+### Post-hook re-hash
+
+After every `post-install` / `post-update` invocation — success OR failure — the engine re-hashes every managed file in `state.json` and writes the updated state. **This means a hook that legitimately edits a managed file does not produce spurious "drift" on the next `shardmind` status run.** It also means a hook that crashed mid-edit leaves `state.json` reflecting the partial bytes on disk; drift detection surfaces the discrepancy on the next status run, not silently. Hook-managed-file edits are still subject to the Invariant 2 rule above — the re-hash is what makes the rule observable, not a license to ignore it.
 
 ### Runtime environment
 

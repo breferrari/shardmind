@@ -590,6 +590,9 @@ interface HookContext {
   modules: Record<string, 'included' | 'excluded'>;
   shard: { name: string; version: string };
   previousVersion?: string;      // Only for post-update
+  valuesAreDefaults: boolean;    // v6 — Invariant 2 (see SHARD-LAYOUT.md)
+  newFiles: string[];            // v6 — managed paths newly added by this run
+  removedFiles: string[];        // v6 — managed paths removed by this run
 }
 
 // Hook file exports a default async function:
@@ -600,7 +603,15 @@ export default async function(ctx: HookContext): Promise<void>;
 
 **Hooks CANNOT**: modify `.shardmind/` (ShardMind owns it), modify `shard-values.yaml` (user owns it), return values that affect install/update flow.
 
-**If a hook throws**: ShardMind logs the error, shows a warning ("post-install hook exited with code N. Install succeeded; the hook's work may be incomplete."), does NOT rollback. Non-fatal. Same pattern as Helm post-install hooks.
+**v6 invariants the new ctx fields encode** (canonical contract: `docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics`):
+
+- `valuesAreDefaults: true` — every user value equals its schema default (deep-equal; computed defaults resolved against the literal-default map first). Hooks that modify *managed* files must no-op in this branch (Invariant 2). Hooks that create *unmanaged* files (QMD indexes, MCP caches) may run unconditionally — they don't affect byte-equivalence.
+- `newFiles: string[]` — empty on clean install (every file is new — uninformative); empty on no-op update; populated for an update with `UpdateAction.kind === 'add'` paths. By default a post-update hook restricts its writes to these paths (Invariant 3).
+- `removedFiles: string[]` — empty on install; populated for an update with `UpdateAction.kind === 'delete'` paths. Hooks use this to maintain external state that referenced now-removed managed paths.
+
+**Post-hook re-hash**: after every `post-install` / `post-update` invocation — success OR failure — the engine re-reads each managed file in `state.files` and recomputes `rendered_hash`, then writes the updated `state.json`. This ensures the engine's view of disk reflects actual content even when a hook only partially completed (the hook contract is non-fatal, so a hook that broke can't corrupt the engine). Per-file ENOENT and other I/O errors are tolerated; drift detection picks up any discrepancy on the next status run. Implementation: `source/core/state.ts::rehashManagedFiles`, called by both command machines after the hook subprocess returns. Spec: `docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics`.
+
+**If a hook throws**: ShardMind logs the error, shows a warning ("post-install hook exited with code N. Install succeeded; the hook's work may be incomplete."), does NOT rollback. Non-fatal. Same pattern as Helm post-install hooks. The post-hook re-hash still runs.
 
 **Execution runtime**: hooks run in a subprocess spawned by `source/core/hook.ts:executeHook`. The engine ships the `tsx` TypeScript loader (~6 MB) bundled as a runtime dependency so authors can write plain `.ts` without a compile step on their side. An internal wrapper at `source/internal/hook-runner.ts` (emitted to `dist/internal/hook-runner.js`) imports the hook and invokes its default export with the typed `HookContext`.
 

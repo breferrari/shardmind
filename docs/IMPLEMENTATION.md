@@ -1011,6 +1011,29 @@ type HookResult =
 
 **Subprocess entry**: `source/internal/hook-runner.ts` — compiled to `dist/internal/hook-runner.js` via a dedicated tsup entry block. Reads argv[2] (hook path) + argv[3] (ctx tempfile), dynamic-imports the hook via `pathToFileURL`, awaits `mod.default(ctx)`, exits 0 / 1. Any throw reaches the stderr stream with a stack trace. Zero Ink / React / Pastel imports — this is the cold-start path.
 
+#### v6 ctx fields + post-hook re-hash
+
+Two engine-side concerns sit *around* `executeHook` but aren't part of the spawn itself; they're owned by the command machines (`source/commands/hooks/use-{install,update}-machine.ts`).
+
+**Building the ctx (v6 fields)**:
+
+- `valuesAreDefaults` — computed by `source/core/values-defaults.ts::valuesAreDefaults(values, schema)`. Pure function: deep-equal the user values map against the schema's would-be-default map (literal defaults plus computed defaults resolved against the literal-default map first). Strict structural equality — array order is significant. Computed-default coercion failures are swallowed and the result is `false` (hook ctx construction is non-fatal).
+- `newFiles` — install: `[]` per spec line 130; update: `result.summary.addedFiles`, populated by `source/core/update-executor.ts` only on `UpdateAction.kind === 'add'`. `overwrite`, `auto_merge`, `restore_missing`, and conflict resolutions are excluded — those paths were already in `state.files`.
+- `removedFiles` — install: `[]`; update: `result.summary.deletedFiles`.
+
+**Post-hook re-hash** (`source/core/state.ts::rehashManagedFiles`):
+
+```typescript
+rehashManagedFiles(
+  vaultRoot: string,
+  state: ShardState,
+): Promise<{ state: ShardState; changed: string[]; missing: string[]; failed: Array<{ path: string; reason: string }> }>
+```
+
+Called by both machines after the hook subprocess returns — success OR failure. Reads each managed file under `mapConcurrent(REHASH_CONCURRENCY = 16)`, recomputes sha256, and returns a new `ShardState` with updated `rendered_hash` for changed entries. Per-file ENOENT and other I/O errors are tolerated (entry stays at the prior hash, surfaces on `missing` / `failed`); the function never throws. The machine writes the resulting state via `writeState` only when at least one path changed / went missing / failed — a fully-clean re-hash skips the redundant write. The whole call is wrapped in a defensive try/catch so a `writeState` failure can't propagate past the install/update boundary.
+
+This is what makes Invariant 2's claim observable: a hook that legitimately edited a managed file produces zero spurious drift on the next `shardmind` status run, because state.json's hash already reflects the post-hook bytes.
+
 ---
 
 ## 5. Runtime Module: `shardmind/runtime`

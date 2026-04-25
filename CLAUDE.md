@@ -167,6 +167,7 @@ shardmind/
 │   │   ├── install-planner.ts         # Pure install plan + collisions
 │   │   ├── install-executor.ts        # Apply install plan with rollback
 │   │   ├── values-io.ts               # Shared YAML load for shard-values.yaml
+│   │   ├── values-defaults.ts         # `valuesAreDefaults(values, schema)` — Invariant 2 helper
 │   │   ├── update-check.ts            # 24h cached latest-version lookup (status + update)
 │   │   ├── status.ts                  # Pure StatusReport builder for the status command
 │   │   ├── cancellation.ts            # Cross-platform SIGINT bridge (Windows stdin-ETX)
@@ -301,6 +302,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `update-planner.ts` | §4.11 | Plan update actions from drift + new-shard render |
 | `update-executor.ts` | §4.12 | Apply update plan with snapshot-based rollback |
 | `values-io.ts` | §4.13 | Shared YAML load for shard-values.yaml (install + update) |
+| `values-defaults.ts` | §4.16 (HookContext extensions) | `valuesAreDefaults(values, schema)` — deep-equal pure fn for Invariant 2 |
 | `status.ts` | §4.14 | Pure StatusReport builder for the `shardmind` (status) command |
 | `update-check.ts` | §4.15 | 24h cached GitHub latest-version lookup shared by status + update |
 | `cancellation.ts` | ARCHITECTURE §19.7 | Cross-platform SIGINT bridge (Windows stdin-ETX → process.emit SIGINT) |
