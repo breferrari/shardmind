@@ -510,4 +510,84 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     // had landed.
     await expect(fsp.access(path.join(vault, '.shardmind'))).rejects.toThrow();
   });
+
+  it('runAdopt with a zero-classification plan still writes engine metadata', async () => {
+    // Pin the empty-plan path: a shard whose every file is excluded
+    // ends up with `matches=[], differs=[], shardOnly=[]`. Adopt
+    // should still succeed and write `.shardmind/state.json` +
+    // `shard-values.yaml` with an empty `state.files` map. The
+    // AdoptSummary view branches on `totalManaged === 0` to render an
+    // "empty plan" footnote — this test makes sure runAdopt actually
+    // exercises that branch end-to-end rather than crashing on a zero
+    // total or skipping the metadata writes.
+    const { manifest, schema } = await loadShard();
+    const validator = buildValuesValidator(schema);
+    const values = validator.parse(resolveComputedDefaults(schema, VALUES));
+    // Exclude every removable module. `brain` is non-removable, so
+    // `defaultModuleSelections` keeps it included — instead, pass an
+    // empty selections map so resolveModules treats every file's owning
+    // module as "not selected" and skips it. (The minimal-shard's
+    // `brain` module is `removable: false`, but the planner's gating
+    // is by the selections map; an empty map means no module is
+    // 'included', so every modular file lands in `skip`.)
+    //
+    // The non-modular files (CLAUDE.md, .shardmindignore, etc.) DO get
+    // walked, so totalShardFiles is small but non-zero. To produce a
+    // strictly empty plan, we manually classify against an empty shard
+    // tree — easier and clearer than coaxing minimal-shard.
+    const tempShard = path.join(os.tmpdir(), `shardmind-adopt-empty-${crypto.randomUUID()}`);
+    await fsp.mkdir(path.join(tempShard, '.shardmind'), { recursive: true });
+    await fsp.writeFile(
+      path.join(tempShard, '.shardmind', 'shard.yaml'),
+      'apiVersion: v1\nname: empty\nnamespace: t\nversion: 1.0.0\ndependencies: []\nhooks: {}\n',
+      'utf-8',
+    );
+    await fsp.writeFile(
+      path.join(tempShard, '.shardmind', 'shard-schema.yaml'),
+      'schema_version: 1\nvalues: {}\ngroups: []\nmodules: {}\nsignals: []\nfrontmatter: {}\nmigrations: []\n',
+      'utf-8',
+    );
+
+    try {
+      const emptyManifest = await parseManifest(path.join(tempShard, '.shardmind', 'shard.yaml'));
+      const emptySchema = await parseSchema(path.join(tempShard, '.shardmind', 'shard-schema.yaml'));
+      const emptyPlan = await classifyAdoption({
+        vaultRoot: vault,
+        schema: emptySchema,
+        manifest: emptyManifest,
+        tempDir: tempShard,
+        values: {},
+        selections: {},
+      });
+      expect(emptyPlan.matches).toEqual([]);
+      expect(emptyPlan.differs).toEqual([]);
+      expect(emptyPlan.shardOnly).toEqual([]);
+      expect(emptyPlan.totalShardFiles).toBe(0);
+
+      const result = await runAdopt({
+        vaultRoot: vault,
+        manifest: emptyManifest,
+        schema: emptySchema,
+        tempDir: tempShard,
+        resolved: { ...RESOLVED, namespace: 't', name: 'empty' },
+        tarballSha256: 'deadbeef',
+        values: {},
+        selections: {},
+        plan: emptyPlan,
+        resolutions: {},
+      });
+
+      // Even with a zero-action plan, engine metadata lands.
+      expect(result.summary.totalManaged).toBe(0);
+      expect(Object.keys(result.state.files)).toEqual([]);
+      await expect(fsp.access(path.join(vault, '.shardmind/state.json'))).resolves.toBeUndefined();
+      await expect(fsp.access(path.join(vault, 'shard-values.yaml'))).resolves.toBeUndefined();
+
+      // Suppress unused-import warnings — `values` is used in other
+      // tests in this file, but referenced here for symmetry only.
+      void values;
+    } finally {
+      await fsp.rm(tempShard, { recursive: true, force: true });
+    }
+  });
 });

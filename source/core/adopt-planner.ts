@@ -87,19 +87,20 @@ export type AdoptClassification =
       volatile: boolean;
     };
 
+/**
+ * Output of adopt classification. Three buckets, no `userOnly` field —
+ * adopt deliberately never enumerates the user's tree. Classification is
+ * shard-source-driven: only paths the shard would have produced get
+ * stat'd against the vault, so symlinks under the user's vault are never
+ * followed and Tier 1 entries (`.git/`, `.obsidian/workspace.json`) are
+ * never enumerated. The user-facing summary's "user files left
+ * untouched" line is implicit (everything outside `state.files` is
+ * unmanaged), not a planner-emitted list.
+ */
 export interface AdoptPlan {
   matches: AdoptClassification[];
   differs: AdoptClassification[];
   shardOnly: AdoptClassification[];
-  /**
-   * Counts only — we never enumerate the user's tree. `userOnly` is a
-   * derived statistic the UI shows, not a list the executor acts on.
-   * Surfacing the full list would require a recursive walk of cwd, which
-   * adopt deliberately avoids: classification is shard-source-driven, so
-   * symlinks under the user's vault never get followed and Tier 1 entries
-   * (`.git/`, `.obsidian/workspace.json`) are never enumerated.
-   */
-  userOnlyApproximate: null;
   /** Total file count the planner would have written under a clean install. */
   totalShardFiles: number;
 }
@@ -180,7 +181,6 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
     matches,
     differs,
     shardOnly,
-    userOnlyApproximate: null,
     totalShardFiles: items.length,
   };
 }
