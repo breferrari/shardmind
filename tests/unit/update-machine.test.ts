@@ -89,13 +89,16 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
   });
 
   it('VERSION_NOT_FOUND from a missing tarball gets the "transient / deleted tag" hint', async () => {
-    // verifyTag branch: /releases/latest succeeds with a tag, then the
-    // HEAD on the tarball 404s — the tag exists in the API but the
+    // verifyTag branch: `/releases?per_page=N` returns a stable tag, then
+    // the HEAD on the tarball 404s — the tag exists in the API but the
     // tarball is unreachable. "Retry in a minute" is the right hint.
     globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const u = typeof url === 'string' ? url : url.toString();
-      if (u.endsWith('/releases/latest')) {
-        return new Response(JSON.stringify({ tag_name: 'v1.0.0' }), { status: 200 });
+      if (/\/releases\?per_page=\d+$/.test(u)) {
+        return new Response(
+          JSON.stringify([{ tag_name: 'v1.0.0', prerelease: false }]),
+          { status: 200 },
+        );
       }
       if (init?.method === 'HEAD') return new Response(null, { status: 404 });
       throw new Error(`Unexpected fetch: ${u}`);
@@ -113,16 +116,19 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
   });
 
   it('NO_RELEASES_PUBLISHED keeps its code but rewrites the install hint for update audience', async () => {
-    // fetchLatestRelease branch: /releases/latest 404s — the upstream
-    // repo has no releases at all. registry.ts emits NO_RELEASES_PUBLISHED
-    // (a distinct code) so the update command can route on it reliably
-    // without matching the message text. The update-audience hint avoids
-    // the install-path "publish a GitHub release" wording (which assumes
-    // the user controls the upstream) and the tarball-missing wording
-    // (which doesn't fit — there is no tarball here).
+    // `fetchLatestRelease` branch: `/releases?per_page=N` returns an empty
+    // array — the upstream repo has no releases at all. registry.ts emits
+    // NO_RELEASES_PUBLISHED so the update command can route on it
+    // reliably without matching the message text. The update-audience
+    // hint avoids the install-path "publish a GitHub release" wording
+    // (which assumes the user controls the upstream) and the
+    // tarball-missing wording (which doesn't fit — there is no tarball
+    // here).
     globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
       const u = typeof url === 'string' ? url : url.toString();
-      if (u.endsWith('/releases/latest')) return new Response(null, { status: 404 });
+      if (/\/releases\?per_page=\d+$/.test(u)) {
+        return new Response('[]', { status: 200 });
+      }
       throw new Error(`Unexpected fetch: ${u}`);
     }) as typeof fetch;
 
@@ -154,8 +160,11 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
   it('returns the ResolvedShard when resolution succeeds', async () => {
     globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const u = typeof url === 'string' ? url : url.toString();
-      if (u.endsWith('/releases/latest')) {
-        return new Response(JSON.stringify({ tag_name: 'v3.5.0' }), { status: 200 });
+      if (/\/releases\?per_page=\d+$/.test(u)) {
+        return new Response(
+          JSON.stringify([{ tag_name: 'v3.5.0', prerelease: false }]),
+          { status: 200 },
+        );
       }
       if (init?.method === 'HEAD') return new Response(null, { status: 200 });
       throw new Error(`Unexpected fetch: ${u}`);

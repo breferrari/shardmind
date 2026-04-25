@@ -27,6 +27,31 @@ function rateLimited(): Response {
   });
 }
 
+interface ReleaseFixture {
+  tag_name: string;
+  prerelease: boolean;
+}
+
+/**
+ * Build the JSON body returned by GitHub's `/repos/:o/:r/releases`. Mirrors
+ * the on-the-wire shape the real API serves: an array of release objects
+ * sorted by `created_at` descending. Tests only need the two fields the
+ * engine reads; extras would just be noise.
+ */
+function releasesResponse(entries: ReleaseFixture[], status = 200): Response {
+  return jsonResponse(entries, status);
+}
+
+/** Convenience for "latest stable v1.0.0" cases. */
+function singleStableRelease(tag = 'v1.0.0'): Response {
+  return releasesResponse([{ tag_name: tag, prerelease: false }]);
+}
+
+/** True iff this URL is the `/releases?per_page=...` listing endpoint. */
+function isReleasesListing(u: string): boolean {
+  return /\/releases\?per_page=\d+$/.test(u);
+}
+
 describe('registry.resolve', () => {
   const originalFetch = globalThis.fetch;
   const originalToken = process.env['GITHUB_TOKEN'];
@@ -209,12 +234,10 @@ describe('registry.resolve', () => {
   });
 
   describe('direct mode', () => {
-    it('skips registry and uses GitHub releases/latest when no version', async () => {
+    it('skips registry and uses GitHub /releases when no version', async () => {
       globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' ? url : url.toString();
-        if (u.endsWith('/releases/latest')) {
-          return jsonResponse({ tag_name: 'v2.1.0' });
-        }
+        if (isReleasesListing(u)) return singleStableRelease('v2.1.0');
         if (u.includes('/tarball/v2.1.0') && init?.method === 'HEAD') return headOk();
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
@@ -229,7 +252,7 @@ describe('registry.resolve', () => {
     it('strips v prefix from tag_name', async () => {
       globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' ? url : url.toString();
-        if (u.endsWith('/releases/latest')) return jsonResponse({ tag_name: 'v4.0.0' });
+        if (isReleasesListing(u)) return singleStableRelease('v4.0.0');
         if (init?.method === 'HEAD') return headOk();
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
@@ -238,7 +261,7 @@ describe('registry.resolve', () => {
       expect(result.version).toBe('4.0.0');
     });
 
-    it('uses explicit version without fetching releases/latest', async () => {
+    it('uses explicit version without fetching releases', async () => {
       const calls: string[] = [];
       globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' ? url : url.toString();
@@ -249,23 +272,181 @@ describe('registry.resolve', () => {
 
       const result = await resolve('github:acme/widget@1.2.3');
       expect(result.version).toBe('1.2.3');
-      expect(calls.some((u) => u.includes('/releases/latest'))).toBe(false);
+      expect(calls.some((u) => u.includes('/releases'))).toBe(false);
     });
 
-    it('throws NO_RELEASES_PUBLISHED when direct mode repo has no releases', async () => {
-      // Distinct from VERSION_NOT_FOUND: /releases/latest returning 404
-      // means the repo has no releases at all. The update command uses
-      // this code to pick an accurate remediation hint without matching
-      // the message text (which is brittle).
+    it('throws SHARD_NOT_FOUND when /releases returns 404 (repo missing)', async () => {
+      // `/releases` 404 means the repo doesn't exist (or is private to
+      // an unauthenticated client). Distinct from a 200 with empty array,
+      // which means the repo exists but has no releases yet.
       globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
         const u = typeof url === 'string' ? url : url.toString();
-        if (u.endsWith('/releases/latest')) return new Response(null, { status: 404 });
+        if (isReleasesListing(u)) return new Response(null, { status: 404 });
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const err = await resolve('github:acme/widget').catch((e) => e);
+      expect(err).toBeInstanceOf(ShardMindError);
+      expect(err.code).toBe('SHARD_NOT_FOUND');
+      expect(err.hint).toContain('GITHUB_TOKEN');
+    });
+  });
+
+  describe('/releases listing semantics', () => {
+    /**
+     * The default-stable filter replaces the v0.1 `/releases/latest` call,
+     * which 404s for repos that publish only prereleases. The listing
+     * endpoint returns the same data without that quirk and lets us
+     * surface a `--include-prerelease` hint when a beta-only repo is
+     * encountered.
+     */
+    it('default skips prereleases and picks the newest stable', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (isReleasesListing(u)) {
+          return releasesResponse([
+            { tag_name: 'v2.0.0-beta.1', prerelease: true },
+            { tag_name: 'v1.0.0', prerelease: false },
+            { tag_name: 'v0.9.0', prerelease: false },
+          ]);
+        }
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolve('github:acme/widget');
+      expect(result.version).toBe('1.0.0');
+    });
+
+    it('NO_RELEASES_PUBLISHED with --include-prerelease hint when only prereleases exist', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (isReleasesListing(u)) {
+          return releasesResponse([
+            { tag_name: 'v2.0.0-beta.1', prerelease: true },
+            { tag_name: 'v2.0.0-alpha.1', prerelease: true },
+          ]);
+        }
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const err = await resolve('github:acme/widget').catch((e) => e);
+      expect(err).toBeInstanceOf(ShardMindError);
+      expect(err.code).toBe('NO_RELEASES_PUBLISHED');
+      expect(err.hint).toContain('--include-prerelease');
+    });
+
+    it('NO_RELEASES_PUBLISHED with no-flag hint on a 200-empty response', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (isReleasesListing(u)) return releasesResponse([]);
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const err = await resolve('github:acme/widget').catch((e) => e);
+      expect(err).toBeInstanceOf(ShardMindError);
+      expect(err.code).toBe('NO_RELEASES_PUBLISHED');
+      // No prereleases exist either, so the --include-prerelease hint
+      // would be misleading. The hint points at the actual remediations.
+      expect(err.hint).not.toContain('--include-prerelease');
+      expect(err.hint).toContain('@version');
+    });
+
+    it('--include-prerelease widens to the newest release of any kind', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (isReleasesListing(u)) {
+          return releasesResponse([
+            { tag_name: 'v2.0.0-beta.1', prerelease: true },
+            { tag_name: 'v1.0.0', prerelease: false },
+          ]);
+        }
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolve('github:acme/widget', { includePrerelease: true });
+      expect(result.version).toBe('2.0.0-beta.1');
+    });
+
+    it('--include-prerelease still throws when the repo has zero releases', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (isReleasesListing(u)) return releasesResponse([]);
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const err = await resolve('github:acme/widget', { includePrerelease: true }).catch(
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ShardMindError);
+      expect(err.code).toBe('NO_RELEASES_PUBLISHED');
+    });
+
+    it('skips malformed entries (missing tag_name / non-boolean prerelease)', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (isReleasesListing(u)) {
+          return jsonResponse([
+            // Missing tag_name — drop.
+            { prerelease: false },
+            // tag_name is empty string — drop.
+            { tag_name: '', prerelease: false },
+            // prerelease is not a boolean — drop (we can't classify it).
+            { tag_name: 'v3.0.0', prerelease: 'no' },
+            // First valid entry wins.
+            { tag_name: 'v2.0.0', prerelease: false },
+            { tag_name: 'v1.0.0', prerelease: false },
+          ]);
+        }
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolve('github:acme/widget');
+      expect(result.version).toBe('2.0.0');
+    });
+
+    it('rejects a non-array response body with REGISTRY_NETWORK', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (isReleasesListing(u)) return jsonResponse({ message: 'Not an array' });
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
 
       await expect(resolve('github:acme/widget')).rejects.toMatchObject({
-        code: 'NO_RELEASES_PUBLISHED',
+        code: 'REGISTRY_NETWORK',
       });
+    });
+
+    it('rejects malformed JSON with REGISTRY_NETWORK', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (isReleasesListing(u)) return new Response('not json', { status: 200 });
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      await expect(resolve('github:acme/widget')).rejects.toMatchObject({
+        code: 'REGISTRY_NETWORK',
+      });
+    });
+
+    it('uses per_page=100 to widen the single-page coverage', async () => {
+      // A first-page that returned only ~30 entries could miss a stable
+      // release for repos that have a long beta tail. per_page=100 is
+      // GitHub's documented per-page cap; bumping the cap requires
+      // pagination, which is documented as out-of-scope for v0.1.
+      const seen: string[] = [];
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        seen.push(u);
+        if (isReleasesListing(u)) return singleStableRelease('v1.0.0');
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      await resolve('github:acme/widget');
+      expect(seen.some((u) => u.includes('/releases?per_page=100'))).toBe(true);
     });
   });
 
@@ -277,7 +458,7 @@ describe('registry.resolve', () => {
       // every real install against the public API.
       globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' ? url : url.toString();
-        if (u.endsWith('/releases/latest')) return jsonResponse({ tag_name: 'v1.0.0' });
+        if (isReleasesListing(u)) return singleStableRelease('v1.0.0');
         if (init?.method === 'HEAD') return new Response(null, { status: 302 });
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
@@ -334,7 +515,7 @@ describe('registry.resolve', () => {
       globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' ? url : url.toString();
         seen.push(u);
-        if (u.endsWith('/releases/latest')) return jsonResponse({ tag_name: 'v1.2.3' });
+        if (isReleasesListing(u)) return singleStableRelease('v1.2.3');
         if (init?.method === 'HEAD') return headOk();
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
@@ -354,7 +535,7 @@ describe('registry.resolve', () => {
         const u = typeof url === 'string' ? url : url.toString();
         expect(u.startsWith('http://127.0.0.1:12345/')).toBe(true);
         expect(u.includes('//repos')).toBe(false);
-        if (u.endsWith('/releases/latest')) return jsonResponse({ tag_name: 'v1.0.0' });
+        if (isReleasesListing(u)) return singleStableRelease('v1.0.0');
         if (init?.method === 'HEAD') return headOk();
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
@@ -376,9 +557,9 @@ describe('registry.resolve', () => {
         expect(u).toBe(
           init?.method === 'HEAD'
             ? 'http://127.0.0.1:12345/repos/acme/widget/tarball/v1.0.0'
-            : 'http://127.0.0.1:12345/repos/acme/widget/releases/latest',
+            : 'http://127.0.0.1:12345/repos/acme/widget/releases?per_page=100',
         );
-        if (u.endsWith('/releases/latest')) return jsonResponse({ tag_name: 'v1.0.0' });
+        if (isReleasesListing(u)) return singleStableRelease('v1.0.0');
         if (init?.method === 'HEAD') return headOk();
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
@@ -447,7 +628,7 @@ describe('registry.resolve', () => {
     it('maps GitHub rate limit to REGISTRY_RATE_LIMITED', async () => {
       globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
         const u = typeof url === 'string' ? url : url.toString();
-        if (u.endsWith('/releases/latest')) return rateLimited();
+        if (isReleasesListing(u)) return rateLimited();
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
 
@@ -464,7 +645,7 @@ describe('registry.resolve', () => {
         const u = typeof url === 'string' ? url : url.toString();
         const headers = (init?.headers ?? {}) as Record<string, string>;
         seen.push({ url: u, auth: headers['Authorization'] ?? null });
-        if (u.endsWith('/releases/latest')) return jsonResponse({ tag_name: 'v1.0.0' });
+        if (isReleasesListing(u)) return singleStableRelease('v1.0.0');
         if (init?.method === 'HEAD') return headOk();
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;

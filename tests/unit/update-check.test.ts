@@ -32,10 +32,13 @@ import { SHARDMIND_DIR } from '../../source/runtime/vault-paths.js';
 const SOURCE = 'github:breferrari/obsidian-mind';
 
 function releaseResponse(tag: string): Response {
-  return new Response(JSON.stringify({ tag_name: tag }), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-  });
+  // Mirrors the post-#76 `/releases?per_page=N` listing shape — an array
+  // of release objects sorted by `created_at` DESC. The single-stable
+  // entry is what registry.ts's stable filter picks.
+  return new Response(
+    JSON.stringify([{ tag_name: tag, prerelease: false }]),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  );
 }
 
 function networkError(): never {

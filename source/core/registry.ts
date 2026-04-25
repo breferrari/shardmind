@@ -73,16 +73,24 @@ const SHARD_REF_RE = /^(github:)?([a-z0-9][a-z0-9-]*)\/([a-z0-9][a-z0-9-]*)(?:@(
  * past the timeout. Without this, `Promise.race` around the call would
  * resolve the caller but the `fetch` would keep the socket open.
  *
+ * The `includePrerelease` option widens resolution from "newest non-
+ * prerelease" (default — what status + the default update path want) to
+ * "newest release of any kind". `update --include-prerelease` threads
+ * this in; the status-cache path leaves it false because the cache is
+ * defined as "latest stable" (see `core/update-check.ts`).
+ *
  * @param source The `state.source` string recorded at install time
  *   (e.g. `"github:breferrari/obsidian-mind"`).
  * @param options.signal Optional abort signal forwarded to the HTTP client.
+ * @param options.includePrerelease When true, prereleases are eligible.
  * @returns The normalized semver string (leading `v` stripped).
  * @throws `ShardMindError` with the same code set `fetchLatestRelease` emits
- *   (`REGISTRY_NETWORK`, `REGISTRY_RATE_LIMITED`, `VERSION_NOT_FOUND`).
+ *   (`REGISTRY_NETWORK`, `REGISTRY_RATE_LIMITED`, `NO_RELEASES_PUBLISHED`,
+ *   `SHARD_NOT_FOUND`).
  */
 export async function fetchLatestVersion(
   source: string,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; includePrerelease?: boolean } = {},
 ): Promise<string> {
   if (!source.startsWith('github:')) {
     throw new ShardMindError(
@@ -104,10 +112,16 @@ export async function fetchLatestVersion(
 
   const owner = rest.slice(0, slash);
   const repo = rest.slice(slash + 1);
-  return fetchLatestRelease(owner, repo, options.signal);
+  return fetchLatestRelease(owner, repo, {
+    signal: options.signal,
+    includePrerelease: options.includePrerelease ?? false,
+  });
 }
 
-export async function resolve(shardRef: string): Promise<ResolvedShard> {
+export async function resolve(
+  shardRef: string,
+  options: { includePrerelease?: boolean } = {},
+): Promise<ResolvedShard> {
   const parsed = parseRef(shardRef);
 
   let version: string;
@@ -119,7 +133,11 @@ export async function resolve(shardRef: string): Promise<ResolvedShard> {
     repoOwner = parsed.namespace;
     repoName = parsed.name;
     source = `github:${repoOwner}/${repoName}`;
-    version = parsed.version ?? (await fetchLatestRelease(repoOwner, repoName));
+    version =
+      parsed.version ??
+      (await fetchLatestRelease(repoOwner, repoName, {
+        includePrerelease: options.includePrerelease ?? false,
+      }));
   } else {
     const index = await fetchRegistryIndex();
     const key = `${parsed.namespace}/${parsed.name}`;
@@ -228,42 +246,77 @@ async function fetchRegistryIndex(): Promise<RegistryIndex> {
   }
 }
 
+/**
+ * Page size for the `/releases` listing. 100 is GitHub's documented per-page
+ * cap on the releases endpoint; bumping the cap is not possible. For repos
+ * with more than 100 releases ahead of any stable, the first page may
+ * legitimately contain only prereleases — pagination is documented as a
+ * known limitation rather than implemented in v0.1, since the realistic
+ * shape (≤30 releases per shard) makes it a non-issue today.
+ */
+const RELEASES_PAGE_SIZE = 100;
+
+interface ReleaseEntry {
+  tag_name: string;
+  prerelease: boolean;
+}
+
+/**
+ * Resolve "newest release matching policy" for a GitHub repo. Replaces the
+ * v0.1 `/releases/latest` call (which 404s for repos that publish only
+ * prereleases — see `ARCHITECTURE.md §10.7`) with a single-page list call
+ * that filters in code.
+ *
+ * Default policy: `includePrerelease: false` returns the first non-
+ * prerelease entry (the previous `/releases/latest` semantics). When
+ * `includePrerelease: true`, the first entry of any kind is returned —
+ * matches `update --include-prerelease`.
+ *
+ * Errors keep the existing code-set: `REGISTRY_RATE_LIMITED` for an
+ * authenticated-rate exceedance, `SHARD_NOT_FOUND` when the repo itself
+ * is missing (404 on `/releases` only fires for missing repos — empty
+ * release lists return 200 with `[]`), `NO_RELEASES_PUBLISHED` when the
+ * filter eliminates every entry, and `REGISTRY_NETWORK` for any other
+ * upstream surprise. The `NO_RELEASES_PUBLISHED` hint differentiates
+ * "repo has zero releases" from "repo has only prereleases" so the user
+ * can choose between publishing a release and re-running with
+ * `--include-prerelease`.
+ */
 async function fetchLatestRelease(
   namespace: string,
   name: string,
-  signal?: AbortSignal,
+  opts: { signal?: AbortSignal; includePrerelease?: boolean } = {},
 ): Promise<string> {
-  const url = `${GITHUB_API_BASE}/repos/${namespace}/${name}/releases/latest`;
-  const response = await safeFetch(url, { ...githubHeaders(), signal });
+  const url = `${GITHUB_API_BASE}/repos/${namespace}/${name}/releases?per_page=${RELEASES_PAGE_SIZE}`;
+  const response = await safeFetch(url, { ...githubHeaders(), signal: opts.signal });
 
   if (response.status === 403 && isRateLimited(response)) {
     throw rateLimitError();
   }
 
   if (response.status === 404) {
-    // Distinct from the verifyTag 404 branch (which throws VERSION_NOT_FOUND).
-    // This one fires when GitHub's `/releases/latest` returns 404, meaning
-    // the repo has no published releases at all. Keeping these codes
-    // separate lets the update command emit a different, accurate hint —
-    // instead of a brittle text match on the message.
+    // `/releases` 404 means the repo itself doesn't exist or is private to
+    // an unauthenticated client — distinct from "no releases yet" (200 with
+    // empty array). SHARD_NOT_FOUND is the closest existing code; the hint
+    // disambiguates direct mode from registry mode.
     throw new ShardMindError(
-      `No releases found for ${namespace}/${name}`,
-      'NO_RELEASES_PUBLISHED',
-      'Specify a version explicitly with @version, or publish a GitHub release.',
+      `Repository ${namespace}/${name} not found`,
+      'SHARD_NOT_FOUND',
+      `github.com/${namespace}/${name} returned 404. Check spelling or set GITHUB_TOKEN if the repo is private.`,
     );
   }
 
   if (!response.ok) {
     throw new ShardMindError(
-      `Could not fetch latest release for ${namespace}/${name}: HTTP ${response.status}`,
+      `Could not fetch releases for ${namespace}/${name}: HTTP ${response.status}`,
       'REGISTRY_NETWORK',
       'GitHub API returned an unexpected status.',
     );
   }
 
-  let data: { tag_name?: string };
+  let data: unknown;
   try {
-    data = (await response.json()) as { tag_name?: string };
+    data = await response.json();
   } catch (err) {
     throw new ShardMindError(
       'Malformed response from GitHub releases API',
@@ -272,15 +325,46 @@ async function fetchLatestRelease(
     );
   }
 
-  const tag = data.tag_name;
-  if (typeof tag !== 'string' || tag.length === 0) {
+  if (!Array.isArray(data)) {
     throw new ShardMindError(
-      `Latest release for ${namespace}/${name} has no tag name`,
+      `Releases response for ${namespace}/${name} is not an array`,
       'REGISTRY_NETWORK',
-      'GitHub returned a release without tag_name.',
+      'GitHub returned a non-array body where a list of releases was expected.',
     );
   }
 
+  // Skip malformed entries silently — a single bad entry shouldn't take down
+  // an otherwise-resolvable list. Empty `tag_name` strings are also dropped
+  // because they would produce a useless `tarball/v` URL downstream.
+  const releases = data.filter((entry): entry is ReleaseEntry => {
+    if (!entry || typeof entry !== 'object') return false;
+    const e = entry as { tag_name?: unknown; prerelease?: unknown };
+    return (
+      typeof e.tag_name === 'string' &&
+      e.tag_name.length > 0 &&
+      typeof e.prerelease === 'boolean'
+    );
+  });
+
+  const includePrerelease = opts.includePrerelease ?? false;
+  const eligible = includePrerelease ? releases : releases.filter((r) => !r.prerelease);
+
+  if (eligible.length === 0) {
+    const onlyPrereleasesExist = !includePrerelease && releases.some((r) => r.prerelease);
+    const hint = onlyPrereleasesExist
+      ? `${namespace}/${name} has only prerelease versions. Re-run with --include-prerelease to install one, or specify a stable version with @version once published.`
+      : `Specify a version explicitly with @version, or publish a GitHub release for ${namespace}/${name}.`;
+    throw new ShardMindError(
+      `No releases found for ${namespace}/${name}`,
+      'NO_RELEASES_PUBLISHED',
+      hint,
+    );
+  }
+
+  // GitHub's `/releases` returns entries sorted by `created_at` DESC by
+  // default — first eligible entry is the newest. Same convention status
+  // expects when reporting "latest available".
+  const tag = eligible[0]!.tag_name;
   return tag.startsWith('v') ? tag.slice(1) : tag;
 }
 
