@@ -198,9 +198,10 @@ shardmind/
 │   ├── component/                     # Ink components via ink-testing-library
 │   ├── integration/                   # Multi-module pipeline tests
 │   ├── e2e/                           # Full CLI invocation tests (subprocess)
-│   │   ├── cli.test.ts                # 31 scenarios covering all 3 commands + post-install hook
+│   │   ├── cli.test.ts                # End-to-end scenarios across status / install / update / adopt + post-install hook + Invariant 1 byte-equivalence
 │   │   └── helpers/                   # build-once, tarball, github-stub,
-│   │                                  # spawn-cli, vault factories
+│   │                                  # spawn-cli, vault factories,
+│   │                                  # invariant1 byte-equivalence helper
 │   ├── helpers/                       # Shared test utilities (factories)
 │   │   ├── shard-state.ts             # makeShardState, makeFileState
 │   │   └── make-shard-source.ts       # makeShardSource — v6 temp-shard scaffold

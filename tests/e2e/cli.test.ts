@@ -11,17 +11,29 @@
  * No test reaches the public internet; rate limits and network flakes
  * can't destabilize the run.
  *
- * Coverage matrix (see `docs/IMPLEMENTATION.md` §20 for the methodology):
- *   Bootstrap (2)  — --version / --help
- *   Status    (7)  — not-in-vault, quick, verbose, update-available,
- *                    modified-files, corrupt state, offline fallback
- *   Install   (12) — happy + dry-run + verbose + @version + errors +
- *                    collision + BACKUP_FAILED + SIGINT rollback
- *   Update    (7)  — no-install typed error, up-to-date, real bump,
- *                    auto-merge with edits, UPDATE_SOURCE_MISMATCH,
- *                    dry-run, SIGINT rollback
- *   Property  (2)  — install determinism + dry-run safety under
- *                    arbitrary value subsets
+ * Coverage areas (see `docs/ARCHITECTURE.md §19.7` for the methodology):
+ *   Bootstrap          — --version / --help
+ *   Status             — not-in-vault, quick, verbose, update-available,
+ *                        modified-files, corrupt state, offline fallback
+ *   Install            — happy + dry-run + verbose + @version + errors +
+ *                        collision + BACKUP_FAILED + SIGINT rollback +
+ *                        --defaults flag (Invariant 1 mode) + flag conflict
+ *                        + over-existing + skips wizard
+ *   Install hook       — post-install hook ran + ctx fields + re-hash +
+ *                        dry-run note
+ *   Install Invariant 1— byte-equivalence vs minimal-shard via
+ *                        `verifyInvariant1` (helpers/invariant1.ts)
+ *   Install #ref       — branch install + unknown ref error
+ *   Update             — no-install typed error, up-to-date, real bump,
+ *                        auto-merge with edits, UPDATE_SOURCE_MISMATCH,
+ *                        dry-run, SIGINT rollback
+ *   Update #ref        — re-resolution on bump + up-to-date when SHA stable
+ *   Update flags       — --release pin, --release + --include-prerelease conflict,
+ *                        --include-prerelease against beta-only repo
+ *   Property           — install determinism + dry-run safety under
+ *                        arbitrary value subsets
+ *   Adopt              — empty / matching / existing-install / dry-run /
+ *                        --yes auto-keep-mine
  */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
