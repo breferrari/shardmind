@@ -52,7 +52,7 @@ import { parseSchema, buildValuesValidator } from './schema.js';
 import { detectDrift } from './drift.js';
 import { loadValuesYaml } from './values-io.js';
 import { getLatestVersion } from './update-check.js';
-import { mapConcurrent, pathExists, stripTemplatePrefix } from './fs-utils.js';
+import { mapConcurrent, pathExists } from './fs-utils.js';
 import { errnoCode } from '../runtime/errno.js';
 import { validateFrontmatter } from '../runtime/frontmatter.js';
 import { renderString, buildRenderContext } from './renderer.js';
@@ -559,11 +559,7 @@ async function renderAndDiffEntry(
     return { path: entry.path, skipped: true, reason: 'no-template' };
   }
 
-  const templatePath = path.join(
-    vaultRoot,
-    CACHED_TEMPLATES,
-    stripTemplatePrefix(entry.template),
-  );
+  const templatePath = path.join(vaultRoot, CACHED_TEMPLATES, entry.template);
 
   let templateSource: string;
   try {

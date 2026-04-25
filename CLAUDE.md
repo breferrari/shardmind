@@ -12,10 +12,10 @@ This project is **spec-driven**. The architecture and implementation are fully d
 |----------|------|-------------|
 | `VISION.md` | Origin story, architectural bets, scope guardrails, non-goals. | Before proposing features or scope changes. |
 | `ROADMAP.md` | v0.1 milestones linked to GitHub issues. Build order. | Before starting a new milestone. |
-| **`docs/SHARD-LAYOUT.md`** | **v6 shard-layout contract + three binding invariants. Active design spec.** Supersedes `ARCHITECTURE.md §3` (File Anatomy) and any stale `templates/`-walk assumptions in `IMPLEMENTATION.md §9` (Build Plan) + `§4.*` (module specs) until those docs are rewritten. | **Before implementing anything related to shard layout, install walk, hook context, adopt command, or obsidian-mind v6. Authoritative over ARCHITECTURE.md / IMPLEMENTATION.md where they conflict.** |
-| `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. **§3 (File Anatomy) is stale — see `docs/SHARD-LAYOUT.md` for the v6 contract. §10.7 `--version` gap is tracked in [#70](https://github.com/breferrari/shardmind/issues/70).** | Before making any architectural decision. |
-| `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, 10 module specs with TypeScript signatures, algorithms as numbered steps, error cases, 17 merge test fixtures, 6-day build plan. **§9 (Build Plan) is stale — see [#70](https://github.com/breferrari/shardmind/issues/70) for the current task list. §4.* module specs referencing `templates/` walk or `partials` field are superseded by `docs/SHARD-LAYOUT.md §Engine change scope`.** | Before implementing any module. |
-| `examples/minimal-shard/` | Minimal test shard for development. 4 values, 2 modules, signals. **Structure follows the flat v6 contract (`docs/SHARD-LAYOUT.md`) once migrated during Day 1-4; current committed state may still use the old `templates/` layout.** | Use this for testing during Days 1-4 before the obsidian-mind shard conversion on Day 5. |
+| **`docs/SHARD-LAYOUT.md`** | **v6 shard-layout contract + three binding invariants. Active design spec.** Folded into `ARCHITECTURE.md §3` and `IMPLEMENTATION.md §4.5` / `§4.5a` / `§4.5b` for the engine specs; this doc remains the canonical contract for the binding properties + author-facing layout. | Before implementing anything related to shard layout, install walk, hook context, adopt command, or obsidian-mind v6. Authoritative over ARCHITECTURE.md / IMPLEMENTATION.md where they conflict. |
+| `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. **§10.7 `--version` gap tracked in [#76](https://github.com/breferrari/shardmind/issues/76).** | Before making any architectural decision. |
+| `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, module specs with TypeScript signatures, algorithms as numbered steps, error cases, 20 merge test fixtures, 6-day build plan. **§9 (Build Plan) is stale — see [#70](https://github.com/breferrari/shardmind/issues/70) for the current task list.** | Before implementing any module. |
+| `examples/minimal-shard/` | Minimal test shard for development. 4 values, 2 modules, signals. Flat v6 layout (`.shardmind/` sidecar, content at native paths, dotfolder `.njk` for rendering). | Use as a fixture for engine-level tests; obsidian-mind v6 conversion lands at Milestone 5. |
 
 **Read the relevant spec section before writing code.** The specs define inputs, outputs, algorithms, error cases, and test expectations for every module. Don't improvise — implement what the spec says.
 
@@ -85,6 +85,15 @@ Every PR for a v6 issue must demonstrate in its description:
 - The quality-gate checklist above lives in [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) and auto-populates every new PR. Don't delete items — check them or justify their absence.
 - **Interim proxy for Invariant 1** while #73-#77 are in-flight: until [#78](https://github.com/breferrari/shardmind/issues/78) lands its CI test, each PR on #73-#77 should manually run `git clone <a fixture shard>` + `shardmind install --defaults` + `diff -r` and paste the result (or "no diff beyond Tier 1 + `.shardmind/` metadata") into the PR description.
 
+### 7. Commit hygiene — step-by-step, never one mega-commit
+
+- **A PR is a sequence of small, reviewable commits.** A single squashed commit on a multi-step change is a review-hostile artifact: reviewers can't bisect, can't read incrementally, can't revert the wrong piece. Always split.
+- **Commit at every coherent step.** A new module + its tests is a step. A test sweep that migrates N existing tests to a new contract is a step. A docs update is a step. A fixture regeneration is a step. Don't batch unrelated steps; don't fragment the same step across commits.
+- **Each commit must be self-consistent**: typecheck + the relevant test scope green at every commit. Reviewers (and `git bisect`) rely on this — a broken intermediate commit defeats the purpose. If a step needs a follow-up step to make tests green, fold them into the same commit.
+- **Conventional-commit prefixes** (`feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`). Subject ≤ 70 chars. Body explains *why* and links the issue. The issue tag goes in the *first* commit of the series; subsequent commits in the same PR don't repeat it unless they cite a sub-decision.
+- **Recommended split shape** for engine work: (1) new pure module(s) + their unit tests, (2) wire-up to existing modules, (3) call-site migrations + test sweep, (4) fixtures / examples, (5) docs (CHANGELOG, ROADMAP). Five commits is normal for a v6 sub-issue PR; one commit is wrong.
+- **Force-pushing the topic branch to fix history is fine** (and expected) before review starts. Once a reviewer has commented, prefer additive `fixup!` commits over rewriting their context. Auto-squash on merge if the maintainer prefers a squashed history at merge time — the *review* still happened against the granular series.
+
 ## Tech Stack
 
 | Tool | Purpose |
@@ -96,6 +105,7 @@ Every PR for a v6 issue must demonstrate in its description:
 | **yaml** (eemeli/yaml) | YAML parsing. TypeScript-typed, comment-preserving |
 | **tar** (node-tar) | Tarball download + extraction |
 | **semver** | Version parsing, range checking |
+| **ignore** | gitignore-spec glob matcher for `.shardmindignore`. Negation pre-filtered by the wrapper (deferred to v0.2 per #87). |
 | **tsx** | TypeScript loader for post-install / post-update hook subprocess execution |
 | **zod** | Schema validation. Shared with Pastel for arg parsing |
 | **diff** | Unified diff generation for update previews |
@@ -149,7 +159,9 @@ shardmind/
 │   │   ├── drift.ts                   # Ownership detection + drift analysis
 │   │   ├── differ.ts                  # Three-way merge (node-diff3)
 │   │   ├── migrator.ts                # Apply schema migrations to values
-│   │   ├── modules.ts                 # Module resolution + file gating
+│   │   ├── modules.ts                 # Shard-root walker + module resolution + file gating
+│   │   ├── tier1.ts                   # Engine-enforced source-side path exclusions
+│   │   ├── shardmindignore.ts         # gitignore-spec glob matcher (negation rejected v0.1)
 │   │   ├── update-planner.ts          # Pure update plan from drift + new shard
 │   │   ├── update-executor.ts         # Apply update plan with rollback
 │   │   ├── install-planner.ts         # Pure install plan + collisions
@@ -183,6 +195,8 @@ shardmind/
 │   │   └── helpers/                   # build-once, tarball, github-stub,
 │   │                                  # spawn-cli, vault factories
 │   ├── helpers/                       # Shared test utilities (factories)
+│   │   ├── shard-state.ts             # makeShardState, makeFileState
+│   │   └── make-shard-source.ts       # makeShardSource — v6 temp-shard scaffold
 │   └── fixtures/                      # Test data
 │       ├── merge/                     # 20 three-way merge scenarios
 │       ├── shards/                    # Pre-built shard tarballs
@@ -274,7 +288,9 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `schema.ts` | §4.4 | Parse shard-schema.yaml → zod validator |
 | `download.ts` | §4.2 | Fetch + extract GitHub tarball |
 | `renderer.ts` | §4.6 | Nunjucks + frontmatter-aware rendering |
-| `modules.ts` | §4.5 | Module resolution + file gating |
+| `modules.ts` | §4.5 (v6: see SHARD-LAYOUT.md §Engine change scope §Walk + discovery) | Shard-root walker + module resolution + file gating |
+| `tier1.ts` | SHARD-LAYOUT.md §File disposition Tier 1 | Engine-enforced source-side path exclusions (`.git/`, `.github/`, `.shardmind/`, `.obsidian/{workspace,workspace-mobile,graph}.json`) |
+| `shardmindignore.ts` | SHARD-LAYOUT.md §Engine change scope item 6 | gitignore-spec glob matcher for the root `.shardmindignore` (negation rejected in v0.1, deferred to #87) |
 | `state.ts` | §4.7 | Read/write .shardmind/state.json |
 | `registry.ts` | §4.1 | Resolve shard ref → GitHub URL |
 | `drift.ts` | §4.8 | Ownership detection + drift analysis |
@@ -290,7 +306,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `cancellation.ts` | ARCHITECTURE §19.7 | Cross-platform SIGINT bridge (Windows stdin-ETX → process.emit SIGINT) |
 | `state-migrator.ts` | §4.7 (v0.2 hook) | Forward-migration framework for `.shardmind/state.json`; scaffolding in v0.1 |
 | `hook.ts` | §4.16 | Resolve + execute post-install / post-update hook scripts via bundled `tsx` subprocess (non-fatal) |
-| `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent, stripTemplatePrefix |
+| `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
 
@@ -307,10 +323,12 @@ Read the spec section before implementing. It has inputs, outputs, algorithm ste
 
 ### Commits
 
-- Conventional commits: `feat:`, `fix:`, `test:`, `docs:`, `refactor:`.
-- One module per commit when building. Don't batch unrelated changes.
-- Reference the GitHub issue: `feat: core/manifest.ts — parse + validate shard.yaml (#2)`.
-- Tests pass before committing.
+See [`§Working Agreement §7 — Commit hygiene`](#7-commit-hygiene--step-by-step-never-one-mega-commit) for the binding rule. Quick reference:
+
+- Conventional commits: `feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`.
+- **Step-by-step always — never one mega-commit on a multi-step PR.** Splitting is what makes a PR reviewable; squashing is the maintainer's call at merge time.
+- Each commit must be self-consistent: typecheck + relevant tests green at every commit.
+- Reference the GitHub issue in the *first* commit of a PR series; subsequent commits cite the issue only when introducing a sub-decision.
 
 ## Key Architectural Decisions
 

@@ -56,7 +56,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 
 Engine rework required by the v6 shard-layout contract. Must land before Milestone 5. Spec: [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md).
 
-- [ ] Flat shard-root walk + Tier 1 exclusions + `.shardmindignore` parser ([#73](https://github.com/breferrari/shardmind/issues/73))
+- [x] Flat shard-root walk + Tier 1 exclusions + `.shardmindignore` parser ([#73](https://github.com/breferrari/shardmind/issues/73))
 - [ ] Schema defaults enforcement + drop `partials` field ([#74](https://github.com/breferrari/shardmind/issues/74))
 - [ ] `HookContext` extensions (`valuesAreDefaults`, `newFiles`, `removedFiles`) + post-hook re-hash ([#75](https://github.com/breferrari/shardmind/issues/75))
 - [ ] Ref installs (`github:owner/repo#<ref>`) + update semantics (`--version`, `--include-prerelease`, ref re-resolution) ([#76](https://github.com/breferrari/shardmind/issues/76))
@@ -74,7 +74,7 @@ Engine rework required by the v6 shard-layout contract. Must land before Milesto
 
 - [ ] Research-wiki shard + E2E tests + npm publish ([#15](https://github.com/breferrari/shardmind/issues/15))
 - [ ] Create `shardmind/registry` repo with index.json (2 shards) — finalize schema per [#29](https://github.com/breferrari/shardmind/issues/29)
-- [ ] v6 docs rewrite: ARCHITECTURE §3, AUTHORING §2, IMPLEMENTATION §4.* / §9; fold SHARD-LAYOUT.md into ARCHITECTURE ([#85](https://github.com/breferrari/shardmind/issues/85))
+- [ ] v6 docs polish: fold remaining SHARD-LAYOUT.md content into ARCHITECTURE §3 + IMPLEMENTATION §4.5/§4.5a/§4.5b once #74-#78 land; rewrite IMPLEMENTATION §9 (Build Plan) to match the actual #70 task series ([#85](https://github.com/breferrari/shardmind/issues/85)) — partial rewrites for §3, AUTHORING §2, IMPLEMENTATION §4.2/§4.5/§4.5a/§4.5b/§4.7 already landed with #73
 - [ ] Final test: fresh machine → `npm install -g shardmind` → `shardmind install breferrari/obsidian-mind` (registry mode, proves [#29](https://github.com/breferrari/shardmind/issues/29) shape works end-to-end) ([#15](https://github.com/breferrari/shardmind/issues/15))
 
 ---

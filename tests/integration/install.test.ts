@@ -54,8 +54,8 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   });
 
   it('installs with all modules included and writes the full output tree', async () => {
-    const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
 
     const selections = defaultModuleSelections(schema);
     const validator = buildValuesValidator(schema);
@@ -111,8 +111,8 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   });
 
   it('excludes files for modules marked excluded', async () => {
-    const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
 
     const selections = defaultModuleSelections(schema);
     selections['extras'] = 'excluded';
@@ -143,8 +143,8 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   });
 
   it('records sha256 hash per file in state', async () => {
-    const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
     const validator = buildValuesValidator(schema);
     const values = validator.parse(resolveComputedDefaults(schema, VALUES));
@@ -173,8 +173,8 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   });
 
   it('dry-run does not write any files', async () => {
-    const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
     const validator = buildValuesValidator(schema);
     const values = validator.parse(resolveComputedDefaults(schema, VALUES));
@@ -196,7 +196,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   });
 
   it('planOutputs reports per-module file counts', async () => {
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
     const { moduleFileCounts, outputs } = await planOutputs(schema, MINIMAL_SHARD, selections);
 
@@ -209,7 +209,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   it('collision detection flags pre-existing files at planned output paths', async () => {
     await fsp.writeFile(path.join(vault, 'Home.md'), 'user content', 'utf-8');
 
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
     const { outputs } = await planOutputs(schema, MINIMAL_SHARD, selections);
     const collisions = await detectCollisions(vault, outputs.map((o) => o.outputPath));
@@ -221,7 +221,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   it('backupCollisions renames existing files out of the way', async () => {
     await fsp.writeFile(path.join(vault, 'Home.md'), 'user content', 'utf-8');
 
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
     const { outputs } = await planOutputs(schema, MINIMAL_SHARD, selections);
     const collisions = await detectCollisions(vault, outputs.map((o) => o.outputPath));
@@ -235,8 +235,8 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   it('refuses to install when shard-values.yaml already exists', async () => {
     await fsp.writeFile(path.join(vault, 'shard-values.yaml'), 'user_name: Old\n', 'utf-8');
 
-    const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
     const validator = buildValuesValidator(schema);
     const values = validator.parse(resolveComputedDefaults(schema, VALUES));
@@ -256,10 +256,11 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   });
 
   it('planOutputs reports alwaysIncludedFileCount for module-null files', async () => {
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
     const { alwaysIncludedFileCount } = await planOutputs(schema, MINIMAL_SHARD, selections);
-    // minimal-shard: CLAUDE.md.njk and Home.md.njk have no module (no paths match)
+    // minimal-shard: CLAUDE.md (static), Home.md.njk, .claude/settings.json.njk
+    // all sit outside any module's `paths`/`commands`/`agents` claim.
     expect(alwaysIncludedFileCount).toBeGreaterThanOrEqual(2);
   });
 
@@ -267,8 +268,8 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     const original = path.join(vault, 'Home.md');
     await fsp.writeFile(original, 'user content', 'utf-8');
 
-    const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
     const validator = buildValuesValidator(schema);
     const values = validator.parse(resolveComputedDefaults(schema, VALUES));
@@ -295,8 +296,8 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   });
 
   it('rollback removes all written files and the .shardmind directory', async () => {
-    const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
     const validator = buildValuesValidator(schema);
     const values = validator.parse(resolveComputedDefaults(schema, VALUES));
@@ -381,8 +382,8 @@ describe('install + post-install hook integration', () => {
       'utf-8',
     );
 
-    const manifest = await parseManifest(path.join(shardDir, 'shard.yaml'));
-    const schema = await parseSchema(path.join(shardDir, 'shard-schema.yaml'));
+    const manifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(shardDir, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
     const validator = buildValuesValidator(schema);
     const values = validator.parse(resolveComputedDefaults(schema, VALUES));
@@ -439,8 +440,8 @@ describe('install + post-install hook integration', () => {
       'utf-8',
     );
 
-    const manifest = await parseManifest(path.join(shardDir, 'shard.yaml'));
-    const schema = await parseSchema(path.join(shardDir, 'shard-schema.yaml'));
+    const manifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(shardDir, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
     const validator = buildValuesValidator(schema);
     const values = validator.parse(resolveComputedDefaults(schema, VALUES));

@@ -42,7 +42,6 @@ modules:
   extras:
     label: "Extra features (for testing module exclusion)"
     paths: ["extras/"]
-    partials: ["claude/_extras.md.njk"]
     commands: ["example-command"]
     removable: true
 

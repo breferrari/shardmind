@@ -31,6 +31,7 @@
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
     "diff": "^9.0.0",
+    "ignore": "7.0.5",
     "ink": "^7.0.1",
     "node-diff3": "^3.2.0",
     "nunjucks": "^3.2.4",

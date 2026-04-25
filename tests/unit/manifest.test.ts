@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { parseManifest, ShardManifestSchema } from '../../source/core/manifest.js';
 
 const FIXTURE_DIR = path.resolve('examples/minimal-shard');
-const VALID_MANIFEST = path.join(FIXTURE_DIR, 'shard.yaml');
+const VALID_MANIFEST = path.join(FIXTURE_DIR, '.shardmind', 'shard.yaml');
 
 describe('parseManifest', () => {
   it('parses valid shard.yaml from minimal-shard fixture', async () => {

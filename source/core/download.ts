@@ -7,7 +7,11 @@ import { pipeline } from 'node:stream/promises';
 import * as tar from 'tar';
 import type { TempShard } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE } from '../runtime/vault-paths.js';
+import {
+  SHARD_MANIFEST_FILE,
+  SHARD_SCHEMA_FILE,
+  SHARD_SOURCE_DIR,
+} from '../runtime/vault-paths.js';
 
 export async function downloadShard(tarballUrl: string): Promise<TempShard> {
   const tempDir = path.join(os.tmpdir(), `shardmind-${crypto.randomUUID()}`);
@@ -74,18 +78,18 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
     );
   }
 
-  // Verify required files
-  const manifestPath = path.join(tempDir, SHARD_MANIFEST_FILE);
-  const schemaPath = path.join(tempDir, SHARD_SCHEMA_FILE);
+  // Verify required files (v6: manifest + schema live under .shardmind/)
+  const manifestPath = path.join(tempDir, SHARD_SOURCE_DIR, SHARD_MANIFEST_FILE);
+  const schemaPath = path.join(tempDir, SHARD_SOURCE_DIR, SHARD_SCHEMA_FILE);
 
   try {
     await fs.access(manifestPath);
   } catch {
     await safeCleanup(tempDir);
     throw new ShardMindError(
-      'Not a valid shard: shard.yaml not found',
+      `Not a valid shard: ${SHARD_SOURCE_DIR}/${SHARD_MANIFEST_FILE} not found`,
       'DOWNLOAD_MISSING_MANIFEST',
-      'Ensure the shard repository includes shard.yaml in its root.',
+      `Ensure the shard repository includes ${SHARD_SOURCE_DIR}/${SHARD_MANIFEST_FILE}.`,
     );
   }
 
@@ -94,9 +98,9 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
   } catch {
     await safeCleanup(tempDir);
     throw new ShardMindError(
-      'Not a valid shard: shard-schema.yaml not found',
+      `Not a valid shard: ${SHARD_SOURCE_DIR}/${SHARD_SCHEMA_FILE} not found`,
       'DOWNLOAD_MISSING_SCHEMA',
-      'Ensure the shard repository includes shard-schema.yaml in its root.',
+      `Ensure the shard repository includes ${SHARD_SOURCE_DIR}/${SHARD_SCHEMA_FILE}.`,
     );
   }
 

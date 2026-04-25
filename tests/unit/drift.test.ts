@@ -265,7 +265,7 @@ async function buildVolatileDriftReport(dir: string, actualContent: string) {
 
     const state = makeShardState({ files: {
       [relPath]: {
-        template: 'templates/volatile.md.njk',
+        template: 'volatile.md.njk',
         rendered_hash: 'stale-hash-that-does-not-match-on-purpose',
         ownership: 'user',
       },

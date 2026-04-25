@@ -42,7 +42,15 @@ export type ErrorCode =
   | 'STATE_READ_FAILED'
   | 'STATE_CORRUPT'
   | 'STATE_UNSUPPORTED_VERSION'
-  | 'STATE_CACHE_MISSING_TEMPLATES'
+  | 'STATE_CACHE_MISSING_MANIFEST'
+
+  // Shard-source walk
+  | 'WALK_SYMLINK_REJECTED'
+  | 'WALK_INVALID_ENTRY'
+
+  // .shardmindignore parser
+  | 'SHARDMINDIGNORE_READ_FAILED'
+  | 'SHARDMINDIGNORE_NEGATION_UNSUPPORTED'
 
   // Registry / download
   | 'SHARD_NOT_FOUND'

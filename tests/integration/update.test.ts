@@ -75,8 +75,8 @@ async function installBaseline(
   shardDir: string,
   tarballSha: string,
 ): Promise<{ manifest: ShardManifest; schema: ShardSchema; values: Record<string, unknown> }> {
-  const manifest = await parseManifest(path.join(shardDir, 'shard.yaml'));
-  const schema = await parseSchema(path.join(shardDir, 'shard-schema.yaml'));
+  const manifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
+  const schema = await parseSchema(path.join(shardDir, '.shardmind', 'shard-schema.yaml'));
   const selections = defaultModuleSelections(schema);
   const validator = buildValuesValidator(schema);
   const values = validator.parse(resolveComputedDefaults(schema, BASE_VALUES)) as Record<string, unknown>;
@@ -100,7 +100,7 @@ async function copyShard(src: string, dst: string): Promise<void> {
 }
 
 async function bumpVersion(shardDir: string, next: string): Promise<void> {
-  const manifestPath = path.join(shardDir, 'shard.yaml');
+  const manifestPath = path.join(shardDir, '.shardmind', 'shard.yaml');
   const raw = await fsp.readFile(manifestPath, 'utf-8');
   const bumped = raw.replace(/^version: .+$/m, `version: ${next}`);
   await fsp.writeFile(manifestPath, bumped, 'utf-8');
@@ -140,7 +140,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     await bumpVersion(newShard, opts.bumpTo);
     if (opts.newHomeTemplate !== undefined) {
       await fsp.writeFile(
-        path.join(newShard, 'templates/Home.md.njk'),
+        path.join(newShard, 'Home.md.njk'),
         opts.newHomeTemplate,
         'utf-8',
       );
@@ -148,8 +148,8 @@ describe('update pipeline (against examples/minimal-shard)', () => {
 
     const state = (await readState(vault)) as ShardState;
     const oldValues = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
-    const newManifest = await parseManifest(path.join(newShard, 'shard.yaml'));
-    const newSchema = await parseSchema(path.join(newShard, 'shard-schema.yaml'));
+    const newManifest = await parseManifest(path.join(newShard, '.shardmind', 'shard.yaml'));
+    const newSchema = await parseSchema(path.join(newShard, '.shardmind', 'shard-schema.yaml'));
     return { state, oldValues, newManifest, newSchema };
   }
 
@@ -218,7 +218,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
   it('three-way merges a user-edited file with a non-overlapping template change', async () => {
     // User appends a line of their own to Home.md; shard changes the
     // welcome line. Expect auto_merge keeping both changes.
-    const origHome = await fsp.readFile(path.join(MINIMAL_SHARD, 'templates/Home.md.njk'), 'utf-8');
+    const origHome = await fsp.readFile(path.join(MINIMAL_SHARD, 'Home.md.njk'), 'utf-8');
     // New template: change the welcome line.
     const newTemplate = origHome.replace(
       'Welcome to your vault, {{ user_name }}.',
@@ -234,12 +234,12 @@ describe('update pipeline (against examples/minimal-shard)', () => {
 
     await copyShard(MINIMAL_SHARD, newShard);
     await bumpVersion(newShard, '0.2.0');
-    await fsp.writeFile(path.join(newShard, 'templates/Home.md.njk'), newTemplate, 'utf-8');
+    await fsp.writeFile(path.join(newShard, 'Home.md.njk'), newTemplate, 'utf-8');
 
     const state = (await readState(vault)) as ShardState;
     const oldValues = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
-    const newManifest = await parseManifest(path.join(newShard, 'shard.yaml'));
-    const newSchema = await parseSchema(path.join(newShard, 'shard-schema.yaml'));
+    const newManifest = await parseManifest(path.join(newShard, '.shardmind', 'shard.yaml'));
+    const newSchema = await parseSchema(path.join(newShard, '.shardmind', 'shard-schema.yaml'));
 
     const selections = mergeModuleSelections(state.modules, newSchema, {});
     const drift = await detectDrift(vault, state);
@@ -372,7 +372,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
   it('reports "already up to date" when tarball matches and version matches', async () => {
     const { manifest, values } = await (async () => {
       await installBaseline(vault, MINIMAL_SHARD, 'sha-same');
-      const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
+      const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
       return { manifest, values: parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) };
     })();
     const state = (await readState(vault)) as ShardState;
@@ -389,7 +389,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     await copyShard(MINIMAL_SHARD, newShard);
     await bumpVersion(newShard, '0.2.0');
 
-    const schemaPath = path.join(newShard, 'shard-schema.yaml');
+    const schemaPath = path.join(newShard, '.shardmind', 'shard-schema.yaml');
     const raw = await fsp.readFile(schemaPath, 'utf-8');
     const withNewValue = raw.replace(
       'values:',
@@ -421,12 +421,12 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     // Build a fake new shard that no longer ships brain/North Star.md.
     await copyShard(MINIMAL_SHARD, newShard);
     await bumpVersion(newShard, '0.2.0');
-    await fsp.rm(path.join(newShard, 'templates/brain/North Star.md.njk'), { force: true });
+    await fsp.rm(path.join(newShard, 'brain/North Star.md.njk'), { force: true });
 
     const state = (await readState(vault)) as ShardState;
     const oldValues = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
-    const newManifest = await parseManifest(path.join(newShard, 'shard.yaml'));
-    const newSchema = await parseSchema(path.join(newShard, 'shard-schema.yaml'));
+    const newManifest = await parseManifest(path.join(newShard, '.shardmind', 'shard.yaml'));
+    const newSchema = await parseSchema(path.join(newShard, '.shardmind', 'shard-schema.yaml'));
 
     const selections = mergeModuleSelections(state.modules, newSchema, {});
     const renderCtx = buildRenderContext(newManifest, oldValues, selections);
@@ -490,12 +490,12 @@ describe('update pipeline (against examples/minimal-shard)', () => {
 
     await copyShard(MINIMAL_SHARD, newShard);
     await bumpVersion(newShard, '0.2.0');
-    await fsp.rm(path.join(newShard, 'templates/brain/North Star.md.njk'), { force: true });
+    await fsp.rm(path.join(newShard, 'brain/North Star.md.njk'), { force: true });
 
     const state = (await readState(vault)) as ShardState;
     const oldValues = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
-    const newManifest = await parseManifest(path.join(newShard, 'shard.yaml'));
-    const newSchema = await parseSchema(path.join(newShard, 'shard-schema.yaml'));
+    const newManifest = await parseManifest(path.join(newShard, '.shardmind', 'shard.yaml'));
+    const newSchema = await parseSchema(path.join(newShard, '.shardmind', 'shard-schema.yaml'));
     const selections = mergeModuleSelections(state.modules, newSchema, {});
     const renderCtx = buildRenderContext(newManifest, oldValues, selections);
     const drift = await detectDrift(vault, state);
@@ -643,15 +643,15 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     await copyShard(MINIMAL_SHARD, newShard);
     await bumpVersion(newShard, '0.2.0');
     await fsp.writeFile(
-      path.join(newShard, 'templates/brain/Backlog.md.njk'),
+      path.join(newShard, 'brain/Backlog.md.njk'),
       'Shard-managed backlog for {{ user_name }}\n',
       'utf-8',
     );
 
     const state = (await readState(vault)) as ShardState;
     const oldValues = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
-    const newManifest = await parseManifest(path.join(newShard, 'shard.yaml'));
-    const newSchema = await parseSchema(path.join(newShard, 'shard-schema.yaml'));
+    const newManifest = await parseManifest(path.join(newShard, '.shardmind', 'shard.yaml'));
+    const newSchema = await parseSchema(path.join(newShard, '.shardmind', 'shard-schema.yaml'));
     const selections = mergeModuleSelections(state.modules, newSchema, {});
     const renderCtx = buildRenderContext(newManifest, oldValues, selections);
     const drift = await detectDrift(vault, state);
@@ -781,15 +781,15 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     await bumpVersion(newShard, '0.2.0');
     const shardBody = 'Shard-managed backlog for {{ user_name }}\n';
     await fsp.writeFile(
-      path.join(newShard, 'templates/brain/Backlog.md.njk'),
+      path.join(newShard, 'brain/Backlog.md.njk'),
       shardBody,
       'utf-8',
     );
 
     const state = (await readState(vault)) as ShardState;
     const oldValues = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
-    const newManifest = await parseManifest(path.join(newShard, 'shard.yaml'));
-    const newSchema = await parseSchema(path.join(newShard, 'shard-schema.yaml'));
+    const newManifest = await parseManifest(path.join(newShard, '.shardmind', 'shard.yaml'));
+    const newSchema = await parseSchema(path.join(newShard, '.shardmind', 'shard-schema.yaml'));
     const selections = mergeModuleSelections(state.modules, newSchema, {});
     const renderCtx = buildRenderContext(newManifest, oldValues, selections);
     const drift = await detectDrift(vault, state);
@@ -844,9 +844,9 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     // The minimal-shard fixture only declares a post-install hook; the
     // update-path test needs a post-update declaration too. Append it
     // to the copied shard.yaml so the lookup finds the file below.
-    const shardYamlInit = await fsp.readFile(path.join(shardDir, 'shard.yaml'), 'utf-8');
+    const shardYamlInit = await fsp.readFile(path.join(shardDir, '.shardmind', 'shard.yaml'), 'utf-8');
     await fsp.writeFile(
-      path.join(shardDir, 'shard.yaml'),
+      path.join(shardDir, '.shardmind', 'shard.yaml'),
       shardYamlInit + '  post-update: hooks/post-update.ts\n',
       'utf-8',
     );
@@ -870,15 +870,15 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       const { manifest, schema, values } = await installBaseline(vault, shardDir, 'sha-0.1.0');
 
       // Bump the shard version to 0.2.0 and re-parse so planUpdate runs.
-      const shardYaml = await fsp.readFile(path.join(shardDir, 'shard.yaml'), 'utf-8');
+      const shardYaml = await fsp.readFile(path.join(shardDir, '.shardmind', 'shard.yaml'), 'utf-8');
       await fsp.writeFile(
-        path.join(shardDir, 'shard.yaml'),
+        path.join(shardDir, '.shardmind', 'shard.yaml'),
         shardYaml.replace('version: 0.1.0', 'version: 0.2.0'),
         'utf-8',
       );
 
       const state = (await readState(vault)) as ShardState;
-      const newManifest = await parseManifest(path.join(shardDir, 'shard.yaml'));
+      const newManifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
       const selections = defaultModuleSelections(schema);
       const renderCtx = buildRenderContext(newManifest, values, selections);
       const drift = await detectDrift(vault, state);

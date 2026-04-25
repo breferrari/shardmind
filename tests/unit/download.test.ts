@@ -43,8 +43,8 @@ describe('downloadShard', () => {
     cleanupFns.push(result.cleanup);
 
     expect(result.tempDir).toBeTruthy();
-    expect(result.manifest).toBe(path.join(result.tempDir, 'shard.yaml'));
-    expect(result.schema).toBe(path.join(result.tempDir, 'shard-schema.yaml'));
+    expect(result.manifest).toBe(path.join(result.tempDir, '.shardmind', 'shard.yaml'));
+    expect(result.schema).toBe(path.join(result.tempDir, '.shardmind', 'shard-schema.yaml'));
   });
 
   it('extracted files exist on disk', async () => {
@@ -59,10 +59,10 @@ describe('downloadShard', () => {
     const schemaStat = await fs.stat(result.schema);
     expect(schemaStat.isFile()).toBe(true);
 
-    // Templates should also be extracted
-    const templatesDir = path.join(result.tempDir, 'templates');
-    const templatesStat = await fs.stat(templatesDir);
-    expect(templatesStat.isDirectory()).toBe(true);
+    // v6 layout: vault content lives at the shard root, no templates/ dir.
+    // Sample-check a known file from the migrated minimal-shard.
+    const homeStat = await fs.stat(path.join(result.tempDir, 'Home.md.njk'));
+    expect(homeStat.isFile()).toBe(true);
   });
 
   it('cleanup() removes the temp directory', async () => {
@@ -102,8 +102,8 @@ describe('downloadShard', () => {
     const tmpTarball = path.join(os.tmpdir(), `test-tarball-${crypto.randomUUID()}.tar.gz`);
     const tmpSrc = path.join(os.tmpdir(), `test-src-${crypto.randomUUID()}`);
     const innerDir = path.join(tmpSrc, 'owner-repo-abc');
-    await fs.mkdir(innerDir, { recursive: true });
-    await fs.writeFile(path.join(innerDir, 'shard-schema.yaml'), 'schema_version: 1');
+    await fs.mkdir(path.join(innerDir, '.shardmind'), { recursive: true });
+    await fs.writeFile(path.join(innerDir, '.shardmind', 'shard-schema.yaml'), 'schema_version: 1');
     await tar.c({ gzip: true, file: tmpTarball, cwd: tmpSrc }, ['owner-repo-abc']);
 
     try {
@@ -123,8 +123,8 @@ describe('downloadShard', () => {
     const tmpTarball = path.join(os.tmpdir(), `test-tarball-${crypto.randomUUID()}.tar.gz`);
     const tmpSrc = path.join(os.tmpdir(), `test-src-${crypto.randomUUID()}`);
     const innerDir = path.join(tmpSrc, 'owner-repo-abc');
-    await fs.mkdir(innerDir, { recursive: true });
-    await fs.writeFile(path.join(innerDir, 'shard.yaml'), 'apiVersion: v1');
+    await fs.mkdir(path.join(innerDir, '.shardmind'), { recursive: true });
+    await fs.writeFile(path.join(innerDir, '.shardmind', 'shard.yaml'), 'apiVersion: v1');
     await tar.c({ gzip: true, file: tmpTarball, cwd: tmpSrc }, ['owner-repo-abc']);
 
     try {

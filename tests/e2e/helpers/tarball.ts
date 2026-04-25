@@ -64,15 +64,16 @@ export async function buildTarballFixtures(): Promise<TarballFixtures> {
       mutate: null,
       outDir: baseDir,
     }),
-    // v0.2.0 — bump Home.md.njk managed content + add a new file under brain/
+    // v0.2.0 — bump Home.md.njk managed content + add a new file under brain/.
+    // v6 layout: vault content lives at the shard root (no `templates/` wrapper).
     buildOne({
       sourceDir: MINIMAL_SHARD,
       version: '0.2.0',
       mutate: async (work) => {
-        const home = path.join(work, 'templates', 'Home.md.njk');
+        const home = path.join(work, 'Home.md.njk');
         const original = await fs.readFile(home, 'utf-8');
         await fs.writeFile(home, original + '\n\n<!-- v0.2.0 addition -->\n', 'utf-8');
-        const newFile = path.join(work, 'templates', 'brain', 'Changelog.md.njk');
+        const newFile = path.join(work, 'brain', 'Changelog.md.njk');
         await fs.writeFile(
           newFile,
           '# Changelog\n\nThis file is new in v0.2.0.\n',
@@ -88,12 +89,12 @@ export async function buildTarballFixtures(): Promise<TarballFixtures> {
       sourceDir: MINIMAL_SHARD,
       version: '0.3.0',
       mutate: async (work) => {
-        const home = path.join(work, 'templates', 'Home.md.njk');
+        const home = path.join(work, 'Home.md.njk');
         const original = await fs.readFile(home, 'utf-8');
         const bumped = original + '\n\n<!-- v0.2.0 addition -->\nUpdated again in v0.3.0.\n';
         await fs.writeFile(home, bumped, 'utf-8');
         await fs.writeFile(
-          path.join(work, 'templates', 'brain', 'Changelog.md.njk'),
+          path.join(work, 'brain', 'Changelog.md.njk'),
           '# Changelog\n\nThis file is new in v0.2.0.\nAnother line in v0.3.0.\n',
           'utf-8',
         );
@@ -135,8 +136,8 @@ async function buildOne(opts: BuildOneOpts): Promise<string> {
     await copyDir(opts.sourceDir, workDir);
 
     // Bump shard.yaml version so the manifest inside the tarball agrees
-    // with the tag the stub reports.
-    const manifestPath = path.join(workDir, 'shard.yaml');
+    // with the tag the stub reports. v6 layout: manifest under .shardmind/.
+    const manifestPath = path.join(workDir, '.shardmind', 'shard.yaml');
     const manifestSrc = await fs.readFile(manifestPath, 'utf-8');
     const manifest = parseYaml(manifestSrc) as Record<string, unknown>;
     manifest['version'] = opts.version;

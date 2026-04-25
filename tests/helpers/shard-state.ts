@@ -26,7 +26,7 @@ export function makeShardState(overrides: Partial<ShardState> = {}): ShardState 
 
 export function makeFileState(overrides: Partial<FileState> = {}): FileState {
   return {
-    template: 'templates/unspecified.md.njk',
+    template: 'unspecified.md.njk',
     rendered_hash: PLACEHOLDER_HASH,
     ownership: 'managed',
     ...overrides,

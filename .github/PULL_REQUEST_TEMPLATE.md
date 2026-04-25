@@ -33,6 +33,7 @@ Delete this section for non-v6 PRs.
 - [ ] `npm run typecheck` passes locally and in CI
 - [ ] `npm test` passes locally and in CI (all scopes: unit, component, integration, E2E)
 - [ ] **Tests added before implementation** (no code without a failing test that motivated it) — CLAUDE.md §Working Agreement §2
+- [ ] **Step-by-step commits** (not a single squash) — CLAUDE.md §Working Agreement §7. Typecheck + relevant tests must be green at every commit; reviewers should be able to read the series incrementally and `git bisect`.
 - [ ] Adversarial cases from the section above are all covered by tests
 - [ ] Copilot review requested and every comment addressed (or marked false-positive with justification in the PR thread)
 - [ ] Issue acceptance criteria checked off with evidence below (or in the issue)
