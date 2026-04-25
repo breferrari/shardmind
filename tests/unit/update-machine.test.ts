@@ -89,7 +89,7 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
   });
 
   it('VERSION_NOT_FOUND from a missing tarball gets the "transient / deleted tag" hint', async () => {
-    // verifyTag branch: `/releases?per_page=N` returns a stable tag, then
+    // verifyTarball branch: `/releases?per_page=N` returns a stable tag, then
     // the HEAD on the tarball 404s — the tag exists in the API but the
     // tarball is unreachable. "Retry in a minute" is the right hint.
     globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

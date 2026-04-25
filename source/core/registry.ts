@@ -9,8 +9,8 @@ import { ShardMindError } from '../runtime/types.js';
  * no downstream consumer is prepared to reason about.
  *
  * Used by `fetchLatestRelease`, `resolve` (tarball URL construction), and
- * indirectly by `verifyTag` (which consumes `resolve`'s tarball URL). The
- * E2E suite sets this to the local GitHub-stub address so no test hits
+ * indirectly by `verifyTarball` (which consumes `resolve`'s tarball URL).
+ * The E2E suite sets this to the local GitHub-stub address so no test hits
  * the real internet; future work (#34 validate, #39 alternate registries,
  * GHE support) also consumes it.
  *

@@ -1398,10 +1398,13 @@ staying hermetic. No test reaches the public internet.
   registries, enterprise GHE support). `SHARDMIND_REGISTRY_INDEX_URL`
   has the same shape for the namespaced `owner/repo` index lookup.
 - **Stub**: `tests/e2e/helpers/github-stub.ts` spins up an HTTP server on
-  `127.0.0.1:0` (OS-assigned port) that emulates three GitHub REST
-  endpoints — `releases/latest`, `HEAD tarball`, `GET tarball`. The
-  `setLatest` API lets a test advertise a newer release mid-session,
-  driving update-available status without restarting the server. The
+  `127.0.0.1:0` (OS-assigned port) that emulates the GitHub REST
+  endpoints the engine consumes — `/releases?per_page=N` (filtered listing),
+  `/commits/<ref>` (ref → SHA), and `HEAD` / `GET /tarball/v<ver>` plus
+  `/tarball/<sha>` for both tag and ref installs. `setLatest` advertises
+  a newer stable release mid-session; `setRef` repoints a branch at a
+  new SHA + tarball, driving update-available status without restarting
+  the server. The
   server is `unref()`-ed so a forgotten `close()` can't pin the
   process; the suite's `afterAll` closes it explicitly.
 - **Fixture tarballs**: `tests/e2e/helpers/tarball.ts` builds three

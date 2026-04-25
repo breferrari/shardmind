@@ -254,7 +254,7 @@ Paths reference current code. Detail to land in `ARCHITECTURE.md §3` + `IMPLEME
 
 12. `source/core/registry.ts` — `github:owner/repo#<ref>` syntax (subsumes [#67](https://github.com/breferrari/shardmind/issues/67)); record resolved commit SHA for ref installs.
 13. `source/core/update-check.ts` — default resolution via `/releases` filtered non-prerelease; `--include-prerelease` widens. For ref-installs, re-resolve ref HEAD on every update.
-14. `source/commands/update.tsx` — add `--version <version>` flag; add `--include-prerelease` flag.
+14. `source/commands/update.tsx` — add `--release <tag>` flag (named `--release` rather than `--version` because Pastel reserves the program-level `--version`); add `--include-prerelease` flag.
 15. `source/runtime/types.ts` — `ShardState.ref?` + `ShardState.resolvedSha?` for ref installs.
 
 ### Adopt

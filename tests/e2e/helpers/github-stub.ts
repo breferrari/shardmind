@@ -3,7 +3,7 @@
  * consumes:
  *
  *   GET  /repos/:owner/:repo/releases?per_page=N → `[{ tag_name, prerelease }, …]`
- *   HEAD /repos/:owner/:repo/tarball/v<ver>      → 200 OK (verifyTag preflight)
+ *   HEAD /repos/:owner/:repo/tarball/v<ver>      → 200 OK (verifyTarball preflight)
  *   GET  /repos/:owner/:repo/tarball/v<ver>      → streams the fixture tarball
  *
  * The production registry (`source/core/registry.ts`) reads its base URL
