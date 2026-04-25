@@ -45,6 +45,7 @@ async function createMockVault(): Promise<string> {
     '    type: string',
     '    required: true',
     '    message: "Your name"',
+    '    default: ""',
     '    group: setup',
     '  org_name:',
     '    type: string',
@@ -58,6 +59,7 @@ async function createMockVault(): Promise<string> {
     '    options:',
     '      - { value: engineering, label: Engineering }',
     '      - { value: research, label: Research }',
+    '    default: engineering',
     '    group: setup',
     '  qmd_enabled:',
     '    type: boolean',
@@ -227,10 +229,10 @@ describe('validateValues', () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it('rejects missing required values', () => {
+  it('default-fills every value when given empty input (v6: every value has a default)', () => {
     const result = validateValues({}, schema);
-    expect(result.valid).toBe(false);
-    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
   });
 
   it('rejects invalid select values', () => {

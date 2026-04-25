@@ -4,6 +4,7 @@ values:
   max_depth:
     type: number
     message: "Maximum depth"
+    default: 0
     min: 10
     max: 5
     group: setup

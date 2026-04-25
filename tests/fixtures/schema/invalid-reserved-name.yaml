@@ -5,6 +5,7 @@ values:
     type: string
     required: true
     message: "Which shard?"
+    default: ""
     group: setup
 
 groups:

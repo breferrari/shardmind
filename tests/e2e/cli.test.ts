@@ -325,14 +325,15 @@ describe('shardmind install', () => {
     expect(result.stdout).toMatch(/REGISTRY_INVALID_REF/);
   });
 
-  it('reports VALUES_MISSING when --yes is used without --values for required keys', async () => {
-    vault = await createEmptyVault('install-missing-values');
+  it('--yes installs successfully without --values when every schema value has a default', async () => {
+    vault = await createEmptyVault('install-yes-defaults');
     const result = await spawnCli(
       ['install', SHARD_REF, '--yes'],
       { cwd: vault.root, env: envWithStub() },
     );
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout).toMatch(/VALUES_MISSING|required/i);
+    expect(result.exitCode).toBe(0);
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+    expect(await vault.exists('shard-values.yaml')).toBe(true);
   });
 
   it('backs up pre-existing user content under --yes', async () => {

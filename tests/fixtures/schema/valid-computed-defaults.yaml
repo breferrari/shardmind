@@ -8,6 +8,7 @@ values:
     options:
       - { value: engineering, label: "Engineering" }
       - { value: research, label: "Research" }
+    default: engineering
     group: setup
 
   is_engineering:

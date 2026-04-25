@@ -5,6 +5,7 @@ values:
     type: string
     required: true
     message: "Your name"
+    default: ""
     group: setup
 
   dark_mode:
@@ -28,6 +29,7 @@ values:
     options:
       - { value: engineering, label: "Engineering" }
       - { value: research, label: "Research" }
+    default: engineering
     group: setup
 
   plugins:
@@ -37,6 +39,7 @@ values:
       - { value: dataview, label: "Dataview" }
       - { value: templater, label: "Templater" }
       - { value: excalidraw, label: "Excalidraw" }
+    default: []
     group: setup
 
   tags:
