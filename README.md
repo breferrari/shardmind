@@ -129,7 +129,7 @@ my-shard/
   shard.yaml              # Package identity (name, version, deps)
   shard-schema.yaml       # Values + modules + signals + frontmatter + migrations
   templates/              # Nunjucks templates (.njk)
-    CLAUDE.md.njk         # Claude Code operating manual (partials per module)
+    CLAUDE.md.njk         # Claude Code operating manual
     AGENTS.md.njk         # Codex operating manual (optional)
     GEMINI.md.njk         # Gemini CLI operating manual (optional)
     brain/
@@ -154,7 +154,7 @@ Shard authors choose which agents to support. A shard can ship `CLAUDE.md` only,
 | [`docs/AUTHORING.md`](docs/AUTHORING.md) | **Start here.** Every file and concept a shard author needs. |
 | [`schemas/shard.schema.json`](schemas/shard.schema.json) | JSON Schema for `shard.yaml` — drop into VS Code for autocomplete + validation. |
 | [`schemas/shard-schema.schema.json`](schemas/shard-schema.schema.json) | JSON Schema for `shard-schema.yaml`. |
-| [`examples/minimal-shard/`](examples/minimal-shard/) | Minimal reference shard — 4 values, 2 modules, partials, signals. |
+| [`examples/minimal-shard/`](examples/minimal-shard/) | Minimal reference shard — 4 values, 2 modules, signals. |
 
 ### For users + contributors
 
