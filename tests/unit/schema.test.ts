@@ -99,6 +99,114 @@ describe('parseSchema', () => {
     expect(err.message).toContain('min');
   });
 
+  it('rejects values missing the required `default` field', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-missing-default.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('user_name');
+    expect(err.message).toContain('default');
+    expect(err.hint).toContain('Every value must declare a `default`');
+  });
+
+  it('reports every value missing `default` (not just the first)', async () => {
+    const os = await import('node:os');
+    const fs = await import('node:fs/promises');
+    const tmp = path.join(os.tmpdir(), `schema-no-default-${Date.now()}.yaml`);
+    await fs.writeFile(tmp, [
+      'schema_version: 1',
+      'values:',
+      '  alpha:',
+      '    type: string',
+      '    message: "x"',
+      '    group: setup',
+      '  beta:',
+      '    type: number',
+      '    message: "y"',
+      '    group: setup',
+      '  gamma:',
+      '    type: string',
+      '    message: "z"',
+      '    default: ""',
+      '    group: setup',
+      'groups:',
+      '  - { id: setup, label: "Setup" }',
+      'modules: {}',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n'));
+
+    try {
+      const err = await parseSchema(tmp).catch(e => e);
+      expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+      expect(err.message).toContain('alpha');
+      expect(err.message).toContain('beta');
+      expect(err.message).not.toContain('gamma');
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
+  it('accepts sentinel default values (null, empty string, false, 0, empty list)', async () => {
+    const os = await import('node:os');
+    const fs = await import('node:fs/promises');
+    const tmp = path.join(os.tmpdir(), `schema-sentinel-defaults-${Date.now()}.yaml`);
+    await fs.writeFile(tmp, [
+      'schema_version: 1',
+      'values:',
+      '  null_default:',
+      '    type: string',
+      '    message: "a"',
+      '    default: null',
+      '    group: setup',
+      '  empty_string_default:',
+      '    type: string',
+      '    message: "b"',
+      '    default: ""',
+      '    group: setup',
+      '  false_default:',
+      '    type: boolean',
+      '    message: "c"',
+      '    default: false',
+      '    group: setup',
+      '  zero_default:',
+      '    type: number',
+      '    message: "d"',
+      '    default: 0',
+      '    group: setup',
+      '  empty_list_default:',
+      '    type: list',
+      '    message: "e"',
+      '    default: []',
+      '    group: setup',
+      '  bare_default:',
+      '    type: string',
+      '    message: "f"',
+      '    default:',
+      '    group: setup',
+      'groups:',
+      '  - { id: setup, label: "Setup" }',
+      'modules: {}',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n'));
+
+    try {
+      const schema = await parseSchema(tmp);
+      expect(Object.keys(schema.values)).toHaveLength(6);
+      expect(schema.values['null_default']!.default).toBeNull();
+      expect(schema.values['empty_string_default']!.default).toBe('');
+      expect(schema.values['false_default']!.default).toBe(false);
+      expect(schema.values['zero_default']!.default).toBe(0);
+      expect(schema.values['empty_list_default']!.default).toEqual([]);
+      expect(schema.values['bare_default']!.default).toBeNull();
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
   it('reports every reserved-name collision when multiple', async () => {
     const os = await import('node:os');
     const fs = await import('node:fs/promises');

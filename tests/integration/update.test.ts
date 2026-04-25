@@ -383,8 +383,10 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     void values;
   });
 
-  it('prompts only for genuinely missing new required values', async () => {
-    // Fake a new schema that adds a required value with no default.
+  it('does not prompt for new schema values added under v6 (all have defaults)', async () => {
+    // v6 contract: every schema value must declare a `default`, so a new
+    // required value can never trigger the "new required key" prompt path.
+    // This test pins the v6 expectation: the no-prompt branch is taken.
     await installBaseline(vault, MINIMAL_SHARD, 'sha-0.1.0');
     await copyShard(MINIMAL_SHARD, newShard);
     await bumpVersion(newShard, '0.2.0');
@@ -398,6 +400,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     type: string
     required: true
     message: "Favorite color?"
+    default: ""
     group: setup
 `,
     );
@@ -408,7 +411,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     const newSchema = await parseSchema(schemaPath);
 
     const additions = computeSchemaAdditions(newSchema, state.modules, oldValues);
-    expect(additions.newRequiredKeys).toContain('favorite_color');
+    expect(additions.newRequiredKeys).toEqual([]);
   });
 
   it('reports modified removed files needing a user decision', async () => {

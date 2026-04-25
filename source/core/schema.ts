@@ -198,6 +198,28 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
     }
   }
 
+  // Every value MUST declare a `default` field. The check reads the raw
+  // YAML because zod's `default: z.unknown().optional()` strips the key
+  // when missing, so post-parse `'default' in val` can't distinguish
+  // missing from explicit-undefined. Sentinel values like null, "",
+  // false, 0, [] are accepted — the rule is presence, not non-emptiness
+  // (see docs/SHARD-LAYOUT.md "Values, schema, and modules").
+  const rawValues = (parsed as { values?: Record<string, unknown> }).values ?? {};
+  const missingDefault: string[] = [];
+  for (const key of Object.keys(data.values)) {
+    const raw = rawValues[key];
+    if (raw && typeof raw === 'object' && !Array.isArray(raw) && !('default' in raw)) {
+      missingDefault.push(key);
+    }
+  }
+  if (missingDefault.length > 0) {
+    throw new ShardMindError(
+      `shard-schema.yaml: values missing required \`default\` field: ${missingDefault.join(', ')}`,
+      'SCHEMA_VALIDATION_FAILED',
+      'Every value must declare a `default`. Use a type-matching value (e.g. "" for string, false for boolean, 0 for number, [] for list/multiselect, the first option value for select).',
+    );
+  }
+
   // Normalize frontmatter: shorthand arrays → { required: [...] }
   const frontmatter: Record<string, FrontmatterRule> = {};
   for (const [key, entry] of Object.entries(data.frontmatter)) {

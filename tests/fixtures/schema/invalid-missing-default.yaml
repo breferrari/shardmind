@@ -1,0 +1,24 @@
+schema_version: 1
+
+values:
+  user_name:
+    type: string
+    required: true
+    message: "Your name"
+    group: setup
+
+  org_name:
+    type: string
+    message: "Organization"
+    default: "Independent"
+    group: setup
+
+groups:
+  - id: setup
+    label: "Setup"
+
+modules: {}
+
+frontmatter: {}
+
+migrations: []
