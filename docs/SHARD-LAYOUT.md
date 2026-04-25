@@ -144,21 +144,28 @@ Post-update hooks receive `ctx.newFiles: string[]` — managed files added in th
 
 For users who cloned before shardmind support (obsidian-mind v5.1 and earlier) and want to adopt the update engine retroactively.
 
-Flow:
-1. Fetch shard at target version into temp.
-2. Walk the user's existing vault (cwd); for each file:
-   - Matches shard content exactly → record hash, mark managed.
-   - Differs from shard content → 2-way diff UI (no base); user marks "my modification" (record user's content hash as managed) or "use shard's version" (overwrite, record shard hash as managed).
-   - Exists in user's vault but not in shard → left as user-created (not managed).
-   - Exists in shard but not in user's vault → installed fresh, managed.
-3. Wizard collects values (same as install).
-4. Write `.shardmind/state.json` + `.shardmind/shard.yaml` (cached) + `.shardmind/shard-schema.yaml` (cached) + vault-root `shard-values.yaml`; cache shard source files to `.shardmind/templates/`.
-5. Run post-install hook with `valuesAreDefaults` reflecting user's values, `newFiles` = files created in step 2d, `removedFiles` = [].
-6. Re-hash managed files per the usual post-hook semantics.
+Pre-conditions enforced before any walk:
+- `.shardmind/state.json` must NOT exist. Adopt is for un-adopted vaults; an existing install routes through `shardmind update`.
+- `shard-values.yaml` at the vault root must NOT exist. The engine writes it at adopt-finish; a pre-existing one is an inconsistent state and surfaces `VALUES_FILE_COLLISION` (same code install uses).
+
+Phases (logical order; UI may interleave loading messages):
+1. Fetch shard at target version into a temp directory.
+2. Wizard collects values (same component / pipeline as install) and module selections. Wizard runs **before** classification because `.njk` templates need values to render before their output bytes can be hashed.
+3. Classify each file the shard would install at the chosen module selections, comparing the rendered (or copied) bytes against the user's vault:
+   - **Matches shard content exactly** → record hash, mark managed automatically. "Exactly" means byte-for-byte equality after the standard render pipeline (frontmatter normalized via `parseYaml → stringifyYaml`, see `renderer.ts`). A pristine clone with default values + clean YAML lands here for every file; non-default vaults legitimately produce `differs` for any rendered output the user's bytes don't post-render-equal. This is the same equality `drift.ts` enforces on update.
+   - **Differs from shard content** → 2-way diff UI (no merge base); user marks "my modification" (record user's content hash as managed) or "use shard's version" (overwrite, record shard hash as managed). Two choices, no third "leave untracked" — adopt is the moment the file becomes managed; the user can later modify it freely and the merge engine handles it on update.
+   - **Volatile templates** (carry `{# shardmind: volatile #}`) skip the prompt: user's bytes are recorded as managed without a differs comparison (volatile content is never expected to match across renders, so a prompt would be meaningless). Symmetric with install, which records volatile-template outputs the same way.
+   - **Excluded modules' files** are not classified. If the user's vault contains them, they stay as user content.
+   - User has the path but it's not a shard output → user-only, left unmanaged (not in `state.files`).
+   - Shard has the path but the user's vault doesn't → shard-only, installed fresh and recorded as managed.
+4. For every `differs` decision, apply: write shard bytes for "use shard's", leave user bytes for "my modification". `keep mine` paths still become `state.files` entries hashed at the user's bytes — adopt is the entry point into management.
+5. Write `.shardmind/state.json` + cached `.shardmind/shard.yaml` + cached `.shardmind/shard-schema.yaml` + vault-root `shard-values.yaml`; cache the shard source under `.shardmind/templates/` so future `update` runs have a merge base.
+6. Run post-install hook with `valuesAreDefaults` reflecting the user's values, `newFiles` = paths classified shard-only and freshly installed, `removedFiles` = [].
+7. Re-hash managed files per the usual post-hook semantics.
 
 Future `shardmind update` calls work normally — merge base is the adopt-time cache.
 
-Reuses: drift detection (`core/drift.ts`), install-executor, values wizard, hook runtime. New surfaces: 2-way diff UI component, adopt-planner, adopt-executor.
+Reuses: drift detection (`core/drift.ts`), install-executor, values wizard, hook runtime. New surfaces: 2-way diff UI component (`AdoptDiffView`), adopt-planner, adopt-executor.
 
 ## Naming decisions
 

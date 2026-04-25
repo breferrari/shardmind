@@ -385,6 +385,24 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 **Remedy:** N/A in v0.1. When the sandboxed evaluator lands (v0.2), this code will surface if a transform crashes and the command layer will distinguish it from "transform returned the wrong shape."
 
+## Adopt
+
+Thrown by `source/core/adopt-executor.ts` (and surfaced through `source/commands/hooks/use-adopt-machine.ts`).
+
+### `ADOPT_EXISTING_INSTALL`
+
+**Meaning:** `shardmind adopt` was invoked in a directory that already contains `.shardmind/state.json`. Adopt is for un-managed vaults (typically pre-shardmind clones); a managed vault routes through `shardmind update` instead.
+
+**Remedy:** Use `shardmind update` to upgrade an existing install. To force re-adoption, remove `.shardmind/state.json` (and `shard-values.yaml`) first — note that this discards the existing merge-base cache, so subsequent updates will see the user's current bytes as the new base.
+
+### `ADOPT_WRITE_FAILED`
+
+**Meaning:** A write during the adopt executor failed (mkdir + writeFile on a planned output, or the `shard-values.yaml` write at finish). Surfaces both for engine-side write failures and for the `Missing adopt resolution for <path>` invariant assertion when a `differs` classification reaches the executor without a `keep_mine` / `use_shard` decision.
+
+**Remedy:** For filesystem-level failures, check permissions on the vault directory and the mentioned path. The snapshot-rollback restored any user content the executor had snapshotted before the failure; newly-written shard-only files were erased. For the missing-resolution case, that's a state-machine bug — open an issue.
+
+`VALUES_FILE_COLLISION` is also reachable from adopt: a vault containing `shard-values.yaml` without `.shardmind/state.json` is a partial-adoption inconsistent state. The hint asks the user to move the stray file aside before re-running.
+
 ## Update-check cache (status + update)
 
 ### `UPDATE_CHECK_FAILED`

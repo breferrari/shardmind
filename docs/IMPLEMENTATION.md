@@ -146,6 +146,46 @@ graph TD
 
 ---
 
+## 3.5 Data Flow: Adopt
+
+Driven by `useAdoptMachine` (`source/commands/hooks/use-adopt-machine.ts`). Mirrors install + update phase shapes so SIGINT handling, hook plumbing, and dry-run posture stay symmetric.
+
+```mermaid
+graph TD
+    A["shardmind adopt breferrari/obsidian-mind"] --> P1
+    P1["adopt-executor.ts::assertAdoptable<br/>state.json exists → ADOPT_EXISTING_INSTALL<br/>shard-values.yaml exists → VALUES_FILE_COLLISION"] --> B
+
+    B["registry + download<br/>Resolve + extract to temp"] --> C
+    C["manifest + schema<br/>Parse new shard.yaml, shard-schema.yaml"] --> D
+
+    D["InstallWizard — Ink TUI<br/>① Value prompts from schema.groups<br/>② Module review<br/>③ Confirm<br/>(runs BEFORE classification — .njk needs values to render)"] --> E
+
+    E["adopt-planner.ts::classifyAdoption<br/>resolveModules walks shard, render or read each output<br/>per-output sha256 vs sha256(user vault path)<br/>→ matches | differs | shard-only buckets"] --> F1
+
+    F1{Any<br/>differs?}
+    F1 -->|Yes, --yes| F2["auto-resolve every differs as keep_mine"]
+    F1 -->|Yes, interactive| F3["diff-review loop<br/>AdoptDiffView per file → keep_mine / use_shard"]
+    F1 -->|No| G
+
+    F2 --> G
+    F3 --> G
+
+    G["adopt-executor.ts::runAdopt<br/>① Snapshot every differs+use_shard user file<br/>② Apply per classification + resolution<br/>③ Cache templates + manifest + schema<br/>④ Write shard-values.yaml + state.json"] --> H
+
+    H["post-install hook<br/>(subprocess via tsx, non-fatal)<br/>HookContext.newFiles = summary.installedFresh"] --> I
+    I["summary — AdoptSummary<br/>Counts: matched-auto / kept-mine / use-shard / fresh<br/>+ hook output"]
+
+    G -->|Any failure| R["rollbackAdopt<br/>Restore snapshot + erase added paths<br/>+ drop .shardmind/ + shard-values.yaml"]
+
+    style A fill:#e94560,stroke:#e94560,color:#fff
+    style F3 fill:#e94560,stroke:#e94560,color:#fff
+    style G fill:#f5a623,stroke:#f5a623,color:#000
+    style I fill:#0f9d58,stroke:#0f9d58,color:#fff
+    style R fill:#777,stroke:#777,color:#fff
+```
+
+---
+
 ## 4. Module Specifications
 
 ### 4.1 `registry.ts`
@@ -1057,6 +1097,133 @@ rehashManagedFiles(
 Called by both machines after the hook subprocess returns — success OR failure. Reads each managed file under `mapConcurrent(REHASH_CONCURRENCY = 16)`, recomputes sha256, and returns a new `ShardState` with updated `rendered_hash` for changed entries. Per-file ENOENT and other I/O errors are tolerated (entry stays at the prior hash, surfaces on `missing` / `failed`); the function never throws. The machine writes the resulting state via `writeState` only when at least one path changed / went missing / failed — a fully-clean re-hash skips the redundant write. The whole call is wrapped in a defensive try/catch so a `writeState` failure can't propagate past the install/update boundary.
 
 This is what makes Invariant 2's claim observable: a hook that legitimately edited a managed file produces zero spurious drift on the next `shardmind` status run, because state.json's hash already reflects the post-hook bytes.
+
+---
+
+### 4.17 `adopt-planner.ts`
+
+**Purpose**: Pure classification of an existing user vault against a downloaded shard. The load-bearing step in the v6 adopt flow — every output path is sorted into `matches` (auto-managed), `differs` (per-file 2-way prompt), or `shard-only` (install fresh). User-only paths in the vault are deliberately not enumerated; classification is shard-source-driven, which keeps Tier 1 entries (`.git/`, `.obsidian/workspace.json`) and arbitrary user files out of the planner's scope.
+
+**Inputs / Outputs**:
+```typescript
+classifyAdoption(input: {
+  vaultRoot: string;
+  schema: ShardSchema;
+  manifest: ShardManifest;
+  tempDir: string;                    // extracted shard tempdir
+  values: Record<string, unknown>;    // wizard answers; required for .njk render
+  selections: ModuleSelections;
+  now?: Date;                         // pin clock for deterministic tests
+}): Promise<AdoptPlan>;
+
+type AdoptClassification =
+  | { kind: 'matches';     path; templateKey; shardHash; iteratorKey?; volatile }
+  | { kind: 'differs';     path; templateKey; shardContent; shardHash;
+                           userContent; userHash; isBinary; iteratorKey?; volatile }
+  | { kind: 'shard-only';  path; templateKey; shardContent; shardHash;
+                           iteratorKey?; volatile };
+
+interface AdoptPlan {
+  matches: AdoptClassification[];
+  differs: AdoptClassification[];
+  shardOnly: AdoptClassification[];
+  totalShardFiles: number;
+  // No userOnly bucket: classification is shard-source-driven; the user's
+  // tree is never recursively walked, so paths in the vault but not in
+  // the shard are silently left untouched and never enter the planner's
+  // output shape.
+}
+```
+
+**Algorithm**:
+1. `resolveModules(schema, selections, tempDir)` → render / copy / skip buckets. Tier 1 + `.shardmindignore` + symlink rejection apply transparently. Excluded modules go to `skip` and are dropped here too.
+2. For each `render` entry: `renderFile(entry, buildRenderContext(...), env)` produces one or many `RenderedFile` objects (iterator templates fan out). Each becomes a `ShardOutputItem` with `shardContent = Buffer.from(content, 'utf-8')` and `shardHash = sha256`.
+3. For each `copy` entry: `fsp.readFile(entry.sourcePath)` → Buffer; hash it.
+4. `mapConcurrent(items, ADOPT_READ_CONCURRENCY = 32, classifyOne)` walks the items. `classifyOne` `fsp.readFile`s the user's path:
+   - ENOENT → `shard-only`.
+   - Volatile (`item.volatile`) → `matches` with `shardHash = sha256(userBuf)`. Volatile templates expect their bytes to drift across renders, so a content prompt would be meaningless; user's bytes are accepted as-is and recorded as managed at the user's hash.
+   - `sha256(userBuf) === item.shardHash` → `matches`.
+   - Otherwise → `differs` with `isBinary = looksBinary(userBuf) || looksBinary(item.shardContent)` (8 KB NUL-byte sniff, same heuristic git uses).
+   - Non-ENOENT read error → `COLLISION_CHECK_FAILED` (mirrors install's collision-detection error code; user permissions / EACCES surface here).
+
+**Symlink handling**: source-side rejection delegates to `walkShardSource` (`WALK_SYMLINK_REJECTED`). User-side classification is per-shard-output-path — only one specific path is stat'd per shard file, so a symlink under the user's vault is never followed by adopt classification.
+
+**Error modes**:
+- `WALK_SYMLINK_REJECTED` (delegated from the walk).
+- `COLLISION_CHECK_FAILED` for non-ENOENT user-side read errors (EACCES, EBUSY, etc.).
+- Any error from `renderFile` (`RENDER_TEMPLATE_ERROR`, `RENDER_FRONTMATTER_ERROR`, `RENDER_ITERATOR_ERROR`) bubbles unchanged.
+
+**Dependencies**: `core/modules` (resolveModules), `core/renderer` (createRenderer + renderFile + buildRenderContext), `core/fs-utils` (sha256 + mapConcurrent + toPosix), `runtime/errno`.
+
+### 4.18 `adopt-executor.ts`
+
+**Purpose**: Disk-mutating ops for adopt. Counterpart to `adopt-planner.ts` — the planner classifies, this file applies decisions. Pre-flight guards refuse to run on already-managed vaults; snapshot-based rollback restores user content if anything between snapshot staging and the final state-write fails.
+
+**Inputs / Outputs**:
+```typescript
+runAdopt(opts: {
+  vaultRoot: string;
+  manifest: ShardManifest;
+  schema: ShardSchema;
+  tempDir: string;
+  resolved: ResolvedShard;
+  tarballSha256: string;
+  values: Record<string, unknown>;
+  selections: ModuleSelections;
+  plan: AdoptPlan;
+  resolutions: Record<string, 'keep_mine' | 'use_shard'>;  // one per `differs`
+  now?: Date;
+  dryRun?: boolean;
+  onProgress?: (event: AdoptProgressEvent) => void;
+  onBackupReady?: (backupDir: string) => void;
+  onFileTouched?: (outputPath: string, introduced: boolean) => void;
+}): Promise<{
+  state: ShardState;
+  summary: AdoptSummary;     // matchedAuto / adoptedMine / adoptedShard /
+                             // installedFresh / totalManaged
+  backupDir: string | null;
+}>;
+
+assertAdoptable(vaultRoot: string): Promise<void>;
+rollbackAdopt(vaultRoot: string, backupDir: string, addedPaths: string[])
+  : Promise<AdoptRollbackFailure[]>;
+```
+
+**Algorithm**:
+1. `assertAdoptable` runs first. `.shardmind/state.json` present → `ADOPT_EXISTING_INSTALL`. `shard-values.yaml` present without state.json → `VALUES_FILE_COLLISION` (existing code; partial-adoption inconsistent state). Both fire before any disk mutation.
+2. Create `backupDir = .shardmind/backups/adopt-<ISO-timestamp>/files/`.
+3. `snapshotForRollback`: copy every `differs+use_shard` user file into the backup tree under `mapConcurrent(SNAPSHOT_CONCURRENCY = 16)`. Tolerate ENOENT (defensive — user file vanished between plan and execute). Surface the backup dir to the caller via `onBackupReady` *before* any vault write so a mid-write SIGINT can find it.
+4. Apply per classification (writes pass; deletes are not part of adopt by design — user-only files are never enumerated):
+   - `matches` → record managed FileState; no disk write. `onFileTouched(path, false)`.
+   - `shard-only` → `writeFile(buffer)`; record managed FileState; track in `addedPaths`. `onFileTouched(path, true)`.
+   - `differs+keep_mine` → record `ownership: 'modified'` with `rendered_hash = userHash`. Mirrors update-executor's keep_mine-modified path so the next update's drift compares against the user's adopt-time bytes.
+   - `differs+use_shard` → `writeFile(shardContent)`; record `ownership: 'managed'` with `rendered_hash = shardHash`.
+5. `initShardDir`, `cacheTemplates(tempDir)`, `cacheManifest(manifest, schema)`, `writeValuesFile(values, { flag: 'wx' })`, `writeState(state)`. The `wx` flag is a belt-and-braces second defense against a values file appearing between guard and write.
+6. Any throw between (3) and (5) lands in the catch and runs `rollbackAdopt(vaultRoot, backupDir!, addedPaths)`. Best-effort; rollback failures are collected (not swallowed) so the command layer can surface them.
+
+**FileState shape**:
+```typescript
+buildFileState(c, hash, ownership) = {
+  template: c.templateKey,             // POSIX-shape relpath into shard tempdir
+  rendered_hash: hash,                 // shard hash (matches / use_shard / shard-only)
+                                       // OR user hash (keep_mine)
+  ownership,                           // 'managed' or 'modified'
+  iterator_key?: c.iteratorKey,        // present only for iterator-derived outputs
+}
+```
+
+**Rollback**: `rollbackAdopt(vaultRoot, backupDir, addedPaths)`:
+1. Erase every path in `addedPaths` first (so a snapshot copy can't spuriously land on top of a brand-new file we wrote).
+2. Walk `backupDir/files/` recursively; for each entry, `fsp.copyFile` back to the matching vault path.
+3. Drop `.shardmind/` and `shard-values.yaml` since the executor never reaches them on a successful adopt rollback. Per-step failures are collected and returned (not thrown) so the command layer can surface partial-rollback state to the user.
+
+**Error modes**:
+- `ADOPT_EXISTING_INSTALL` — pre-flight guard.
+- `ADOPT_WRITE_FAILED` — disk write failure during apply, or invariant assertion when a `differs` reaches the executor without a matching resolution.
+- `VALUES_FILE_COLLISION` — pre-flight guard (existing code) or the `wx`-flag race.
+- Any error thrown by `state.ts::cacheTemplates` (e.g. `STATE_CACHE_MISSING_MANIFEST`) bubbles unchanged.
+
+**Dependencies**: `core/state` (initShardDir, cacheTemplates, cacheManifest, writeState), `core/install-planner` (hashValues), `core/fs-utils` (mapConcurrent, pathExists), `runtime/errno`, `runtime/vault-paths`.
 
 ---
 

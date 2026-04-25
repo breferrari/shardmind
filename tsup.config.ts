@@ -16,6 +16,7 @@ export default defineConfig([
       'commands/index': 'source/commands/index.tsx',
       'commands/install': 'source/commands/install.tsx',
       'commands/update': 'source/commands/update.tsx',
+      'commands/adopt': 'source/commands/adopt.tsx',
     },
     format: ['esm'],
     dts: true,
