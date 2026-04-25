@@ -52,6 +52,60 @@ const ValueDefinitionSchema = z.object({
       input: val,
     });
   }
+  // `default` type-match. Skipped when the value is `null` (the
+  // universal "no default" sentinel per docs/SHARD-LAYOUT.md line 119)
+  // or a `{{ }}` computed expression (resolved at install time).
+  if (val.default !== undefined && val.default !== null && !isComputedDefault(val.default)) {
+    const d = val.default;
+    let typeMismatch: string | null = null;
+    switch (val.type) {
+      case 'string':
+        if (typeof d !== 'string') typeMismatch = `expected string, got ${typeof d}`;
+        break;
+      case 'boolean':
+        if (typeof d !== 'boolean') typeMismatch = `expected boolean, got ${typeof d}`;
+        break;
+      case 'number':
+        if (typeof d !== 'number' || !Number.isFinite(d)) typeMismatch = `expected finite number, got ${typeof d === 'number' ? String(d) : typeof d}`;
+        break;
+      case 'list':
+      case 'multiselect':
+        if (!Array.isArray(d)) typeMismatch = `expected array, got ${typeof d}`;
+        break;
+      case 'select':
+        if (typeof d !== 'string') typeMismatch = `expected string (one of options), got ${typeof d}`;
+        break;
+    }
+    if (typeMismatch !== null) {
+      ctx.issues.push({
+        code: 'custom',
+        path: ['default'],
+        message: `\`default\` does not match \`type: ${val.type}\` — ${typeMismatch}`,
+        input: val,
+      });
+    } else if (val.type === 'select' && val.options && typeof d === 'string') {
+      const allowed = val.options.map(o => o.value);
+      if (!allowed.includes(d)) {
+        ctx.issues.push({
+          code: 'custom',
+          path: ['default'],
+          message: `\`default: ${JSON.stringify(d)}\` is not one of \`options[].value\`: ${JSON.stringify(allowed)}`,
+          input: val,
+        });
+      }
+    } else if (val.type === 'multiselect' && val.options && Array.isArray(d)) {
+      const allowed = new Set(val.options.map(o => o.value));
+      const bad = d.filter(item => typeof item !== 'string' || !allowed.has(item));
+      if (bad.length > 0) {
+        ctx.issues.push({
+          code: 'custom',
+          path: ['default'],
+          message: `\`default\` contains values not in \`options[].value\`: ${JSON.stringify(bad)}`,
+          input: val,
+        });
+      }
+    }
+  }
 });
 
 const GroupDefinitionSchema = z.object({

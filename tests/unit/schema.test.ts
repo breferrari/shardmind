@@ -99,6 +99,28 @@ describe('parseSchema', () => {
     expect(err.message).toContain('min');
   });
 
+  it('rejects literal `default` whose type does not match the value type', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-default-type-mismatch.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('default');
+    expect(err.message).toContain('number');
+  });
+
+  it('rejects select `default` not present in `options[].value`', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-select-default-not-in-options.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('default');
+    expect(err.message).toContain('options');
+    expect(err.message).toContain('purple');
+  });
+
+  it('rejects multiselect `default` containing values not in `options[].value`', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-multiselect-default-not-in-options.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('default');
+    expect(err.message).toContain('nonexistent');
+  });
+
   it('rejects values missing the required `default` field', async () => {
     const err = await parseSchema(path.join(FIXTURES, 'invalid-missing-default.yaml')).catch(e => e);
     expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');

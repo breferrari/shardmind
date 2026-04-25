@@ -1,0 +1,19 @@
+schema_version: 1
+
+values:
+  color:
+    type: select
+    message: "Pick a color"
+    default: "purple"
+    options:
+      - { value: red, label: "Red" }
+      - { value: blue, label: "Blue" }
+    group: setup
+
+groups:
+  - { id: setup, label: "Setup" }
+
+modules: {}
+signals: []
+frontmatter: {}
+migrations: []

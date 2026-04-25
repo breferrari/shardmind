@@ -1,0 +1,16 @@
+schema_version: 1
+
+values:
+  count:
+    type: number
+    message: "Count"
+    default: "not-a-number"
+    group: setup
+
+groups:
+  - { id: setup, label: "Setup" }
+
+modules: {}
+signals: []
+frontmatter: {}
+migrations: []
