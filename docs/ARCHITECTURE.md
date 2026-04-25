@@ -830,9 +830,15 @@ If the directory isn't empty, ShardMind warns and asks to confirm. No `--dir` fl
 
 ### 10.7 Update Fetching
 
-`shardmind update` reads the `source` field from `.shardmind/state.json`, checks GitHub for the latest tag, compares semver. If newer, downloads tarball. No arguments needed — the state file knows where the shard came from.
+`shardmind update` reads the `source` field from `.shardmind/state.json` and resolves the latest installable shard via one of three policies:
 
-For pinning: `shardmind update --version 3.6.0`.
+1. **Default — latest stable.** Resolves via `GET /repos/:o/:r/releases?per_page=100` filtered for `prerelease: false`. Picks the newest entry. Replaces the v0.1 `/releases/latest` endpoint, which 404'd for repos that publish only prereleases (e.g. an obsidian-mind v6.0.0-beta cycle before a stable release exists). Empty filtered list throws `NO_RELEASES_PUBLISHED`; if any prereleases were filtered out, the hint points at `--include-prerelease`.
+2. **`--release <tag>` — pinned tag.** Skips latest-resolution; HEAD-verifies the tarball at `/tarball/v<tag>` exists. Works for stable or prerelease tags. Mutually exclusive with `--include-prerelease` (the pin already chose) and with ref-installed vaults (those track a moving ref by definition). Named `--release` (not `--version`) because Pastel reserves the program-level `--version` flag for printing the package version.
+3. **`--include-prerelease` — widened.** Returns the newest entry of any kind from the same `/releases` listing.
+
+**Ref installs** (`state.ref` set; vault was installed via `github:owner/repo#<ref>`) follow a fourth policy: re-resolve `/repos/:o/:r/commits/<ref>` on every update to get the current commit SHA, then HEAD-verify `/tarball/<sha>`. Up-to-date iff `state.resolvedSha === resolved.commit`. The vault tracks the moving ref by design — no flags accepted (combinations with `--release` or `--include-prerelease` reject as `UPDATE_FLAG_CONFLICT`). To stop tracking the ref, reinstall with `shardmind install <source>@<version>`.
+
+The update-check cache (`.shardmind/update-check.json`, 24h TTL) is stable-only. The update command primes it only when the run resolved through the latest-stable policy — `--release`, `--include-prerelease`, and ref installs all skip the prime so the next `shardmind` (status) invocation isn't told a prerelease / pinned tag / SHA-derived version is the latest stable.
 
 ---
 

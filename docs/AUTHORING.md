@@ -381,12 +381,37 @@ On Windows, `SIGTERM` is emulated as `TerminateProcess`, which skips the hook's 
 
 ## 7. Testing your shard locally
 
-1. Clone your shard to a directory under your GitHub account.
-2. Tag a pre-release: `git tag v0.0.1 && git push --tags`.
-3. In an empty directory: `shardmind install github:<user>/<shard> --dry-run`. Fix anything broken.
-4. Drop `--dry-run` for a real install. Inspect the resulting vault.
+The fastest dev loop avoids cutting a tag for every change. Install from a branch or commit SHA via the `#<ref>` syntax, iterate, push, and re-install.
+
+1. Push your work-in-progress to a branch on your GitHub account (default branch is fine; a feature branch is fine).
+2. In an empty directory: `shardmind install github:<user>/<shard>#<branch> --dry-run`. Fix anything broken.
+3. Drop `--dry-run` for a real install. Inspect the resulting vault.
+4. **Iterate**. After each push, run `shardmind update` from the same vault — the engine re-resolves the branch HEAD, fetches the new commit's tarball, and three-way-merges your local edits with the upstream changes.
 5. Use `scripts/smoke-install.sh` in the shardmind repo as a template for your own smoke harness.
-6. Iterate. Tag new versions as you go.
+
+When you're ready to publish a stable release, tag it (`git tag v6.0.0 && git push --tags`) and re-install via `shardmind install github:<user>/<shard>` (no `#<ref>` — the latest stable release wins).
+
+### `#<ref>` syntax
+
+| Form                                  | Resolves to                                |
+|---------------------------------------|--------------------------------------------|
+| `github:user/shard#main`              | Branch HEAD; tracks movement on `update`.  |
+| `github:user/shard#feature/foo`       | Branch with `/` in the name (URL-encoded). |
+| `github:user/shard#v1.0.0`            | Tag (any tag, prerelease included).        |
+| `github:user/shard#abc1234`           | Commit SHA prefix (≥ 7 chars).             |
+| `github:user/shard#abc12…40chars…`    | Full commit SHA.                           |
+
+`#<ref>` is mutually exclusive with `@<version>`. Registry-mode refs (`user/shard#main` without `github:`) are rejected — the registry index has no per-branch metadata.
+
+### Update flags
+
+| Flag                       | Effect                                                             |
+|----------------------------|--------------------------------------------------------------------|
+| (none)                     | Latest non-prerelease via `/releases?prerelease=false`.             |
+| `--release <tag>`          | Pin to a specific release tag (stable or prerelease).              |
+| `--include-prerelease`     | Widen latest-resolution to all releases.                           |
+
+Ref-installed vaults (`state.ref` set) re-resolve the tracked ref on every `update` and accept neither `--release` nor `--include-prerelease` — both reject as `UPDATE_FLAG_CONFLICT`. To switch a ref-installed vault to a tag pin, reinstall via `shardmind install <source>@<version>`.
 
 ## 8. Publishing checklist
 

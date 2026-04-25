@@ -59,7 +59,7 @@ Engine rework required by the v6 shard-layout contract. Must land before Milesto
 - [x] Flat shard-root walk + Tier 1 exclusions + `.shardmindignore` parser ([#73](https://github.com/breferrari/shardmind/issues/73))
 - [x] Schema defaults enforcement + drop `partials` field ([#74](https://github.com/breferrari/shardmind/issues/74))
 - [x] `HookContext` extensions (`valuesAreDefaults`, `newFiles`, `removedFiles`) + post-hook re-hash ([#75](https://github.com/breferrari/shardmind/issues/75))
-- [ ] Ref installs (`github:owner/repo#<ref>`) + update semantics (`--version`, `--include-prerelease`, ref re-resolution) ([#76](https://github.com/breferrari/shardmind/issues/76))
+- [x] Ref installs (`github:owner/repo#<ref>`) + update semantics (`--release`, `--include-prerelease`, ref re-resolution) ([#76](https://github.com/breferrari/shardmind/issues/76))
 - [ ] `shardmind adopt` command (2-way diff UI + adopt-planner + adopt-executor) ([#77](https://github.com/breferrari/shardmind/issues/77))
 - [ ] `install --defaults` flag + **Invariant 1 byte-equivalence CI test** ([#78](https://github.com/breferrari/shardmind/issues/78))
 - [ ] **Contract acceptance suite** — full install / update (no-conflict + with-conflict) / adopt / additive-principle / hook-failure / adversarial scenario matrix ([#92](https://github.com/breferrari/shardmind/issues/92))

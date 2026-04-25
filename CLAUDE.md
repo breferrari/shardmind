@@ -13,7 +13,7 @@ This project is **spec-driven**. The architecture and implementation are fully d
 | `VISION.md` | Origin story, architectural bets, scope guardrails, non-goals. | Before proposing features or scope changes. |
 | `ROADMAP.md` | v0.1 milestones linked to GitHub issues. Build order. | Before starting a new milestone. |
 | **`docs/SHARD-LAYOUT.md`** | **v6 shard-layout contract + three binding invariants. Active design spec.** Folded into `ARCHITECTURE.md §3` and `IMPLEMENTATION.md §4.5` / `§4.5a` / `§4.5b` for the engine specs; this doc remains the canonical contract for the binding properties + author-facing layout. | Before implementing anything related to shard layout, install walk, hook context, adopt command, or obsidian-mind v6. Authoritative over ARCHITECTURE.md / IMPLEMENTATION.md where they conflict. |
-| `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. **§10.7 `--version` gap tracked in [#76](https://github.com/breferrari/shardmind/issues/76).** | Before making any architectural decision. |
+| `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. | Before making any architectural decision. |
 | `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, module specs with TypeScript signatures, algorithms as numbered steps, error cases, 20 merge test fixtures, 6-day build plan. **§9 (Build Plan) is stale — see [#70](https://github.com/breferrari/shardmind/issues/70) for the current task list.** | Before implementing any module. |
 | `examples/minimal-shard/` | Minimal test shard for development. 4 values, 2 modules, signals. Flat v6 layout (`.shardmind/` sidecar, content at native paths, dotfolder `.njk` for rendering). | Use as a fixture for engine-level tests; obsidian-mind v6 conversion lands at Milestone 5. |
 
@@ -56,7 +56,7 @@ Before coding, list adversarial scenarios in the issue thread or PR description.
 - **#73 walk**: symlinks pointing outside vault, paths with Unicode + spaces, missing `.shardmind/`, empty `.shardmind/`, `.shardmindignore` with thousands of patterns, tarball with Windows path separators.
 - **#74 schema**: defaults of `null` / `""` / `0` / `false` / nested objects; required-without-default must reject at parse time.
 - **#75 hooks**: hook crashes mid-edit (state.json must still reflect actual content), hook exceeds timeout, hook writes to unmanaged paths, `valuesAreDefaults` deep-equal vs. near-equal (whitespace, case, type coercion).
-- **#76 update**: ref moves between install and update, tag force-moved upstream, non-existent ref, rate-limited GitHub API, `--version` + `--include-prerelease` combined, beta-only repos (no stable release).
+- **#76 update**: ref moves between install and update, tag force-moved upstream, non-existent ref, rate-limited GitHub API, `--release` + `--include-prerelease` combined, beta-only repos (no stable release).
 - **#77 adopt**: adopt into dir with partial vault, adopt with existing `.shardmind/`, adopt with user files byte-equivalent to shard paths, adopt mid-failure recovery, adopt when shard can't be fetched.
 - **#78 Invariant 1**: shard with all-defaults empty strings, shard with zero modules, `.shardmindignore` excluding everything, byte-equivalence on case-insensitive filesystems (macOS), clone of shard vs. install includes/excludes parity.
 
@@ -151,7 +151,7 @@ shardmind/
 │   ├── core/
 │   │   ├── manifest.ts                # Parse + validate shard.yaml
 │   │   ├── schema.ts                  # Parse shard-schema.yaml → zod validator
-│   │   ├── registry.ts                # Resolve shard ref → GitHub URL + version
+│   │   ├── registry.ts                # Resolve shard ref → GitHub URL + version (incl. `#<ref>` commit resolution)
 │   │   ├── download.ts                # Fetch + extract GitHub tarball
 │   │   ├── renderer.ts                # Nunjucks + frontmatter-aware rendering
 │   │   ├── state.ts                   # Read/write .shardmind/state.json
@@ -293,7 +293,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `tier1.ts` | SHARD-LAYOUT.md §File disposition Tier 1 | Engine-enforced source-side path exclusions (`.git/`, `.github/`, `.shardmind/`, `.obsidian/{workspace,workspace-mobile,graph}.json`) |
 | `shardmindignore.ts` | SHARD-LAYOUT.md §Engine change scope item 6 | gitignore-spec glob matcher for the root `.shardmindignore` (negation rejected in v0.1, deferred to #87) |
 | `state.ts` | §4.7 | Read/write .shardmind/state.json |
-| `registry.ts` | §4.1 | Resolve shard ref → GitHub URL |
+| `registry.ts` | §4.1 | Resolve shard ref → GitHub URL (registry / direct / `#<ref>` commit resolution / `/releases` listing with prerelease policy) |
 | `drift.ts` | §4.8 | Ownership detection + drift analysis |
 | `differ.ts` | §4.9 | Three-way merge via node-diff3 |
 | `migrator.ts` | §4.10 | Apply schema migrations to values |
