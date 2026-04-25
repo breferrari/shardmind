@@ -70,5 +70,5 @@ export function parseShardmindignore(source: string): IgnoreFilter {
 }
 
 const EMPTY_FILTER: IgnoreFilter = {
-  ignores: () => false,
+  ignores: (_relPosixPath: string, _isDir: boolean) => false,
 };

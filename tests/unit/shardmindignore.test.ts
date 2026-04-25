@@ -106,6 +106,16 @@ obsidian-mind-logo.*
     }
   });
 
+  it('accepts gitignore-escaped literal-bang patterns (`\\!file`)', () => {
+    // Per gitignore spec, `\!literal.md` is a non-negation pattern that
+    // matches a file named `!literal.md`. The parser must NOT reject this
+    // as a negation — only an unescaped leading `!` is unsupported.
+    const filter = parseShardmindignore('\\!literal-bang.md\n*.tmp\n');
+    expect(filter.ignores('!literal-bang.md', false)).toBe(true);
+    expect(filter.ignores('literal-bang.md', false)).toBe(false);
+    expect(filter.ignores('foo.tmp', false)).toBe(true);
+  });
+
   it('handles unicode patterns and paths safely', () => {
     const filter = parseShardmindignore('Idées-*.md\n');
     expect(filter.ignores('Idées-2026.md', false)).toBe(true);
