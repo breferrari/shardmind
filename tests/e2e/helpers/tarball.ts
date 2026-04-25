@@ -19,11 +19,11 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import os from 'node:os';
 import * as tar from 'tar';
 import { stringify as stringifyYaml, parse as parseYaml } from 'yaml';
 import { fileURLToPath } from 'node:url';
+import { copyDir, hashSourceTree, cachedFilesExist } from './tarball-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,7 +42,11 @@ let cached: { key: string; fixtures: TarballFixtures } | null = null;
  */
 export async function buildTarballFixtures(): Promise<TarballFixtures> {
   const treeKey = await hashSourceTree(MINIMAL_SHARD);
-  if (cached && cached.key === treeKey && (await cachedFilesExist(cached.fixtures))) {
+  if (
+    cached &&
+    cached.key === treeKey &&
+    (await cachedFilesExist(cached.fixtures.byVersion))
+  ) {
     return cached.fixtures;
   }
   // The source-tree hash matches but disk is missing the tarballs — e.g. a
@@ -160,57 +164,3 @@ async function buildOne(opts: BuildOneOpts): Promise<string> {
   }
 }
 
-async function copyDir(src: string, dst: string): Promise<void> {
-  await fs.mkdir(dst, { recursive: true });
-  const entries = await fs.readdir(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const sFrom = path.join(src, entry.name);
-    const sTo = path.join(dst, entry.name);
-    if (entry.isDirectory()) await copyDir(sFrom, sTo);
-    else if (entry.isFile()) await fs.copyFile(sFrom, sTo);
-    else {
-      // Symlinks, sockets, FIFOs — the minimal shard has none today, but a
-      // future fixture source might. Fail loudly rather than silently drop
-      // the entry (which would produce a subtly-broken tarball the CLI
-      // would install without complaint).
-      throw new Error(
-        `copyDir: unsupported entry type at ${sFrom} (isSymbolicLink=${entry.isSymbolicLink()}). Extend the copier if you need this.`,
-      );
-    }
-  }
-}
-
-async function cachedFilesExist(fixtures: TarballFixtures): Promise<boolean> {
-  for (const tarPath of Object.values(fixtures.byVersion)) {
-    try {
-      await fs.access(tarPath);
-    } catch {
-      return false;
-    }
-  }
-  return true;
-}
-
-async function hashSourceTree(dir: string): Promise<string> {
-  const hasher = crypto.createHash('sha256');
-  const stack: string[] = [dir];
-  const entries: string[] = [];
-  while (stack.length > 0) {
-    const current = stack.pop()!;
-    const kids = await fs.readdir(current, { withFileTypes: true });
-    for (const k of kids) {
-      const full = path.join(current, k.name);
-      if (k.isDirectory()) stack.push(full);
-      else if (k.isFile()) entries.push(full);
-    }
-  }
-  entries.sort();
-  for (const entry of entries) {
-    const rel = path.relative(dir, entry).replace(/\\/g, '/');
-    hasher.update(rel);
-    hasher.update('\0');
-    hasher.update(await fs.readFile(entry));
-    hasher.update('\0');
-  }
-  return hasher.digest('hex');
-}

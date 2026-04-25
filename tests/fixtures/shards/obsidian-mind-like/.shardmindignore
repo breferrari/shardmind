@@ -1,0 +1,7 @@
+# Repo-meta — meaningful on GitHub, noise in a vault.
+CONTRIBUTING.md
+README.*.md
+
+# Marketing media — not vault content.
+*.gif
+*.png

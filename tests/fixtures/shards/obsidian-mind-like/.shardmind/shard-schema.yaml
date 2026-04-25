@@ -1,0 +1,92 @@
+schema_version: 1
+
+values:
+  user_name:
+    type: string
+    required: true
+    message: "Your name"
+    default: ""
+    group: setup
+
+  org_name:
+    type: string
+    message: "Organization (or 'Independent')"
+    default: "Independent"
+    group: setup
+
+  vault_purpose:
+    type: select
+    required: true
+    message: "How will you use this vault?"
+    options:
+      - { value: engineering, label: "Engineering" }
+      - { value: research, label: "Research" }
+      - { value: general, label: "General" }
+    default: engineering
+    group: setup
+
+  qmd_enabled:
+    type: boolean
+    message: "Enable QMD semantic search?"
+    default: false
+    group: setup
+
+  brain_capacity:
+    type: number
+    message: "Target brain folder size (notes)"
+    default: 0
+    group: setup
+
+groups:
+  - id: setup
+    label: "Quick Setup"
+
+modules:
+  brain:
+    label: "Brain — goals, memories, patterns"
+    paths: ["brain/"]
+    removable: false
+
+  work:
+    label: "Work — daily / weekly / quarterly"
+    paths: ["work/"]
+    removable: true
+
+  perf:
+    label: "Performance reviews"
+    paths: ["perf/"]
+    removable: true
+
+  claude:
+    label: "Claude (Anthropic) agent files"
+    paths: ["CLAUDE.md", ".claude/"]
+    agents: ["claude"]
+    removable: true
+
+  codex:
+    label: "Codex (OpenAI) agent files"
+    paths: ["AGENTS.md", ".codex/"]
+    agents: ["codex"]
+    removable: true
+
+  gemini:
+    label: "Gemini (Google) agent files"
+    paths: ["GEMINI.md", ".gemini/"]
+    agents: ["gemini"]
+    removable: true
+
+signals:
+  - id: DECISION
+    description: "A choice was made"
+    routes_to: "brain/"
+    core: true
+
+  - id: PERF_NOTE
+    description: "A performance-review-relevant note"
+    routes_to: "perf/"
+    module: perf
+
+frontmatter:
+  global: [date, description, tags]
+
+migrations: []

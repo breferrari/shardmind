@@ -1,0 +1,16 @@
+apiVersion: v1
+name: obs-mind-like
+namespace: acme
+version: 6.0.0
+description: "Obsidian-mind-shaped fixture for the v6 contract acceptance suite (#92)"
+persona: "ShardMind contract suite"
+license: MIT
+homepage: https://github.com/breferrari/shardmind
+
+requires:
+  node: ">=18.0.0"
+
+hooks:
+  post-install: .shardmind/hooks/post-install.ts
+  post-update: .shardmind/hooks/post-update.ts
+  timeout_ms: 30000

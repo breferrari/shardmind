@@ -1521,6 +1521,29 @@ staying hermetic. No test reaches the public internet.
   trips the gate via the three mismatch arrays (`staticByteMismatches`,
   `missingFromInstall`, `extrasInInstall`); `matched` is a non-zero
   count under "everything green" rather than an array.
+- **v6 contract acceptance suite**: complementing the byte-equivalence
+  gate, `tests/e2e/obsidian-mind-contract.test.ts` exercises the full
+  behavioral matrix of [`docs/SHARD-LAYOUT.md`](SHARD-LAYOUT.md) — every
+  combination of install / update / adopt × user choices × edit states ×
+  upstream changes — against a richer obsidian-mind-shaped fixture
+  (`tests/fixtures/shards/obsidian-mind-like/`) at three versions
+  (`6.0.0`, `6.0.1`, `6.1.0`). 28 scenarios cover install (defaults +
+  custom values + collisions), update (no edits / non-conflicting edits
+  / conflicts under `--yes` / new modules / removed files / value
+  changes), adopt (clean clone / edited clone / user files / existing-
+  install rejection / adopt→update), refs + versions, the additive
+  principle (delete `.shardmind/`; install over no-`.shardmind/`
+  source), hook failure (mid-edit throw + timeout), and adversarial
+  cases (symlink rejection, 1k-line `.shardmindignore`, mixed-default-
+  type `valuesAreDefaults`, case-insensitive macOS). Module-deselection
+  scenarios that bypass the wizard live in
+  `tests/integration/obsidian-mind-contract.test.ts` because the CLI
+  exposes no non-interactive `--modules` flag — those go through
+  `runInstall(...)` with custom selections directly. Every test cites
+  the `docs/SHARD-LAYOUT.md` section it validates inline. Fixture
+  smokes pin the contract (parses through engine loaders + manifest-
+  version stamping in the tarball builder) so a fixture regression
+  surfaces as one obvious failure rather than ~30 cryptic E2E failures.
 
 ---
 

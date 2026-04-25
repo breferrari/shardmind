@@ -24,6 +24,7 @@ import os from 'node:os';
 import { stringify as stringifyYaml } from 'yaml';
 import { spawnCli } from './spawn-cli.js';
 import type { GitHubStub } from './github-stub.js';
+import type { HookContext } from '../../../source/runtime/types.js';
 
 export interface Vault {
   /** Absolute path. */
@@ -118,6 +119,36 @@ export async function cleanupAllVaults(): Promise<void> {
   for (const root of roots) {
     await fs.rm(root, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * Strip the engine's installed-side metadata (`.shardmind/` dir +
+ * `shard-values.yaml`) from a vault. Used by adopt scenarios to
+ * simulate a v5.1-style clone — the user has the vault content but
+ * never went through `shardmind install`.
+ */
+export async function stripShardmindMetadata(vault: Vault): Promise<void> {
+  await fs.rm(path.join(vault.root, '.shardmind'), { recursive: true, force: true });
+  await fs.rm(path.join(vault.root, 'shard-values.yaml'), { force: true });
+}
+
+/**
+ * Read and parse a hook ctx dump emitted by a fixture's
+ * `post-install.ts` / `post-update.ts`. The fixture writes the full
+ * `HookContext` JSON to `.hook-ctx-{install,update}.json` so scenarios
+ * can assert what the engine handed the hook (valuesAreDefaults,
+ * newFiles, removedFiles, previousVersion, …).
+ *
+ * `T` defaults to the engine's `HookContext` so a typo'd field name
+ * trips the type checker. Tests that assert subset-shape (e.g. just
+ * `valuesAreDefaults`) can pass a tighter T or use the canonical type
+ * directly.
+ */
+export async function readHookContext<T = HookContext>(
+  vault: Vault,
+  phase: 'install' | 'update',
+): Promise<T> {
+  return JSON.parse(await vault.readFile(`.hook-ctx-${phase}.json`)) as T;
 }
 
 /**
