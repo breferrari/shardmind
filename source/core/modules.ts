@@ -13,6 +13,23 @@ import { loadShardmindignore, type IgnoreFilter } from './shardmindignore.js';
 const VOLATILE_MARKER = '{# shardmind: volatile #}';
 
 /**
+ * Parent-directory names that activate per-name `mod.commands` / `mod.agents`
+ * gating during classification. Files at `.../commands/<name>.<ext>` are
+ * matched against `mod.commands` by basename-no-ext; same for `agents`.
+ * Scoping the lookup to these specific dir names prevents false positives
+ * (a vault note named after a command shouldn't be gated by it). Names
+ * are matched case-insensitively against the lowercased parent segment.
+ */
+const AGENT_PARENT_DIRS = ['commands', 'agents'] as const;
+type AgentResourceType = (typeof AGENT_PARENT_DIRS)[number];
+
+function getResourceType(parentDirName: string): AgentResourceType | null {
+  return (AGENT_PARENT_DIRS as readonly string[]).includes(parentDirName)
+    ? (parentDirName as AgentResourceType)
+    : null;
+}
+
+/**
  * Walk a shard source tree and classify every file into render / copy / skip.
  *
  * v6 contract: a single shard-root walk replaces the v5 four-tree pattern
@@ -162,11 +179,9 @@ function classifyModule(relPath: string, schema: ShardSchema): string | null {
   // module gating" working without hardcoding `.claude/`/`.codex/`/etc.
   const segments = relPath.split('/');
   if (segments.length >= 2) {
-    const parent = segments[segments.length - 2]!.toLowerCase();
-    const fileName = segments[segments.length - 1]!;
-    const baseNoExt = fileName.replace(/\.[^./]+$/, '');
-    const resourceType = parent === 'commands' ? 'commands' : parent === 'agents' ? 'agents' : null;
+    const resourceType = getResourceType(segments[segments.length - 2]!.toLowerCase());
     if (resourceType !== null) {
+      const baseNoExt = segments[segments.length - 1]!.replace(/\.[^./]+$/, '');
       for (const [moduleId, mod] of Object.entries(schema.modules)) {
         const list = mod[resourceType];
         if (list && list.includes(baseNoExt)) {
