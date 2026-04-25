@@ -74,7 +74,7 @@ Engine rework required by the v6 shard-layout contract. Must land before Milesto
 
 - [ ] Research-wiki shard + E2E tests + npm publish ([#15](https://github.com/breferrari/shardmind/issues/15))
 - [ ] Create `shardmind/registry` repo with index.json (2 shards) — finalize schema per [#29](https://github.com/breferrari/shardmind/issues/29)
-- [ ] v6 docs rewrite: ARCHITECTURE §3, AUTHORING §2, IMPLEMENTATION §4.* / §9; fold SHARD-LAYOUT.md into ARCHITECTURE ([#85](https://github.com/breferrari/shardmind/issues/85))
+- [ ] v6 docs polish: fold remaining SHARD-LAYOUT.md content into ARCHITECTURE §3 + IMPLEMENTATION §4.5/§4.5a/§4.5b once #74-#78 land; rewrite IMPLEMENTATION §9 (Build Plan) to match the actual #70 task series ([#85](https://github.com/breferrari/shardmind/issues/85)) — partial rewrites for §3, AUTHORING §2, IMPLEMENTATION §4.2/§4.5/§4.5a/§4.5b/§4.7 already landed with #73
 - [ ] Final test: fresh machine → `npm install -g shardmind` → `shardmind install breferrari/obsidian-mind` (registry mode, proves [#29](https://github.com/breferrari/shardmind/issues/29) shape works end-to-end) ([#15](https://github.com/breferrari/shardmind/issues/15))
 
 ---
