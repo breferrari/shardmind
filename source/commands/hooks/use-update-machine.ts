@@ -67,6 +67,10 @@ export interface UseUpdateMachineInput {
   yes: boolean;
   verbose: boolean;
   dryRun: boolean;
+  /** `--version <v>`: pin to an exact tag (stable or prerelease). */
+  version?: string;
+  /** `--include-prerelease`: widen latest-version resolution to all releases. */
+  includePrerelease: boolean;
 }
 
 export interface PreparedContext {
@@ -149,7 +153,7 @@ export interface UseUpdateMachineOutput {
 }
 
 export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachineOutput {
-  const { vaultRoot, yes, verbose, dryRun } = input;
+  const { vaultRoot, yes, verbose, dryRun, version, includePrerelease } = input;
   const { exit } = useApp();
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
@@ -219,15 +223,38 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         const state = await readState(vaultRoot);
         if (!state) throwNoInstall();
 
-        setPhase({ kind: 'loading', message: `Resolving ${state.source}…` });
-        const resolved = await resolveRefForUpdate(state.source);
-        // Warm the update-check cache so the next `shardmind` (status) run
-        // answers "latest version" instantly instead of paying for another
-        // GitHub API call. Swallows errors — a cache-priming failure must
-        // not cascade into an update failure.
-        void primeLatestVersion(vaultRoot, state.source, resolved.version).catch(() => {
-          /* swallow */
-        });
+        // Mutual-exclusion guard for the three resolution policies the
+        // update flow supports — latest-stable (default), pinned-tag
+        // (`--version`), widened (`--include-prerelease`), and ref
+        // re-resolution (`state.ref` set). The combinations rejected
+        // here would silently choose one over the other; surfacing a
+        // typed error keeps the contract obvious.
+        assertFlagsCompatible({ stateRef: state.ref ?? null, version, includePrerelease });
+
+        // Assemble the resolution-source string. `state.ref` re-resolves
+        // HEAD of the tracked ref; `--version` pins to a tag; otherwise
+        // we go through the default-stable path.
+        const resolveSource = state.ref
+          ? `${state.source}#${state.ref}`
+          : version
+            ? `${state.source}@${version}`
+            : state.source;
+
+        setPhase({ kind: 'loading', message: `Resolving ${resolveSource}…` });
+        const resolved = await resolveRefForUpdate(resolveSource, { includePrerelease });
+
+        // The update-check cache stores "latest stable" for the status
+        // command. Only prime when the run resolved through that exact
+        // policy: no prerelease widen, no version pin, no ref tracking.
+        // Otherwise the cache would report a prerelease / pinned tag /
+        // ref-SHA-derived version as the latest stable on the next
+        // status invocation, contradicting the cache's contract.
+        const primesStableCache = !state.ref && !version && !includePrerelease;
+        if (primesStableCache) {
+          void primeLatestVersion(vaultRoot, state.source, resolved.version).catch(() => {
+            /* swallow */
+          });
+        }
 
         setPhase({
           kind: 'loading',
@@ -240,10 +267,17 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         const newManifest = await parseManifest(temp.manifest);
         const newSchema = await parseSchema(temp.schema);
 
-        if (
-          newManifest.version === state.version &&
-          temp.tarball_sha256 === state.tarball_sha256
-        ) {
+        // Up-to-date short-circuit. For ref installs, "up-to-date" is
+        // SHA-equality (the user is tracking a moving ref; manifest
+        // version may not change between commits). For tag installs,
+        // it's manifest-version + tarball-sha equality (the existing
+        // contract — a retagged release surfaces as a tarball-sha
+        // mismatch and runs through the merge engine).
+        const upToDate = state.ref
+          ? state.resolvedSha === resolved.ref?.commit
+          : newManifest.version === state.version &&
+            temp.tarball_sha256 === state.tarball_sha256;
+        if (upToDate) {
           if (disposed) return;
           finish({ kind: 'up-to-date', manifest: newManifest, state });
           return;
@@ -663,15 +697,21 @@ function throwNoInstall(): never {
  * - `REGISTRY_INVALID_REF` → `UPDATE_SOURCE_MISMATCH`: the ref shape is
  *   broken, which during update always means `state.json` was hand-edited
  *   or partially corrupted.
- * - `SHARD_NOT_FOUND` / `VERSION_NOT_FOUND`: same code, new hint — the
- *   original hints mention spelling and version-flag tweaks that don't
- *   apply to a ref read from disk.
+ * - `SHARD_NOT_FOUND` / `VERSION_NOT_FOUND` / `REF_NOT_FOUND`: same code,
+ *   new hint — the original hints mention spelling and version-flag tweaks
+ *   that don't apply to a ref read from disk.
  * - `REGISTRY_NETWORK` / `REGISTRY_RATE_LIMITED`: unchanged; their hints
  *   are context-agnostic.
+ *
+ * `opts.includePrerelease` is forwarded to `resolveRef` and threads
+ * through to `/releases` filtering. Defaults false.
  */
-export async function resolveRefForUpdate(source: string): Promise<ResolvedShard> {
+export async function resolveRefForUpdate(
+  source: string,
+  opts: { includePrerelease?: boolean } = {},
+): Promise<ResolvedShard> {
   try {
-    return await resolveRef(source);
+    return await resolveRef(source, opts);
   } catch (err) {
     if (err instanceof ShardMindError) {
       if (err.code === 'REGISTRY_INVALID_REF') {
@@ -703,17 +743,74 @@ export async function resolveRefForUpdate(source: string): Promise<ResolvedShard
         );
       }
       if (err.code === 'VERSION_NOT_FOUND') {
-        // This is the `verifyTag` HEAD-404 branch: /releases/latest
-        // returned a tag but the tarball isn't fetchable. Usually a
-        // transient GitHub state or a deleted tag.
+        // This is the `verifyTarball` HEAD-404 branch on a tag install:
+        // the listing returned a tag but the tarball isn't fetchable.
+        // Usually a transient GitHub state or a deleted tag.
         throw new ShardMindError(
           err.message,
           'VERSION_NOT_FOUND',
           `The latest version of '${source}' reports a tag whose tarball is missing upstream — usually a transient GitHub state or a deleted tag. Retry in a minute, or reinstall if the issue persists.`,
         );
       }
+      if (err.code === 'REF_NOT_FOUND') {
+        // Ref installs only: the ref recorded in `state.ref` no longer
+        // resolves. Different remediation than the install path —
+        // re-installing requires picking a new ref, not just retrying.
+        throw new ShardMindError(
+          err.message,
+          'REF_NOT_FOUND',
+          `The ref recorded in .shardmind/state.json no longer exists upstream. Re-run \`shardmind install ${source}\` with a different ref to repoint this vault, or reinstall from a tagged release.`,
+        );
+      }
     }
     throw err;
+  }
+}
+
+/**
+ * Reject mutually-incompatible flag combinations at boot, before any
+ * network call. Three rules:
+ *
+ *   1. `--version` + `--include-prerelease` — `--version` already
+ *      pins a specific tag, so widening latest-resolution is meaningless.
+ *      Surfacing instead of silently accepting one over the other keeps
+ *      the user from thinking they pinned a different tag than they did.
+ *   2. ref install + `--version` — ref installs track a moving branch /
+ *      tag; the user has already chosen the "follow the ref" policy.
+ *      Pinning a tag would silently abandon that policy. Reinstall via
+ *      `shardmind install <ref>@<v>` (which rejects ref+`@`) is the
+ *      explicit transition.
+ *   3. ref install + `--include-prerelease` — the prerelease widen flag
+ *      tunes the `/releases` filter, which ref installs don't use at
+ *      all (they re-resolve `/commits/<ref>`). Combining is always a
+ *      mistake.
+ */
+function assertFlagsCompatible(opts: {
+  stateRef: string | null;
+  version: string | undefined;
+  includePrerelease: boolean;
+}): void {
+  const { stateRef, version, includePrerelease } = opts;
+  if (version && includePrerelease) {
+    throw new ShardMindError(
+      '--version and --include-prerelease cannot be combined',
+      'UPDATE_FLAG_CONFLICT',
+      '--version already pins a specific tag (stable or prerelease). Drop one of the flags.',
+    );
+  }
+  if (stateRef && version) {
+    throw new ShardMindError(
+      `Cannot use --version on a ref-installed vault (state.ref='${stateRef}')`,
+      'UPDATE_FLAG_CONFLICT',
+      `This vault tracks ref '${stateRef}'. Drop --version to re-resolve the ref, or reinstall via \`shardmind install <source>@<version>\` to switch to a tag pin.`,
+    );
+  }
+  if (stateRef && includePrerelease) {
+    throw new ShardMindError(
+      `Cannot use --include-prerelease on a ref-installed vault (state.ref='${stateRef}')`,
+      'UPDATE_FLAG_CONFLICT',
+      `This vault tracks ref '${stateRef}'. The prerelease widen flag only affects /releases-based resolution; ref installs use /commits/<ref> regardless. Drop --include-prerelease.`,
+    );
   }
 }
 
@@ -723,13 +820,30 @@ export async function resolveRefForUpdate(source: string): Promise<ResolvedShard
  * `resolveRefForUpdate` (rewriting hints for the update audience), and
  * returns both pieces. Exported so unit tests can exercise every error
  * path end-to-end without mounting the React tree.
+ *
+ * Mirrors the boot-pipeline logic for ref-aware source assembly +
+ * prerelease widening, so a unit test driving this entry point sees
+ * the same resolution path the live machine uses.
  */
 export async function lookupUpdateTarget(
   vaultRoot: string,
+  opts: { version?: string; includePrerelease?: boolean } = {},
 ): Promise<{ state: ShardState; resolved: ResolvedShard }> {
   const state = await readState(vaultRoot);
   if (!state) throwNoInstall();
-  const resolved = await resolveRefForUpdate(state.source);
+  assertFlagsCompatible({
+    stateRef: state.ref ?? null,
+    version: opts.version,
+    includePrerelease: opts.includePrerelease ?? false,
+  });
+  const source = state.ref
+    ? `${state.source}#${state.ref}`
+    : opts.version
+      ? `${state.source}@${opts.version}`
+      : state.source;
+  const resolved = await resolveRefForUpdate(source, {
+    includePrerelease: opts.includePrerelease ?? false,
+  });
   return { state, resolved };
 }
 

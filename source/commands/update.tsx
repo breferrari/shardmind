@@ -20,6 +20,14 @@ export const options = zod.object({
   yes: zod.boolean().default(false).describe('Accept defaults for every prompt (auto-keeps conflicts)'),
   verbose: zod.boolean().default(false).describe('Show per-file action history during write'),
   dryRun: zod.boolean().default(false).describe('Plan the update without touching the vault'),
+  version: zod
+    .string()
+    .optional()
+    .describe('Pin the update to a specific shard version (stable or prerelease)'),
+  includePrerelease: zod
+    .boolean()
+    .default(false)
+    .describe('Widen latest-version resolution to include prereleases'),
 });
 
 type Props = {
@@ -27,7 +35,7 @@ type Props = {
 };
 
 export default function Update({ options }: Props) {
-  const { yes, verbose, dryRun } = options;
+  const { yes, verbose, dryRun, version, includePrerelease } = options;
 
   const {
     phase,
@@ -40,6 +48,8 @@ export default function Update({ options }: Props) {
     yes,
     verbose,
     dryRun,
+    version,
+    includePrerelease,
   });
 
   switch (phase.kind) {

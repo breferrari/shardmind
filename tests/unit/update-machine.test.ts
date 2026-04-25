@@ -174,4 +174,146 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
     expect(result.version).toBe('3.5.0');
     expect(result.source).toBe('github:breferrari/obsidian-mind');
   });
+
+  it('rewrites REF_NOT_FOUND with a state.json-aware reinstall hint', async () => {
+    // Ref recorded in state.json no longer resolves upstream — typical
+    // when a tracked branch was renamed or the ref was force-deleted.
+    // The user has to pick a new ref; "retry" doesn't apply.
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      if (u.includes('/commits/')) return new Response(null, { status: 404 });
+      throw new Error(`Unexpected fetch: ${u}`);
+    }) as typeof fetch;
+
+    const err = await resolveRefForUpdate('github:acme/widget#missing-branch').catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ShardMindError);
+    expect((err as ShardMindError).code).toBe('REF_NOT_FOUND');
+    expect((err as ShardMindError).hint).toContain('shardmind install');
+    expect((err as ShardMindError).hint).toContain('github:acme/widget#missing-branch');
+  });
+
+  it('forwards includePrerelease to resolve()', async () => {
+    let listingCalled = false;
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      if (/\/releases\?per_page=\d+$/.test(u)) {
+        listingCalled = true;
+        return new Response(
+          JSON.stringify([
+            { tag_name: 'v2.0.0-beta.1', prerelease: true },
+            { tag_name: 'v1.0.0', prerelease: false },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (init?.method === 'HEAD') return new Response(null, { status: 200 });
+      throw new Error(`Unexpected fetch: ${u}`);
+    }) as typeof fetch;
+
+    const result = await resolveRefForUpdate('github:acme/widget', {
+      includePrerelease: true,
+    });
+    expect(listingCalled).toBe(true);
+    // With the widen flag, the prerelease at the head of the list wins.
+    expect(result.version).toBe('2.0.0-beta.1');
+  });
+});
+
+describe('lookupUpdateTarget — flag exclusivity + ref re-resolution', () => {
+  let vault: string;
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(async () => {
+    vault = path.join(os.tmpdir(), `shardmind-flag-conflict-${crypto.randomUUID()}`);
+    await fsp.mkdir(path.join(vault, SHARDMIND_DIR), { recursive: true });
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    await fsp.rm(vault, { recursive: true, force: true });
+  });
+
+  /** Helper: write a state.json with optional ref tracking. */
+  async function writeState(ref?: string): Promise<void> {
+    const base = makeShardState({ source: 'github:acme/widget' });
+    const state = ref
+      ? { ...base, ref, resolvedSha: 'a'.repeat(40) }
+      : base;
+    await fsp.writeFile(path.join(vault, STATE_FILE), JSON.stringify(state));
+  }
+
+  it('rejects --version + --include-prerelease combination', async () => {
+    await writeState();
+    const err = await lookupUpdateTarget(vault, {
+      version: '1.0.0',
+      includePrerelease: true,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ShardMindError);
+    expect((err as ShardMindError).code).toBe('UPDATE_FLAG_CONFLICT');
+    expect((err as ShardMindError).message).toContain('--version');
+    expect((err as ShardMindError).message).toContain('--include-prerelease');
+  });
+
+  it('rejects --version on a ref-installed vault', async () => {
+    await writeState('main');
+    const err = await lookupUpdateTarget(vault, { version: '1.0.0' }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ShardMindError);
+    expect((err as ShardMindError).code).toBe('UPDATE_FLAG_CONFLICT');
+    expect((err as ShardMindError).message).toContain('main');
+    expect((err as ShardMindError).hint).toContain('shardmind install');
+  });
+
+  it('rejects --include-prerelease on a ref-installed vault', async () => {
+    await writeState('main');
+    const err = await lookupUpdateTarget(vault, { includePrerelease: true }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ShardMindError);
+    expect((err as ShardMindError).code).toBe('UPDATE_FLAG_CONFLICT');
+    expect((err as ShardMindError).message).toContain('main');
+  });
+
+  it('re-resolves the ref via /commits/<ref> for ref installs', async () => {
+    await writeState('main');
+    const seen: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      seen.push(u);
+      if (u.endsWith('/commits/main')) {
+        return new Response(JSON.stringify({ sha: 'b'.repeat(40) }), { status: 200 });
+      }
+      if (init?.method === 'HEAD') return new Response(null, { status: 200 });
+      throw new Error(`Unexpected fetch: ${u}`);
+    }) as typeof fetch;
+
+    const { state, resolved } = await lookupUpdateTarget(vault);
+    expect(state.ref).toBe('main');
+    expect(resolved.ref?.commit).toBe('b'.repeat(40));
+    // Ref installs go through /commits, not /releases — the fresh
+    // resolution path is what makes "track this branch's HEAD" work.
+    expect(seen.some((u) => u.includes('/commits/main'))).toBe(true);
+    expect(seen.some((u) => u.includes('/releases'))).toBe(false);
+  });
+
+  it('constructs source@version when --version is used on a tag install', async () => {
+    await writeState();
+    const seen: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      seen.push(u);
+      if (init?.method === 'HEAD') return new Response(null, { status: 200 });
+      throw new Error(`Unexpected fetch: ${u}`);
+    }) as typeof fetch;
+
+    const { resolved } = await lookupUpdateTarget(vault, { version: '6.0.0-beta.2' });
+    expect(resolved.version).toBe('6.0.0-beta.2');
+    // No /releases call — explicit version skips latest-resolution.
+    expect(seen.some((u) => u.includes('/releases'))).toBe(false);
+    // Tarball URL pins to the requested version.
+    expect(seen.some((u) => u.includes('/tarball/v6.0.0-beta.2'))).toBe(true);
+  });
 });
