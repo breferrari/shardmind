@@ -555,6 +555,32 @@ describe('shardmind install — post-install hook', () => {
     expect(ctx.values).toMatchObject({ user_name: 'Alice', qmd_enabled: true });
   }, 60_000);
 
+  it('reports valuesAreDefaults: true when every value matches the schema default (#75)', async () => {
+    // Pin the Invariant 2 positive branch end-to-end. The hook-demo
+    // tarball is built from examples/minimal-shard, whose literal
+    // defaults are user_name='' / org_name='Independent' /
+    // vault_purpose='engineering' / qmd_enabled=false. Passing those
+    // verbatim must yield valuesAreDefaults: true so a hook author
+    // gating managed-file edits with `if (!ctx.valuesAreDefaults)`
+    // can trust the signal.
+    vault = await createEmptyVault('install-hook-ctx-defaults');
+    const valuesPath = await writeValuesFile(vault, {
+      user_name: '',
+      org_name: 'Independent',
+      vault_purpose: 'engineering',
+      qmd_enabled: false,
+    });
+    const result = await spawnCli(
+      ['install', 'github:acme/hook-demo', '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: hookStub.url } },
+    );
+    expect(result.exitCode).toBe(0);
+    const ctx = JSON.parse(await vault.readFile('.hook-ctx.json')) as {
+      valuesAreDefaults: boolean;
+    };
+    expect(ctx.valuesAreDefaults).toBe(true);
+  }, 60_000);
+
   it('re-hashes managed files after a hook that edits one (#75)', async () => {
     // Hook appends to Home.md under SHARDMIND_REHASH_TEST=1. After
     // install completes, state.json's `rendered_hash` for Home.md must

@@ -243,7 +243,11 @@ Paths reference current code. Detail to land in `ARCHITECTURE.md §3` + `IMPLEME
 ### Hooks + state
 
 10. `source/runtime/types.ts` — extend `HookContext` with `valuesAreDefaults: boolean`, `newFiles: string[]`, `removedFiles: string[]`.
-11. `source/core/install-executor.ts` + `source/core/update-executor.ts` — compute `valuesAreDefaults` (deep-equal values vs schema defaults), `newFiles` + `removedFiles` (diff current file set vs previous state). Re-hash all managed files after hook exits (success or failure) and write updated state.json.
+11. **Engine plumbing for the new ctx fields + post-hook re-hash** — split across:
+    - `source/core/values-defaults.ts` (new) — pure `valuesAreDefaults(values, schema)` for Invariant 2; deep-equal user values against the would-be-default map (literal defaults + computed defaults resolved against the literal-default map).
+    - `source/core/update-executor.ts` — surface `addedFiles: string[]` (paths from `UpdateAction.kind === 'add'`) and the existing `deletedFiles: string[]` on `UpdateSummary` so the update machine can wire `newFiles` / `removedFiles` without re-deriving from the plan.
+    - `source/core/state.ts::rehashManagedFiles(vaultRoot, state)` (new) — parallel re-read + sha256 of every managed file; per-file ENOENT / EACCES tolerated.
+    - `source/commands/hooks/{use-install-machine,use-update-machine}.ts` — build the full ctx and call `postHookRehash` (helper in `source/commands/hooks/shared.ts`) after the hook subprocess returns, on success or failure. Re-hash + `writeState` are skipped when nothing changed (common case — most hooks edit only unmanaged files).
 
 ### Registry + update
 
