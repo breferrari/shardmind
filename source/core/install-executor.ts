@@ -258,6 +258,10 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     values_hash: hashValues(values),
     modules: selections,
     files: fileStates,
+    // Spread keeps the JSON tidy: tag installs have no `ref` /
+    // `resolvedSha` keys at all, ref installs carry both. Stamping
+    // `undefined` would emit `"ref":null` after JSON serialization.
+    ...(resolved.ref ? { ref: resolved.ref.name, resolvedSha: resolved.ref.commit } : {}),
   };
 
   if (!dryRun) {

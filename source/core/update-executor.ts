@@ -228,6 +228,13 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       values_hash: hashValues(newValues),
       modules: newSelections,
       files: nextFiles,
+      // Ref installs carry the user's ref name + the commit SHA the
+      // ref resolved to *this* run. `resolved.ref` always reflects the
+      // freshly resolved value (the update machine constructs the
+      // ref-shaped source string from `currentState.ref` before
+      // calling `resolve`); on a tag install both fields are absent and
+      // the spread is a no-op.
+      ...(resolved.ref ? { ref: resolved.ref.name, resolvedSha: resolved.ref.commit } : {}),
     };
 
     if (!dryRun) {

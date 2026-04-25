@@ -142,6 +142,80 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     await expect(fsp.access(path.join(vault, 'brain'))).resolves.toBeUndefined();
   });
 
+  it('records ref + resolvedSha when ResolvedShard.ref is set (ref install)', async () => {
+    // `ref` and `resolvedSha` are only persisted when the user
+    // installed via `github:owner/repo#<ref>`. The install-machine
+    // sources them from `ResolvedShard.ref`; here we simulate that
+    // resolve outcome and assert the round-trip into `state.json`.
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+    const selections = defaultModuleSelections(schema);
+    const validator = buildValuesValidator(schema);
+    const values = validator.parse(resolveComputedDefaults(schema, VALUES));
+
+    const SHA = 'a'.repeat(40);
+    const refResolved: ResolvedShard = {
+      ...RESOLVED,
+      version: SHA.slice(0, 7),
+      ref: { name: 'main', commit: SHA },
+    };
+
+    await runInstall({
+      vaultRoot: vault,
+      manifest,
+      schema,
+      tempDir: MINIMAL_SHARD,
+      resolved: refResolved,
+      tarballSha256: 'deadbeef',
+      values,
+      selections,
+    });
+
+    const state = (await readState(vault)) as ShardState;
+    expect(state.ref).toBe('main');
+    expect(state.resolvedSha).toBe(SHA);
+    // `state.version` always tracks `manifest.version`, never the SHA —
+    // so semver-aware migrations keep working for ref installs.
+    expect(state.version).toBe('0.1.0');
+
+    // Round-trip through JSON to confirm no `null` is emitted for
+    // missing optional fields elsewhere — the spread-on-presence guard
+    // in install-executor.ts depends on `JSON.stringify` not stamping
+    // `undefined` keys, but the persistence path is what we actually
+    // care about.
+    const onDisk = await fsp.readFile(path.join(vault, '.shardmind/state.json'), 'utf-8');
+    expect(onDisk).toContain('"ref": "main"');
+    expect(onDisk).toContain(`"resolvedSha": "${SHA}"`);
+  });
+
+  it('omits ref + resolvedSha for tag installs', async () => {
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+    const selections = defaultModuleSelections(schema);
+    const validator = buildValuesValidator(schema);
+    const values = validator.parse(resolveComputedDefaults(schema, VALUES));
+
+    await runInstall({
+      vaultRoot: vault,
+      manifest,
+      schema,
+      tempDir: MINIMAL_SHARD,
+      resolved: RESOLVED, // No `ref` field.
+      tarballSha256: 'deadbeef',
+      values,
+      selections,
+    });
+
+    const state = (await readState(vault)) as ShardState;
+    expect(state.ref).toBeUndefined();
+    expect(state.resolvedSha).toBeUndefined();
+    // The persisted JSON has no `ref` / `resolvedSha` keys at all —
+    // not `null`, not `undefined`. Pre-#76 readers stay happy.
+    const onDisk = await fsp.readFile(path.join(vault, '.shardmind/state.json'), 'utf-8');
+    expect(onDisk).not.toContain('"ref"');
+    expect(onDisk).not.toContain('"resolvedSha"');
+  });
+
   it('records sha256 hash per file in state', async () => {
     const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
     const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));

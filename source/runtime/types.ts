@@ -115,6 +115,24 @@ export interface ShardState {
   values_hash: string;
   modules: ModuleSelections;
   files: Record<string, FileState>;
+  /**
+   * Present iff this vault was installed via `github:owner/repo#<ref>`.
+   * Records the ref name the user typed (branch / tag / SHA prefix).
+   * `shardmind update` re-resolves this ref's HEAD on every run so the
+   * vault tracks branch movement.
+   *
+   * Both `ref` and `resolvedSha` are optional and forward-compatible:
+   * pre-#76 state.json (no ref fields) reads fine because `ShardState`
+   * is the type of an existing-vault `state.json`, not a strict schema.
+   */
+  ref?: string;
+  /**
+   * 40-char hex commit SHA the ref resolved to at install / last
+   * update. Distinct from `tarball_sha256` (content hash of the
+   * downloaded archive, not the commit identity). Only present
+   * alongside `ref`.
+   */
+  resolvedSha?: string;
 }
 
 export interface FileState {
