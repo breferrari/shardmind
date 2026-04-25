@@ -4,10 +4,12 @@
  *
  * Sibling of `install-planner.ts`. Where install builds an output plan from
  * a clean target, adopt walks the same rendered/copied outputs and asks of
- * each one: "what does the user already have here?" — producing four
- * disjoint buckets (`matches`, `differs`, `shardOnly`, `userOnly`) that the
- * UI surfaces as auto-adopt vs. per-file diff vs. fresh install vs.
- * leave-alone.
+ * each one: "what does the user already have here?" — producing three
+ * buckets (`matches`, `differs`, `shardOnly`) that the UI surfaces as
+ * auto-adopt vs. per-file diff vs. fresh install. Paths in the user's
+ * vault but not in the shard ("user-only") are silently left untouched
+ * and never enter the planner's output: classification is shard-source-
+ * driven, never recursive over cwd.
  *
  * This module is pure: it reads the shard tempdir + the user's vault but
  * never writes. Disk mutations live in `adopt-executor.ts`.

@@ -1127,8 +1127,11 @@ interface AdoptPlan {
   matches: AdoptClassification[];
   differs: AdoptClassification[];
   shardOnly: AdoptClassification[];
-  userOnlyApproximate: null;          // never enumerated
   totalShardFiles: number;
+  // No userOnly bucket: classification is shard-source-driven; the user's
+  // tree is never recursively walked, so paths in the vault but not in
+  // the shard are silently left untouched and never enter the planner's
+  // output shape.
 }
 ```
 
