@@ -56,7 +56,7 @@ Ship the core: install, update, status. Prove that vault template upgrades work 
 
 Engine rework required by the v6 shard-layout contract. Must land before Milestone 5. Spec: [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md).
 
-- [ ] Flat shard-root walk + Tier 1 exclusions + `.shardmindignore` parser ([#73](https://github.com/breferrari/shardmind/issues/73))
+- [x] Flat shard-root walk + Tier 1 exclusions + `.shardmindignore` parser ([#73](https://github.com/breferrari/shardmind/issues/73))
 - [ ] Schema defaults enforcement + drop `partials` field ([#74](https://github.com/breferrari/shardmind/issues/74))
 - [ ] `HookContext` extensions (`valuesAreDefaults`, `newFiles`, `removedFiles`) + post-hook re-hash ([#75](https://github.com/breferrari/shardmind/issues/75))
 - [ ] Ref installs (`github:owner/repo#<ref>`) + update semantics (`--version`, `--include-prerelease`, ref re-resolution) ([#76](https://github.com/breferrari/shardmind/issues/76))
