@@ -145,15 +145,20 @@ describe('parseSchema', () => {
     expect('partials' in mod).toBe(false);
   });
 
-  it('accepts sentinel default values (null, empty string, false, 0, empty list)', async () => {
+  it('accepts type-matching empty/falsey literal defaults ("", false, 0, [])', async () => {
     const schema = await parseSchema(path.join(FIXTURES, 'valid-sentinel-defaults.yaml'));
-    expect(Object.keys(schema.values)).toHaveLength(6);
-    expect(schema.values['null_default']!.default).toBeNull();
+    expect(Object.keys(schema.values)).toHaveLength(4);
     expect(schema.values['empty_string_default']!.default).toBe('');
     expect(schema.values['false_default']!.default).toBe(false);
     expect(schema.values['zero_default']!.default).toBe(0);
     expect(schema.values['empty_list_default']!.default).toEqual([]);
-    expect(schema.values['bare_default']!.default).toBeNull();
+  });
+
+  it('rejects literal `default: null` — null does not match any value type', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-default-null.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('default');
+    expect(err.message).toContain('string');
   });
 
   it('reports every reserved-name collision when multiple', async () => {

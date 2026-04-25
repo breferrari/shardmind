@@ -1,35 +1,25 @@
 schema_version: 1
 
 values:
-  null_default:
-    type: string
-    message: "a"
-    default: null
-    group: setup
   empty_string_default:
     type: string
-    message: "b"
+    message: "a"
     default: ""
     group: setup
   false_default:
     type: boolean
-    message: "c"
+    message: "b"
     default: false
     group: setup
   zero_default:
     type: number
-    message: "d"
+    message: "c"
     default: 0
     group: setup
   empty_list_default:
     type: list
-    message: "e"
+    message: "d"
     default: []
-    group: setup
-  bare_default:
-    type: string
-    message: "f"
-    default:
     group: setup
 
 groups:

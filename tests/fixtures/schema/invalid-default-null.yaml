@@ -1,0 +1,16 @@
+schema_version: 1
+
+values:
+  user_name:
+    type: string
+    message: "Your name"
+    default: null
+    group: setup
+
+groups:
+  - { id: setup, label: "Setup" }
+
+modules: {}
+signals: []
+frontmatter: {}
+migrations: []

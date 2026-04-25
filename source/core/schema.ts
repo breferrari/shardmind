@@ -52,10 +52,16 @@ const ValueDefinitionSchema = z.object({
       input: val,
     });
   }
-  // `default` type-match. Skipped when the value is `null` (the
-  // universal "no default" sentinel per docs/SHARD-LAYOUT.md line 119)
-  // or a `{{ }}` computed expression (resolved at install time).
-  if (val.default !== undefined && val.default !== null && !isComputedDefault(val.default)) {
+  // `default` type-match. Skipped only for `{{ … }}` computed
+  // expressions (resolved at install time against the user's other
+  // answers). Every other literal — including `null` — must match
+  // the declared `type`. Authors who want an empty default use a
+  // type-matching literal: `""` for string, `0` for number, `false`
+  // for boolean, `[]` for list/multiselect, the first option for
+  // select. Allowing `null` past this check would propagate to
+  // `mergePrefill` and `buildValuesValidator`, surfacing as a
+  // confusing zod runtime error far from the offending schema line.
+  if (val.default !== undefined && !isComputedDefault(val.default)) {
     const d = val.default;
     let typeMismatch: string | null = null;
     switch (val.type) {
@@ -254,9 +260,11 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
   // Every value MUST declare a `default` field. The check reads the raw
   // YAML because zod's `default: z.unknown().optional()` strips the key
   // when missing, so post-parse `'default' in val` can't distinguish
-  // missing from explicit-undefined. Sentinel values like null, "",
-  // false, 0, [] are accepted — the rule is presence, not non-emptiness
-  // (see docs/SHARD-LAYOUT.md "Values, schema, and modules").
+  // missing from explicit-undefined. Empty/falsey values like `""`,
+  // `false`, `0`, `[]` are accepted — the rule is presence, not
+  // non-emptiness. (Type-match for the literal happens in the
+  // `ValueDefinitionSchema.check()` rule above; `null` is rejected
+  // there because it doesn't match any of the six value types.)
   const rawValues = (parsed as { values?: Record<string, unknown> }).values ?? {};
   const missingDefault: string[] = [];
   for (const key of Object.keys(data.values)) {
@@ -269,7 +277,7 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
     throw new ShardMindError(
       `shard-schema.yaml: values missing required \`default\` field: ${missingDefault.join(', ')}`,
       'SCHEMA_VALIDATION_FAILED',
-      'Every value must declare a `default`. Use a type-matching value (e.g. "" for string, false for boolean, 0 for number, [] for list/multiselect, the first option value for select).',
+      'Every value must declare a `default` whose type matches the value\'s `type`: "" for string, false for boolean, 0 for number, [] for list/multiselect, one of `options[].value` for select.',
     );
   }
 
