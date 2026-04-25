@@ -141,19 +141,26 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
   const env = createRenderer(tempDir);
   const renderContext = buildRenderContext(manifest, values, selections, now);
 
-  const items: ShardOutputItem[] = [];
+  // `renderFile` reads the source file then runs Nunjucks; `buildItemFromCopy`
+  // reads the source file. Both are independent across entries — fan out to
+  // bounded concurrency so a shard with hundreds of files doesn't serialize
+  // on per-entry I/O. Same budget the user-side classification uses.
+  const renderedGroups = await mapConcurrent(
+    resolution.render,
+    ADOPT_READ_CONCURRENCY,
+    async (entry) => {
+      const rendered = await renderFile(entry, renderContext, env);
+      const outputs = Array.isArray(rendered) ? rendered : [rendered];
+      return outputs.map((file) => buildItemFromRender(entry, file, tempDir));
+    },
+  );
+  const copyItems = await mapConcurrent(
+    resolution.copy,
+    ADOPT_READ_CONCURRENCY,
+    (entry) => buildItemFromCopy(entry, tempDir),
+  );
 
-  for (const entry of resolution.render) {
-    const rendered = await renderFile(entry, renderContext, env);
-    const outputs = Array.isArray(rendered) ? rendered : [rendered];
-    for (const file of outputs) {
-      items.push(buildItemFromRender(entry, file, tempDir));
-    }
-  }
-
-  for (const entry of resolution.copy) {
-    items.push(await buildItemFromCopy(entry, tempDir));
-  }
+  const items: ShardOutputItem[] = [...renderedGroups.flat(), ...copyItems];
 
   const classifications = await mapConcurrent(items, ADOPT_READ_CONCURRENCY, async (item) => {
     return classifyOne(vaultRoot, item);

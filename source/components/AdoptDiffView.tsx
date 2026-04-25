@@ -102,7 +102,6 @@ export default function AdoptDiffView({
               key={`${filePath}-${i}-${hunk.startLine}`}
               hunk={hunk}
               userLines={hunks!.userLines}
-              shardLines={hunks!.shardLines}
             />
           ))}
           {hunks && hunks.regions.length > HUNK_DISPLAY_CAP && (
@@ -135,7 +134,6 @@ interface DiffHunk {
 interface DiffRender {
   regions: DiffHunk[];
   userLines: string[];
-  shardLines: string[];
 }
 
 /**
@@ -155,7 +153,6 @@ interface DiffRender {
  */
 function computeHunks(userText: string, shardText: string): DiffRender {
   const userLines = splitLinesPreserve(userText);
-  const shardLines = splitLinesPreserve(shardText);
   const parts = diffLines(userText, shardText);
 
   const regions: DiffHunk[] = [];
@@ -195,16 +192,15 @@ function computeHunks(userText: string, shardText: string): DiffRender {
   }
   flush(userLine);
 
-  return { regions, userLines, shardLines };
+  return { regions, userLines };
 }
 
 interface HunkBlockProps {
   hunk: DiffHunk;
   userLines: string[];
-  shardLines: string[];
 }
 
-function HunkBlock({ hunk, userLines, shardLines }: HunkBlockProps) {
+function HunkBlock({ hunk, userLines }: HunkBlockProps) {
   const beforeStart = Math.max(0, hunk.startLine - 1 - CONTEXT_LINES);
   const beforeEnd = hunk.startLine - 1;
   const afterStart = Math.min(userLines.length, hunk.endLine - 1);
@@ -239,12 +235,6 @@ function HunkBlock({ hunk, userLines, shardLines }: HunkBlockProps) {
       {after.map((line, i) => (
         <Text key={`a-${i}`} dimColor>  {line}</Text>
       ))}
-      {/* `void shardLines` keeps the prop wired without rendering — the
-          full shard listing isn't surfaced inline; we surface only the
-          shard-side lines that participate in the hunk. The arg keeps
-          the API symmetric so a future "show shard context" toggle
-          doesn't change the shape of computeHunks. */}
-      {void shardLines}
     </Box>
   );
 }

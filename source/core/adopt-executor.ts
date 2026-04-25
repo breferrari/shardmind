@@ -40,9 +40,6 @@ import { errnoCode, isEnoent } from '../runtime/errno.js';
 import {
   SHARDMIND_DIR,
   STATE_FILE,
-  CACHED_MANIFEST,
-  CACHED_SCHEMA,
-  CACHED_TEMPLATES,
   VALUES_FILE,
 } from '../runtime/vault-paths.js';
 import { mapConcurrent, pathExists } from './fs-utils.js';
@@ -425,33 +422,39 @@ export async function rollbackAdopt(
   }
 
   // Restore each snapshotted file. The snapshot tree mirrors the vault
-  // shape, so a recursive walk + per-file copy is enough.
+  // shape, so a recursive walk + per-file copy is enough. Skip the
+  // existence pre-check and let the first `readdir` ENOENT-tolerate —
+  // if the snapshot dir is missing (e.g. failure before snapshotForRollback
+  // finished), the walk is a no-op rather than a TOCTOU race against a
+  // stat that lies the moment we read it.
   const filesDir = path.join(backupDir, 'files');
-  if (await pathExists(filesDir)) {
-    const stack: string[] = [filesDir];
-    while (stack.length > 0) {
-      const dir = stack.pop()!;
-      let entries;
-      try {
-        entries = await fsp.readdir(dir, { withFileTypes: true });
-      } catch (err) {
-        failures.push({ path: dir, reason: `readdir failed: ${reasonOf(err)}` });
+  const stack: string[] = [filesDir];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let entries;
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      // ENOENT on the root is the "no snapshot" case — silent skip;
+      // ENOENT on a subdir is a vanished mid-walk dir — also tolerable.
+      // Anything else (EACCES, EBUSY, …) is a real failure.
+      if (isEnoent(err)) continue;
+      failures.push({ path: dir, reason: `readdir failed: ${reasonOf(err)}` });
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
         continue;
       }
-      for (const entry of entries) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          stack.push(full);
-          continue;
-        }
-        const rel = path.relative(filesDir, full);
-        const dst = path.join(vaultRoot, rel);
-        try {
-          await fsp.mkdir(path.dirname(dst), { recursive: true });
-          await fsp.copyFile(full, dst);
-        } catch (err) {
-          failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}` });
-        }
+      const rel = path.relative(filesDir, full);
+      const dst = path.join(vaultRoot, rel);
+      try {
+        await fsp.mkdir(path.dirname(dst), { recursive: true });
+        await fsp.copyFile(full, dst);
+      } catch (err) {
+        failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}` });
       }
     }
   }
@@ -531,7 +534,3 @@ async function writeValuesFile(
   }
 }
 
-// Touch unused-symbol guards (avoid warnings if anything below changes).
-void CACHED_MANIFEST;
-void CACHED_SCHEMA;
-void CACHED_TEMPLATES;

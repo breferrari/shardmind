@@ -23,7 +23,6 @@ import type {
   ResolvedShard,
   ShardManifest,
   ShardSchema,
-  ShardState,
 } from '../../runtime/types.js';
 import { ShardMindError } from '../../runtime/types.js';
 import { resolve as resolveRef } from '../../core/registry.js';
@@ -39,6 +38,7 @@ import {
   assertAdoptable,
   rollbackAdopt,
   runAdopt,
+  type AdoptApplyKind,
   type AdoptResolutions,
   type AdoptSummary as AdoptSummaryData,
 } from '../../core/adopt-executor.js';
@@ -498,7 +498,7 @@ async function loadValuesFile(
   });
 }
 
-function labelForAction(kind: string): string {
+function labelForAction(kind: AdoptApplyKind): string {
   switch (kind) {
     case 'matches':
       return '✓';
@@ -508,11 +508,5 @@ function labelForAction(kind: string): string {
       return '→';
     case 'differs-use-shard':
       return '↻';
-    default:
-      return '·';
   }
 }
-
-// Avoid unused-symbol warnings when this is built but `_state` isn't surfaced
-// up the chain.
-void ({} as ShardState);
