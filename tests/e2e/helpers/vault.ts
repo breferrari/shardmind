@@ -121,6 +121,31 @@ export async function cleanupAllVaults(): Promise<void> {
 }
 
 /**
+ * Strip the engine's installed-side metadata (`.shardmind/` dir +
+ * `shard-values.yaml`) from a vault. Used by adopt scenarios to
+ * simulate a v5.1-style clone — the user has the vault content but
+ * never went through `shardmind install`.
+ */
+export async function stripShardmindMetadata(vault: Vault): Promise<void> {
+  await fs.rm(path.join(vault.root, '.shardmind'), { recursive: true, force: true });
+  await fs.rm(path.join(vault.root, 'shard-values.yaml'), { force: true });
+}
+
+/**
+ * Read and parse a hook ctx dump emitted by a fixture's
+ * `post-install.ts` / `post-update.ts`. The fixture writes the full
+ * `HookContext` JSON to `.hook-ctx-{install,update}.json` so scenarios
+ * can assert what the engine handed the hook (valuesAreDefaults,
+ * newFiles, removedFiles, previousVersion, …).
+ */
+export async function readHookContext<T = Record<string, unknown>>(
+  vault: Vault,
+  phase: 'install' | 'update',
+): Promise<T> {
+  return JSON.parse(await vault.readFile(`.hook-ctx-${phase}.json`)) as T;
+}
+
+/**
  * Recursive file listing. Returns relative paths in POSIX form, sorted.
  * Skips symlinks and non-regular entries silently. Tolerates a directory
  * vanishing mid-walk. Shared by the Vault factory and the Invariant 1

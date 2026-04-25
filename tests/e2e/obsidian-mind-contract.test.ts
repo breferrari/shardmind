@@ -33,24 +33,31 @@
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stringify as stringifyYaml } from 'yaml';
+import * as tar from 'tar';
+import { stringify as stringifyYaml, parse as parseYaml } from 'yaml';
 
+import { sha256 } from '../../source/core/fs-utils.js';
 import { ensureBuilt } from './helpers/build-once.js';
 import {
   buildObsidianMindTarballs,
   cleanupObsidianMindTarballs,
   type ObsidianMindTarballs,
 } from './helpers/obsidian-mind-tarball.js';
+import { unpackInto } from './helpers/tarball-utils.js';
 import { createGitHubStub, type GitHubStub } from './helpers/github-stub.js';
 import { spawnCli } from './helpers/spawn-cli.js';
 import {
   createEmptyVault,
   createInstalledVault,
   cleanupAllVaults,
+  readHookContext,
+  stripShardmindMetadata,
   type Vault,
 } from './helpers/vault.js';
+import { verifyInvariant1 } from './helpers/invariant1.js';
 
 const SHARD_SLUG = 'acme/obs-mind-like';
 const SHARD_REF = `github:${SHARD_SLUG}`;
@@ -145,12 +152,6 @@ interface HookCtxSnapshot {
   previousVersion?: string;
 }
 
-async function readInstallHookCtx(vault: Vault): Promise<HookCtxSnapshot> {
-  return JSON.parse(
-    await vault.readFile('.hook-ctx-install.json'),
-  ) as HookCtxSnapshot;
-}
-
 // ---------------------------------------------------------------------------
 // Install scenarios — see issue #92 §Install + docs/SHARD-LAYOUT.md
 // §Installation invariants.
@@ -196,7 +197,7 @@ describe('install (obsidian-mind-like)', () => {
       expect(await vault.exists(rel)).toBe(true);
     }
 
-    const ctx = await readInstallHookCtx(vault);
+    const ctx = await readHookContext<HookCtxSnapshot>(vault, 'install');
     expect(ctx.valuesAreDefaults).toBe(true);
     expect(ctx.newFiles).toEqual([]);
     expect(ctx.removedFiles).toEqual([]);
@@ -238,14 +239,13 @@ describe('install (obsidian-mind-like)', () => {
     // Post-hook re-hash: state.json's rendered_hash for North Star.md
     // must match the post-edit bytes so a `shardmind` status reports
     // zero drift right after install.
-    const { sha256 } = await import('../../source/core/fs-utils.js');
-    const expectedHash = sha256(northStar);
+const expectedHash = sha256(northStar);
     const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
       files: Record<string, { rendered_hash: string }>;
     };
     expect(state.files['brain/North Star.md']?.rendered_hash).toBe(expectedHash);
 
-    const ctx = await readInstallHookCtx(vault);
+    const ctx = await readHookContext<HookCtxSnapshot>(vault, 'install');
     expect(ctx.valuesAreDefaults).toBe(false);
     expect(ctx.values).toMatchObject({
       user_name: 'Alice',
@@ -385,8 +385,7 @@ describe('update (obsidian-mind-like)', () => {
     const claudeAfter = await vault.readFile('CLAUDE.md');
     expect(claudeAfter).toContain('My bespoke CLAUDE addition.');
 
-    const { sha256 } = await import('../../source/core/fs-utils.js');
-    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
       files: Record<string, { rendered_hash: string }>;
     };
     expect(state.files['CLAUDE.md']?.rendered_hash).toBe(sha256(claudeAfter));
@@ -552,17 +551,6 @@ describe('update (obsidian-mind-like)', () => {
 // §Adopt semantics.
 // ---------------------------------------------------------------------------
 
-/**
- * Strip the engine's installed-side metadata to simulate a v5.1-style
- * clone: no .shardmind/, no shard-values.yaml. Vault content survives.
- * Used by adopt scenarios that need a "user has cloned the shard
- * before shardmind support" starting state.
- */
-async function stripEngineMetadata(vault: Vault): Promise<void> {
-  await fs.rm(path.join(vault.root, '.shardmind'), { recursive: true, force: true });
-  await fs.rm(path.join(vault.root, 'shard-values.yaml'), { force: true });
-}
-
 describe('adopt (obsidian-mind-like)', () => {
   let vault: Vault;
   afterEach(async () => {
@@ -585,7 +573,7 @@ describe('adopt (obsidian-mind-like)', () => {
       values: CUSTOM_VALUES,
       prefix: 'obs-mind-adopt-clean',
     });
-    await stripEngineMetadata(vault);
+    await stripShardmindMetadata(vault);
 
     const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
     const result = await spawnCli(
@@ -622,7 +610,7 @@ describe('adopt (obsidian-mind-like)', () => {
       values: CUSTOM_VALUES,
       prefix: 'obs-mind-adopt-edited',
     });
-    await stripEngineMetadata(vault);
+    await stripShardmindMetadata(vault);
 
     const myEdit = '# Claude — edited before adopt\n';
     await vault.writeFile('CLAUDE.md', myEdit);
@@ -654,7 +642,7 @@ describe('adopt (obsidian-mind-like)', () => {
       values: CUSTOM_VALUES,
       prefix: 'obs-mind-adopt-userfile',
     });
-    await stripEngineMetadata(vault);
+    await stripShardmindMetadata(vault);
     await vault.writeFile('my-private-note.md', 'private user content\n');
 
     const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
@@ -708,7 +696,7 @@ describe('adopt (obsidian-mind-like)', () => {
       values: CUSTOM_VALUES,
       prefix: 'obs-mind-adopt-then-update',
     });
-    await stripEngineMetadata(vault);
+    await stripShardmindMetadata(vault);
 
     const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
     const adopt = await spawnCli(
@@ -845,11 +833,8 @@ describe('prerelease policy (obsidian-mind-like)', () => {
   let vault: Vault;
 
   beforeAll(async () => {
-    const tarMod = await import('tar');
-    const osMod = await import('node:os');
-    const yamlMod = await import('yaml');
     prerelScratch = await fs.mkdtemp(
-      path.join(osMod.tmpdir(), 'shardmind-e2e-obsmind-prerel-'),
+      path.join(os.tmpdir(), 'shardmind-e2e-obsmind-prerel-'),
     );
     const prefix = 'obs-mind-like-6.0.1-beta.1';
     const workRoot = path.join(prerelScratch, 'work');
@@ -859,12 +844,12 @@ describe('prerelease policy (obsidian-mind-like)', () => {
     await unpackInto(fixtures.byVersion['6.0.1'], workDir);
     const manifestPath = path.join(workDir, '.shardmind', 'shard.yaml');
     const manifestSrc = await fs.readFile(manifestPath, 'utf-8');
-    const manifest = yamlMod.parse(manifestSrc) as Record<string, unknown>;
+    const manifest = parseYaml(manifestSrc) as Record<string, unknown>;
     manifest['version'] = '6.0.1-beta.1';
-    await fs.writeFile(manifestPath, yamlMod.stringify(manifest), 'utf-8');
+    await fs.writeFile(manifestPath, stringifyYaml(manifest), 'utf-8');
 
     prerelTarball = path.join(prerelScratch, `${prefix}.tar.gz`);
-    await tarMod.c({ file: prerelTarball, gzip: true, cwd: workRoot }, [prefix]);
+    await tar.c({ file: prerelTarball, gzip: true, cwd: workRoot }, [prefix]);
 
     prerelStub = await createGitHubStub({
       shards: {
@@ -927,14 +912,6 @@ describe('prerelease policy (obsidian-mind-like)', () => {
   }, 60_000);
 });
 
-/** Extract a tar.gz into `into` (creating it). Helper for inline tarball
- * scaffolding inside describe-blocks that need a custom-shaped tarball. */
-async function unpackInto(tarPath: string, into: string): Promise<void> {
-  const tarMod = await import('tar');
-  await fs.mkdir(into, { recursive: true });
-  await tarMod.x({ file: tarPath, cwd: into, strip: 1 });
-}
-
 // ---------------------------------------------------------------------------
 // Hook failure + adversarial — see issue #92 §Hook failure + §Adversarial
 // + docs/SHARD-LAYOUT.md §Hooks (non-fatal contract) + §File disposition.
@@ -950,107 +927,100 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
   let vault: Vault;
 
   beforeAll(async () => {
-    const tarMod = await import('tar');
-    const osMod = await import('node:os');
-    const yamlMod = await import('yaml');
     weirdScratch = await fs.mkdtemp(
-      path.join(osMod.tmpdir(), 'shardmind-e2e-obsmind-weird-'),
+      path.join(os.tmpdir(), 'shardmind-e2e-obsmind-weird-'),
     );
 
-    // 1. Tiny-timeout tarball — manifest declares timeout_ms: 1000 so
-    //    a hook that sleeps 5s deterministically times out.
-    const timeoutPrefix = 'obs-mind-like-tiny-timeout-1.0.0';
-    const timeoutWorkRoot = path.join(weirdScratch, 'timeout-work');
-    const timeoutDir = path.join(timeoutWorkRoot, timeoutPrefix);
-    await unpackInto(fixtures.byVersion['6.0.0'], timeoutDir);
-    {
-      const manifestPath = path.join(timeoutDir, '.shardmind', 'shard.yaml');
-      const manifestSrc = await fs.readFile(manifestPath, 'utf-8');
-      const manifest = yamlMod.parse(manifestSrc) as {
-        hooks: Record<string, unknown>;
-        version: string;
-      };
-      manifest.hooks['timeout_ms'] = 1000;
-      manifest.version = '1.0.0';
-      await fs.writeFile(manifestPath, yamlMod.stringify(manifest), 'utf-8');
-    }
-    const timeoutTar = path.join(weirdScratch, `${timeoutPrefix}.tar.gz`);
-    await tarMod.c(
-      { file: timeoutTar, gzip: true, cwd: timeoutWorkRoot },
-      [timeoutPrefix],
-    );
-
-    // 2. Symlinked tarball — drop a relative symlink at the shard root
-    //    so the engine's walk hits `WALK_SYMLINK_REJECTED` before any
-    //    write. Keep the rest of the tree byte-identical to v6.0.0 so
-    //    a regression that silently allows symlinks would also let
-    //    them propagate to disk.
-    const symlinkPrefix = 'obs-mind-like-symlinked-1.0.0';
-    const symlinkWorkRoot = path.join(weirdScratch, 'symlink-work');
-    const symlinkDir = path.join(symlinkWorkRoot, symlinkPrefix);
-    await unpackInto(fixtures.byVersion['6.0.0'], symlinkDir);
-    {
-      const manifestPath = path.join(symlinkDir, '.shardmind', 'shard.yaml');
-      const manifestSrc = await fs.readFile(manifestPath, 'utf-8');
-      const manifest = yamlMod.parse(manifestSrc) as { version: string };
-      manifest.version = '1.0.0';
-      await fs.writeFile(manifestPath, yamlMod.stringify(manifest), 'utf-8');
-    }
-    // Symlink the repo's CLAUDE.md inside brain/ — relative target so
-    // the tarball is self-contained. The walker rejects on encounter,
-    // not at extraction time.
-    await fs.symlink(
-      '../CLAUDE.md',
-      path.join(symlinkDir, 'brain', 'symlink-trap.md'),
-    );
-    const symlinkTar = path.join(weirdScratch, `${symlinkPrefix}.tar.gz`);
-    await tarMod.c(
-      {
-        file: symlinkTar,
-        gzip: true,
-        cwd: symlinkWorkRoot,
-        // Preserve symlinks in the archive — node-tar respects this by
-        // default but be explicit so a future tar version that flips
-        // the default to dereference doesn't silently mutate the test.
-        follow: false,
-      },
-      [symlinkPrefix],
-    );
-
-    // 3. Mass-ignore tarball — `.shardmindignore` with 1k patterns,
-    //    one of which actually excludes a planted decoy file. Asserts
-    //    the parser scales and the matcher correctly applies the
-    //    needle pattern in a haystack.
-    const massPrefix = 'obs-mind-like-mass-ignore-1.0.0';
-    const massWorkRoot = path.join(weirdScratch, 'mass-ignore-work');
-    const massDir = path.join(massWorkRoot, massPrefix);
-    await unpackInto(fixtures.byVersion['6.0.0'], massDir);
-    {
-      const manifestPath = path.join(massDir, '.shardmind', 'shard.yaml');
-      const manifestSrc = await fs.readFile(manifestPath, 'utf-8');
-      const manifest = yamlMod.parse(manifestSrc) as { version: string };
-      manifest.version = '1.0.0';
-      await fs.writeFile(manifestPath, yamlMod.stringify(manifest), 'utf-8');
-    }
-    // Plant the decoy file the ignore line will catch.
-    await fs.writeFile(
-      path.join(massDir, 'decoy-marketing.gif'),
-      'pretend this is a gif\n',
-      'utf-8',
-    );
-    const ignoreLines: string[] = [];
-    for (let i = 0; i < 999; i++) ignoreLines.push(`unused-pattern-${i}.tmp`);
-    ignoreLines.push('decoy-marketing.gif'); // The needle.
-    await fs.writeFile(
-      path.join(massDir, '.shardmindignore'),
-      ignoreLines.join('\n') + '\n',
-      'utf-8',
-    );
-    const massTar = path.join(weirdScratch, `${massPrefix}.tar.gz`);
-    await tarMod.c(
-      { file: massTar, gzip: true, cwd: massWorkRoot },
-      [massPrefix],
-    );
+    // The three tarballs are independent; build them in parallel so
+    // the describe block's setup cost stays around the longest single
+    // build instead of the sum.
+    const [timeoutTar, symlinkTar, massTar] = await Promise.all([
+      // 1. Tiny-timeout tarball — manifest declares timeout_ms: 1000
+      //    so a hook that sleeps 5s deterministically times out.
+      (async () => {
+        const prefix = 'obs-mind-like-tiny-timeout-1.0.0';
+        const workRoot = path.join(weirdScratch, 'timeout-work');
+        const dir = path.join(workRoot, prefix);
+        await unpackInto(fixtures.byVersion['6.0.0'], dir);
+        const manifestPath = path.join(dir, '.shardmind', 'shard.yaml');
+        const manifest = parseYaml(await fs.readFile(manifestPath, 'utf-8')) as {
+          hooks: Record<string, unknown>;
+          version: string;
+        };
+        manifest.hooks['timeout_ms'] = 1000;
+        manifest.version = '1.0.0';
+        await fs.writeFile(manifestPath, stringifyYaml(manifest), 'utf-8');
+        const tarPath = path.join(weirdScratch, `${prefix}.tar.gz`);
+        await tar.c({ file: tarPath, gzip: true, cwd: workRoot }, [prefix]);
+        return tarPath;
+      })(),
+      // 2. Symlinked tarball — relative symlink at the shard root so
+      //    the engine's walk hits WALK_SYMLINK_REJECTED before any
+      //    write. Rest of the tree byte-identical to v6.0.0 so a
+      //    regression that silently allows symlinks would also let
+      //    them propagate to disk.
+      (async () => {
+        const prefix = 'obs-mind-like-symlinked-1.0.0';
+        const workRoot = path.join(weirdScratch, 'symlink-work');
+        const dir = path.join(workRoot, prefix);
+        await unpackInto(fixtures.byVersion['6.0.0'], dir);
+        const manifestPath = path.join(dir, '.shardmind', 'shard.yaml');
+        const manifest = parseYaml(await fs.readFile(manifestPath, 'utf-8')) as {
+          version: string;
+        };
+        manifest.version = '1.0.0';
+        await fs.writeFile(manifestPath, stringifyYaml(manifest), 'utf-8');
+        await fs.symlink(
+          '../CLAUDE.md',
+          path.join(dir, 'brain', 'symlink-trap.md'),
+        );
+        const tarPath = path.join(weirdScratch, `${prefix}.tar.gz`);
+        await tar.c(
+          {
+            file: tarPath,
+            gzip: true,
+            cwd: workRoot,
+            // Preserve symlinks in the archive — node-tar's default,
+            // but be explicit so a future tar version that flips to
+            // dereference doesn't silently mutate the test.
+            follow: false,
+          },
+          [prefix],
+        );
+        return tarPath;
+      })(),
+      // 3. Mass-ignore tarball — `.shardmindignore` with 1k patterns,
+      //    one of which excludes a planted decoy file. Asserts both
+      //    the parser scales and the matcher catches the needle.
+      (async () => {
+        const prefix = 'obs-mind-like-mass-ignore-1.0.0';
+        const workRoot = path.join(weirdScratch, 'mass-ignore-work');
+        const dir = path.join(workRoot, prefix);
+        await unpackInto(fixtures.byVersion['6.0.0'], dir);
+        const manifestPath = path.join(dir, '.shardmind', 'shard.yaml');
+        const manifest = parseYaml(await fs.readFile(manifestPath, 'utf-8')) as {
+          version: string;
+        };
+        manifest.version = '1.0.0';
+        await fs.writeFile(manifestPath, stringifyYaml(manifest), 'utf-8');
+        await fs.writeFile(
+          path.join(dir, 'decoy-marketing.gif'),
+          'pretend this is a gif\n',
+          'utf-8',
+        );
+        const ignoreLines: string[] = [];
+        for (let i = 0; i < 999; i++) ignoreLines.push(`unused-pattern-${i}.tmp`);
+        ignoreLines.push('decoy-marketing.gif'); // The needle.
+        await fs.writeFile(
+          path.join(dir, '.shardmindignore'),
+          ignoreLines.join('\n') + '\n',
+          'utf-8',
+        );
+        const tarPath = path.join(weirdScratch, `${prefix}.tar.gz`);
+        await tar.c({ file: tarPath, gzip: true, cwd: workRoot }, [prefix]);
+        return tarPath;
+      })(),
+    ]);
 
     weirdStub = await createGitHubStub({
       shards: {
@@ -1111,8 +1081,7 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     const northStar = await vault.readFile('brain/North Star.md');
     expect(northStar).toContain('<!-- pre-throw edit -->');
 
-    const { sha256 } = await import('../../source/core/fs-utils.js');
-    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
       files: Record<string, { rendered_hash: string }>;
     };
     expect(state.files['brain/North Star.md']?.rendered_hash).toBe(sha256(northStar));
@@ -1199,12 +1168,15 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
       { cwd: vault.root, env: envWithStub() },
     );
     expect(positive.exitCode).toBe(0);
-    const positiveCtx = await readInstallHookCtx(vault);
+    const positiveCtx = await readHookContext<HookCtxSnapshot>(vault, 'install');
     expect(positiveCtx.valuesAreDefaults).toBe(true);
     await vault.cleanup();
 
     // Negative branches — flip exactly one value at a time. Each
-    // flip must surface valuesAreDefaults=false.
+    // flip must surface valuesAreDefaults=false. The five flips are
+    // independent (each gets its own vault) so they run in parallel
+    // — install is subprocess-bound (~2s each), and serial cost was
+    // ~10s for the whole scenario.
     const flips: Array<[string, Record<string, unknown>]> = [
       ['user_name (string default "")', { ...DEFAULT_VALUES, user_name: 'Alice' }],
       ['qmd_enabled (boolean default false)', { ...DEFAULT_VALUES, qmd_enabled: true }],
@@ -1212,21 +1184,26 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
       ['org_name (string default "Independent")', { ...DEFAULT_VALUES, org_name: 'Acme' }],
       ['vault_purpose (select default engineering)', { ...DEFAULT_VALUES, vault_purpose: 'research' }],
     ];
-    for (const [label, values] of flips) {
-      vault = await createEmptyVault(`obs-mind-flip-${label.split(' ')[0]}`);
-      const valuesPath = await writeValuesFile(vault, values);
-      const result = await spawnCli(
-        ['install', SHARD_REF, '--yes', '--values', valuesPath],
-        { cwd: vault.root, env: envWithStub() },
-      );
-      expect(result.exitCode, `flip ${label} install failed`).toBe(0);
-      const ctx = await readInstallHookCtx(vault);
-      expect(
-        ctx.valuesAreDefaults,
-        `valuesAreDefaults should be false when ${label} diverges`,
-      ).toBe(false);
-      await vault.cleanup();
-    }
+    await Promise.all(
+      flips.map(async ([label, values]) => {
+        const v = await createEmptyVault(`obs-mind-flip-${label.split(' ')[0]}`);
+        try {
+          const valuesPath = await writeValuesFile(v, values);
+          const result = await spawnCli(
+            ['install', SHARD_REF, '--yes', '--values', valuesPath],
+            { cwd: v.root, env: envWithStub() },
+          );
+          expect(result.exitCode, `flip ${label} install failed`).toBe(0);
+          const ctx = await readHookContext<HookCtxSnapshot>(v, 'install');
+          expect(
+            ctx.valuesAreDefaults,
+            `valuesAreDefaults should be false when ${label} diverges`,
+          ).toBe(false);
+        } finally {
+          await v.cleanup();
+        }
+      }),
+    );
   }, 240_000);
 
   it.runIf(process.platform === 'darwin')(
@@ -1237,7 +1214,6 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
       // case-insensitive filesystems (macOS default). Skipped on
       // linux because case-folding only matters on the platforms that
       // do it.
-      const { verifyInvariant1 } = await import('./helpers/invariant1.js');
       const FIXTURE_DIR = fileURLToPath(
         new URL('../fixtures/shards/obsidian-mind-like', import.meta.url),
       );
@@ -1316,10 +1292,8 @@ describe('source repo without .shardmind/ (additive principle, install rejection
   let vault: Vault;
 
   beforeAll(async () => {
-    const tarMod = await import('tar');
-    const osMod = await import('node:os');
     scratch = await fs.mkdtemp(
-      path.join(osMod.tmpdir(), 'shardmind-e2e-noshardmind-'),
+      path.join(os.tmpdir(), 'shardmind-e2e-noshardmind-'),
     );
     const prefix = 'no-shardmind-1.0.0';
     const workRoot = path.join(scratch, 'work');
@@ -1340,7 +1314,7 @@ describe('source repo without .shardmind/ (additive principle, install rejection
     );
 
     const tarPath = path.join(scratch, `${prefix}.tar.gz`);
-    await tarMod.c({ file: tarPath, gzip: true, cwd: workRoot }, [prefix]);
+    await tar.c({ file: tarPath, gzip: true, cwd: workRoot }, [prefix]);
 
     noShardmindStub = await createGitHubStub({
       shards: {
