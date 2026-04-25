@@ -108,8 +108,6 @@ export async function buildObsidianMindTarballs(): Promise<ObsidianMindTarballs>
         );
         await fs.writeFile(claude, replaced, 'utf-8');
 
-        // Add the new optional module: declare it in the schema and
-        // ship one file under research/.
         const schemaPath = path.join(work, '.shardmind', 'shard-schema.yaml');
         const schemaSrc = await fs.readFile(schemaPath, 'utf-8');
         const schema = parseYaml(schemaSrc) as {
@@ -164,7 +162,9 @@ async function buildOne(opts: BuildOneOpts): Promise<string> {
     const workDir = path.join(workRoot, prefix);
     await copyDir(FIXTURE_DIR, workDir);
 
-    // Manifest version must match the served tag.
+    // state.version tracks manifest.version after install — keep the
+    // manifest in lockstep with the tag the stub will serve, otherwise
+    // up-to-date detection compares mismatched values.
     const manifestPath = path.join(workDir, '.shardmind', 'shard.yaml');
     const manifestSrc = await fs.readFile(manifestPath, 'utf-8');
     const manifest = parseYaml(manifestSrc) as Record<string, unknown>;

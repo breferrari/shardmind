@@ -40,6 +40,7 @@ import * as tar from 'tar';
 import { stringify as stringifyYaml, parse as parseYaml } from 'yaml';
 
 import { sha256 } from '../../source/core/fs-utils.js';
+import type { HookContext } from '../../source/runtime/types.js';
 import { ensureBuilt } from './helpers/build-once.js';
 import {
   buildObsidianMindTarballs,
@@ -141,16 +142,14 @@ async function writeValuesFile(
   return valuesPath;
 }
 
-interface HookCtxSnapshot {
-  vaultRoot: string;
-  values: Record<string, unknown>;
-  modules: Record<string, 'included' | 'excluded'>;
-  shard: { name: string; version: string };
-  valuesAreDefaults: boolean;
-  newFiles: string[];
-  removedFiles: string[];
-  previousVersion?: string;
-}
+/**
+ * Test-side mirror of the engine's HookContext. Aliasing the runtime
+ * type (rather than redefining its shape) means a new HookContext
+ * field shows up here automatically — silently dropping a field at
+ * the assertion layer is a class of regression we deliberately can't
+ * have.
+ */
+type HookCtxSnapshot = HookContext;
 
 // ---------------------------------------------------------------------------
 // Install scenarios — see issue #92 §Install + docs/SHARD-LAYOUT.md
@@ -934,6 +933,12 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     // The three tarballs are independent; build them in parallel so
     // the describe block's setup cost stays around the longest single
     // build instead of the sum.
+    //
+    // Windows: skip the symlink tarball entirely. fs.symlink() requires
+    // Admin / Developer Mode privileges, so the tarball *build* (in
+    // beforeAll) crashes before any test runs. Returning null collapses
+    // to a skip on the symlink scenario below.
+    const skipSymlinkPlatform = process.platform === 'win32';
     const [timeoutTar, symlinkTar, massTar] = await Promise.all([
       // 1. Tiny-timeout tarball — manifest declares timeout_ms: 1000
       //    so a hook that sleeps 5s deterministically times out.
@@ -958,37 +963,45 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
       //    the engine's walk hits WALK_SYMLINK_REJECTED before any
       //    write. Rest of the tree byte-identical to v6.0.0 so a
       //    regression that silently allows symlinks would also let
-      //    them propagate to disk.
-      (async () => {
-        const prefix = 'obs-mind-like-symlinked-1.0.0';
-        const workRoot = path.join(weirdScratch, 'symlink-work');
-        const dir = path.join(workRoot, prefix);
-        await unpackInto(fixtures.byVersion['6.0.0'], dir);
-        const manifestPath = path.join(dir, '.shardmind', 'shard.yaml');
-        const manifest = parseYaml(await fs.readFile(manifestPath, 'utf-8')) as {
-          version: string;
-        };
-        manifest.version = '1.0.0';
-        await fs.writeFile(manifestPath, stringifyYaml(manifest), 'utf-8');
-        await fs.symlink(
-          '../CLAUDE.md',
-          path.join(dir, 'brain', 'symlink-trap.md'),
-        );
-        const tarPath = path.join(weirdScratch, `${prefix}.tar.gz`);
-        await tar.c(
-          {
-            file: tarPath,
-            gzip: true,
-            cwd: workRoot,
-            // Preserve symlinks in the archive — node-tar's default,
-            // but be explicit so a future tar version that flips to
-            // dereference doesn't silently mutate the test.
-            follow: false,
-          },
-          [prefix],
-        );
-        return tarPath;
-      })(),
+      //    them propagate to disk. Skipped on Windows: fs.symlink()
+      //    requires Admin / Developer Mode privileges which CI runners
+      //    don't have, and on a stock Windows box the build itself
+      //    would throw before tests start.
+      skipSymlinkPlatform
+        ? Promise.resolve(null)
+        : (async () => {
+            const prefix = 'obs-mind-like-symlinked-1.0.0';
+            const workRoot = path.join(weirdScratch, 'symlink-work');
+            const dir = path.join(workRoot, prefix);
+            await unpackInto(fixtures.byVersion['6.0.0'], dir);
+            const manifestPath = path.join(dir, '.shardmind', 'shard.yaml');
+            const manifest = parseYaml(
+              await fs.readFile(manifestPath, 'utf-8'),
+            ) as {
+              version: string;
+            };
+            manifest.version = '1.0.0';
+            await fs.writeFile(manifestPath, stringifyYaml(manifest), 'utf-8');
+            await fs.symlink(
+              '../CLAUDE.md',
+              path.join(dir, 'brain', 'symlink-trap.md'),
+            );
+            const tarPath = path.join(weirdScratch, `${prefix}.tar.gz`);
+            await tar.c(
+              {
+                file: tarPath,
+                gzip: true,
+                cwd: workRoot,
+                // Preserve symlinks in the archive — node-tar's
+                // default, but be explicit so a future tar version
+                // that flips to dereference doesn't silently mutate
+                // the test.
+                follow: false,
+              },
+              [prefix],
+            );
+            return tarPath;
+          })(),
       // 3. Mass-ignore tarball — `.shardmindignore` with 1k patterns,
       //    one of which excludes a planted decoy file. Asserts both
       //    the parser scales and the matcher catches the needle.
@@ -1028,14 +1041,21 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
           versions: { '1.0.0': timeoutTar },
           latest: '1.0.0',
         },
-        'acme/obs-mind-symlinked': {
-          versions: { '1.0.0': symlinkTar },
-          latest: '1.0.0',
-        },
         'acme/obs-mind-mass-ignore': {
           versions: { '1.0.0': massTar },
           latest: '1.0.0',
         },
+        // Symlinked slug only registered when the build succeeded
+        // (non-Windows). The corresponding scenario also gates on
+        // platform so an unregistered slug is never queried.
+        ...(symlinkTar
+          ? {
+              'acme/obs-mind-symlinked': {
+                versions: { '1.0.0': symlinkTar },
+                latest: '1.0.0',
+              },
+            }
+          : {}),
       },
     });
   }, 90_000);
@@ -1098,18 +1118,26 @@ const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
         cwd: vault.root,
         env: {
           SHARDMIND_GITHUB_API_BASE: weirdStub.url,
-          // 5s sleep against a 1s manifest timeout = deterministic kill.
-          SHARDMIND_HOOK_SLEEP_MS: '5000',
+          // 30s sleep against a 1s manifest timeout = deterministic
+          // kill with 29s of slack. A 5s sleep was theoretically
+          // sufficient but a jittery event loop on slow CI can park
+          // setTimeout firing past the budget. The 30:1 ratio means
+          // even a worst-case ~10x event-loop stall still kills the
+          // hook before it would naturally exit.
+          SHARDMIND_HOOK_SLEEP_MS: '30000',
         },
-        timeoutMs: 30_000,
+        // Outer ceiling well past the hook's natural sleep so a
+        // genuinely-stuck engine surfaces as a test timeout (not as
+        // a coincidence with the hook's natural exit).
+        timeoutMs: 60_000,
       },
     );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/timed out/i);
     expect(await vault.exists('.shardmind/state.json')).toBe(true);
-  }, 60_000);
+  }, 90_000);
 
-  it('symlink anywhere in shard source rejects install with WALK_SYMLINK_REJECTED before any writes', async () => {
+  it.skipIf(process.platform === 'win32')('symlink anywhere in shard source rejects install with WALK_SYMLINK_REJECTED before any writes', async () => {
     // Scenario 28 — docs/SHARD-LAYOUT.md §File disposition Tier 1:
     // "Symbolic links anywhere in the shard source — engine rejects
     // with a clear error during the install walk." Pinned by error

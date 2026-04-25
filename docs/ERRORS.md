@@ -421,6 +421,34 @@ Thrown by `source/core/adopt-executor.ts` (and surfaced through `source/commands
 
 `VALUES_FILE_COLLISION` is also reachable from adopt: a vault containing `shard-values.yaml` without `.shardmind/state.json` is a partial-adoption inconsistent state. The hint asks the user to move the stray file aside before re-running.
 
+## Walk + `.shardmindignore`
+
+Thrown by `source/core/modules.ts::walkShardSource` and `source/core/shardmindignore.ts::loadShardmindignore` during the install / update walk over the extracted shard. Pre-write — these never leave a partial vault behind because they fire before any `runInstall` / `runUpdate` mutation.
+
+### `WALK_SYMLINK_REJECTED`
+
+**Meaning:** The walker found a symbolic link inside the shard source. Symlinks anywhere in a shard are a Tier 1 exclusion per [`docs/SHARD-LAYOUT.md §File disposition`](SHARD-LAYOUT.md) — security baseline, an untrusted shard could symlink outside the install target. The error names the offending path.
+
+**Remedy:** Shard authors: replace the symlink with a regular file or remove the entry. End users: report the issue to the shard author; do not attempt to install a shard that ships symlinks.
+
+### `WALK_INVALID_ENTRY`
+
+**Meaning:** The walker hit a directory entry that isn't a regular file, directory, or symbolic link (sockets, FIFOs, block / character devices). Same Tier 1 boundary as symlinks: shards must ship structured-content files only.
+
+**Remedy:** Same as `WALK_SYMLINK_REJECTED` — the shard source is malformed; remove the offending entry or report upstream.
+
+### `SHARDMINDIGNORE_READ_FAILED`
+
+**Meaning:** Reading the shard-root `.shardmindignore` failed for a reason other than "file is absent" (ENOENT is silently treated as an empty ignore set, which is the default). Typically a permissions or I/O error.
+
+**Remedy:** Check filesystem permissions on the shard's extracted temp directory; re-run the install. Persistent failures are usually a corrupt download — clearing `.shardmind/templates/` (for installed vaults) and re-running update forces a fresh fetch.
+
+### `SHARDMINDIGNORE_NEGATION_UNSUPPORTED`
+
+**Meaning:** The `.shardmindignore` file contained a negation pattern (`!pattern`). v0.1 supports glob-only semantics; negation is deferred to v0.2 ([#87](https://github.com/breferrari/shardmind/issues/87)).
+
+**Remedy:** Shard authors: rewrite the ignore patterns as positive excludes (no `!` prefix). End users: report to the shard author — this is a shard-side fix.
+
 ## Update-check cache (status + update)
 
 ### `UPDATE_CHECK_FAILED`

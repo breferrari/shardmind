@@ -21,6 +21,7 @@ import {
   buildObsidianMindTarballs,
   cleanupObsidianMindTarballs,
 } from '../e2e/helpers/obsidian-mind-tarball.js';
+import { parseSchema } from '../../source/core/schema.js';
 
 afterAll(async () => {
   await cleanupObsidianMindTarballs();
@@ -60,6 +61,31 @@ describe('obsidian-mind tarball helper', () => {
     const b = await buildObsidianMindTarballs();
     expect(b.baseDir).toBe(a.baseDir);
     expect(b.byVersion).toEqual(a.byVersion);
+  }, 30_000);
+
+  it('v6.1.0 schema mutation round-trips through YAML preserving falsy / empty defaults', async () => {
+    // The v6.1.0 mutate function parses shard-schema.yaml, adds a new
+    // module, and re-stringifies. YAML's handling of `default: ""`,
+    // `default: 0`, `default: false` is library-specific — a regression
+    // that coerced any of these to null would silently flip Invariant 2
+    // (valuesAreDefaults) for downstream tests. Pin via the engine's
+    // own parser, which is what the install pipeline uses at runtime.
+    const fixtures = await buildObsidianMindTarballs();
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'obs-mind-schema-rt-'));
+    try {
+      await tar.x({ file: fixtures.byVersion['6.1.0'], cwd: tmp, strip: 1 });
+      const schema = await parseSchema(
+        path.join(tmp, '.shardmind', 'shard-schema.yaml'),
+      );
+      expect(schema.values['user_name']?.default).toBe('');
+      expect(schema.values['qmd_enabled']?.default).toBe(false);
+      expect(schema.values['brain_capacity']?.default).toBe(0);
+      // The new research module landed in the round-tripped schema.
+      expect(schema.modules['research']?.removable).toBe(true);
+      expect(schema.modules['research']?.paths).toEqual(['research/']);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
   }, 30_000);
 });
 

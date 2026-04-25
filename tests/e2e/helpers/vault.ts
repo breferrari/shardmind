@@ -24,6 +24,7 @@ import os from 'node:os';
 import { stringify as stringifyYaml } from 'yaml';
 import { spawnCli } from './spawn-cli.js';
 import type { GitHubStub } from './github-stub.js';
+import type { HookContext } from '../../../source/runtime/types.js';
 
 export interface Vault {
   /** Absolute path. */
@@ -137,8 +138,13 @@ export async function stripShardmindMetadata(vault: Vault): Promise<void> {
  * `HookContext` JSON to `.hook-ctx-{install,update}.json` so scenarios
  * can assert what the engine handed the hook (valuesAreDefaults,
  * newFiles, removedFiles, previousVersion, …).
+ *
+ * `T` defaults to the engine's `HookContext` so a typo'd field name
+ * trips the type checker. Tests that assert subset-shape (e.g. just
+ * `valuesAreDefaults`) can pass a tighter T or use the canonical type
+ * directly.
  */
-export async function readHookContext<T = Record<string, unknown>>(
+export async function readHookContext<T = HookContext>(
   vault: Vault,
   phase: 'install' | 'update',
 ): Promise<T> {
