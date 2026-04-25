@@ -356,17 +356,16 @@ describe('verifyInvariant1 — `.shardmindignore` parser delegation', () => {
     // sees the same EMPTY_FILTER outcome as a literally-empty file.
     const pair = await makePair('ignore-comments');
     const ignore = '# top comment\n\n# trailing\n   \n';
-    const pair2 = pair;
     try {
-      await writeFile(pair2.cloneDir, '.shardmindignore', ignore);
-      await writeFile(pair2.cloneDir, 'README.md', '# x\n');
-      await writeFile(pair2.installDir, '.shardmindignore', ignore);
-      await writeFile(pair2.installDir, 'README.md', '# x\n');
-      const report = await verifyInvariant1(pair2);
+      await writeFile(pair.cloneDir, '.shardmindignore', ignore);
+      await writeFile(pair.cloneDir, 'README.md', '# x\n');
+      await writeFile(pair.installDir, '.shardmindignore', ignore);
+      await writeFile(pair.installDir, 'README.md', '# x\n');
+      const report = await verifyInvariant1(pair);
       expect(report.matched).toBe(2);
       expect(report.staticByteMismatches).toEqual([]);
     } finally {
-      await pair2.cleanup();
+      await pair.cleanup();
     }
   });
 });
@@ -447,6 +446,55 @@ describe('verifyInvariant1 — robustness', () => {
       } finally {
         (fsp as { readFile: typeof fsp.readFile }).readFile = originalRead;
       }
+    } finally {
+      await pair.cleanup();
+    }
+  });
+
+  it('rejects a clone-side symlink (engine contract — install pipeline would refuse it)', async () => {
+    // `walkShardSource` throws `WALK_SYMLINK_REJECTED` on any symlink in
+    // the clone tree because the install pipeline refuses them upstream
+    // (security baseline against symlink-escape). The helper inherits
+    // that contract by delegating clone enumeration to walkShardSource;
+    // a regression that swapped in a permissive walker would bypass the
+    // engine's security guarantee here.
+    const pair = await makePair('clone-symlink');
+    try {
+      await writeFile(pair.cloneDir, 'target.txt', 'real content\n');
+      await fsp.symlink(
+        path.join(pair.cloneDir, 'target.txt'),
+        path.join(pair.cloneDir, 'link.txt'),
+      );
+      await expect(verifyInvariant1(pair)).rejects.toThrow(/symbolic link/i);
+    } finally {
+      await pair.cleanup();
+    }
+  });
+
+  it('silently skips an install-side symlink (engine never writes them; outside the contract)', async () => {
+    // Asymmetric on purpose. The install pipeline uses `writeFile` /
+    // `copyFile` exclusively — it cannot produce a symlink, so any
+    // install-side symlink is pre-existing user state outside Invariant 1's
+    // surface. `listRecursive` silently skips it (matching `vault.ts`'s
+    // existing behavior). Pinning this prevents a future change that
+    // surfaced install-side symlinks as `extrasInInstall` from breaking
+    // any caller that legitimately has unrelated symlinks alongside the
+    // managed vault.
+    const pair = await makePair('install-symlink');
+    try {
+      await writeFile(pair.cloneDir, 'README.md', '# x\n');
+      await writeFile(pair.installDir, 'README.md', '# x\n');
+      await writeFile(pair.installDir, 'target.txt', 'unrelated\n');
+      await fsp.symlink(
+        path.join(pair.installDir, 'target.txt'),
+        path.join(pair.installDir, 'link.txt'),
+      );
+      const report = await verifyInvariant1(pair);
+      expect(report.staticByteMismatches).toEqual([]);
+      expect(report.missingFromInstall).toEqual([]);
+      // `target.txt` is a regular file with no clone source → extra.
+      // `link.txt` (symlink) is silently skipped; not in the report.
+      expect(report.extrasInInstall).toEqual(['target.txt']);
     } finally {
       await pair.cleanup();
     }

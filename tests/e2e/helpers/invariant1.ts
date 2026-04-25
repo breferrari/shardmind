@@ -26,7 +26,7 @@ import path from 'node:path';
 import { walkShardSource } from '../../../source/core/modules.js';
 import { loadShardmindignore } from '../../../source/core/shardmindignore.js';
 import { mapConcurrent } from '../../../source/core/fs-utils.js';
-import { isEnoent } from '../../../source/runtime/errno.js';
+import { errnoCode, isEnoent } from '../../../source/runtime/errno.js';
 import {
   SHARDMIND_DIR,
   VALUES_FILE,
@@ -145,8 +145,15 @@ export async function verifyInvariant1(
           if (isEnoent(err)) {
             return { kind: 'missing', installRel };
           }
+          // Surface the errno code AND the file path so a CI failure
+          // log distinguishes EACCES (permission) from EBUSY (lock) from
+          // ENAMETOOLONG (path) on the actual offending file. Without
+          // both pieces, debugging an Invariant 1 break in CI degrades
+          // to bisecting the diff.
+          const code = errnoCode(err) ?? 'UNKNOWN';
+          const message = err instanceof Error ? err.message : String(err);
           throw new Error(
-            `verifyInvariant1: failed to read ${installRel}: ${err instanceof Error ? err.message : String(err)}`,
+            `verifyInvariant1: failed to read ${installRel} [${code}]: ${message}`,
           );
         }
         if (!cloneBytes.equals(installBytes)) {

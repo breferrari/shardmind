@@ -291,6 +291,12 @@ Thrown by `source/core/install-planner.ts` and `source/core/install-executor.ts`
 
 **Remedy:** Check permissions at the path referenced in the error. Clean up stale `*.shardmind-backup-*` backup paths if you somehow have a thousand of them.
 
+---
+
+## Install command flags
+
+Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-flight, before any network call.
+
 ### `INSTALL_FLAG_CONFLICT`
 
 **Meaning:** Two install flags would resolve through different policies and the engine refuses to silently pick one. Currently rejected: `--defaults` + `--values <file>` — `--defaults` uses schema defaults for every value; `--values` would override them.
