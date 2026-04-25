@@ -153,7 +153,7 @@ Driven by `useAdoptMachine` (`source/commands/hooks/use-adopt-machine.ts`). Mirr
 ```mermaid
 graph TD
     A["shardmind adopt breferrari/obsidian-mind"] --> P1
-    P1["adopt-executor.ts::assertAdoptable<br/>state.json absent → ADOPT_EXISTING_INSTALL<br/>shard-values.yaml absent → VALUES_FILE_COLLISION"] --> B
+    P1["adopt-executor.ts::assertAdoptable<br/>state.json exists → ADOPT_EXISTING_INSTALL<br/>shard-values.yaml exists → VALUES_FILE_COLLISION"] --> B
 
     B["registry + download<br/>Resolve + extract to temp"] --> C
     C["manifest + schema<br/>Parse new shard.yaml, shard-schema.yaml"] --> D

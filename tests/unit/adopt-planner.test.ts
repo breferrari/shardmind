@@ -18,7 +18,6 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import * as fc from 'fast-check';
-import { stringify as stringifyYaml } from 'yaml';
 
 import { classifyAdoption } from '../../source/core/adopt-planner.js';
 import type {
@@ -713,6 +712,3 @@ describe('classifyAdoption property tests', () => {
     );
   }, 60_000);
 });
-
-// Quiet a no-unused-locals on `stringifyYaml` if linting is added later.
-void stringifyYaml;

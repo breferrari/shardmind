@@ -257,7 +257,12 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         addedPaths.push(c.path);
       }
       fileStates[c.path] = buildFileState(c, c.shardHash, 'managed');
-      onFileTouched?.(c.path, true);
+      // `introduced` reflects whether this run actually created the file
+      // on disk — false under --dry-run since no write happened. Keeps
+      // the SIGINT-rollback `addedPaths` accounting honest under
+      // dry-run semantics (where nothing was written, nothing should
+      // be erased).
+      onFileTouched?.(c.path, !dryRun);
       summary.installedFresh.push(c.path);
     }
 

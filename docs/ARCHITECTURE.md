@@ -845,7 +845,7 @@ Two pre-flight guards run before the network resolve, so a deterministically-wro
 - `.shardmind/state.json` already exists → `ADOPT_EXISTING_INSTALL`. The vault is already managed; the user wants `shardmind update`.
 - `shard-values.yaml` exists without `state.json` → `VALUES_FILE_COLLISION`. Partial-adoption inconsistent state; the user moves the stray file aside.
 
-Phase ordering (logical; UI may interleave loading messages — see IMPLEMENTATION §2.x for the data-flow diagram):
+Phase ordering (logical; UI may interleave loading messages — see IMPLEMENTATION §3.5 for the data-flow diagram):
 
 1. **Fetch** — resolve + download into a temp directory.
 2. **Wizard** — collect values + module selections via the same `InstallWizard` component install uses. Wizard runs **before** classification because `.njk` templates need values to render before their output bytes can be hashed.
