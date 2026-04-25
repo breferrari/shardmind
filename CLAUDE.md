@@ -199,15 +199,19 @@ shardmind/
 │   ├── integration/                   # Multi-module pipeline tests
 │   ├── e2e/                           # Full CLI invocation tests (subprocess)
 │   │   ├── cli.test.ts                # End-to-end scenarios across status / install / update / adopt + post-install hook + Invariant 1 byte-equivalence
+│   │   ├── obsidian-mind-contract.test.ts  # v6 contract acceptance suite — install / update / adopt / refs / additive / hook failure / adversarial against the obsidian-mind-like fixture (#92)
 │   │   └── helpers/                   # build-once, tarball, github-stub,
 │   │                                  # spawn-cli, vault factories,
-│   │                                  # invariant1 byte-equivalence helper
+│   │                                  # invariant1 byte-equivalence helper,
+│   │                                  # obsidian-mind-tarball builder
 │   ├── helpers/                       # Shared test utilities (factories)
 │   │   ├── shard-state.ts             # makeShardState, makeFileState
 │   │   └── make-shard-source.ts       # makeShardSource — v6 temp-shard scaffold
 │   └── fixtures/                      # Test data
 │       ├── merge/                     # 20 three-way merge scenarios
-│       ├── shards/                    # Pre-built shard tarballs
+│       ├── shards/
+│       │   ├── minimal-shard.tar.gz       # Pre-built minimal shard tarball
+│       │   └── obsidian-mind-like/        # Flat-layout shard fixture for the v6 contract acceptance suite (#92)
 │       ├── schema/                    # Valid + invalid schemas
 │       ├── render/                    # Template rendering scenarios
 │       └── migration/                 # Value migration scenarios
