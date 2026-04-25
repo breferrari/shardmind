@@ -5,171 +5,235 @@ import os from 'node:os';
 import { describe, it, expect } from 'vitest';
 import { resolveModules } from '../../source/core/modules.js';
 import { parseSchema } from '../../source/core/schema.js';
+import type { ShardSchema } from '../../source/runtime/types.js';
 
 const EXAMPLE_SHARD = path.resolve('examples/minimal-shard');
 
 async function loadSchema() {
-  return parseSchema(path.join(EXAMPLE_SHARD, 'shard-schema.yaml'));
+  return parseSchema(path.join(EXAMPLE_SHARD, '.shardmind', 'shard-schema.yaml'));
 }
 
-describe('resolveModules', () => {
-  it('includes all files when all modules are included', async () => {
+async function makeTempShard(name: string): Promise<string> {
+  const dir = path.join(os.tmpdir(), `${name}-${crypto.randomUUID()}`);
+  await fs.mkdir(path.join(dir, '.shardmind'), { recursive: true });
+  await fs.writeFile(path.join(dir, '.shardmind', 'shard.yaml'), '', 'utf-8');
+  return dir;
+}
+
+const EMPTY_SCHEMA: ShardSchema = {
+  schema_version: 1,
+  values: {},
+  groups: [],
+  modules: {},
+  signals: [],
+  frontmatter: {},
+  migrations: [],
+};
+
+describe('resolveModules — v6 shard-root walker', () => {
+  it('resolves the migrated minimal-shard with all modules included', async () => {
     const schema = await loadSchema();
     const selections = { brain: 'included' as const, extras: 'included' as const };
     const result = await resolveModules(schema, selections, EXAMPLE_SHARD);
 
-    expect(result.skip).toHaveLength(0);
-    expect(result.render.length).toBeGreaterThan(0);
+    const renderPaths = result.render.map((f) => f.outputPath).sort();
+    const copyPaths = result.copy.map((f) => f.outputPath).sort();
 
-    // All .njk files should be in render
-    const renderPaths = result.render.map(f => f.outputPath);
-    expect(renderPaths).toContain('CLAUDE.md');
-    expect(renderPaths).toContain('Home.md');
-    expect(renderPaths).toContain('brain/North Star.md');
-    expect(renderPaths).toContain('claude/_core.md');
-    expect(renderPaths).toContain('claude/_extras.md');
+    // `.njk` is the author opt-in to render; the migrated fixture uses it
+    // for `.claude/settings.json.njk` (dotfolder config) and the two
+    // values-substituted vault files (Home, brain/North Star).
+    expect(renderPaths).toEqual(['.claude/settings.json', 'Home.md', 'brain/North Star.md']);
 
-    // Commands should be in copy
-    const copyPaths = result.copy.map(f => f.outputPath);
+    expect(copyPaths).toContain('CLAUDE.md');
     expect(copyPaths).toContain('.claude/commands/example-command.md');
   });
 
-  it('skips excluded module files (commands, templates, and partials)', async () => {
-    // Copy fixture and add a template under extras/ path to exercise template gating
-    const tmpShard = path.join(os.tmpdir(), `modules-test-${crypto.randomUUID()}`);
-    await fs.cp(EXAMPLE_SHARD, tmpShard, { recursive: true });
-    await fs.mkdir(path.join(tmpShard, 'templates', 'extras'), { recursive: true });
-    await fs.writeFile(path.join(tmpShard, 'templates', 'extras', 'Feature.md.njk'), '# Extra Feature\n');
+  it('skips files when their owning module is excluded', async () => {
+    const schema = await loadSchema();
+    const selections = { brain: 'included' as const, extras: 'excluded' as const };
+    const result = await resolveModules(schema, selections, EXAMPLE_SHARD);
 
+    const skipPaths = result.skip.map((f) => f.outputPath);
+    expect(skipPaths).toContain('.claude/commands/example-command.md');
+
+    const renderPaths = result.render.map((f) => f.outputPath);
+    expect(renderPaths).toContain('brain/North Star.md');
+
+    const copyPaths = result.copy.map((f) => f.outputPath);
+    expect(copyPaths).not.toContain('.claude/commands/example-command.md');
+  });
+
+  it('honors .shardmindignore at the shard root', async () => {
+    const schema = await loadSchema();
+    const tmpShard = await makeTempShard('modules-ignore');
     try {
-      const schema = await parseSchema(path.join(tmpShard, 'shard-schema.yaml'));
-      const selections = { brain: 'included' as const, extras: 'excluded' as const };
-      const result = await resolveModules(schema, selections, tmpShard);
+      // Mirror minimal-shard's ignore: `*.gif`. Drop in a .gif and confirm.
+      await fs.writeFile(path.join(tmpShard, '.shardmindignore'), '*.gif\n');
+      await fs.writeFile(path.join(tmpShard, 'banner.gif'), 'fake-binary');
+      await fs.writeFile(path.join(tmpShard, 'README.md'), '# repo');
 
-      const skipPaths = result.skip.map(f => f.outputPath);
-      // Command gated by extras module
-      expect(skipPaths).toContain('.claude/commands/example-command.md');
-      // Template under extras/ path
-      expect(skipPaths).toContain('extras/Feature.md');
-      // Partial declared in extras.partials
-      expect(skipPaths).toContain('claude/_extras.md');
-
-      // Brain files should still render
-      const renderPaths = result.render.map(f => f.outputPath);
-      expect(renderPaths).toContain('brain/North Star.md');
-      expect(renderPaths).toContain('CLAUDE.md');
-      expect(renderPaths).not.toContain('extras/Feature.md');
+      const result = await resolveModules(schema, {}, tmpShard);
+      const allOutput = [
+        ...result.render.map((f) => f.outputPath),
+        ...result.copy.map((f) => f.outputPath),
+        ...result.skip.map((f) => f.outputPath),
+      ];
+      expect(allOutput).not.toContain('banner.gif');
+      expect(allOutput).toContain('README.md');
     } finally {
       await fs.rm(tmpShard, { recursive: true, force: true });
     }
   });
 
-  it('assigns correct module IDs to files', async () => {
-    const schema = await loadSchema();
-    const selections = { brain: 'included' as const, extras: 'included' as const };
-    const result = await resolveModules(schema, selections, EXAMPLE_SHARD);
-
-    const brainFile = result.render.find(f => f.outputPath === 'brain/North Star.md');
-    expect(brainFile?.module).toBe('brain');
-
-    const coreFile = result.render.find(f => f.outputPath === 'CLAUDE.md');
-    expect(coreFile?.module).toBeNull();
-
-    const homeFile = result.render.find(f => f.outputPath === 'Home.md');
-    expect(homeFile?.module).toBeNull();
-  });
-
-  it('.njk files go to render, non-.njk to copy', async () => {
-    const schema = await loadSchema();
-    const selections = { brain: 'included' as const, extras: 'included' as const };
-    const result = await resolveModules(schema, selections, EXAMPLE_SHARD);
-
-    // All render entries should have .njk source paths
-    for (const entry of result.render) {
-      expect(entry.sourcePath).toMatch(/\.njk$/);
-    }
-
-    // Copy entries from commands should not be .njk
-    const cmdCopy = result.copy.filter(f => f.outputPath.startsWith('.claude/commands/'));
-    for (const entry of cmdCopy) {
-      expect(entry.sourcePath).not.toMatch(/\.njk$/);
+  it('rejects symlinks anywhere in the shard source', async () => {
+    const tmpShard = await makeTempShard('modules-symlink');
+    try {
+      await fs.writeFile(path.join(tmpShard, 'real.md'), 'real');
+      await fs.symlink('real.md', path.join(tmpShard, 'link.md'));
+      await expect(resolveModules(EMPTY_SCHEMA, {}, tmpShard)).rejects.toMatchObject({
+        code: 'WALK_SYMLINK_REJECTED',
+      });
+    } finally {
+      await fs.rm(tmpShard, { recursive: true, force: true });
     }
   });
 
-  it('strips templates/ prefix and .njk suffix for output paths', async () => {
-    const schema = await loadSchema();
-    const selections = { brain: 'included' as const, extras: 'included' as const };
-    const result = await resolveModules(schema, selections, EXAMPLE_SHARD);
+  it('rejects symlinks pointing outside the shard root', async () => {
+    const outside = path.join(os.tmpdir(), `outside-${crypto.randomUUID()}.md`);
+    await fs.writeFile(outside, 'secret');
+    const tmpShard = await makeTempShard('modules-symlink-out');
+    try {
+      await fs.symlink(outside, path.join(tmpShard, 'escape.md'));
+      await expect(resolveModules(EMPTY_SCHEMA, {}, tmpShard)).rejects.toMatchObject({
+        code: 'WALK_SYMLINK_REJECTED',
+      });
+    } finally {
+      await fs.rm(tmpShard, { recursive: true, force: true });
+      await fs.rm(outside, { force: true });
+    }
+  });
 
-    for (const entry of result.render) {
-      expect(entry.outputPath).not.toContain('templates/');
-      expect(entry.outputPath).not.toMatch(/\.njk$/);
+  it('walks Unicode + spaces in paths cleanly', async () => {
+    const tmpShard = await makeTempShard('modules-unicode');
+    try {
+      await fs.mkdir(path.join(tmpShard, 'brain'), { recursive: true });
+      await fs.writeFile(path.join(tmpShard, 'brain', 'Idées de projet.md'), 'fr');
+      await fs.writeFile(path.join(tmpShard, 'A B C.md'), 'spaces');
+
+      const result = await resolveModules(EMPTY_SCHEMA, {}, tmpShard);
+      const copyPaths = result.copy.map((f) => f.outputPath);
+      expect(copyPaths).toContain('brain/Idées de projet.md');
+      expect(copyPaths).toContain('A B C.md');
+    } finally {
+      await fs.rm(tmpShard, { recursive: true, force: true });
+    }
+  });
+
+  it('any .njk file renders (dotfolder or not) — author opt-in via the suffix', async () => {
+    const tmpShard = await makeTempShard('modules-njk-rule');
+    try {
+      await fs.mkdir(path.join(tmpShard, '.claude'), { recursive: true });
+      await fs.writeFile(path.join(tmpShard, '.claude', 'settings.json.njk'), '{}');
+      // .njk at vault-visible paths also renders — spec defers `rendered_files`
+      // (rendering files *without* `.njk`) to v0.2 (#86), but `.njk` itself
+      // is the existing author opt-in and stays live.
+      await fs.writeFile(path.join(tmpShard, 'page.md.njk'), '# page');
+
+      const result = await resolveModules(EMPTY_SCHEMA, {}, tmpShard);
+      const renderPaths = result.render.map((f) => f.outputPath);
+      const copyPaths = result.copy.map((f) => f.outputPath);
+      expect(renderPaths).toContain('.claude/settings.json');
+      expect(renderPaths).toContain('page.md');
+      expect(copyPaths).not.toContain('page.md.njk');
+    } finally {
+      await fs.rm(tmpShard, { recursive: true, force: true });
     }
   });
 
   it('detects _each iterator from parent directory name', async () => {
-    const tmpDir = path.join(os.tmpdir(), `modules-test-${crypto.randomUUID()}`);
-    const templateDir = path.join(tmpDir, 'templates', 'perf', 'competencies');
-    await fs.mkdir(templateDir, { recursive: true });
-    await fs.writeFile(path.join(templateDir, '_each.md.njk'), '# {{ item.name }}\n');
-    // Need shard.yaml and shard-schema.yaml for the shard to be valid
-    await fs.writeFile(path.join(tmpDir, 'shard.yaml'), 'apiVersion: v1\nname: test\nnamespace: dev\nversion: 1.0.0');
-    await fs.writeFile(path.join(tmpDir, 'shard-schema.yaml'), 'schema_version: 1\nvalues: {}\ngroups: []\nmodules:\n  perf:\n    label: Perf\n    paths: ["perf/"]\n    removable: true\nfrontmatter: {}\nmigrations: []');
-
+    const tmpShard = await makeTempShard('modules-each');
     try {
-      const schema = await parseSchema(path.join(tmpDir, 'shard-schema.yaml'));
-      const selections = { perf: 'included' as const };
-      const result = await resolveModules(schema, selections, tmpDir);
+      const subdir = path.join(tmpShard, '.claude', 'perf', 'competencies');
+      await fs.mkdir(subdir, { recursive: true });
+      await fs.writeFile(path.join(subdir, '_each.md.njk'), '# {{ item.name }}\n');
 
-      const eachFile = result.render.find(f => f.outputPath.includes('_each'));
+      const schema: ShardSchema = {
+        ...EMPTY_SCHEMA,
+        modules: {
+          perf: { label: 'Perf', paths: ['.claude/perf/'], removable: true },
+        },
+      };
+      const result = await resolveModules(schema, { perf: 'included' }, tmpShard);
+      const eachFile = result.render.find((f) => f.outputPath.includes('_each'));
       expect(eachFile).toBeDefined();
       expect(eachFile!.iterator).toBe('competencies');
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await fs.rm(tmpShard, { recursive: true, force: true });
     }
   });
 
   it('detects volatile hint in template files', async () => {
-    const tmpDir = path.join(os.tmpdir(), `modules-test-${crypto.randomUUID()}`);
-    const templateDir = path.join(tmpDir, 'templates');
-    await fs.mkdir(templateDir, { recursive: true });
-    await fs.writeFile(path.join(templateDir, 'index.md.njk'), '{# shardmind: volatile #}\n# Index\n');
-
+    const tmpShard = await makeTempShard('modules-volatile');
     try {
-      const schema = { schema_version: 1, values: {}, groups: [], modules: {}, signals: [], frontmatter: {}, migrations: [] };
-      const result = await resolveModules(schema as any, {}, tmpDir);
-
-      const indexFile = result.render.find(f => f.outputPath === 'index.md');
+      await fs.mkdir(path.join(tmpShard, '.claude'), { recursive: true });
+      await fs.writeFile(
+        path.join(tmpShard, '.claude', 'index.md.njk'),
+        '{# shardmind: volatile #}\n# Index\n',
+      );
+      const result = await resolveModules(EMPTY_SCHEMA, {}, tmpShard);
+      const indexFile = result.render.find((f) => f.outputPath === '.claude/index.md');
       expect(indexFile).toBeDefined();
       expect(indexFile!.volatile).toBe(true);
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await fs.rm(tmpShard, { recursive: true, force: true });
     }
   });
 
-  it('maps commands to .claude/commands/ output path', async () => {
-    const schema = await loadSchema();
-    const selections = { brain: 'included' as const, extras: 'included' as const };
-    const result = await resolveModules(schema, selections, EXAMPLE_SHARD);
+  it('per-name commands gating only fires when parent dir is `commands`', async () => {
+    const tmpShard = await makeTempShard('modules-commands-collision');
+    try {
+      await fs.mkdir(path.join(tmpShard, '.claude', 'commands'), { recursive: true });
+      await fs.mkdir(path.join(tmpShard, 'notes'), { recursive: true });
+      await fs.writeFile(
+        path.join(tmpShard, '.claude', 'commands', 'example-command.md'),
+        '# command',
+      );
+      // A note that happens to share the same name — must NOT be gated.
+      await fs.writeFile(path.join(tmpShard, 'notes', 'example-command.md'), '# note');
 
-    const cmd = result.copy.find(f => f.outputPath === '.claude/commands/example-command.md');
-    expect(cmd).toBeDefined();
-    expect(cmd!.module).toBe('extras');
+      const schema: ShardSchema = {
+        ...EMPTY_SCHEMA,
+        modules: {
+          extras: {
+            label: 'Extras',
+            paths: ['extras/'],
+            commands: ['example-command'],
+            removable: true,
+          },
+        },
+      };
+      const result = await resolveModules(schema, { extras: 'excluded' }, tmpShard);
+      const skipPaths = result.skip.map((f) => f.outputPath);
+      expect(skipPaths).toContain('.claude/commands/example-command.md');
+      expect(skipPaths).not.toContain('notes/example-command.md');
+
+      const copyPaths = result.copy.map((f) => f.outputPath);
+      expect(copyPaths).toContain('notes/example-command.md');
+    } finally {
+      await fs.rm(tmpShard, { recursive: true, force: true });
+    }
   });
 
-  it('handles missing directories gracefully', async () => {
-    const tmpDir = path.join(os.tmpdir(), `modules-test-${crypto.randomUUID()}`);
-    await fs.mkdir(tmpDir, { recursive: true });
-
+  it('handles missing .shardmindignore + empty shard root gracefully', async () => {
+    const tmpShard = await makeTempShard('modules-empty');
     try {
-      const schema = { schema_version: 1, values: {}, groups: [], modules: {}, signals: [], frontmatter: {}, migrations: [] };
-      const result = await resolveModules(schema as any, {}, tmpDir);
-
-      expect(result.render).toHaveLength(0);
-      expect(result.copy).toHaveLength(0);
+      const result = await resolveModules(EMPTY_SCHEMA, {}, tmpShard);
+      const total = result.render.length + result.copy.length;
+      // Only the synthetic .shardmind/shard.yaml exists, and Tier 1 excludes it.
+      expect(total).toBe(0);
       expect(result.skip).toHaveLength(0);
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
+      await fs.rm(tmpShard, { recursive: true, force: true });
     }
   });
 });

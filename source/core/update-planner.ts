@@ -30,11 +30,8 @@ import { isEnoent } from '../runtime/errno.js';
 import { computeMergeAction } from './differ.js';
 import { resolveModules } from './modules.js';
 import { renderFile, createRenderer } from './renderer.js';
-import { sha256, mapConcurrent, stripTemplatePrefix } from './fs-utils.js';
-import {
-  SHARD_TEMPLATES_DIR,
-  CACHED_TEMPLATES,
-} from '../runtime/vault-paths.js';
+import { sha256, mapConcurrent } from './fs-utils.js';
+import { CACHED_TEMPLATES } from '../runtime/vault-paths.js';
 
 /** Cap fan-out when reading templates + user files during merge planning. */
 const PLAN_IO_CONCURRENCY = 16;
@@ -277,7 +274,7 @@ export async function renderNewShard(
   newRenderContext: RenderContext,
 ): Promise<NewFilePlan> {
   const resolution = await resolveModules(newSchema, newSelections, newTempDir);
-  const env = createRenderer(path.join(newTempDir, SHARD_TEMPLATES_DIR));
+  const env = createRenderer(newTempDir);
 
   // Render and copy in parallel (bounded by PLAN_IO_CONCURRENCY) since
   // each entry is independent.
@@ -672,7 +669,7 @@ async function loadOldTemplate(
   templateKey: string | null,
 ): Promise<string | null> {
   if (!templateKey) return null;
-  const abs = path.join(vaultRoot, CACHED_TEMPLATES, stripTemplatePrefix(templateKey));
+  const abs = path.join(vaultRoot, CACHED_TEMPLATES, templateKey);
   try {
     return await fsp.readFile(abs, 'utf-8');
   } catch (err) {

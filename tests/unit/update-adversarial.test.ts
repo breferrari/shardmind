@@ -33,11 +33,7 @@ import type {
   RenderContext,
   DriftReport,
 } from '../../source/runtime/types.js';
-import {
-  SHARDMIND_DIR,
-  CACHED_TEMPLATES,
-  SHARD_TEMPLATES_DIR,
-} from '../../source/runtime/vault-paths.js';
+import { SHARDMIND_DIR, CACHED_TEMPLATES } from '../../source/runtime/vault-paths.js';
 import { makeShardState, makeFileState } from '../helpers/index.js';
 
 const NOW = new Date('2026-04-20T00:00:00Z');
@@ -96,10 +92,11 @@ async function makeShardDir(
   files: Record<string, string>,
 ): Promise<string> {
   const shardDir = path.join(tempRoot, 'shard-' + crypto.randomUUID());
-  const templatesDir = path.join(shardDir, SHARD_TEMPLATES_DIR);
-  await fsp.mkdir(templatesDir, { recursive: true });
+  await fsp.mkdir(shardDir, { recursive: true });
+  await fsp.mkdir(path.join(shardDir, '.shardmind'), { recursive: true });
+  await fsp.writeFile(path.join(shardDir, '.shardmind', 'shard.yaml'), '', 'utf-8');
   for (const [rel, content] of Object.entries(files)) {
-    const abs = path.join(templatesDir, rel);
+    const abs = path.join(shardDir, rel);
     await fsp.mkdir(path.dirname(abs), { recursive: true });
     await fsp.writeFile(abs, content, 'utf-8');
   }
@@ -139,7 +136,7 @@ describe('planUpdate — hostile inputs', () => {
       modules: selections,
       files: {
         'brain/Index.md': makeFileState({
-          template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+          template: `brain/Index.md.njk`,
           rendered_hash: 'stale',
           ownership: 'modified',
         }),
@@ -151,7 +148,7 @@ describe('planUpdate — hostile inputs', () => {
       modified: [
         {
           path: 'brain/Index.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+          template: `brain/Index.md.njk`,
           renderedHash: 'stale',
           actualHash: sha256(onDisk),
           ownership: 'modified',
@@ -182,7 +179,7 @@ describe('planUpdate — hostile inputs', () => {
     // The templateKey is relative to the new tempdir (templates/<...>),
     // not an absolute path (the previous bug in conflictFromDirect
     // passed '' for tempDir which produced an absolute path).
-    expect(conflict.templateKey).toBe(`${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`);
+    expect(conflict.templateKey).toBe(`brain/Index.md.njk`);
   });
 
   it('deletes orphaned files from state when the iterator array shrinks', async () => {
@@ -216,17 +213,17 @@ describe('planUpdate — hostile inputs', () => {
       modules: selections,
       files: {
         'items/a/note.md': makeFileState({
-          template: `${SHARD_TEMPLATES_DIR}/items/_each/note.md.njk`,
+          template: `items/_each/note.md.njk`,
           rendered_hash: sha256(content),
           iterator_key: 'items',
         }),
         'items/b/note.md': makeFileState({
-          template: `${SHARD_TEMPLATES_DIR}/items/_each/note.md.njk`,
+          template: `items/_each/note.md.njk`,
           rendered_hash: sha256(content),
           iterator_key: 'items',
         }),
         'items/c/note.md': makeFileState({
-          template: `${SHARD_TEMPLATES_DIR}/items/_each/note.md.njk`,
+          template: `items/_each/note.md.njk`,
           rendered_hash: sha256(content),
           iterator_key: 'items',
         }),
@@ -276,7 +273,7 @@ describe('planUpdate — hostile inputs', () => {
       modules: selections,
       files: {
         'brain/Index.md': makeFileState({
-          template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+          template: `brain/Index.md.njk`,
           rendered_hash: sha256(oldTemplate),
           ownership: 'modified',
         }),
@@ -288,7 +285,7 @@ describe('planUpdate — hostile inputs', () => {
       modified: [
         {
           path: 'brain/Index.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+          template: `brain/Index.md.njk`,
           renderedHash: sha256(oldTemplate),
           actualHash: sha256(userCRLF),
           ownership: 'modified',
@@ -327,7 +324,7 @@ describe('planUpdate — hostile inputs', () => {
       modules: selections,
       files: {
         'brain/Idées.md': makeFileState({
-          template: `${SHARD_TEMPLATES_DIR}/brain/Idées.md.njk`,
+          template: `brain/Idées.md.njk`,
           rendered_hash: sha256(content),
         }),
       },
@@ -338,7 +335,7 @@ describe('planUpdate — hostile inputs', () => {
       managed: [
         {
           path: 'brain/Idées.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/Idées.md.njk`,
+          template: `brain/Idées.md.njk`,
           renderedHash: sha256(content),
           actualHash: sha256(content),
           ownership: 'managed',
@@ -589,12 +586,12 @@ describe('planUpdate — invariants', () => {
             vaultFiles[outPath] = content;
             cachedTemplates[tmplPath] = content;
             stateFiles[outPath] = makeFileState({
-              template: `${SHARD_TEMPLATES_DIR}/${tmplPath}`,
+              template: `${tmplPath}`,
               rendered_hash: sha256(content),
             });
             managed.push({
               path: outPath,
-              template: `${SHARD_TEMPLATES_DIR}/${tmplPath}`,
+              template: `${tmplPath}`,
               renderedHash: sha256(content),
               actualHash: sha256(content),
               ownership: 'managed',

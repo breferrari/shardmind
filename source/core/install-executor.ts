@@ -29,7 +29,7 @@ import {
 } from './state.js';
 import { sha256, toPosix, pathExists } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
-import { SHARDMIND_DIR, VALUES_FILE, SHARD_TEMPLATES_DIR } from '../runtime/vault-paths.js';
+import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
 
 export interface BackupRecord {
   originalPath: string;
@@ -183,7 +183,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
 
   onProgress?.({ kind: 'start', total: totalFiles });
 
-  const env = createRenderer(path.join(tempDir, SHARD_TEMPLATES_DIR));
+  const env = createRenderer(tempDir);
   const context = buildRenderContext(manifest, values, selections);
 
   let index = 0;

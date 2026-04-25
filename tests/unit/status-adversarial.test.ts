@@ -50,8 +50,8 @@ const VALUES = {
 };
 
 async function installMinimal(vault: string): Promise<void> {
-  const manifest = await parseManifest(path.join(MINIMAL_SHARD, 'shard.yaml'));
-  const schema = await parseSchema(path.join(MINIMAL_SHARD, 'shard-schema.yaml'));
+  const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+  const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
   const selections = defaultModuleSelections(schema);
   const validator = buildValuesValidator(schema);
   const values = validator.parse(resolveComputedDefaults(schema, VALUES));

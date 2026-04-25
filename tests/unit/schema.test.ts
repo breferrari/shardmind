@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { parseSchema, buildValuesValidator, isComputedDefault } from '../../source/core/schema.js';
 
 const FIXTURES = path.resolve('tests/fixtures/schema');
-const EXAMPLE_SCHEMA = path.resolve('examples/minimal-shard/shard-schema.yaml');
+const EXAMPLE_SCHEMA = path.resolve('examples/minimal-shard/.shardmind/shard-schema.yaml');
 
 describe('parseSchema', () => {
   it('parses valid-minimal fixture', async () => {

@@ -31,7 +31,13 @@ export const CODEX_DIR = '.codex/prompts';
 export const GIT_DIR = '.git';
 export const OBSIDIAN_DIR = '.obsidian';
 
-/** Source-side filenames inside a downloaded shard's temp directory. */
+/**
+ * Source-side engine metadata directory inside an extracted shard tarball.
+ * Contains `shard.yaml`, `shard-schema.yaml`, and `hooks/`. Walker excludes
+ * this dir from the install set (Tier 1); the engine reads it directly.
+ */
+export const SHARD_SOURCE_DIR = '.shardmind';
+
+/** Source-side filenames inside a downloaded shard's `.shardmind/` dir. */
 export const SHARD_MANIFEST_FILE = 'shard.yaml';
 export const SHARD_SCHEMA_FILE = 'shard-schema.yaml';
-export const SHARD_TEMPLATES_DIR = 'templates';

@@ -25,11 +25,7 @@ import type {
   DriftReport,
 } from '../../source/runtime/types.js';
 import { sha256 } from '../../source/core/fs-utils.js';
-import {
-  SHARDMIND_DIR,
-  CACHED_TEMPLATES,
-  SHARD_TEMPLATES_DIR,
-} from '../../source/runtime/vault-paths.js';
+import { SHARDMIND_DIR, CACHED_TEMPLATES } from '../../source/runtime/vault-paths.js';
 import { makeShardState, makeFileState } from '../helpers/index.js';
 
 const NOW = new Date('2026-04-20T00:00:00Z');
@@ -181,10 +177,12 @@ describe('planUpdate', () => {
     files: Record<string, string>,
   ): Promise<string> {
     const shardDir = path.join(tempRoot, 'shard-' + Math.random().toString(36).slice(2, 8));
-    const templatesDir = path.join(shardDir, SHARD_TEMPLATES_DIR);
-    await fsp.mkdir(templatesDir, { recursive: true });
+    await fsp.mkdir(shardDir, { recursive: true });
+    // v6: every shard requires `.shardmind/shard.yaml` for `cacheTemplates`.
+    await fsp.mkdir(path.join(shardDir, '.shardmind'), { recursive: true });
+    await fsp.writeFile(path.join(shardDir, '.shardmind', 'shard.yaml'), '', 'utf-8');
     for (const [rel, content] of Object.entries(files)) {
-      const abs = path.join(templatesDir, rel);
+      const abs = path.join(shardDir, rel);
       await fsp.mkdir(path.dirname(abs), { recursive: true });
       await fsp.writeFile(abs, content, 'utf-8');
     }
@@ -236,7 +234,7 @@ describe('planUpdate', () => {
       modules: selections,
       files: {
         'brain/Index.md': makeFileState({
-          template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+          template: `brain/Index.md.njk`,
           rendered_hash: sha256(oldRendered),
           ownership: 'managed',
         }),
@@ -247,7 +245,7 @@ describe('planUpdate', () => {
       managed: [
         {
           path: 'brain/Index.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+          template: `brain/Index.md.njk`,
           renderedHash: sha256(oldRendered),
           actualHash: sha256(oldRendered),
           ownership: 'managed',
@@ -298,7 +296,7 @@ describe('planUpdate', () => {
       managed: [
         {
           path: 'brain/Index.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+          template: `brain/Index.md.njk`,
           renderedHash: sha256(rendered),
           actualHash: sha256(rendered),
           ownership: 'managed',
@@ -316,7 +314,7 @@ describe('planUpdate', () => {
         modules: selections,
         files: {
           'brain/Index.md': makeFileState({
-            template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+            template: `brain/Index.md.njk`,
             rendered_hash: sha256(rendered),
           }),
         },
@@ -370,7 +368,7 @@ describe('planUpdate', () => {
       modified: [
         {
           path: 'brain/Index.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+          template: `brain/Index.md.njk`,
           renderedHash: sha256(oldTemplate),
           actualHash: sha256(userEdited),
           ownership: 'modified',
@@ -387,7 +385,7 @@ describe('planUpdate', () => {
         modules: selections,
         files: {
           'brain/Index.md': makeFileState({
-            template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+            template: `brain/Index.md.njk`,
             rendered_hash: sha256(oldTemplate),
             ownership: 'modified',
           }),
@@ -430,7 +428,7 @@ describe('planUpdate', () => {
       modified: [
         {
           path: 'brain/Index.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+          template: `brain/Index.md.njk`,
           renderedHash: sha256(oldTemplate),
           actualHash: sha256(userEdited),
           ownership: 'modified',
@@ -447,7 +445,7 @@ describe('planUpdate', () => {
         modules: selections,
         files: {
           'brain/Index.md': makeFileState({
-            template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+            template: `brain/Index.md.njk`,
             rendered_hash: sha256(oldTemplate),
             ownership: 'modified',
           }),
@@ -515,7 +513,7 @@ describe('planUpdate', () => {
       managed: [
         {
           path: 'brain/Obsolete.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/Obsolete.md.njk`,
+          template: `brain/Obsolete.md.njk`,
           renderedHash: sha256('old content\n'),
           actualHash: sha256('old content\n'),
           ownership: 'managed',
@@ -530,7 +528,7 @@ describe('planUpdate', () => {
         modules: selections,
         files: {
           'brain/Obsolete.md': makeFileState({
-            template: `${SHARD_TEMPLATES_DIR}/brain/Obsolete.md.njk`,
+            template: `brain/Obsolete.md.njk`,
             rendered_hash: sha256('old content\n'),
           }),
         },
@@ -564,7 +562,7 @@ describe('planUpdate', () => {
       modified: [
         {
           path: 'brain/UserEdited.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/UserEdited.md.njk`,
+          template: `brain/UserEdited.md.njk`,
           renderedHash: sha256('original\n'),
           actualHash: sha256('my edits\n'),
           ownership: 'modified',
@@ -578,7 +576,7 @@ describe('planUpdate', () => {
         modules: selections,
         files: {
           'brain/UserEdited.md': makeFileState({
-            template: `${SHARD_TEMPLATES_DIR}/brain/UserEdited.md.njk`,
+            template: `brain/UserEdited.md.njk`,
             rendered_hash: sha256('original\n'),
             ownership: 'modified',
           }),
@@ -613,7 +611,7 @@ describe('planUpdate', () => {
       modified: [
         {
           path: 'brain/UserEdited.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/UserEdited.md.njk`,
+          template: `brain/UserEdited.md.njk`,
           renderedHash: sha256('original\n'),
           actualHash: sha256('my edits\n'),
           ownership: 'modified',
@@ -627,7 +625,7 @@ describe('planUpdate', () => {
         modules: selections,
         files: {
           'brain/UserEdited.md': makeFileState({
-            template: `${SHARD_TEMPLATES_DIR}/brain/UserEdited.md.njk`,
+            template: `brain/UserEdited.md.njk`,
             rendered_hash: sha256('original\n'),
             ownership: 'modified',
           }),
@@ -663,7 +661,7 @@ describe('planUpdate', () => {
       missing: [
         {
           path: 'brain/Index.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+          template: `brain/Index.md.njk`,
           renderedHash: sha256(template),
           actualHash: null,
           ownership: 'managed',
@@ -677,7 +675,7 @@ describe('planUpdate', () => {
         modules: selections,
         files: {
           'brain/Index.md': makeFileState({
-            template: `${SHARD_TEMPLATES_DIR}/brain/Index.md.njk`,
+            template: `brain/Index.md.njk`,
             rendered_hash: sha256(template),
           }),
         },
@@ -713,7 +711,7 @@ describe('planUpdate', () => {
       volatile: [
         {
           path: 'brain/Log.md',
-          template: `${SHARD_TEMPLATES_DIR}/brain/Log.md.njk`,
+          template: `brain/Log.md.njk`,
           renderedHash: sha256('template\n'),
           actualHash: null,
           ownership: 'volatile',
@@ -727,7 +725,7 @@ describe('planUpdate', () => {
         modules: selections,
         files: {
           'brain/Log.md': makeFileState({
-            template: `${SHARD_TEMPLATES_DIR}/brain/Log.md.njk`,
+            template: `brain/Log.md.njk`,
             rendered_hash: sha256('template\n'),
             ownership: 'user',
           }),

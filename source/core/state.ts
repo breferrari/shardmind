@@ -20,10 +20,13 @@ import {
   CACHED_MANIFEST,
   CACHED_SCHEMA,
   CACHED_TEMPLATES,
-  SHARD_TEMPLATES_DIR,
+  SHARD_SOURCE_DIR,
+  SHARD_MANIFEST_FILE,
 } from '../runtime/vault-paths.js';
 import { errnoCode } from '../runtime/errno.js';
 import { migrateState } from './state-migrator.js';
+import { walkShardSource } from './modules.js';
+import { loadShardmindignore } from './shardmindignore.js';
 
 const STATE_SCHEMA_VERSION = 1;
 
@@ -103,23 +106,44 @@ export async function initShardDir(vaultRoot: string): Promise<void> {
   await fsp.mkdir(path.join(vaultRoot, CACHED_TEMPLATES), { recursive: true });
 }
 
+/**
+ * Cache the post-walk source-file set under `.shardmind/templates/` so the
+ * three-way merge engine has a stable merge base for the next update.
+ *
+ * Walks the temp shard with the same Tier 1 + `.shardmindignore` + symlink
+ * filter the install/update planners use, so the cache mirrors exactly what
+ * the engine considered installable. Module gating is *not* applied here —
+ * toggling a module on at update time must be able to read its source from
+ * the cache without re-downloading.
+ *
+ * The required-file gate is `.shardmind/shard.yaml`'s presence, not a top-
+ * level `templates/` dir (gone under v6).
+ */
 export async function cacheTemplates(vaultRoot: string, tempDir: string): Promise<void> {
-  const src = path.join(tempDir, SHARD_TEMPLATES_DIR);
   const dest = path.join(vaultRoot, CACHED_TEMPLATES);
-
-  await fsp.rm(dest, { recursive: true, force: true });
-  await fsp.mkdir(dest, { recursive: true });
+  const manifestSrc = path.join(tempDir, SHARD_SOURCE_DIR, SHARD_MANIFEST_FILE);
   try {
-    await fsp.cp(src, dest, { recursive: true });
+    await fsp.access(manifestSrc);
   } catch (err) {
     if (errnoCode(err) === 'ENOENT') {
       throw new ShardMindError(
-        `Missing templates/ directory in shard source: ${src}`,
-        'STATE_CACHE_MISSING_TEMPLATES',
-        'The downloaded shard does not contain a templates/ directory.',
+        `Missing ${SHARD_SOURCE_DIR}/${SHARD_MANIFEST_FILE} in shard source: ${manifestSrc}`,
+        'STATE_CACHE_MISSING_MANIFEST',
+        `The downloaded shard does not contain a ${SHARD_SOURCE_DIR}/${SHARD_MANIFEST_FILE} file.`,
       );
     }
     throw err;
+  }
+
+  const ignoreFilter = await loadShardmindignore(tempDir);
+  const files = await walkShardSource(tempDir, ignoreFilter);
+
+  await fsp.rm(dest, { recursive: true, force: true });
+  await fsp.mkdir(dest, { recursive: true });
+  for (const { relPath, absPath } of files) {
+    const destPath = path.join(dest, relPath);
+    await fsp.mkdir(path.dirname(destPath), { recursive: true });
+    await fsp.copyFile(absPath, destPath);
   }
 }
 
