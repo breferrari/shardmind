@@ -520,6 +520,28 @@ describe('registry.resolve', () => {
       expect(result.version).toBe('4.0.0');
     });
 
+    it('strips a leading `v` from explicit @version (matches latest-resolution normalization)', async () => {
+      // `fetchLatestRelease` already strips a leading `v` from the
+      // tag GitHub returns. Without the same strip on the
+      // user-supplied `@v1.2.3`, the tarball URL ends up
+      // `tarball/vv1.2.3` and HEAD-404s with a confusing
+      // VERSION_NOT_FOUND. Pin both shapes to `tarball/v1.2.3`.
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const withV = await resolve('github:acme/widget@v1.2.3');
+      const withoutV = await resolve('github:acme/widget@1.2.3');
+      expect(withV.version).toBe('1.2.3');
+      expect(withoutV.version).toBe('1.2.3');
+      expect(withV.tarballUrl).toBe(
+        'https://api.github.com/repos/acme/widget/tarball/v1.2.3',
+      );
+      expect(withV.tarballUrl).toBe(withoutV.tarballUrl);
+    });
+
     it('uses explicit version without fetching releases', async () => {
       const calls: string[] = [];
       globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

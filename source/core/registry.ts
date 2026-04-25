@@ -276,11 +276,18 @@ function parseRef(shardRef: string): ParsedRef {
       'Use "github:namespace/name#<ref>" to install from a branch, tag, or commit SHA. Registry-mode refs are not supported.',
     );
   }
+  // Normalize the version like `fetchLatestRelease` does: strip a single
+  // leading `v` so `@v1.2.3`, `--release v1.2.3`, and `@1.2.3` all build
+  // the same `tarball/v1.2.3` URL. Without the strip, the tarball URL
+  // ends up `tarball/vv1.2.3` and HEAD-404s with a confusing
+  // VERSION_NOT_FOUND.
+  const normalizedVersion =
+    version !== undefined && version.startsWith('v') ? version.slice(1) : version;
   return {
     direct,
     namespace: namespace!,
     name: name!,
-    version: version ?? null,
+    version: normalizedVersion ?? null,
     ref: ref ?? null,
   };
 }

@@ -299,16 +299,16 @@ describe('lookupUpdateTarget — flag exclusivity + ref re-resolution', () => {
     expect(seen.some((u) => u.includes('/releases'))).toBe(false);
   });
 
-  it('throws when state.ref is set but resolveRefForUpdate returns no ref descriptor', async () => {
+  it('round-trips ResolvedShard.ref end-to-end for a ref-state vault', async () => {
     // Defensive invariant — `resolveRefInstall` always populates
     // `ResolvedShard.ref` for ref-shaped source strings. A future
     // regression that constructed the source without the `#<ref>`
     // suffix would silently produce `state.resolvedSha === undefined
     // === resolved.ref?.commit`, falsely classifying a stale vault
-    // as up-to-date. Driving this end-to-end requires the real
-    // boot pipeline; here we drive `lookupUpdateTarget` and confirm
-    // a ref-state with a tag-only `state.source` rejects via the
-    // resolver, exercising the same code path.
+    // as up-to-date. The boot pipeline guards against that with an
+    // explicit assertion (`use-update-machine.ts:288-294`); this test
+    // pins the *positive* case — `lookupUpdateTarget` for a ref-state
+    // vault produces a ResolvedShard whose `ref` is fully populated.
     await writeState('main');
     let calledCommits = false;
     globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

@@ -405,11 +405,11 @@ When you're ready to publish a stable release, tag it (`git tag v6.0.0 && git pu
 
 ### Update flags
 
-| Flag                       | Effect                                                             |
-|----------------------------|--------------------------------------------------------------------|
-| (none)                     | Latest non-prerelease via `/releases?prerelease=false`.             |
-| `--release <tag>`          | Pin to a specific release tag (stable or prerelease).              |
-| `--include-prerelease`     | Widen latest-resolution to all releases.                           |
+| Flag                       | Effect                                                                                  |
+|----------------------------|-----------------------------------------------------------------------------------------|
+| (none)                     | Fetch `/releases?per_page=100`; pick latest non-prerelease after client-side filtering. |
+| `--release <tag>`          | Pin to a specific release tag (stable or prerelease).                                   |
+| `--include-prerelease`     | Same `/releases?per_page=100` lookup, but latest-resolution includes prereleases.       |
 
 Ref-installed vaults (`state.ref` set) re-resolve the tracked ref on every `update` and accept neither `--release` nor `--include-prerelease` — both reject as `UPDATE_FLAG_CONFLICT`. To switch a ref-installed vault to a tag pin, reinstall via `shardmind install <source>@<version>`.
 

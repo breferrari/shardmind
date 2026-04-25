@@ -358,7 +358,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vaultRoot, yes]);
+  }, [vaultRoot, yes, release, includePrerelease]);
 
   const runNonInteractive = useCallback(
     async (ctx: PreparedContext) => {
@@ -741,11 +741,16 @@ export async function resolveRefForUpdate(
         );
       }
       if (err.code === 'SHARD_NOT_FOUND') {
-        throw new ShardMindError(
-          err.message,
-          'SHARD_NOT_FOUND',
-          `The shard recorded in .shardmind/state.json ('${source}') is no longer listed in the registry. It may have been renamed, moved, or deprecated — check the shard's homepage, or reinstall from a github:owner/repo source.`,
-        );
+        // Two paths fire SHARD_NOT_FOUND:
+        //   - registry-mode lookup misses in the index ("renamed / moved / deprecated")
+        //   - direct-mode `/releases?per_page=N` returns 404 (the repo itself
+        //     is missing or private to the unauthenticated client)
+        // Branch the hint so the user gets a remediation that fits their case.
+        const isDirect = source.startsWith('github:');
+        const hint = isDirect
+          ? `github.com/${source.slice('github:'.length)} returned 404. The repo may have been renamed, deleted, or made private. Check the URL, or set GITHUB_TOKEN if it's now a private repo you have access to.`
+          : `The shard recorded in .shardmind/state.json ('${source}') is no longer listed in the registry. It may have been renamed, moved, or deprecated — check the shard's homepage, or reinstall from a github:owner/repo source.`;
+        throw new ShardMindError(err.message, 'SHARD_NOT_FOUND', hint);
       }
       if (err.code === 'NO_RELEASES_PUBLISHED') {
         // `registry.ts` emits NO_RELEASES_PUBLISHED for two sub-cases.
