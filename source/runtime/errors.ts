@@ -84,6 +84,10 @@ export type ErrorCode =
   | 'UPDATE_FLAG_CONFLICT'
   | 'UPDATE_CACHE_MISSING'
   | 'UPDATE_WRITE_FAILED'
+
+  // Adopt
+  | 'ADOPT_EXISTING_INSTALL'
+  | 'ADOPT_WRITE_FAILED'
   | 'MIGRATION_INVALID_VERSION'
   // Reserved for the v0.2 sandboxed-transform path: currently migrator.ts
   // swallows `type_changed` transform exceptions and records a warning
