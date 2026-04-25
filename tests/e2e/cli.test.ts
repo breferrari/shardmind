@@ -46,6 +46,7 @@ import {
   cleanupAllVaults,
   type Vault,
 } from './helpers/vault.js';
+import { verifyInvariant1 } from './helpers/invariant1.js';
 
 const SHARD_SLUG = 'acme/demo';
 const SHARD_REF = `github:${SHARD_SLUG}`;
@@ -530,7 +531,53 @@ describe('shardmind install', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Install — post-install hook execution.
+// 4. Install — Invariant 1 byte-equivalence gate.
+// `shardmind install --defaults` must produce a vault that satisfies
+// `verifyInvariant1` against `examples/minimal-shard/`. This is the
+// CI test the spec promises (docs/SHARD-LAYOUT.md §Installation invariants).
+// ---------------------------------------------------------------------------
+
+describe('shardmind install — Invariant 1', () => {
+  let vault: Vault;
+  afterEach(async () => vault?.cleanup());
+
+  it('--defaults produces a vault that satisfies Invariant 1 against examples/minimal-shard/', async () => {
+    // The contract test. Source-of-truth for "clone" is the example dir
+    // the tarball is built from — content-equivalent by construction
+    // (tarball.ts copies the tree verbatim and bumps shard.yaml's version
+    // field, which lives under .shardmind/ on both sides and is therefore
+    // Tier 1-excluded clone-side and engine-metadata-excluded install-side).
+    //
+    // A clean report (all four arrays empty) means the engine produced
+    // exactly the file set the contract demands: every clone-side static
+    // file present byte-equivalent, every clone-side `.njk` present at
+    // the stripped install path, no Tier 1 leak, no `.shardmindignore`
+    // leak, no extras beyond engine metadata.
+    vault = await createEmptyVault('install-invariant1');
+    const installResult = await spawnCli(
+      ['install', SHARD_REF, '--defaults'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(installResult.exitCode).toBe(0);
+
+    const cloneDir = fileURLToPath(new URL('../../examples/minimal-shard', import.meta.url));
+    const report = await verifyInvariant1({ cloneDir, installDir: vault.root });
+
+    // Failure messages need to point at the exact divergence — naming
+    // each array in its own assertion gives vitest's diff a useful
+    // header instead of one mega-object that hides which contract broke.
+    expect(report.staticByteMismatches).toEqual([]);
+    expect(report.missingFromInstall).toEqual([]);
+    expect(report.extrasInInstall).toEqual([]);
+    // Sanity check — minimal-shard has 6 paths after Tier 1 +
+    // .shardmindignore filtering (1 .shardmindignore + 1 CLAUDE.md +
+    // 1 .claude/commands/example-command.md + 3 `.njk` templates).
+    expect(report.matched).toBe(6);
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// 5. Install — post-install hook execution.
 // One scenario, its own stub mount because the main stub's shard roster is
 // frozen at suite-start. Builds a custom tarball that adds
 // hooks/post-install.ts on top of the minimal-shard tree, then installs
