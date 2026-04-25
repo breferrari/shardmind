@@ -15,6 +15,8 @@ A shard ships:
 
 Users run `shardmind install <namespace>/<shard>`. The engine downloads the tarball, walks the shard root applying Tier 1 exclusions + `.shardmindignore` + symlink rejection, prompts for values, lets the user opt out of removable modules, renders + copies + caches, writes `state.json`, and runs your hook. Users never edit your shard directly — they edit their vault, and the next `shardmind update` merges upstream changes into their customizations via three-way merge.
 
+A user who already cloned your repo (typically before shardmind support existed) can run `shardmind adopt <namespace>/<shard>` instead. Adopt walks the existing vault, classifies each shard-output path against what the install would have produced, and asks the user — for any file that differs — whether to keep their version (recorded as `ownership: 'modified'`) or accept the shard's. Files matching exactly are auto-managed; files only the shard ships are installed fresh. After adopt, `shardmind update` works normally — the cache made at adopt time becomes the merge base. See `docs/SHARD-LAYOUT.md §Adopt semantics` for the full contract.
+
 ## 2. File layout
 
 The shard repo's layout *is* the installed vault's layout — no `templates/` wrapper, no separate `commands/`/`agents/`/`codex/` trees. Vault content sits at native paths in the source tree.

@@ -647,13 +647,14 @@ The shard's `.gitignore.njk` template includes:
 
 ### 10.1 Command Surface
 
-Three commands. Two that write. One that reads.
+Four commands. Three that write. One that reads.
 
 | Command | What | Writes? |
 |---------|------|---------|
 | `shardmind` | Status + health | No |
-| `shardmind install <namespace/name>` | Install a shard | Yes |
-| `shardmind update` | Upgrade to latest version | Yes |
+| `shardmind install <namespace/name>` | Install a shard into an empty (or near-empty) directory | Yes |
+| `shardmind update` | Upgrade to a newer version | Yes |
+| `shardmind adopt <namespace/name>` | Retrofit the engine onto a vault that was already cloned without shardmind | Yes |
 | `shardmind --verbose` | Detailed diagnostics | No |
 
 No `list` (vault-local, one shard per vault, nothing to list). No `doctor` (baked into status). No `init` (v1 shards are authored by hand).
@@ -816,6 +817,58 @@ Flags:
 - `--dry-run` — run the full pipeline (fetch, migrate, plan, merge) without touching the vault; the summary reports what *would* happen.
 
 Implementation modules: `source/core/migrator.ts` (IMPLEMENTATION §4.10), `source/core/update-planner.ts` (§4.11), `source/core/update-executor.ts` (§4.12). Orchestration lives in `source/commands/hooks/use-update-machine.ts`. The full phase diagram is in IMPLEMENTATION §3.
+
+### 10.5a `shardmind adopt <shard>` — Retrofit Flow
+
+For users who cloned a shard repo before shardmind support existed (e.g. `obsidian-mind` v5.1 clones). Adopt walks the user's existing vault, classifies each shard-output path, and writes the same `.shardmind/` metadata an install would have produced — without overwriting the user's current bytes unless they explicitly opt in per file.
+
+```
+shardmind adopt breferrari/obsidian-mind
+
+  Comparing your vault with the shard…
+
+  Differs from shard: CLAUDE.md (1 of 2)
+    lines 14–22
+      ## Setup notes
+    <<<<<<< mine
+      Personal shortcuts I added in week 1
+    =======
+      ## Module reference
+      Generated section (every shard ships this)
+    >>>>>>> shard
+
+  [Keep mine] [Use shard]
+```
+
+Two pre-flight guards run before the network resolve, so a deterministically-wrong adopt bails in milliseconds:
+
+- `.shardmind/state.json` already exists → `ADOPT_EXISTING_INSTALL`. The vault is already managed; the user wants `shardmind update`.
+- `shard-values.yaml` exists without `state.json` → `VALUES_FILE_COLLISION`. Partial-adoption inconsistent state; the user moves the stray file aside.
+
+Phase ordering (logical; UI may interleave loading messages — see IMPLEMENTATION §2.x for the data-flow diagram):
+
+1. **Fetch** — resolve + download into a temp directory.
+2. **Wizard** — collect values + module selections via the same `InstallWizard` component install uses. Wizard runs **before** classification because `.njk` templates need values to render before their output bytes can be hashed.
+3. **Classify** (`source/core/adopt-planner.ts::classifyAdoption`) — for every shard output, render or read, hash, stat the user's vault, and assign one of four buckets:
+   - **matches** — byte-identical post-render → managed silently.
+   - **differs** — bytes differ → 2-way diff prompt (`AdoptDiffView`); user picks `keep_mine` (record user's hash, ownership=`modified`) or `use_shard` (overwrite with shard bytes, ownership=`managed`).
+   - **shard-only** — user doesn't have the path → install fresh, managed.
+   - Implicit **user-only** — paths in vault but not in shard → never enumerated, left untouched.
+4. **Apply** (`source/core/adopt-executor.ts::runAdopt`) — snapshot any `differs+use_shard` user file before overwriting, write shard-only fresh installs, write engine metadata (`state.json`, cached manifest+schema, templates cache, vault-root `shard-values.yaml`). Snapshot-then-restore rollback on any failure between snapshot and final state-write.
+5. **Hook** — fire the post-install hook with `valuesAreDefaults` + `newFiles=summary.installedFresh` + `removedFiles=[]`. Non-fatal (Helm semantics, §9.3).
+6. **Re-hash** — recompute managed-file hashes per `state.ts::rehashManagedFiles` so any hook edits to managed paths land in the recorded state.
+
+Flags:
+- `--yes` — skip wizard + auto-pick `keep_mine` on every `differs`. Preserves the user's bytes on every divergence; safe default for retroactive adoption.
+- `--values <file>` — prefill wizard answers (same shape as `install --values`).
+- `--verbose` — show per-file action history during the apply phase.
+- `--dry-run` — run the full pipeline (fetch, wizard, classify) without touching the vault. Summary reports what *would* happen.
+
+Volatile templates (`{# shardmind: volatile #}`) skip the differs prompt entirely — their rendered output is expected to vary across renders, so a content prompt would be meaningless. User's bytes are accepted as-is; missing-on-disk falls through to shard-only.
+
+Excluded modules' files in the user's vault are not classified — adopt mirrors install's "module excluded → file not installed" rule, so user content at those paths stays user-content without any prompt.
+
+Implementation modules: `source/core/adopt-planner.ts` (IMPLEMENTATION §4.17), `source/core/adopt-executor.ts` (§4.18). Orchestration lives in `source/commands/hooks/use-adopt-machine.ts`; UI components are `source/components/AdoptDiffView.tsx` + `source/components/AdoptSummary.tsx`.
 
 ### 10.6 Install Location
 

@@ -87,11 +87,12 @@ Classification signals define how the vault routes content. Core signals (DECISI
 ```bash
 shardmind                              # Status + health
 shardmind install <namespace/name>     # Install a shard
-shardmind update                       # Upgrade to latest version
+shardmind update                       # Upgrade to a newer version
+shardmind adopt <namespace/name>       # Retrofit the engine into an existing clone
 shardmind --verbose                    # Detailed diagnostics
 ```
 
-Three commands. Two that write. One that reads. No menu, no wizard fatigue. Status-first.
+Four commands. Three that write. One that reads. No menu, no wizard fatigue. Status-first. `adopt` is the migration path for users who cloned before shardmind support existed — see [`docs/ARCHITECTURE.md §10.5a`](docs/ARCHITECTURE.md) for the flow.
 
 Wrapper scripts, CI pipelines, enterprise deployments — see [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for exit codes, environment variables (`GITHUB_TOKEN`, `SHARDMIND_GITHUB_API_BASE`, `SHARDMIND_REGISTRY_INDEX_URL`), file locations, and signal handling.
 

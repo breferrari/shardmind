@@ -123,9 +123,11 @@ shardmind/
 │   │   ├── index.tsx                  # Status display (root command)
 │   │   ├── install.tsx                # shardmind install <shard>
 │   │   ├── update.tsx                 # shardmind update
+│   │   ├── adopt.tsx                  # shardmind adopt <shard>
 │   │   └── hooks/                     # State-machine + shared command hooks
 │   │       ├── use-install-machine.ts
 │   │       ├── use-update-machine.ts
+│   │       ├── use-adopt-machine.ts
 │   │       ├── use-status-report.ts   # Async loader for status command
 │   │       └── shared.ts              # summarizeHook, useSigintRollback
 │   ├── components/
@@ -138,6 +140,8 @@ shardmind/
 │   │   ├── CollisionReview.tsx        # Install: backup / overwrite / cancel
 │   │   ├── ExistingInstallGate.tsx    # Install: existing-install disambiguation
 │   │   ├── DiffView.tsx               # Three-way diff + conflict resolution
+│   │   ├── AdoptDiffView.tsx          # Adopt: 2-way diff (no merge base) + per-file prompt
+│   │   ├── AdoptSummary.tsx           # Final adopt report (matched / mine / shard / fresh)
 │   │   ├── NewValuesPrompt.tsx        # Update: prompt for newly required values
 │   │   ├── NewModulesReview.tsx       # Update: offer newly optional modules
 │   │   ├── RemovedFilesReview.tsx     # Update: per-file keep/delete decision
@@ -166,6 +170,8 @@ shardmind/
 │   │   ├── update-executor.ts         # Apply update plan with rollback
 │   │   ├── install-planner.ts         # Pure install plan + collisions
 │   │   ├── install-executor.ts        # Apply install plan with rollback
+│   │   ├── adopt-planner.ts           # Classify user vault vs shard (matches/differs/shard-only)
+│   │   ├── adopt-executor.ts          # Apply adopt plan with snapshot-rollback
 │   │   ├── values-io.ts               # Shared YAML load for shard-values.yaml
 │   │   ├── values-defaults.ts         # `valuesAreDefaults(values, schema)` — Invariant 2 helper
 │   │   ├── update-check.ts            # 24h cached latest-version lookup (status + update)
@@ -301,6 +307,8 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `install-executor.ts` | §4.11b (to land) | Apply install plan with transactional backup + rollback |
 | `update-planner.ts` | §4.11 | Plan update actions from drift + new-shard render |
 | `update-executor.ts` | §4.12 | Apply update plan with snapshot-based rollback |
+| `adopt-planner.ts` | §4.17 | Classify user vault vs shard outputs (matches / differs / shard-only) |
+| `adopt-executor.ts` | §4.18 | Apply adopt plan with snapshot-based rollback |
 | `values-io.ts` | §4.13 | Shared YAML load for shard-values.yaml (install + update) |
 | `values-defaults.ts` | §4.16 (HookContext extensions) | `valuesAreDefaults(values, schema)` — deep-equal pure fn for Invariant 2 |
 | `status.ts` | §4.14 | Pure StatusReport builder for the `shardmind` (status) command |
