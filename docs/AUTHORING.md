@@ -338,7 +338,11 @@ Hooks **cannot**:
 
 ### Post-hook re-hash
 
-After every `post-install` / `post-update` invocation — success OR failure — the engine re-hashes every managed file in `state.json` and writes the updated state. **This means a hook that legitimately edits a managed file does not produce spurious "drift" on the next `shardmind` status run.** It also means a hook that crashed mid-edit leaves `state.json` reflecting the partial bytes on disk; drift detection surfaces the discrepancy on the next status run, not silently. Hook-managed-file edits are still subject to the Invariant 2 rule above — the re-hash is what makes the rule observable, not a license to ignore it.
+After every `post-install` / `post-update` invocation — success OR failure — the engine re-hashes every managed file in `state.json` and writes the updated state. **This means a hook that legitimately edits a managed file does not produce spurious "drift" on the next `shardmind` status run.**
+
+A consequence to know: `state.json` reflects whatever bytes are on disk *after* the hook exits. If a hook crashes mid-write, the partial bytes get hashed and adopted as the new managed hash — drift detection won't flag them as drift, because state-matches-disk by construction. If you need atomicity (the file is either fully-written or untouched), use `fs.rename` from a temp file inside your hook; don't rely on the engine to detect partial writes.
+
+Hook-managed-file edits are still subject to the Invariant 2 rule above — the re-hash is what makes legitimate edits observable, not a license to ignore the gate.
 
 ### Runtime environment
 

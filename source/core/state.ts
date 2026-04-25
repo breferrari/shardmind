@@ -206,12 +206,21 @@ export interface RehashResult {
  * `failed`. The hook contract is non-fatal (Helm pattern), so a hook
  * that broke the world cannot break the engine; the next `shardmind`
  * status run surfaces drift on the affected paths.
+ *
+ * Entries with `ownership === 'user'` are skipped: drift detection
+ * already routes those through the volatile bucket (see `drift.ts:104`)
+ * and never compares their stored hash, so re-reading + sha256-ing
+ * them is wasted I/O that would also cause the function's behavior to
+ * drift from its name (it really is "managed files", not "every entry
+ * in state.files").
  */
 export async function rehashManagedFiles(
   vaultRoot: string,
   state: ShardState,
 ): Promise<RehashResult> {
-  const paths = Object.keys(state.files);
+  const paths = Object.entries(state.files)
+    .filter(([, file]) => file.ownership !== 'user')
+    .map(([rel]) => rel);
   const changed: string[] = [];
   const missing: string[] = [];
   const failed: Array<{ path: string; reason: string }> = [];

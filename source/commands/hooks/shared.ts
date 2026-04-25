@@ -133,7 +133,11 @@ export function appendHookOutput<P extends { kind: string }>(
 export async function postHookRehash(vaultRoot: string, state: ShardState): Promise<void> {
   try {
     const rehash = await rehashManagedFiles(vaultRoot, state);
-    if (rehash.changed.length > 0 || rehash.missing.length > 0 || rehash.failed.length > 0) {
+    // Only `changed` actually mutates the returned state; `missing` and
+    // `failed` paths retain their prior hash, so the serialized state
+    // would be byte-identical to what the executor already wrote. Skip
+    // the redundant fs.writeFile.
+    if (rehash.changed.length > 0) {
       await writeState(vaultRoot, rehash.state);
     }
   } catch {
