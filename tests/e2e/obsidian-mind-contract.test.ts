@@ -284,7 +284,7 @@ const expectedHash = sha256(northStar);
 
 // ---------------------------------------------------------------------------
 // Update scenarios — see issue #92 §Update + docs/SHARD-LAYOUT.md
-// §Update semantics + §Hooks (Invariant 3 — post-update is additive-only).
+// §Update semantics + §Invariant 3 (post-update additive-only).
 // ---------------------------------------------------------------------------
 
 describe('update (obsidian-mind-like)', () => {
@@ -332,7 +332,8 @@ describe('update (obsidian-mind-like)', () => {
 
   it('6.0.0 → 6.1.0 (--yes auto-includes new module) installs the new file and surfaces it as ctx.newFiles', async () => {
     // Scenario 8 — docs/SHARD-LAYOUT.md §Update semantics +
-    // §Hooks/Invariant 3: under --yes, NewModulesReview auto-includes;
+    // §Invariant 3 — Post-update hooks are additive-only by default:
+    // under --yes, NewModulesReview auto-includes;
     // research/Findings.md lands; ctx.newFiles names exactly that path
     // so the post-update hook's additive-only marker is appended to it.
     vault = await createInstalledVault({
@@ -913,7 +914,8 @@ describe('prerelease policy (obsidian-mind-like)', () => {
 
 // ---------------------------------------------------------------------------
 // Hook failure + adversarial — see issue #92 §Hook failure + §Adversarial
-// + docs/SHARD-LAYOUT.md §Hooks (non-fatal contract) + §File disposition.
+// + docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics +
+// §File disposition.
 // ---------------------------------------------------------------------------
 
 describe('hook failure + adversarial (obsidian-mind-like)', () => {
@@ -1078,13 +1080,14 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
   });
 
   it('post-install hook that edits a managed file then throws → install completes; state.hash reflects post-hook bytes', async () => {
-    // Scenario 26 — docs/SHARD-LAYOUT.md §Hooks (Helm-style non-fatal
-    // contract) + §Hooks, state, and re-hash semantics: a hook that
-    // partially edits a managed file and then throws still leaves the
-    // install in a consistent state — engine re-hashes after hook
-    // exit (success OR failure) so state.json reflects actual disk
-    // content. Drive the failure via the fixture's
-    // SHARDMIND_HOOK_EDIT_BEFORE_THROW env hook.
+    // Scenario 26 — docs/SHARD-LAYOUT.md §Hooks, state, and re-hash
+    // semantics ("Engine re-hashes all managed files after hook
+    // exits — success OR failure"): a hook that partially edits a
+    // managed file and then throws still leaves the install in a
+    // consistent state. The Helm-style non-fatal contract is in the
+    // same section ("Hook timeout stays at the existing
+    // DEFAULT_HOOK_TIMEOUT_MS (non-fatal on timeout)"). Drive the
+    // failure via the fixture's SHARDMIND_HOOK_EDIT_BEFORE_THROW env.
     vault = await createEmptyVault('obs-mind-hook-throw');
     const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
     const result = await spawnCli(
@@ -1108,9 +1111,11 @@ const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
   }, 60_000);
 
   it('post-install hook exceeding timeout_ms → killed; install completes; summary surfaces a timeout warning', async () => {
-    // Scenario 27 — docs/SHARD-LAYOUT.md §Hooks (non-fatal):
-    // exceeding the per-shard timeout_ms results in a HookResult.kind
-    // = 'failed' with a timed-out message; install still succeeds.
+    // Scenario 27 — docs/SHARD-LAYOUT.md §Hooks, state, and re-hash
+    // semantics ("Hook timeout stays at the existing
+    // DEFAULT_HOOK_TIMEOUT_MS (non-fatal on timeout)"): exceeding
+    // the per-shard timeout_ms results in HookResult.kind='failed'
+    // with a timed-out message; install still succeeds.
     vault = await createEmptyVault('obs-mind-hook-timeout');
     const result = await spawnCli(
       ['install', 'github:acme/obs-mind-tiny-timeout', '--defaults'],
@@ -1182,7 +1187,8 @@ const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
 
   it('valuesAreDefaults handles mixed-default types ("" / 0 / false / select / non-empty string) correctly across both branches', async () => {
     // Scenario 30 — docs/SHARD-LAYOUT.md §Values, schema, and modules
-    // ("Every value has a default") + §Hooks/Invariant 2: the deep-
+    // ("Every value has a default") + §Invariant 2 — Hooks respect
+    // default-values: the deep-
     // equal computation must treat literal `""`, `0`, `false`,
     // a string default, and a select default identically. Drives
     // both the positive (every value at default) and negative (any
