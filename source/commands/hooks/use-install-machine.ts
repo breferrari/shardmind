@@ -26,7 +26,7 @@ import { resolve as resolveRef } from '../../core/registry.js';
 import { downloadShard } from '../../core/download.js';
 import { parseManifest } from '../../core/manifest.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
-import { readState, rehashManagedFiles, writeState } from '../../core/state.js';
+import { readState } from '../../core/state.js';
 import { valuesAreDefaults } from '../../core/values-defaults.js';
 import {
   planOutputs,
@@ -45,7 +45,13 @@ import {
 } from '../../core/install-executor.js';
 import { runPostInstallHook, type RunningHookPhase } from '../../core/hook.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
-import { appendHookOutput, summarizeHook, useSigintRollback, type HookSummary } from './shared.js';
+import {
+  appendHookOutput,
+  postHookRehash,
+  summarizeHook,
+  useSigintRollback,
+  type HookSummary,
+} from './shared.js';
 
 import type { WizardResult } from '../../components/InstallWizard.js';
 import type { CollisionAction } from '../../components/CollisionReview.js';
@@ -355,9 +361,6 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
               modules: result.selections,
               shard: { name: ctx.manifest.name, version: ctx.manifest.version },
               valuesAreDefaults: valuesAreDefaults(result.values, ctx.schema),
-              // Spec: empty on a clean install — every file is new, so the
-              // signal would be uninformative. Adopt (#77) populates this
-              // separately when the same hook fires after a 2-way diff.
               newFiles: [],
               removedFiles: [],
             };
@@ -371,23 +374,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
             hookAbortRef.current = null;
           }
 
-          // Re-hash managed files after the hook exits — success OR
-          // failure. The hook contract is non-fatal (Helm pattern), but
-          // state.json must reflect actual file content so the next
-          // status run doesn't surface spurious drift on paths the hook
-          // legitimately edited. See docs/SHARD-LAYOUT.md §Hooks, state,
-          // and re-hash semantics.
-          try {
-            const rehash = await rehashManagedFiles(vaultRoot, runResult.state);
-            if (rehash.changed.length > 0 || rehash.missing.length > 0 || rehash.failed.length > 0) {
-              await writeState(vaultRoot, rehash.state);
-            }
-          } catch {
-            // Defensive: rehash should not throw (per-file errors are
-            // tolerated internally). If something at the writeState
-            // layer does, the prior state.json stays — drift detection
-            // surfaces the discrepancy on the next status run.
-          }
+          await postHookRehash(vaultRoot, runResult.state);
         }
 
         finish({

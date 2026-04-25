@@ -20,7 +20,8 @@ import {
   type HookSummary,
   type RunningHookPhase,
 } from '../../core/hook.js';
-import { assertNever } from '../../runtime/types.js';
+import { rehashManagedFiles, writeState } from '../../core/state.js';
+import { assertNever, type ShardState } from '../../runtime/types.js';
 
 /**
  * Re-export so existing callers that reach for `HookSummary` via this
@@ -105,6 +106,31 @@ export function appendHookOutput<P extends { kind: string }>(
     const trimmed = tailAtUtf8Boundary(combined, HOOK_OUTPUT_UI_CAP_BYTES);
     return { ...prev, output: trimmed };
   });
+}
+
+/**
+ * Re-hash every managed file after a hook subprocess returns and persist
+ * the updated state.json — the post-hook contract documented in
+ * `docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics`.
+ *
+ * Runs on success OR failure of the hook (Helm-style non-fatal contract).
+ * Skips the `writeState` call when nothing changed so we don't burn a
+ * redundant fs.writeFile on the common case (most hooks edit unmanaged
+ * files, not managed ones). The wrapping try/catch is defensive — per-
+ * file errors are tolerated inside `rehashManagedFiles`, but a
+ * `writeState` crash mid-write must not propagate past the install /
+ * update boundary; drift detection surfaces any discrepancy on the next
+ * status run.
+ */
+export async function postHookRehash(vaultRoot: string, state: ShardState): Promise<void> {
+  try {
+    const rehash = await rehashManagedFiles(vaultRoot, state);
+    if (rehash.changed.length > 0 || rehash.missing.length > 0 || rehash.failed.length > 0) {
+      await writeState(vaultRoot, rehash.state);
+    }
+  } catch {
+    // see comment above — non-fatal by design
+  }
 }
 
 /**
