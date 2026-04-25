@@ -531,3 +531,191 @@ describe('update (obsidian-mind-like)', () => {
     expect(ctx.newFiles).toEqual([]);
   }, 90_000);
 });
+
+// ---------------------------------------------------------------------------
+// Adopt scenarios — see issue #92 §Adopt + docs/SHARD-LAYOUT.md
+// §Adopt semantics.
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip the engine's installed-side metadata to simulate a v5.1-style
+ * clone: no .shardmind/, no shard-values.yaml. Vault content survives.
+ * Used by adopt scenarios that need a "user has cloned the shard
+ * before shardmind support" starting state.
+ */
+async function stripEngineMetadata(vault: Vault): Promise<void> {
+  await fs.rm(path.join(vault.root, '.shardmind'), { recursive: true, force: true });
+  await fs.rm(path.join(vault.root, 'shard-values.yaml'), { force: true });
+}
+
+describe('adopt (obsidian-mind-like)', () => {
+  let vault: Vault;
+  afterEach(async () => {
+    defaultLatest();
+    await vault?.cleanup();
+  });
+
+  it('adopts a clean clone — most files classified `matched`, state.json seeded', async () => {
+    // Scenario 15 — docs/SHARD-LAYOUT.md §Adopt semantics: a pristine
+    // clone with default values lands every static-content file as
+    // matched on first pass. Renderable templates with install_date
+    // legitimately classify as `differs` (the floating timestamp
+    // doesn't byte-equal any prior render); --yes resolves those as
+    // keep_mine. The contract clause being pinned is "first-pass
+    // adoption seeds state.json with managed entries for every
+    // shard-output path".
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-adopt-clean',
+    });
+    await stripEngineMetadata(vault);
+
+    const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
+    const result = await spawnCli(
+      ['adopt', SHARD_REF, '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/\d+ matched the shard exactly/);
+
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+    expect(await vault.exists('shard-values.yaml')).toBe(true);
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      files: Record<string, { ownership: string }>;
+    };
+    // Every state.files entry is either managed (matches / use_shard)
+    // or modified (keep_mine — the install_date templates).
+    for (const fs of Object.values(state.files)) {
+      expect(['managed', 'modified']).toContain(fs.ownership);
+    }
+    // CLAUDE.md is static content — must classify managed (byte-match).
+    expect(state.files['CLAUDE.md']?.ownership).toBe('managed');
+  }, 90_000);
+
+  it('adopts with a user-edited managed file and records `modified` ownership under --yes', async () => {
+    // Scenario 16 — docs/SHARD-LAYOUT.md §Adopt semantics: under --yes,
+    // every `differs` decision auto-resolves keep_mine
+    // (use-adopt-machine.ts:283-290). User bytes survive byte-for-byte
+    // and the file is recorded with ownership=modified at the user's
+    // hash so subsequent updates merge from this base.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-adopt-edited',
+    });
+    await stripEngineMetadata(vault);
+
+    const myEdit = '# Claude — edited before adopt\n';
+    await vault.writeFile('CLAUDE.md', myEdit);
+
+    const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
+    const result = await spawnCli(
+      ['adopt', SHARD_REF, '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+
+    const claudeAfter = await vault.readFile('CLAUDE.md');
+    expect(claudeAfter).toBe(myEdit);
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      files: Record<string, { ownership: string }>;
+    };
+    expect(state.files['CLAUDE.md']?.ownership).toBe('modified');
+  }, 90_000);
+
+  it('adopt leaves user-created files (not declared by the shard) unmanaged', async () => {
+    // Scenario 17 — docs/SHARD-LAYOUT.md §Adopt semantics: "User has
+    // the path but it's not a shard output → user-only, left
+    // unmanaged (not in state.files)." Pinned by an explicit
+    // user-only file the shard doesn't ship.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-adopt-userfile',
+    });
+    await stripEngineMetadata(vault);
+    await vault.writeFile('my-private-note.md', 'private user content\n');
+
+    const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
+    const result = await spawnCli(
+      ['adopt', SHARD_REF, '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+
+    // User file survived.
+    expect(await vault.readFile('my-private-note.md')).toBe('private user content\n');
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      files: Record<string, unknown>;
+    };
+    expect(state.files['my-private-note.md']).toBeUndefined();
+  }, 90_000);
+
+  it('rejects adopt against an already-managed vault with ADOPT_EXISTING_INSTALL', async () => {
+    // Scenario 18 — docs/SHARD-LAYOUT.md §Adopt semantics
+    // (pre-conditions): "An existing install routes through
+    // `shardmind update`." Engine refuses to overwrite the existing
+    // .shardmind/ at adopt and surfaces a typed error pointing the
+    // user at update.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-adopt-existing',
+    });
+    const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
+    const result = await spawnCli(
+      ['adopt', SHARD_REF, '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout + result.stderr).toContain('ADOPT_EXISTING_INSTALL');
+    expect(result.stdout + result.stderr).toMatch(/shardmind update/);
+  }, 60_000);
+
+  it('adopt → update bumps cleanly using the adopt-time cache as merge base', async () => {
+    // Scenario 19 — docs/SHARD-LAYOUT.md §Adopt semantics step 5
+    // (cache the shard source under .shardmind/templates/) +
+    // §Update semantics: a subsequent `shardmind update` against a
+    // bumped tag uses the adopt-time cache as the merge base. Pin
+    // both halves: adopt seeds the cache, update uses it without
+    // a second adopt.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-adopt-then-update',
+    });
+    await stripEngineMetadata(vault);
+
+    const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
+    const adopt = await spawnCli(
+      ['adopt', SHARD_REF, '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(adopt.exitCode).toBe(0);
+    expect(await vault.exists('.shardmind/templates')).toBe(true);
+
+    stub.setLatest(SHARD_SLUG, '6.1.0');
+    const update = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(update.exitCode).toBe(0);
+
+    // 6.1.0's research/ module landed via auto-include.
+    expect(await vault.exists('research/Findings.md')).toBe(true);
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      version: string;
+    };
+    expect(state.version).toBe('6.1.0');
+  }, 120_000);
+});
