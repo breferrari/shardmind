@@ -1,0 +1,22 @@
+schema_version: 1
+
+values:
+  user_name:
+    type: string
+    message: "Your name"
+    default: ""
+    group: setup
+
+groups:
+  - { id: setup, label: "Setup" }
+
+modules:
+  legacy_mod:
+    label: "Has v5 partials field"
+    paths: ["legacy/"]
+    partials: ["claude/_legacy.md.njk"]
+    removable: true
+
+signals: []
+frontmatter: {}
+migrations: []
