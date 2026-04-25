@@ -86,11 +86,11 @@ The installed-side path constants are authoritative in [`source/runtime/vault-pa
 
 ## Personalization model
 
-Three mechanisms. v0.1 deliberately does NOT ship Nunjucks rendering at **user-visible vault paths** (root markdown, folder-level notes). The one rendering path v0.1 DOES ship is dotfolder `.njk` (item 2 below) — hidden from Obsidian's file view, so no clone-UX cost. Hooks cover any personalization that needs to touch user-visible content. Vault-visible `{{ values.X }}` is a v0.2 feature when a shard (likely research-wiki) pushes on it.
+Three mechanisms.
 
 1. **Module / agent selection.** Wizard values gate which files ship. Default wizard state is **all modules enabled, all agent files shipped** — per VISION's "ships complete" posture and Invariant 1. User deselects what they don't want.
 
-2. **Dotfolder `.njk` rendering.** Config files the user doesn't see (`.claude/settings.json.njk`, `.mcp.json.njk`) render with user values; suffix stripped on install. Obsidian hides dotfolders, so no clone-UX cost.
+2. **`.njk` Nunjucks rendering** (author-explicit opt-in by suffix). Any file ending in `.njk` is rendered with user values and the suffix is stripped on install. Author convention is to keep `.njk` to **dotfolder configs** the user doesn't see — `.claude/settings.json.njk`, `.mcp.json.njk` — so the clone-UX cost stays zero. The engine doesn't enforce that convention because iterator templates (`<dir>/_each.<ext>.njk`) and other legitimate uses produce vault-visible output. Vault-visible `{{ values.X }}` *without* the `.njk` suffix is the deferred `rendered_files` opt-in tracked under [#86](https://github.com/breferrari/shardmind/issues/86).
 
 3. **Post-install / post-update hooks.** Shard-author TypeScript reads `shard-values.yaml` and does whatever it wants — QMD bootstrap, programmatic edits to `brain/North Star.md`, MCP wiring. Bound by Invariants 2 + 3 below.
 
