@@ -1,9 +1,17 @@
 import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import { parseSchema, buildValuesValidator, isComputedDefault } from '../../source/core/schema.js';
 
 const FIXTURES = path.resolve('tests/fixtures/schema');
 const EXAMPLE_SCHEMA = path.resolve('examples/minimal-shard/.shardmind/shard-schema.yaml');
+
+// Unique tmp filename per call. `Date.now()` collides under parallel
+// vitest workers (two tests within the same millisecond share a path,
+// and the second `unlink` throws ENOENT after the first cleans up).
+const tmpYaml = (prefix: string): string =>
+  path.join(os.tmpdir(), `${prefix}-${crypto.randomUUID()}.yaml`);
 
 describe('parseSchema', () => {
   it('parses valid-minimal fixture', async () => {
@@ -58,9 +66,8 @@ describe('parseSchema', () => {
   });
 
   it('rejects invalid YAML syntax', async () => {
-    const os = await import('node:os');
     const fs = await import('node:fs/promises');
-    const tmp = path.join(os.tmpdir(), `schema-test-${Date.now()}.yaml`);
+    const tmp = tmpYaml('schema-test');
     await fs.writeFile(tmp, ':\n  - [\ninvalid');
     try {
       const err = await parseSchema(tmp).catch(e => e);
@@ -162,9 +169,8 @@ describe('parseSchema', () => {
   });
 
   it('reports every reserved-name collision when multiple', async () => {
-    const os = await import('node:os');
     const fs = await import('node:fs/promises');
-    const tmp = path.join(os.tmpdir(), `schema-reserved-${Date.now()}.yaml`);
+    const tmp = tmpYaml('schema-reserved');
     await fs.writeFile(tmp, [
       'schema_version: 1',
       'values:',
