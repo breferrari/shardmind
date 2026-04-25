@@ -140,12 +140,13 @@ describe('CLI bootstrap', () => {
     expect(result.stdout.trim()).toBe(PACKAGE_VERSION);
   });
 
-  it('--help lists install and update subcommands', async () => {
+  it('--help lists install, update, and adopt subcommands', async () => {
     vault = await createEmptyVault('help');
     const result = await spawnCli(['--help'], { cwd: vault.root, env: envWithStub() });
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('install');
     expect(result.stdout).toContain('update');
+    expect(result.stdout).toContain('adopt');
   });
 });
 
@@ -1170,4 +1171,134 @@ describe('install — property-based invariants', () => {
     // Outer budget envelopes the fast-check worst case: 5 × 45s + overhead.
     // Same sizing as the sibling property above.
   }, 240_000);
+});
+
+// ---------------------------------------------------------------------------
+// 11. Adopt — `shardmind adopt <shard>` retrofits the engine onto an
+// existing un-managed vault. Spec: docs/SHARD-LAYOUT.md §Adopt semantics.
+// ---------------------------------------------------------------------------
+
+describe('shardmind adopt', () => {
+  let vault: Vault;
+  afterEach(async () => vault?.cleanup());
+
+  it('--yes adopts an empty vault — every shard file installs fresh', async () => {
+    vault = await createEmptyVault('adopt-empty');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(['adopt', SHARD_REF, '--yes', '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('Adopted');
+    expect(result.stdout).toContain('installed fresh');
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+    expect(await vault.exists('shard-values.yaml')).toBe(true);
+    expect(await vault.exists('Home.md')).toBe(true);
+  });
+
+  it('classifies a vault that matches the shard byte-for-byte as `matched` (no overwrites)', async () => {
+    // Pre-install via `createInstalledVault` so the user vault contains
+    // the post-install bytes, then strip engine state to simulate a
+    // git clone of those bytes. Adopt should classify static-content
+    // files as `matches` and install_date templates as `differs` (the
+    // user's install_date floats with `Date.now`, so re-render produces
+    // different bytes — this is the spec's post-render-byte-equality
+    // rule playing out).
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'adopt-matching',
+    });
+    // Strip `.shardmind/` + `shard-values.yaml` to simulate a fresh
+    // clone of the install output.
+    await fs.rm(path.join(vault.root, '.shardmind'), { recursive: true, force: true });
+    await fs.rm(path.join(vault.root, 'shard-values.yaml'), { force: true });
+
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(['adopt', SHARD_REF, '--yes', '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    // At least the static-content files (CLAUDE.md, the example
+    // command, the values-only settings template) match exactly.
+    expect(result.stdout).toMatch(/\d+ matched the shard exactly/);
+    // Engine metadata was written.
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      files: Record<string, { ownership: string }>;
+    };
+    // Every file in state.files is either managed (matches / use_shard)
+    // or modified (keep_mine).
+    const ownerships = Object.values(state.files).map((f) => f.ownership);
+    for (const o of ownerships) expect(['managed', 'modified']).toContain(o);
+  });
+
+  it('rejects adopt when the vault is already shardmind-managed', async () => {
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'adopt-already',
+    });
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(['adopt', SHARD_REF, '--yes', '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout + result.stderr).toContain('ADOPT_EXISTING_INSTALL');
+    expect(result.stdout + result.stderr).toMatch(/shardmind update/);
+  });
+
+  it('--dry-run writes nothing', async () => {
+    vault = await createEmptyVault('adopt-dry');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const filesBefore = (await vault.listFiles()).sort();
+    const result = await spawnCli(
+      ['adopt', SHARD_REF, '--dry-run', '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/Dry run/i);
+    const filesAfter = (await vault.listFiles()).sort();
+    expect(filesAfter).toEqual(filesBefore);
+    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+    expect(await vault.exists('shard-values.yaml')).toBe(false);
+  });
+
+  it('--yes auto-keep-mine on a divergent file preserves user bytes + records as managed', async () => {
+    // Pre-install, strip engine state, modify CLAUDE.md, re-adopt.
+    // Under --yes adopt picks `keep_mine` for every differs entry, so
+    // the modified bytes survive intact and state records ownership =
+    // 'modified' with the user's hash.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'adopt-keepmine',
+    });
+    await fs.rm(path.join(vault.root, '.shardmind'), { recursive: true, force: true });
+    await fs.rm(path.join(vault.root, 'shard-values.yaml'), { force: true });
+
+    const myCustomBytes = '# CLAUDE — bespoke override\n';
+    await vault.writeFile('CLAUDE.md', myCustomBytes);
+
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(['adopt', SHARD_REF, '--yes', '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+
+    const claudeAfter = await vault.readFile('CLAUDE.md');
+    expect(claudeAfter).toBe(myCustomBytes);
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      files: Record<string, { ownership: string }>;
+    };
+    expect(state.files['CLAUDE.md']?.ownership).toBe('modified');
+  });
 });
