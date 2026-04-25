@@ -79,6 +79,12 @@ const DEFAULT_VALUES = {
 let stub: GitHubStub;
 let fixtures: ObsidianMindTarballs;
 
+// Two SHAs shared by ref-install scenarios — the stub is content-opaque,
+// so any 40-char hex pair works. `BASE` maps to v6.0.0; `BUMP` maps to
+// v6.1.0 so a ref bump observably mirrors a tag bump.
+const REF_SHA_BASE = 'a'.repeat(40);
+const REF_SHA_BUMP = 'b'.repeat(40);
+
 beforeAll(async () => {
   await ensureBuilt();
   fixtures = await buildObsidianMindTarballs();
@@ -91,10 +97,18 @@ beforeAll(async () => {
           '6.1.0': fixtures.byVersion['6.1.0'],
         },
         latest: '6.0.0',
+        // Pre-seed `main` for ref scenarios. Tests that bump the ref
+        // call `stub.setRef(...)`; tests that don't ignore it.
+        refs: { main: REF_SHA_BASE },
+        shaTarballs: { [REF_SHA_BASE]: fixtures.byVersion['6.0.0'] },
       },
     },
   });
 }, 90_000);
+
+function defaultRef(): void {
+  stub.setRef(SHARD_SLUG, 'main', REF_SHA_BASE, fixtures.byVersion['6.0.0']);
+}
 
 afterAll(async () => {
   await stub?.close();
@@ -718,4 +732,325 @@ describe('adopt (obsidian-mind-like)', () => {
     };
     expect(state.version).toBe('6.1.0');
   }, 120_000);
+});
+
+// ---------------------------------------------------------------------------
+// Refs + versions — see issue #92 §Refs + versions + docs/SHARD-LAYOUT.md
+// §Update semantics §Ref-install re-resolution.
+// ---------------------------------------------------------------------------
+
+describe('refs + versions (obsidian-mind-like)', () => {
+  let vault: Vault;
+  afterEach(async () => {
+    defaultRef();
+    defaultLatest();
+    await vault?.cleanup();
+  });
+
+  it('install from #main records ref + resolvedSha in state.json', async () => {
+    // Scenario 20 — docs/SHARD-LAYOUT.md §Update semantics §Ref-install
+    // re-resolution: ref installs persist both the user-typed ref and
+    // the resolved 40-char SHA so update can show movement and the
+    // up-to-date short-circuit can fire on SHA equality.
+    vault = await createEmptyVault('obs-mind-ref-main');
+    const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
+    const result = await spawnCli(
+      ['install', `${SHARD_REF}#main`, '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      ref?: string;
+      resolvedSha?: string;
+      version: string;
+    };
+    expect(state.ref).toBe('main');
+    expect(state.resolvedSha).toBe(REF_SHA_BASE);
+    // state.version tracks the cached manifest's version field, not the
+    // SHA — so semver-aware migrations keep working for ref installs.
+    expect(state.version).toBe('6.0.0');
+  }, 60_000);
+
+  it('update on a ref install re-resolves HEAD when the ref bumps to a new SHA', async () => {
+    // Scenario 21 — docs/SHARD-LAYOUT.md §Update semantics: ref-installed
+    // vaults re-fetch HEAD on every update. Bumping `main` to a SHA
+    // backed by the v6.1.0 tarball must observably ship v6.1.0's
+    // research/ module without going through the latest-stable
+    // listing.
+    vault = await createEmptyVault('obs-mind-ref-bump');
+    const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
+    const installResult = await spawnCli(
+      ['install', `${SHARD_REF}#main`, '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(installResult.exitCode).toBe(0);
+
+    // Bump `main` upstream to a SHA backed by the v6.1.0 tarball
+    // (which adds the research/ module).
+    stub.setRef(SHARD_SLUG, 'main', REF_SHA_BUMP, fixtures.byVersion['6.1.0']);
+
+    const updateResult = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(updateResult.exitCode).toBe(0);
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      ref?: string;
+      resolvedSha?: string;
+      version: string;
+    };
+    expect(state.ref).toBe('main');
+    expect(state.resolvedSha).toBe(REF_SHA_BUMP);
+    expect(state.version).toBe('6.1.0');
+    expect(await vault.exists('research/Findings.md')).toBe(true);
+  }, 90_000);
+
+  it('--release pins to a non-latest tag and ignores the latest-stable listing', async () => {
+    // Scenario 23 — docs/SHARD-LAYOUT.md §Update semantics §--release:
+    // even if 6.1.0 is the advertised latest, --release 6.0.1 wins.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-release-pin',
+    });
+    stub.setLatest(SHARD_SLUG, '6.1.0');
+    const result = await spawnCli(['update', '--yes', '--release', '6.0.1'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      version: string;
+    };
+    expect(state.version).toBe('6.0.1');
+    // 6.1.0-only file did NOT come along.
+    expect(await vault.exists('research/Findings.md')).toBe(false);
+  }, 90_000);
+});
+
+// `@6.0.1-beta.1` prerelease scenarios live under their own stub —
+// the main stub's release listing is the conventional single-stable
+// derivation, and the prerelease scenario needs a richer listing
+// (one stable + one prerelease) plus a tarball whose internal
+// manifest version matches the prerelease tag (state.version tracks
+// the cached manifest's version field, not the tag the user typed).
+describe('prerelease policy (obsidian-mind-like)', () => {
+  let prerelStub: GitHubStub;
+  let prerelScratch: string;
+  let prerelTarball: string;
+  let vault: Vault;
+
+  beforeAll(async () => {
+    const tarMod = await import('tar');
+    const osMod = await import('node:os');
+    const yamlMod = await import('yaml');
+    prerelScratch = await fs.mkdtemp(
+      path.join(osMod.tmpdir(), 'shardmind-e2e-obsmind-prerel-'),
+    );
+    const prefix = 'obs-mind-like-6.0.1-beta.1';
+    const workRoot = path.join(prerelScratch, 'work');
+    const workDir = path.join(workRoot, prefix);
+    // Reuse the v6.0.1 tarball's content but stamp the manifest with
+    // the prerelease version so state.version round-trips correctly.
+    await unpackInto(fixtures.byVersion['6.0.1'], workDir);
+    const manifestPath = path.join(workDir, '.shardmind', 'shard.yaml');
+    const manifestSrc = await fs.readFile(manifestPath, 'utf-8');
+    const manifest = yamlMod.parse(manifestSrc) as Record<string, unknown>;
+    manifest['version'] = '6.0.1-beta.1';
+    await fs.writeFile(manifestPath, yamlMod.stringify(manifest), 'utf-8');
+
+    prerelTarball = path.join(prerelScratch, `${prefix}.tar.gz`);
+    await tarMod.c({ file: prerelTarball, gzip: true, cwd: workRoot }, [prefix]);
+
+    prerelStub = await createGitHubStub({
+      shards: {
+        ['acme/obs-mind-prerel']: {
+          versions: {
+            '6.0.0': fixtures.byVersion['6.0.0'],
+            '6.0.1-beta.1': prerelTarball,
+          },
+          latest: '6.0.0',
+          releases: [
+            { tag_name: 'v6.0.1-beta.1', prerelease: true },
+            { tag_name: 'v6.0.0', prerelease: false },
+          ],
+        },
+      },
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    await prerelStub?.close();
+    if (prerelScratch) {
+      await fs.rm(prerelScratch, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    }
+  });
+
+  afterEach(async () => {
+    await vault?.cleanup();
+  });
+
+  it('explicit @<prerelease-tag> install works (no --include-prerelease needed)', async () => {
+    // Scenario 22 (positive branch) — docs/SHARD-LAYOUT.md §Update
+    // semantics: an explicit version pin bypasses the prerelease
+    // filter; `--include-prerelease` is only required for the
+    // implicit "latest" resolution.
+    vault = await createEmptyVault('obs-mind-prerel-pin');
+    const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
+    const result = await spawnCli(
+      [
+        'install',
+        'github:acme/obs-mind-prerel@6.0.1-beta.1',
+        '--yes',
+        '--values',
+        valuesPath,
+      ],
+      {
+        cwd: vault.root,
+        env: { SHARDMIND_GITHUB_API_BASE: prerelStub.url },
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      version: string;
+    };
+    expect(state.version).toBe('6.0.1-beta.1');
+  }, 60_000);
+});
+
+/** Extract a tar.gz into `into` (creating it). Helper for inline tarball
+ * scaffolding inside describe-blocks that need a custom-shaped tarball. */
+async function unpackInto(tarPath: string, into: string): Promise<void> {
+  const tarMod = await import('tar');
+  await fs.mkdir(into, { recursive: true });
+  await tarMod.x({ file: tarPath, cwd: into, strip: 1 });
+}
+
+// ---------------------------------------------------------------------------
+// Additive principle — see issue #92 §Additive principle +
+// docs/SHARD-LAYOUT.md §Guiding principle.
+// ---------------------------------------------------------------------------
+
+describe('additive principle (obsidian-mind-like)', () => {
+  let vault: Vault;
+  afterEach(async () => {
+    defaultLatest();
+    await vault?.cleanup();
+  });
+
+  it('deleting .shardmind/ + shard-values.yaml leaves a working vault; status reports "not in a shard-managed vault"', async () => {
+    // Scenario 24 — docs/SHARD-LAYOUT.md §Guiding principle:
+    // "Delete .shardmind/ and shard-values.yaml — the vault continues
+    // to work in Obsidian and Claude Code." The engine surface for
+    // that is `shardmind` (status) recognizing the un-managed state
+    // and falling back to the install-hint path.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: CUSTOM_VALUES,
+      prefix: 'obs-mind-additive-delete',
+    });
+    await fs.rm(path.join(vault.root, '.shardmind'), { recursive: true, force: true });
+    await fs.rm(path.join(vault.root, 'shard-values.yaml'), { force: true });
+
+    // Vault content untouched.
+    expect(await vault.exists('CLAUDE.md')).toBe(true);
+    expect(await vault.exists('brain/North Star.md')).toBe(true);
+    expect(await vault.exists('Home.md')).toBe(true);
+
+    const status = await spawnCli([], { cwd: vault.root, env: envWithStub() });
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout).toContain('Not in a shard-managed vault.');
+  }, 90_000);
+});
+
+// Source-repo-without-.shardmind/ scenario builds a custom tarball
+// inline (the obsidian-mind-like fixtures all ship `.shardmind/`).
+describe('source repo without .shardmind/ (additive principle, install rejection)', () => {
+  let noShardmindStub: GitHubStub;
+  let scratch: string;
+  let vault: Vault;
+
+  beforeAll(async () => {
+    const tarMod = await import('tar');
+    const osMod = await import('node:os');
+    scratch = await fs.mkdtemp(
+      path.join(osMod.tmpdir(), 'shardmind-e2e-noshardmind-'),
+    );
+    const prefix = 'no-shardmind-1.0.0';
+    const workRoot = path.join(scratch, 'work');
+    const workDir = path.join(workRoot, prefix);
+    await fs.mkdir(workDir, { recursive: true });
+    // A minimum-viable Obsidian vault: just a CLAUDE.md + Home.md.
+    // No .shardmind/ — the engine must reject install with a clear
+    // error pointing at the missing manifest.
+    await fs.writeFile(
+      path.join(workDir, 'CLAUDE.md'),
+      '# Claude\n',
+      'utf-8',
+    );
+    await fs.writeFile(
+      path.join(workDir, 'Home.md'),
+      '# Home\n',
+      'utf-8',
+    );
+
+    const tarPath = path.join(scratch, `${prefix}.tar.gz`);
+    await tarMod.c({ file: tarPath, gzip: true, cwd: workRoot }, [prefix]);
+
+    noShardmindStub = await createGitHubStub({
+      shards: {
+        ['acme/no-shardmind']: {
+          versions: { '1.0.0': tarPath },
+          latest: '1.0.0',
+        },
+      },
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    await noShardmindStub?.close();
+    if (scratch) {
+      await fs.rm(scratch, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    }
+  });
+
+  afterEach(async () => {
+    await vault?.cleanup();
+  });
+
+  it('installing a shard tarball without .shardmind/ rejects with a typed error', async () => {
+    // Scenario 25 — docs/SHARD-LAYOUT.md §What a shard is:
+    // "A shard is an Obsidian vault with a `.shardmind/` directory."
+    // A repo missing that directory cannot be installed; engine
+    // surfaces a typed error rather than silently producing a
+    // half-managed vault.
+    vault = await createEmptyVault('obs-mind-noshardmind');
+    const result = await spawnCli(
+      ['install', 'github:acme/no-shardmind', '--defaults'],
+      {
+        cwd: vault.root,
+        env: { SHARDMIND_GITHUB_API_BASE: noShardmindStub.url },
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    // Engine rejects somewhere in the manifest-load path. Assert on
+    // exit code + that the error mentions the missing manifest /
+    // shard.yaml so the user gets actionable feedback.
+    const out = result.stdout + result.stderr;
+    expect(out).toMatch(/shard\.yaml|manifest|\.shardmind/i);
+  }, 60_000);
 });
