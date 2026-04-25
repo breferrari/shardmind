@@ -117,7 +117,7 @@ async function walk(
       );
     }
 
-    if (isTier1Excluded(relPath, isDir)) continue;
+    if (isTier1Excluded(relPath)) continue;
     if (ignoreFilter.ignores(relPath, isDir)) continue;
 
     if (isDir) {

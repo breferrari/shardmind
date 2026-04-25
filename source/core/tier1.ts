@@ -29,7 +29,7 @@ export const TIER1 = Object.freeze({
   ] as const,
 });
 
-export function isTier1Excluded(relPosixPath: string, _isDir: boolean): boolean {
+export function isTier1Excluded(relPosixPath: string): boolean {
   const lower = relPosixPath.toLowerCase();
   for (const dir of TIER1.excludedDirs) {
     if (lower === dir || lower.startsWith(`${dir}/`)) {
