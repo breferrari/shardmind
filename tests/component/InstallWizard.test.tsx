@@ -147,4 +147,50 @@ describe('InstallWizard', () => {
 
     await waitFor(lastFrame, (f) => f.includes('Choose modules to install'));
   });
+
+  it('prompts for every value under v6 (all schema values have a `default`)', async () => {
+    // Regression guard: under the v6 contract, every value has a literal
+    // default. If the wizard merged defaults into its prompt-list input,
+    // valueKeys would always be empty and the user would never be asked
+    // about anything. Pin the corrected behavior — empty raw prefill
+    // surfaces all non-computed values as questions.
+    const v6Schema: ShardSchema = {
+      schema_version: 1,
+      values: {
+        user_name: { type: 'string', required: true, message: 'Your name', default: '', group: 'setup' },
+        org_name: { type: 'string', message: 'Organization', default: 'Independent', group: 'setup' },
+        vault_purpose: {
+          type: 'select',
+          required: true,
+          message: 'Vault purpose',
+          options: [
+            { value: 'engineering', label: 'Engineering' },
+            { value: 'research', label: 'Research' },
+          ],
+          default: 'engineering',
+          group: 'setup',
+        },
+      },
+      groups: [{ id: 'setup', label: 'Quick Setup' }],
+      modules: {},
+      signals: [],
+      frontmatter: {},
+      migrations: [],
+    };
+
+    const { lastFrame } = await mount(
+      <InstallWizard
+        manifest={manifest}
+        schema={v6Schema}
+        prefillValues={{}}
+        moduleFileCounts={{}}
+        alwaysIncludedFileCount={0}
+        onComplete={() => {}}
+        onCancel={() => {}}
+        onError={() => {}}
+      />,
+    );
+
+    await waitFor(lastFrame, (f) => /3 questions to answer/.test(f));
+  });
 });
