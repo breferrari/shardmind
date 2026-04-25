@@ -243,6 +243,7 @@ Any file ending in `.njk` anywhere in the shard root is rendered with [Nunjucks]
 - `.njk` suffix → template, rendered; suffix is stripped. `Home.md.njk` → `Home.md`, `.claude/settings.json.njk` → `.claude/settings.json`.
 - No `.njk` → copy verbatim to the same relative path.
 - Author convention: keep `.njk` to dotfolder configs (`.claude/settings.json.njk`, `.mcp.json.njk`) so the clone-UX cost stays zero. Iterator templates (`<dir>/_each.<ext>.njk`) and any explicitly-tagged vault-visible `.njk` also render — the engine doesn't restrict by location.
+- **Why the dotfolder convention matters for Invariant 1.** Renderable templates render to bytes that legitimately differ from the source (`install_date`, value substitution); the [Invariant 1](SHARD-LAYOUT.md#invariant-1--install---defaults-is-clone-equivalent) helper enforces presence-at-mapped-path for `.njk` and byte-equivalence for static files. The smaller a shard's render-delta surface, the closer `install --defaults` is to a true `git clone`. Vault-visible content authored as static `.md` + post-install hook personalization keeps the surface small.
 
 ### Frontmatter-aware rendering
 
