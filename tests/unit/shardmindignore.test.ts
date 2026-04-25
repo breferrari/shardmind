@@ -136,6 +136,36 @@ obsidian-mind-logo.*
     }
   });
 
+  it('throws SHARDMINDIGNORE_READ_FAILED on non-ENOENT IO errors', async () => {
+    // ENOENT → empty filter (covered above). Other IO failures (EPERM,
+    // EACCES, EIO) must surface as the typed error so the install command
+    // can render an actionable message instead of a blank crash.
+    if (process.platform === 'win32') return; // chmod semantics differ on Windows
+    const dir = await tempDir();
+    const ignorePath = path.join(dir, '.shardmindignore');
+    try {
+      await fs.writeFile(ignorePath, '*.gif\n');
+      await fs.chmod(ignorePath, 0o000);
+      try {
+        await loadShardmindignore(dir);
+        expect.fail('expected ShardMindError');
+      } catch (err) {
+        if (err instanceof ShardMindError) {
+          expect(err.code).toBe('SHARDMINDIGNORE_READ_FAILED');
+        } else {
+          // Some sandboxed CI runners ignore chmod 0 (root-equivalent perms);
+          // skip the assertion rather than flake. Tests run as the file owner
+          // on macOS/Linux dev machines, which is the case we care about.
+          await fs.chmod(ignorePath, 0o644);
+          throw err;
+        }
+      }
+    } finally {
+      await fs.chmod(ignorePath, 0o644).catch(() => {});
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('property: parser accepts arbitrary non-negation glob patterns without crashing', () => {
     const safeGlob = fc.stringMatching(/^[A-Za-z0-9*?\/_.\-\[\]]+$/);
     fc.assert(
