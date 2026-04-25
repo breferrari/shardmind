@@ -154,32 +154,52 @@ graph TD
 
 **Inputs**:
 ```typescript
-resolve(shardRef: string): Promise<ResolvedShard>
+resolve(
+  shardRef: string,
+  options?: { includePrerelease?: boolean },
+): Promise<ResolvedShard>
 // shardRef examples:
-//   "breferrari/obsidian-mind"         → latest from registry
-//   "breferrari/obsidian-mind@3.5.0"   → specific version
-//   "github:breferrari/obsidian-mind"  → direct GitHub, skip registry
+//   "breferrari/obsidian-mind"           → latest stable from registry
+//   "breferrari/obsidian-mind@3.5.0"     → specific version
+//   "github:breferrari/obsidian-mind"    → direct GitHub, latest stable
+//   "github:breferrari/obsidian-mind@3.5.0" → direct GitHub, exact tag
+//   "github:breferrari/obsidian-mind#main"  → direct GitHub, branch HEAD (#76)
+//   "github:breferrari/obsidian-mind#abc1234" → direct GitHub, commit SHA
 ```
 
 **Outputs**:
 ```typescript
 interface ResolvedShard {
-  namespace: string;          // "breferrari"
-  name: string;               // "obsidian-mind"
-  version: string;            // "3.5.0"
-  source: string;             // "github:breferrari/obsidian-mind"
-  tarballUrl: string;         // "https://api.github.com/repos/breferrari/obsidian-mind/tarball/v3.5.0"
+  namespace: string;                        // "breferrari"
+  name: string;                             // "obsidian-mind"
+  version: string;                          // "3.5.0" — semver for tag installs;
+                                            //          short SHA prefix (7 chars)
+                                            //          for ref installs (display only)
+  source: string;                           // "github:breferrari/obsidian-mind"
+  tarballUrl: string;                       // tag installs: ".../tarball/v3.5.0"
+                                            // ref installs: ".../tarball/<full-sha>"
+  ref?: { name: string; commit: string };   // present iff ref install
 }
 ```
 
 **Algorithm**:
-1. Parse `shardRef` into namespace, name, and optional version
-2. If `shardRef` starts with `github:` → direct mode, skip registry
-3. Else → fetch registry index from `${REGISTRY_INDEX_URL}` (defaults to `https://raw.githubusercontent.com/shardmind/registry/main/index.json`; see env-var overrides below)
-4. Look up `namespace/name` in registry
-5. If version not specified → use `latest` field from registry
-6. Construct tarball URL: `${GITHUB_API_BASE}/repos/{owner}/{repo}/tarball/v{version}` (defaults to `https://api.github.com`; see env-var overrides below)
-7. Verify the tag exists (HEAD request to GitHub API). 404 → error.
+1. Parse `shardRef` into namespace, name, and optional version OR ref. The regex makes `@<version>` and `#<ref>` mutually exclusive.
+2. If `#<ref>` is set:
+   a. Direct mode only — `#<ref>` without `github:` prefix is rejected as `REGISTRY_INVALID_REF` (the registry index has no per-branch metadata).
+   b. Resolve the ref to a 40-char hex SHA via `GET /repos/:o/:r/commits/{encodeURIComponent(ref)}`. 404 → `REF_NOT_FOUND`. 422 (ambiguous SHA prefix) → `REF_NOT_FOUND` with a "lengthen the prefix" hint.
+   c. Construct tarball URL `${GITHUB_API_BASE}/repos/{owner}/{repo}/tarball/<sha>` (no `v` prefix).
+   d. HEAD-verify (`verifyTarball` in `'ref'` mode). 404 here is rare but real (force-push between calls); throws `REF_NOT_FOUND` with a "force-push" hint.
+   e. Return `ResolvedShard` with `ref: { name, commit }` populated; `version` is the short SHA (7 chars) for display.
+3. Else if `shardRef` starts with `github:` → direct mode, skip registry.
+4. Else → fetch registry index from `${REGISTRY_INDEX_URL}` (defaults to `https://raw.githubusercontent.com/shardmind/registry/main/index.json`; see env-var overrides below).
+5. Look up `namespace/name` in registry.
+6. If version not specified → resolve via `GET /repos/:o/:r/releases?per_page=100`, filtered:
+   a. `includePrerelease=false` (default) — first entry where `prerelease === false`.
+   b. `includePrerelease=true` — first entry of any kind.
+   c. Empty filtered list → `NO_RELEASES_PUBLISHED`. Hint differentiates "repo has zero releases" from "repo has only prereleases" (the latter points at `--include-prerelease`).
+   d. Replaces the v0.1 `/releases/latest` endpoint, which 404'd for beta-only repos.
+7. Construct tarball URL: `${GITHUB_API_BASE}/repos/{owner}/{repo}/tarball/v{version}`.
+8. HEAD-verify (`verifyTarball` in `'tag'` mode). 404 → `VERSION_NOT_FOUND`. 200 / 302 (codeload redirect) → pass.
 
 **Env-var overrides** (read once at module load, overridable for testing,
 enterprise GitHub Enterprise deployments, and future self-hosted registry
@@ -196,9 +216,13 @@ to point at a local stub server (see `tests/e2e/helpers/github-stub.ts`).
 
 **Error cases**:
 - Shard not found in registry → `"Shard 'foo/bar' not found. Check spelling or use github:owner/repo for direct install."`
-- Version not found → `"Version 3.5.0 not found for breferrari/obsidian-mind. Available: 3.4.0, 3.3.0"`
-- Network failure → `"Could not reach GitHub. Check your connection."`
-- Rate limited → `"GitHub API rate limit reached. Set GITHUB_TOKEN for higher limits."`
+- Version not found (registry) → `"Version 3.5.0 not found for breferrari/obsidian-mind. Available: 3.4.0, 3.3.0"`
+- Version not found (tag verify) → `VERSION_NOT_FOUND`: tarball HEAD returned 404; usually a deleted tag or transient state.
+- No releases published → `NO_RELEASES_PUBLISHED`: `/releases` returned an empty array, or every entry was filtered out by the prerelease policy. Hint mentions `--include-prerelease` when prereleases exist.
+- Ref not found → `REF_NOT_FOUND`: `/commits/<ref>` returned 404, or 422 (ambiguous SHA prefix).
+- Repository not found → `SHARD_NOT_FOUND`: `/releases` returned 404 (the repo itself doesn't exist or is private to an unauthenticated client).
+- Network failure → `REGISTRY_NETWORK`.
+- Rate limited → `REGISTRY_RATE_LIMITED`. Set `GITHUB_TOKEN` for the higher authenticated rate.
 
 **Environment**: Reads `GITHUB_TOKEN` env var for authenticated requests (5000 req/hr vs 60 unauthenticated).
 

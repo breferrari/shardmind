@@ -115,6 +115,24 @@ export interface ShardState {
   values_hash: string;
   modules: ModuleSelections;
   files: Record<string, FileState>;
+  /**
+   * Present iff this vault was installed via `github:owner/repo#<ref>`.
+   * Records the ref name the user typed (branch / tag / SHA prefix).
+   * `shardmind update` re-resolves this ref's HEAD on every run so the
+   * vault tracks branch movement.
+   *
+   * Both `ref` and `resolvedSha` are optional and forward-compatible:
+   * pre-#76 state.json (no ref fields) reads fine because `ShardState`
+   * is the type of an existing-vault `state.json`, not a strict schema.
+   */
+  ref?: string;
+  /**
+   * 40-char hex commit SHA the ref resolved to at install / last
+   * update. Distinct from `tarball_sha256` (content hash of the
+   * downloaded archive, not the commit identity). Only present
+   * alongside `ref`.
+   */
+  resolvedSha?: string;
 }
 
 export interface FileState {
@@ -139,9 +157,26 @@ export interface FrontmatterValidationResult {
 export interface ResolvedShard {
   namespace: string;
   name: string;
+  /**
+   * Display label for the resolved shard. Semver string for tag installs
+   * (e.g. `"6.0.0"`); short SHA prefix (7 chars) for ref installs (e.g.
+   * `"abc1234"`). Used for `Downloading owner/repo@<version>` messages
+   * only — `state.version` is set from `manifest.version` (the value
+   * inside `shard.yaml`) regardless of how the shard was addressed, so
+   * semver-aware migrations keep working for ref installs too.
+   */
   version: string;
   source: string;
   tarballUrl: string;
+  /**
+   * Present when the shard was addressed via `github:owner/repo#<ref>`.
+   * `name` is the user-passed ref string (branch, tag, or SHA prefix);
+   * `commit` is the 40-char hex SHA the ref resolved to at install time.
+   * Recorded in `state.ref` + `state.resolvedSha` so a future
+   * `shardmind update` can re-resolve the same ref and detect commit
+   * movement on a tracked branch.
+   */
+  ref?: { name: string; commit: string };
 }
 
 export interface TempShard {

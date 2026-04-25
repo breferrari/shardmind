@@ -20,6 +20,19 @@ export const options = zod.object({
   yes: zod.boolean().default(false).describe('Accept defaults for every prompt (auto-keeps conflicts)'),
   verbose: zod.boolean().default(false).describe('Show per-file action history during write'),
   dryRun: zod.boolean().default(false).describe('Plan the update without touching the vault'),
+  // Named `--release <v>` because Pastel reserves the program-level
+  // `--version` for "print package version" (`shardmind --version`).
+  // Trying to expose `update --version 0.2.0` would silently print the
+  // package version and exit. `--release` matches GitHub's terminology
+  // for tagged releases and avoids the collision.
+  release: zod
+    .string()
+    .optional()
+    .describe('Pin the update to a specific shard release tag (stable or prerelease)'),
+  includePrerelease: zod
+    .boolean()
+    .default(false)
+    .describe('Widen latest-release resolution to include prereleases'),
 });
 
 type Props = {
@@ -27,7 +40,7 @@ type Props = {
 };
 
 export default function Update({ options }: Props) {
-  const { yes, verbose, dryRun } = options;
+  const { yes, verbose, dryRun, release, includePrerelease } = options;
 
   const {
     phase,
@@ -40,6 +53,8 @@ export default function Update({ options }: Props) {
     yes,
     verbose,
     dryRun,
+    release,
+    includePrerelease,
   });
 
   switch (phase.kind) {

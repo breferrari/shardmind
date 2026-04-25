@@ -60,6 +60,13 @@ const DEFAULT_VALUES = {
 let stub: GitHubStub;
 let fixtures: TarballFixtures;
 
+// Two SHAs shared by ref-install scenarios — content is opaque to the
+// stub, so any 40-char hex pair works. The tarballs they point at are
+// the same fixtures the tag-install tests use; the ref-install path
+// just addresses them by SHA instead of `v<version>`.
+const REF_SHA_BASE = 'a'.repeat(40);
+const REF_SHA_BUMP = 'b'.repeat(40);
+
 beforeAll(async () => {
   await ensureBuilt();
   fixtures = await buildTarballFixtures();
@@ -72,6 +79,11 @@ beforeAll(async () => {
           '0.3.0': fixtures.byVersion['0.3.0'],
         },
         latest: '0.1.0',
+        // Pre-seed a `main` ref for ref-install scenarios. Tests that
+        // need to bump `main` to a new SHA call `stub.setRef(...)` to
+        // change the mapping; tests that don't need it ignore it.
+        refs: { main: REF_SHA_BASE },
+        shaTarballs: { [REF_SHA_BASE]: fixtures.byVersion['0.1.0'] },
       },
     },
   });
@@ -101,6 +113,16 @@ function envWithStub(extra: Record<string, string> = {}): Record<string, string>
 
 function defaultLatest(): void {
   stub.setLatest(SHARD_SLUG, '0.1.0');
+}
+
+/**
+ * Reset the `main` ref to its base SHA between ref-aware tests. Mirrors
+ * `defaultLatest()` for tag installs — without it, a previous test's
+ * `setRef` would leak into the next run and produce confusing "already
+ * bumped" failures.
+ */
+function defaultRef(): void {
+  stub.setRef(SHARD_SLUG, 'main', REF_SHA_BASE, fixtures.byVersion['0.1.0']);
 }
 
 // ---------------------------------------------------------------------------
@@ -310,8 +332,9 @@ describe('shardmind install', () => {
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(1);
-    // The stub returns 404 for unregistered repos; /releases/latest 404
-    // now surfaces as NO_RELEASES_PUBLISHED (was VERSION_NOT_FOUND pre-#58).
+    // The stub returns 404 for unregistered repos; the post-#76
+    // `/releases?per_page=N` 404 surfaces as SHARD_NOT_FOUND
+    // (was VERSION_NOT_FOUND pre-#58, NO_RELEASES_PUBLISHED pre-#76).
     expect(result.stdout).toMatch(/NO_RELEASES_PUBLISHED|VERSION_NOT_FOUND|SHARD_NOT_FOUND|not found/i);
   });
 
@@ -801,7 +824,231 @@ describe('shardmind update', () => {
 
 
 // ---------------------------------------------------------------------------
-// 5. Property-based — invariants across the argument surface.
+// 5. Ref installs (#76) — branch / tag / SHA addressing.
+// `github:owner/repo#<ref>` resolves to a commit SHA via /commits/<ref>,
+// pins the install to that SHA, and re-resolves the same ref on every
+// future `shardmind update` so the vault tracks the moving ref.
+// ---------------------------------------------------------------------------
+
+describe('shardmind install — #ref syntax', () => {
+  let vault: Vault;
+  afterEach(async () => {
+    defaultRef();
+    defaultLatest();
+    await vault?.cleanup();
+  });
+
+  it('installs from #main and records ref + resolvedSha in state.json', async () => {
+    vault = await createEmptyVault('install-ref-main');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['install', `${SHARD_REF}#main`, '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      ref?: string;
+      resolvedSha?: string;
+      version: string;
+    };
+    expect(state.ref).toBe('main');
+    expect(state.resolvedSha).toBe(REF_SHA_BASE);
+    // state.version still tracks manifest.version (the v0.1.0 fixture's
+    // shard.yaml `version` field) regardless of ref addressing.
+    expect(state.version).toBe('0.1.0');
+  });
+
+  it('exits 1 with REF_NOT_FOUND for an unknown ref', async () => {
+    vault = await createEmptyVault('install-ref-bogus');
+    const result = await spawnCli(
+      ['install', `${SHARD_REF}#does-not-exist`, '--yes'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/REF_NOT_FOUND/);
+    // Ref name shows up in the message so the user knows what was missing.
+    expect(result.stdout).toContain('does-not-exist');
+  });
+});
+
+describe('shardmind update — #ref re-resolution', () => {
+  let vault: Vault;
+  afterEach(async () => {
+    defaultRef();
+    defaultLatest();
+    await vault?.cleanup();
+  });
+
+  it('re-fetches when the tracked ref bumps to a new SHA', async () => {
+    vault = await createEmptyVault('update-ref-bump');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+
+    // Install via ref: state.ref='main', state.resolvedSha=BASE.
+    const installResult = await spawnCli(
+      ['install', `${SHARD_REF}#main`, '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(installResult.exitCode).toBe(0);
+
+    // Branch HEAD bumps upstream — `main` now points at a new SHA
+    // backed by the v0.2.0 tarball (which adds `brain/Changelog.md`).
+    stub.setRef(SHARD_SLUG, 'main', REF_SHA_BUMP, fixtures.byVersion['0.2.0']);
+
+    const updateResult = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(updateResult.exitCode).toBe(0);
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      ref?: string;
+      resolvedSha?: string;
+      version: string;
+    };
+    expect(state.ref).toBe('main');
+    expect(state.resolvedSha).toBe(REF_SHA_BUMP);
+    expect(state.version).toBe('0.2.0');
+    // The v0.2.0-only file now exists — proves the tarball was fetched
+    // and the merge engine ran.
+    expect(await vault.exists('brain/Changelog.md')).toBe(true);
+  });
+
+  it('reports up-to-date when the ref still points at the same SHA', async () => {
+    vault = await createEmptyVault('update-ref-stable');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const installResult = await spawnCli(
+      ['install', `${SHARD_REF}#main`, '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(installResult.exitCode).toBe(0);
+
+    // No setRef — main keeps pointing at REF_SHA_BASE.
+    const updateResult = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(updateResult.exitCode).toBe(0);
+    expect(updateResult.stdout).toMatch(/up to date/i);
+  });
+});
+
+describe('shardmind update — flag combinations', () => {
+  let vault: Vault;
+  afterEach(async () => {
+    defaultLatest();
+    await vault?.cleanup();
+  });
+
+  it('--release pins to the requested tag and skips latest-resolution', async () => {
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'update-pin-release',
+    });
+    // Stub still advertises 0.1.0 as latest — `--release 0.2.0` should
+    // win regardless of what the listing says.
+    const result = await spawnCli(['update', '--yes', '--release', '0.2.0'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as { version: string };
+    expect(state.version).toBe('0.2.0');
+    // v0.2.0-only file is present.
+    expect(await vault.exists('brain/Changelog.md')).toBe(true);
+  });
+
+  it('rejects --release + --include-prerelease with UPDATE_FLAG_CONFLICT', async () => {
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'update-flag-conflict',
+    });
+    const result = await spawnCli(
+      ['update', '--yes', '--release', '0.2.0', '--include-prerelease'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/UPDATE_FLAG_CONFLICT/);
+  });
+});
+
+// `--include-prerelease` against a beta-only repo needs a stub mount
+// whose `releases` listing carries no stable entries. Inline fixture so
+// the main stub's `acme/demo` keeps its conventional shape.
+describe('shardmind update — --include-prerelease against a beta-only repo', () => {
+  let betaStub: GitHubStub;
+  let vault: Vault;
+
+  beforeAll(async () => {
+    betaStub = await createGitHubStub({
+      shards: {
+        ['beta/only']: {
+          versions: {
+            '2.0.0-beta.1': fixtures.byVersion['0.2.0'],
+          },
+          // `latest` is unused here because `releases` overrides the
+          // single-stable derivation.
+          latest: '2.0.0-beta.1',
+          releases: [{ tag_name: 'v2.0.0-beta.1', prerelease: true }],
+        },
+      },
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    await betaStub?.close();
+  });
+
+  afterEach(async () => {
+    await vault?.cleanup();
+  });
+
+  function envWithBetaStub(): Record<string, string> {
+    return { SHARDMIND_GITHUB_API_BASE: betaStub.url };
+  }
+
+  it('default update on a beta-only repo throws NO_RELEASES_PUBLISHED with an --include-prerelease hint', async () => {
+    vault = await createInstalledVault({
+      stub: betaStub,
+      shardRef: 'github:beta/only@2.0.0-beta.1',
+      values: DEFAULT_VALUES,
+      prefix: 'update-beta-default',
+    });
+    const result = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithBetaStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/NO_RELEASES_PUBLISHED/);
+    expect(result.stdout).toMatch(/--include-prerelease/);
+  });
+
+  it('--include-prerelease widens to the prerelease and reports up-to-date', async () => {
+    vault = await createInstalledVault({
+      stub: betaStub,
+      shardRef: 'github:beta/only@2.0.0-beta.1',
+      values: DEFAULT_VALUES,
+      prefix: 'update-beta-widen',
+    });
+    const result = await spawnCli(['update', '--yes', '--include-prerelease'], {
+      cwd: vault.root,
+      env: envWithBetaStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    // Same prerelease tarball the install used; the bump-detection logic
+    // confirms tarball_sha256 + version match → up-to-date.
+    expect(result.stdout).toMatch(/up to date/i);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// 6. Property-based — invariants across the argument surface.
 // Each property spawns a subprocess per case; keep numRuns lean.
 // ---------------------------------------------------------------------------
 

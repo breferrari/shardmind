@@ -258,6 +258,11 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     values_hash: hashValues(values),
     modules: selections,
     files: fileStates,
+    // `ref` / `resolvedSha` populate only on ref installs. `JSON.stringify`
+    // omits undefined values, so tag installs serialize without those
+    // keys at all — preserves forward-compat for pre-#76 readers.
+    ref: resolved.ref?.name,
+    resolvedSha: resolved.ref?.commit,
   };
 
   if (!dryRun) {

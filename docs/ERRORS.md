@@ -30,13 +30,26 @@ Thrown by `source/core/registry.ts`.
 
 **Meaning:** The version you asked for isn't available. For registry mode, the version isn't in the `versions[]` array. For direct mode, the git tag `v<version>` doesn't exist on the repo (HEAD on the tarball URL returns 404).
 
-**Remedy:** Pick an available version (the error message lists them for registry mode), or omit `@version` to use the latest.
+**Remedy:** Pick an available version (the error message lists them for registry mode), or omit `@version` to use the latest. On `shardmind update`, pin a known-good tag with `--release <version>`.
 
 ### `NO_RELEASES_PUBLISHED`
 
-**Meaning:** Direct-mode `/releases/latest` returned 404 — the upstream repo has no published releases at all. Distinct from `VERSION_NOT_FOUND` (which fires when a specific tag is missing) so `shardmind update` can route on a stable code instead of matching message text.
+**Meaning:** GitHub's `/releases?per_page=100` returned no entries that match the prerelease policy. Two sub-cases distinguished by the hint:
 
-**Remedy:** Specify a version explicitly with `@version` if one exists, or publish a GitHub release upstream, or reinstall from a different source.
+- **Empty release list:** the upstream repo has zero releases. The hint suggests `@version` (if a tag exists), publishing a release, or reinstalling from a different source.
+- **Only prereleases exist:** every entry in the listing has `prerelease: true` and the default-stable filter eliminated all of them. The hint suggests `--include-prerelease`.
+
+**Remedy:** Match the hint. For ref-installed vaults this code can't fire (ref installs use `/commits/<ref>`, not `/releases`).
+
+### `REF_NOT_FOUND`
+
+**Meaning:** The branch / tag / SHA passed via `github:owner/repo#<ref>` (or recorded in `state.ref` for an existing ref-installed vault) couldn't be resolved. Three sub-cases:
+
+- 404 on `/commits/<ref>` — no branch / tag / commit by that name.
+- 422 on `/commits/<ref>` — a SHA prefix matched multiple commits (ambiguous).
+- HEAD on `/tarball/<sha>` 404'd after a successful commit resolution — typically a force-push that orphaned the commit between the two API calls.
+
+**Remedy:** Match the hint. For ambiguous SHAs, lengthen the prefix or use the full 40-char SHA. For deleted refs in an existing vault, reinstall via `shardmind install <source>#<new-ref>` to repoint, or via `shardmind install <source>@<version>` to switch to a tag pin.
 
 ### `REGISTRY_NETWORK`
 
@@ -333,6 +346,16 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 **Meaning:** `state.source` in `.shardmind/state.json` doesn't parse as a valid shard reference (`namespace/name` or `github:namespace/name`). Usually a hand-edit or partial corruption of `state.json`.
 
 **Remedy:** Reinstall the shard to regenerate a coherent `state.json`.
+
+### `UPDATE_FLAG_CONFLICT`
+
+**Meaning:** Two or more update flags / states would resolve through different policies. Three rejected combinations:
+
+- `--release <v>` + `--include-prerelease` — `--release` already pins a specific tag; the widen flag can't change which tag is picked.
+- `--release <v>` on a ref-installed vault (`state.ref` set) — the vault tracks a moving ref by definition; pinning a tag silently abandons that policy.
+- `--include-prerelease` on a ref-installed vault — the widen flag tunes `/releases` filtering, which ref installs don't use (they re-resolve `/commits/<ref>` instead).
+
+**Remedy:** Drop the conflicting flag. To switch a ref-installed vault to a tag pin, reinstall via `shardmind install <source>@<version>` (the explicit transition).
 
 ### `UPDATE_CACHE_MISSING`
 

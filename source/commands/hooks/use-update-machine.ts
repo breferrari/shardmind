@@ -67,6 +67,15 @@ export interface UseUpdateMachineInput {
   yes: boolean;
   verbose: boolean;
   dryRun: boolean;
+  /**
+   * `--release <v>`: pin to an exact tag (stable or prerelease). Named
+   * `--release` rather than `--version` because Pastel reserves the
+   * program-level `--version` for printing the package version
+   * (`shardmind --version`); a per-command `--version` would collide.
+   */
+  release?: string;
+  /** `--include-prerelease`: widen latest-release resolution to all releases. */
+  includePrerelease: boolean;
 }
 
 export interface PreparedContext {
@@ -149,7 +158,7 @@ export interface UseUpdateMachineOutput {
 }
 
 export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachineOutput {
-  const { vaultRoot, yes, verbose, dryRun } = input;
+  const { vaultRoot, yes, verbose, dryRun, release, includePrerelease } = input;
   const { exit } = useApp();
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
@@ -219,15 +228,38 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         const state = await readState(vaultRoot);
         if (!state) throwNoInstall();
 
-        setPhase({ kind: 'loading', message: `Resolving ${state.source}…` });
-        const resolved = await resolveRefForUpdate(state.source);
-        // Warm the update-check cache so the next `shardmind` (status) run
-        // answers "latest version" instantly instead of paying for another
-        // GitHub API call. Swallows errors — a cache-priming failure must
-        // not cascade into an update failure.
-        void primeLatestVersion(vaultRoot, state.source, resolved.version).catch(() => {
-          /* swallow */
-        });
+        // Mutual-exclusion guard for the three resolution policies the
+        // update flow supports — latest-stable (default), pinned-release
+        // (`--release`), widened (`--include-prerelease`), and ref
+        // re-resolution (`state.ref` set). The combinations rejected
+        // here would silently choose one over the other; surfacing a
+        // typed error keeps the contract obvious.
+        assertFlagsCompatible({ stateRef: state.ref ?? null, release, includePrerelease });
+
+        // Assemble the resolution-source string. `state.ref` re-resolves
+        // HEAD of the tracked ref; `--release` pins to a tag; otherwise
+        // we go through the default-stable path.
+        const resolveSource = state.ref
+          ? `${state.source}#${state.ref}`
+          : release
+            ? `${state.source}@${release}`
+            : state.source;
+
+        setPhase({ kind: 'loading', message: `Resolving ${resolveSource}…` });
+        const resolved = await resolveRefForUpdate(resolveSource, { includePrerelease });
+
+        // The update-check cache stores "latest stable" for the status
+        // command. Only prime when the run resolved through that exact
+        // policy: no prerelease widen, no release pin, no ref tracking.
+        // Otherwise the cache would report a prerelease / pinned tag /
+        // ref-SHA-derived version as the latest stable on the next
+        // status invocation, contradicting the cache's contract.
+        const primesStableCache = !state.ref && !release && !includePrerelease;
+        if (primesStableCache) {
+          void primeLatestVersion(vaultRoot, state.source, resolved.version).catch(() => {
+            /* swallow */
+          });
+        }
 
         setPhase({
           kind: 'loading',
@@ -240,10 +272,31 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         const newManifest = await parseManifest(temp.manifest);
         const newSchema = await parseSchema(temp.schema);
 
-        if (
-          newManifest.version === state.version &&
-          temp.tarball_sha256 === state.tarball_sha256
-        ) {
+        // Up-to-date short-circuit. For ref installs, "up-to-date" is
+        // SHA-equality (the user is tracking a moving ref; manifest
+        // version may not change between commits). For tag installs,
+        // it's manifest-version + tarball-sha equality (the existing
+        // contract — a retagged release surfaces as a tarball-sha
+        // mismatch and runs through the merge engine).
+        //
+        // For ref installs we explicitly assert `resolved.ref` is set
+        // — it's guaranteed by `resolveRefInstall` for any ref-shaped
+        // source string, but a future regression that constructed the
+        // ref source string without the `#<ref>` suffix would silently
+        // give us `state.resolvedSha === undefined === undefined ===
+        // true`, falsely classifying a stale vault as up-to-date.
+        if (state.ref && !resolved.ref) {
+          throw new ShardMindError(
+            `Internal: ref install resolved without a ref descriptor (state.ref='${state.ref}')`,
+            'REGISTRY_NETWORK',
+            'This is a bug. Please report — the registry should always return ResolvedShard.ref for ref-shaped sources.',
+          );
+        }
+        const upToDate = state.ref
+          ? state.resolvedSha === resolved.ref?.commit
+          : newManifest.version === state.version &&
+            temp.tarball_sha256 === state.tarball_sha256;
+        if (upToDate) {
           if (disposed) return;
           finish({ kind: 'up-to-date', manifest: newManifest, state });
           return;
@@ -305,7 +358,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vaultRoot, yes]);
+  }, [vaultRoot, yes, release, includePrerelease]);
 
   const runNonInteractive = useCallback(
     async (ctx: PreparedContext) => {
@@ -663,15 +716,21 @@ function throwNoInstall(): never {
  * - `REGISTRY_INVALID_REF` → `UPDATE_SOURCE_MISMATCH`: the ref shape is
  *   broken, which during update always means `state.json` was hand-edited
  *   or partially corrupted.
- * - `SHARD_NOT_FOUND` / `VERSION_NOT_FOUND`: same code, new hint — the
- *   original hints mention spelling and version-flag tweaks that don't
- *   apply to a ref read from disk.
+ * - `SHARD_NOT_FOUND` / `VERSION_NOT_FOUND` / `REF_NOT_FOUND`: same code,
+ *   new hint — the original hints mention spelling and version-flag tweaks
+ *   that don't apply to a ref read from disk.
  * - `REGISTRY_NETWORK` / `REGISTRY_RATE_LIMITED`: unchanged; their hints
  *   are context-agnostic.
+ *
+ * `opts.includePrerelease` is forwarded to `resolveRef` and threads
+ * through to `/releases` filtering. Defaults false.
  */
-export async function resolveRefForUpdate(source: string): Promise<ResolvedShard> {
+export async function resolveRefForUpdate(
+  source: string,
+  opts: { includePrerelease?: boolean } = {},
+): Promise<ResolvedShard> {
   try {
-    return await resolveRef(source);
+    return await resolveRef(source, opts);
   } catch (err) {
     if (err instanceof ShardMindError) {
       if (err.code === 'REGISTRY_INVALID_REF') {
@@ -682,20 +741,39 @@ export async function resolveRefForUpdate(source: string): Promise<ResolvedShard
         );
       }
       if (err.code === 'SHARD_NOT_FOUND') {
-        throw new ShardMindError(
-          err.message,
-          'SHARD_NOT_FOUND',
-          `The shard recorded in .shardmind/state.json ('${source}') is no longer listed in the registry. It may have been renamed, moved, or deprecated — check the shard's homepage, or reinstall from a github:owner/repo source.`,
-        );
+        // Two paths fire SHARD_NOT_FOUND:
+        //   - registry-mode lookup misses in the index ("renamed / moved / deprecated")
+        //   - direct-mode `/releases?per_page=N` returns 404 (the repo itself
+        //     is missing or private to the unauthenticated client)
+        // Branch the hint so the user gets a remediation that fits their case.
+        const isDirect = source.startsWith('github:');
+        const hint = isDirect
+          ? `github.com/${source.slice('github:'.length)} returned 404. The repo may have been renamed, deleted, or made private. Check the URL, or set GITHUB_TOKEN if it's now a private repo you have access to.`
+          : `The shard recorded in .shardmind/state.json ('${source}') is no longer listed in the registry. It may have been renamed, moved, or deprecated — check the shard's homepage, or reinstall from a github:owner/repo source.`;
+        throw new ShardMindError(err.message, 'SHARD_NOT_FOUND', hint);
       }
       if (err.code === 'NO_RELEASES_PUBLISHED') {
-        // registry.ts fires NO_RELEASES_PUBLISHED when `/releases/latest`
-        // returns 404 — the upstream repo has no releases at all. The
-        // "retry / transient state" hint doesn't fit: there's no tarball
-        // to retry. Point at the actual remediation without speculating
-        // about cause (the shard may have installed from a pinned
-        // @version tag that never had releases, which state.source can't
-        // retain).
+        // `registry.ts` emits NO_RELEASES_PUBLISHED for two sub-cases.
+        // (a) Empty list: the install-side hint mentions "publish a
+        //     GitHub release" which is unactionable for an updater
+        //     who doesn't own the upstream repo. Rewrite to focus on
+        //     reinstall remediations.
+        // (b) All-prereleases: the install-side hint already says
+        //     "use --include-prerelease" — that remediation is
+        //     identical for the update audience, so forward it.
+        // The discriminator is whether the original hint mentions the
+        // flag. Text-match here keeps the registry's API surface
+        // narrow (no extra error-shape fields) at the cost of a
+        // light-touch coupling between the two modules.
+        const inheritedHint = err.hint ?? '';
+        const isPrereleaseOnly = inheritedHint.includes('--include-prerelease');
+        if (isPrereleaseOnly) {
+          throw new ShardMindError(
+            err.message,
+            'NO_RELEASES_PUBLISHED',
+            `${inheritedHint} Or reinstall via \`shardmind install ${source}@<version>\` to switch this vault to a tag pin.`,
+          );
+        }
         throw new ShardMindError(
           err.message,
           'NO_RELEASES_PUBLISHED',
@@ -703,17 +781,74 @@ export async function resolveRefForUpdate(source: string): Promise<ResolvedShard
         );
       }
       if (err.code === 'VERSION_NOT_FOUND') {
-        // This is the `verifyTag` HEAD-404 branch: /releases/latest
-        // returned a tag but the tarball isn't fetchable. Usually a
-        // transient GitHub state or a deleted tag.
+        // This is the `verifyTarball` HEAD-404 branch on a tag install:
+        // the listing returned a tag but the tarball isn't fetchable.
+        // Usually a transient GitHub state or a deleted tag.
         throw new ShardMindError(
           err.message,
           'VERSION_NOT_FOUND',
           `The latest version of '${source}' reports a tag whose tarball is missing upstream — usually a transient GitHub state or a deleted tag. Retry in a minute, or reinstall if the issue persists.`,
         );
       }
+      if (err.code === 'REF_NOT_FOUND') {
+        // Ref installs only: the ref recorded in `state.ref` no longer
+        // resolves. Different remediation than the install path —
+        // re-installing requires picking a new ref, not just retrying.
+        throw new ShardMindError(
+          err.message,
+          'REF_NOT_FOUND',
+          `The ref recorded in .shardmind/state.json no longer exists upstream. Re-run \`shardmind install ${source}\` with a different ref to repoint this vault, or reinstall from a tagged release.`,
+        );
+      }
     }
     throw err;
+  }
+}
+
+/**
+ * Reject mutually-incompatible flag combinations at boot, before any
+ * network call. Three rules:
+ *
+ *   1. `--release` + `--include-prerelease` — `--release` already
+ *      pins a specific tag, so widening latest-resolution is meaningless.
+ *      Surfacing instead of silently accepting one over the other keeps
+ *      the user from thinking they pinned a different tag than they did.
+ *   2. ref install + `--release` — ref installs track a moving branch /
+ *      tag; the user has already chosen the "follow the ref" policy.
+ *      Pinning a tag would silently abandon that policy. Reinstall via
+ *      `shardmind install <ref>@<v>` (which rejects ref+`@`) is the
+ *      explicit transition.
+ *   3. ref install + `--include-prerelease` — the prerelease widen flag
+ *      tunes the `/releases` filter, which ref installs don't use at
+ *      all (they re-resolve `/commits/<ref>`). Combining is always a
+ *      mistake.
+ */
+function assertFlagsCompatible(opts: {
+  stateRef: string | null;
+  release: string | undefined;
+  includePrerelease: boolean;
+}): void {
+  const { stateRef, release, includePrerelease } = opts;
+  if (release && includePrerelease) {
+    throw new ShardMindError(
+      '--release and --include-prerelease cannot be combined',
+      'UPDATE_FLAG_CONFLICT',
+      '--release already pins a specific tag (stable or prerelease). Drop one of the flags.',
+    );
+  }
+  if (stateRef && release) {
+    throw new ShardMindError(
+      `Cannot use --release on a ref-installed vault (state.ref='${stateRef}')`,
+      'UPDATE_FLAG_CONFLICT',
+      `This vault tracks ref '${stateRef}'. Drop --release to re-resolve the ref, or reinstall via \`shardmind install <source>@<version>\` to switch to a tag pin.`,
+    );
+  }
+  if (stateRef && includePrerelease) {
+    throw new ShardMindError(
+      `Cannot use --include-prerelease on a ref-installed vault (state.ref='${stateRef}')`,
+      'UPDATE_FLAG_CONFLICT',
+      `This vault tracks ref '${stateRef}'. The prerelease widen flag only affects /releases-based resolution; ref installs use /commits/<ref> regardless. Drop --include-prerelease.`,
+    );
   }
 }
 
@@ -723,13 +858,30 @@ export async function resolveRefForUpdate(source: string): Promise<ResolvedShard
  * `resolveRefForUpdate` (rewriting hints for the update audience), and
  * returns both pieces. Exported so unit tests can exercise every error
  * path end-to-end without mounting the React tree.
+ *
+ * Mirrors the boot-pipeline logic for ref-aware source assembly +
+ * prerelease widening, so a unit test driving this entry point sees
+ * the same resolution path the live machine uses.
  */
 export async function lookupUpdateTarget(
   vaultRoot: string,
+  opts: { release?: string; includePrerelease?: boolean } = {},
 ): Promise<{ state: ShardState; resolved: ResolvedShard }> {
   const state = await readState(vaultRoot);
   if (!state) throwNoInstall();
-  const resolved = await resolveRefForUpdate(state.source);
+  assertFlagsCompatible({
+    stateRef: state.ref ?? null,
+    release: opts.release,
+    includePrerelease: opts.includePrerelease ?? false,
+  });
+  const source = state.ref
+    ? `${state.source}#${state.ref}`
+    : opts.release
+      ? `${state.source}@${opts.release}`
+      : state.source;
+  const resolved = await resolveRefForUpdate(source, {
+    includePrerelease: opts.includePrerelease ?? false,
+  });
   return { state, resolved };
 }
 

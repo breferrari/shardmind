@@ -134,10 +134,11 @@ Post-update hooks receive `ctx.newFiles: string[]` — managed files added in th
 
 ## Update semantics — spec rules
 
-- **Default: latest stable release.** `shardmind update` resolves via GitHub's `/releases` filtered for non-prerelease. Closes the [`ARCHITECTURE §10.7`](ARCHITECTURE.md) gap (current code hits `/releases/latest` which 404s for beta-only repos).
-- **Prerelease opt-in.** `--include-prerelease` flag widens resolution to all releases. Explicit opt-in matches npm tag conventions; safer default.
-- **`--version <version>` flag.** Pins to a specific tag (stable or prerelease).
-- **Ref-install re-resolution.** Vaults installed via `github:owner/repo#<ref>` re-fetch HEAD of the ref on every `shardmind update` — ref installs track the branch/ref. `state.json` records the resolved commit SHA so status can show movement. Enables the shard-author dev loop (install from `#main`, iterate, update to pull new commits).
+- **Default: latest stable release.** `shardmind update` resolves via `GET /repos/:o/:r/releases?per_page=100` filtered for `prerelease: false`. Replaces the v0.1 `/releases/latest` endpoint, which 404'd for beta-only repos. Closes the [`ARCHITECTURE §10.7`](ARCHITECTURE.md) gap.
+- **Prerelease opt-in.** `--include-prerelease` flag widens resolution to all releases. Explicit opt-in matches npm tag conventions; safer default. When the default-stable filter eliminates every entry but prereleases exist, `NO_RELEASES_PUBLISHED`'s hint points at this flag.
+- **`--release <tag>` flag.** Pins to a specific tag (stable or prerelease). Mutually exclusive with `--include-prerelease` (pin already chose) and with ref installs (those track a moving ref). Named `--release` rather than `--version` because Pastel reserves the program-level `--version` flag for printing the package version (`shardmind --version`); a per-command `--version` would silently collide.
+- **Ref-install re-resolution.** Vaults installed via `github:owner/repo#<ref>` re-fetch HEAD of the ref on every `shardmind update` — ref installs track the branch/ref. `state.json` records the user-passed `ref` and the `resolvedSha` (40-char commit hex) so status can show movement and the up-to-date short-circuit can fire on SHA equality. Enables the shard-author dev loop (install from `#main`, iterate, update to pull new commits). Ref-installed vaults reject `--release` and `--include-prerelease` as `UPDATE_FLAG_CONFLICT`; reinstalling via `shardmind install <source>@<version>` is the explicit transition off the ref.
+- **Update-check cache stays stable-only.** The 24-hour cache backing `shardmind` (status) is defined as "latest stable available". `shardmind update` primes the cache only when the run resolved through the latest-stable policy — `--release`, `--include-prerelease`, and ref installs all skip the prime so the cache doesn't drift into reporting a non-stable version as "latest stable".
 
 ## Adopt semantics — `shardmind adopt <shard>`
 
@@ -253,7 +254,7 @@ Paths reference current code. Detail to land in `ARCHITECTURE.md §3` + `IMPLEME
 
 12. `source/core/registry.ts` — `github:owner/repo#<ref>` syntax (subsumes [#67](https://github.com/breferrari/shardmind/issues/67)); record resolved commit SHA for ref installs.
 13. `source/core/update-check.ts` — default resolution via `/releases` filtered non-prerelease; `--include-prerelease` widens. For ref-installs, re-resolve ref HEAD on every update.
-14. `source/commands/update.tsx` — add `--version <version>` flag; add `--include-prerelease` flag.
+14. `source/commands/update.tsx` — add `--release <tag>` flag (named `--release` rather than `--version` because Pastel reserves the program-level `--version`); add `--include-prerelease` flag.
 15. `source/runtime/types.ts` — `ShardState.ref?` + `ShardState.resolvedSha?` for ref installs.
 
 ### Adopt

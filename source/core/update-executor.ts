@@ -228,6 +228,14 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       values_hash: hashValues(newValues),
       modules: newSelections,
       files: nextFiles,
+      // `resolved.ref` always reflects the *freshly resolved* SHA on
+      // ref installs (the update machine reconstructs the ref source
+      // string from `currentState.ref` before calling `resolve`), so
+      // a bumped branch HEAD always advances `state.resolvedSha` here.
+      // Tag installs leave both keys absent on disk per JSON.stringify
+      // dropping undefined values.
+      ref: resolved.ref?.name,
+      resolvedSha: resolved.ref?.commit,
     };
 
     if (!dryRun) {
