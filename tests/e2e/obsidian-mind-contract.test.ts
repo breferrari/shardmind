@@ -34,6 +34,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { stringify as stringifyYaml } from 'yaml';
 
 import { ensureBuilt } from './helpers/build-once.js';
@@ -933,6 +934,341 @@ async function unpackInto(tarPath: string, into: string): Promise<void> {
   await fs.mkdir(into, { recursive: true });
   await tarMod.x({ file: tarPath, cwd: into, strip: 1 });
 }
+
+// ---------------------------------------------------------------------------
+// Hook failure + adversarial — see issue #92 §Hook failure + §Adversarial
+// + docs/SHARD-LAYOUT.md §Hooks (non-fatal contract) + §File disposition.
+// ---------------------------------------------------------------------------
+
+describe('hook failure + adversarial (obsidian-mind-like)', () => {
+  // Custom tarballs and their stub for scenarios that need a manifest
+  // tweak (tiny timeout_ms) or a structurally weird shard (symlink,
+  // thousand-pattern ignore file). Built in this describe's beforeAll
+  // so the main stub keeps its conventional shape.
+  let weirdStub: GitHubStub;
+  let weirdScratch: string;
+  let vault: Vault;
+
+  beforeAll(async () => {
+    const tarMod = await import('tar');
+    const osMod = await import('node:os');
+    const yamlMod = await import('yaml');
+    weirdScratch = await fs.mkdtemp(
+      path.join(osMod.tmpdir(), 'shardmind-e2e-obsmind-weird-'),
+    );
+
+    // 1. Tiny-timeout tarball — manifest declares timeout_ms: 1000 so
+    //    a hook that sleeps 5s deterministically times out.
+    const timeoutPrefix = 'obs-mind-like-tiny-timeout-1.0.0';
+    const timeoutWorkRoot = path.join(weirdScratch, 'timeout-work');
+    const timeoutDir = path.join(timeoutWorkRoot, timeoutPrefix);
+    await unpackInto(fixtures.byVersion['6.0.0'], timeoutDir);
+    {
+      const manifestPath = path.join(timeoutDir, '.shardmind', 'shard.yaml');
+      const manifestSrc = await fs.readFile(manifestPath, 'utf-8');
+      const manifest = yamlMod.parse(manifestSrc) as {
+        hooks: Record<string, unknown>;
+        version: string;
+      };
+      manifest.hooks['timeout_ms'] = 1000;
+      manifest.version = '1.0.0';
+      await fs.writeFile(manifestPath, yamlMod.stringify(manifest), 'utf-8');
+    }
+    const timeoutTar = path.join(weirdScratch, `${timeoutPrefix}.tar.gz`);
+    await tarMod.c(
+      { file: timeoutTar, gzip: true, cwd: timeoutWorkRoot },
+      [timeoutPrefix],
+    );
+
+    // 2. Symlinked tarball — drop a relative symlink at the shard root
+    //    so the engine's walk hits `WALK_SYMLINK_REJECTED` before any
+    //    write. Keep the rest of the tree byte-identical to v6.0.0 so
+    //    a regression that silently allows symlinks would also let
+    //    them propagate to disk.
+    const symlinkPrefix = 'obs-mind-like-symlinked-1.0.0';
+    const symlinkWorkRoot = path.join(weirdScratch, 'symlink-work');
+    const symlinkDir = path.join(symlinkWorkRoot, symlinkPrefix);
+    await unpackInto(fixtures.byVersion['6.0.0'], symlinkDir);
+    {
+      const manifestPath = path.join(symlinkDir, '.shardmind', 'shard.yaml');
+      const manifestSrc = await fs.readFile(manifestPath, 'utf-8');
+      const manifest = yamlMod.parse(manifestSrc) as { version: string };
+      manifest.version = '1.0.0';
+      await fs.writeFile(manifestPath, yamlMod.stringify(manifest), 'utf-8');
+    }
+    // Symlink the repo's CLAUDE.md inside brain/ — relative target so
+    // the tarball is self-contained. The walker rejects on encounter,
+    // not at extraction time.
+    await fs.symlink(
+      '../CLAUDE.md',
+      path.join(symlinkDir, 'brain', 'symlink-trap.md'),
+    );
+    const symlinkTar = path.join(weirdScratch, `${symlinkPrefix}.tar.gz`);
+    await tarMod.c(
+      {
+        file: symlinkTar,
+        gzip: true,
+        cwd: symlinkWorkRoot,
+        // Preserve symlinks in the archive — node-tar respects this by
+        // default but be explicit so a future tar version that flips
+        // the default to dereference doesn't silently mutate the test.
+        follow: false,
+      },
+      [symlinkPrefix],
+    );
+
+    // 3. Mass-ignore tarball — `.shardmindignore` with 1k patterns,
+    //    one of which actually excludes a planted decoy file. Asserts
+    //    the parser scales and the matcher correctly applies the
+    //    needle pattern in a haystack.
+    const massPrefix = 'obs-mind-like-mass-ignore-1.0.0';
+    const massWorkRoot = path.join(weirdScratch, 'mass-ignore-work');
+    const massDir = path.join(massWorkRoot, massPrefix);
+    await unpackInto(fixtures.byVersion['6.0.0'], massDir);
+    {
+      const manifestPath = path.join(massDir, '.shardmind', 'shard.yaml');
+      const manifestSrc = await fs.readFile(manifestPath, 'utf-8');
+      const manifest = yamlMod.parse(manifestSrc) as { version: string };
+      manifest.version = '1.0.0';
+      await fs.writeFile(manifestPath, yamlMod.stringify(manifest), 'utf-8');
+    }
+    // Plant the decoy file the ignore line will catch.
+    await fs.writeFile(
+      path.join(massDir, 'decoy-marketing.gif'),
+      'pretend this is a gif\n',
+      'utf-8',
+    );
+    const ignoreLines: string[] = [];
+    for (let i = 0; i < 999; i++) ignoreLines.push(`unused-pattern-${i}.tmp`);
+    ignoreLines.push('decoy-marketing.gif'); // The needle.
+    await fs.writeFile(
+      path.join(massDir, '.shardmindignore'),
+      ignoreLines.join('\n') + '\n',
+      'utf-8',
+    );
+    const massTar = path.join(weirdScratch, `${massPrefix}.tar.gz`);
+    await tarMod.c(
+      { file: massTar, gzip: true, cwd: massWorkRoot },
+      [massPrefix],
+    );
+
+    weirdStub = await createGitHubStub({
+      shards: {
+        'acme/obs-mind-tiny-timeout': {
+          versions: { '1.0.0': timeoutTar },
+          latest: '1.0.0',
+        },
+        'acme/obs-mind-symlinked': {
+          versions: { '1.0.0': symlinkTar },
+          latest: '1.0.0',
+        },
+        'acme/obs-mind-mass-ignore': {
+          versions: { '1.0.0': massTar },
+          latest: '1.0.0',
+        },
+      },
+    });
+  }, 90_000);
+
+  afterAll(async () => {
+    await weirdStub?.close();
+    if (weirdScratch) {
+      await fs.rm(weirdScratch, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    }
+  });
+
+  afterEach(async () => {
+    defaultLatest();
+    await vault?.cleanup();
+  });
+
+  it('post-install hook that edits a managed file then throws → install completes; state.hash reflects post-hook bytes', async () => {
+    // Scenario 26 — docs/SHARD-LAYOUT.md §Hooks (Helm-style non-fatal
+    // contract) + §Hooks, state, and re-hash semantics: a hook that
+    // partially edits a managed file and then throws still leaves the
+    // install in a consistent state — engine re-hashes after hook
+    // exit (success OR failure) so state.json reflects actual disk
+    // content. Drive the failure via the fixture's
+    // SHARDMIND_HOOK_EDIT_BEFORE_THROW env hook.
+    vault = await createEmptyVault('obs-mind-hook-throw');
+    const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--yes', '--values', valuesPath],
+      {
+        cwd: vault.root,
+        env: envWithStub({ SHARDMIND_HOOK_EDIT_BEFORE_THROW: '1' }),
+      },
+    );
+    // Install succeeded despite the hook failure (Helm contract).
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/hook deliberately failed/i);
+
+    const northStar = await vault.readFile('brain/North Star.md');
+    expect(northStar).toContain('<!-- pre-throw edit -->');
+
+    const { sha256 } = await import('../../source/core/fs-utils.js');
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      files: Record<string, { rendered_hash: string }>;
+    };
+    expect(state.files['brain/North Star.md']?.rendered_hash).toBe(sha256(northStar));
+  }, 60_000);
+
+  it('post-install hook exceeding timeout_ms → killed; install completes; summary surfaces a timeout warning', async () => {
+    // Scenario 27 — docs/SHARD-LAYOUT.md §Hooks (non-fatal):
+    // exceeding the per-shard timeout_ms results in a HookResult.kind
+    // = 'failed' with a timed-out message; install still succeeds.
+    vault = await createEmptyVault('obs-mind-hook-timeout');
+    const result = await spawnCli(
+      ['install', 'github:acme/obs-mind-tiny-timeout', '--defaults'],
+      {
+        cwd: vault.root,
+        env: {
+          SHARDMIND_GITHUB_API_BASE: weirdStub.url,
+          // 5s sleep against a 1s manifest timeout = deterministic kill.
+          SHARDMIND_HOOK_SLEEP_MS: '5000',
+        },
+        timeoutMs: 30_000,
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/timed out/i);
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+  }, 60_000);
+
+  it('symlink anywhere in shard source rejects install with WALK_SYMLINK_REJECTED before any writes', async () => {
+    // Scenario 28 — docs/SHARD-LAYOUT.md §File disposition Tier 1:
+    // "Symbolic links anywhere in the shard source — engine rejects
+    // with a clear error during the install walk." Pinned by error
+    // code + the assertion that no .shardmind/ leaked into the vault
+    // (rejection must precede the metadata write).
+    vault = await createEmptyVault('obs-mind-symlink');
+    const result = await spawnCli(
+      ['install', 'github:acme/obs-mind-symlinked', '--defaults'],
+      {
+        cwd: vault.root,
+        env: { SHARDMIND_GITHUB_API_BASE: weirdStub.url },
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    const out = result.stdout + result.stderr;
+    expect(out).toContain('WALK_SYMLINK_REJECTED');
+    expect(out).toMatch(/symlink-trap\.md/);
+    // Nothing leaked into the vault.
+    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+    expect(await vault.exists('brain/symlink-trap.md')).toBe(false);
+  }, 60_000);
+
+  it('.shardmindignore with 1k patterns parses + applies the needle pattern', async () => {
+    // Scenario 29 — docs/SHARD-LAYOUT.md §File disposition Tier 3:
+    // glob-only `.shardmindignore` scales beyond the obsidian-mind
+    // fixture's handful of patterns. The decoy file is excluded,
+    // proving both that the parser succeeds at 1k lines and that
+    // the matcher correctly catches the planted needle.
+    vault = await createEmptyVault('obs-mind-mass-ignore');
+    const result = await spawnCli(
+      ['install', 'github:acme/obs-mind-mass-ignore', '--defaults'],
+      {
+        cwd: vault.root,
+        env: { SHARDMIND_GITHUB_API_BASE: weirdStub.url },
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(await vault.exists('decoy-marketing.gif')).toBe(false);
+    // Vault structure otherwise sane.
+    expect(await vault.exists('CLAUDE.md')).toBe(true);
+  }, 60_000);
+
+  it('valuesAreDefaults handles mixed-default types ("" / 0 / false / select / non-empty string) correctly across both branches', async () => {
+    // Scenario 30 — docs/SHARD-LAYOUT.md §Values, schema, and modules
+    // ("Every value has a default") + §Hooks/Invariant 2: the deep-
+    // equal computation must treat literal `""`, `0`, `false`,
+    // a string default, and a select default identically. Drives
+    // both the positive (every value at default) and negative (any
+    // value diverges) branches against the same fixture.
+    //
+    // Positive branch: every value matches its literal default.
+    vault = await createEmptyVault('obs-mind-defaults-positive');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const positive = await spawnCli(
+      ['install', SHARD_REF, '--yes', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(positive.exitCode).toBe(0);
+    const positiveCtx = await readInstallHookCtx(vault);
+    expect(positiveCtx.valuesAreDefaults).toBe(true);
+    await vault.cleanup();
+
+    // Negative branches — flip exactly one value at a time. Each
+    // flip must surface valuesAreDefaults=false.
+    const flips: Array<[string, Record<string, unknown>]> = [
+      ['user_name (string default "")', { ...DEFAULT_VALUES, user_name: 'Alice' }],
+      ['qmd_enabled (boolean default false)', { ...DEFAULT_VALUES, qmd_enabled: true }],
+      ['brain_capacity (number default 0)', { ...DEFAULT_VALUES, brain_capacity: 10 }],
+      ['org_name (string default "Independent")', { ...DEFAULT_VALUES, org_name: 'Acme' }],
+      ['vault_purpose (select default engineering)', { ...DEFAULT_VALUES, vault_purpose: 'research' }],
+    ];
+    for (const [label, values] of flips) {
+      vault = await createEmptyVault(`obs-mind-flip-${label.split(' ')[0]}`);
+      const valuesPath = await writeValuesFile(vault, values);
+      const result = await spawnCli(
+        ['install', SHARD_REF, '--yes', '--values', valuesPath],
+        { cwd: vault.root, env: envWithStub() },
+      );
+      expect(result.exitCode, `flip ${label} install failed`).toBe(0);
+      const ctx = await readInstallHookCtx(vault);
+      expect(
+        ctx.valuesAreDefaults,
+        `valuesAreDefaults should be false when ${label} diverges`,
+      ).toBe(false);
+      await vault.cleanup();
+    }
+  }, 240_000);
+
+  it.runIf(process.platform === 'darwin')(
+    'install + verifyInvariant1 produces no false positives on case-insensitive macOS APFS/HFS+',
+    async () => {
+      // Scenario 31 — docs/SHARD-LAYOUT.md §Installation invariants:
+      // the invariant-1 helper's path comparisons must be stable on
+      // case-insensitive filesystems (macOS default). Skipped on
+      // linux because case-folding only matters on the platforms that
+      // do it.
+      const { verifyInvariant1 } = await import('./helpers/invariant1.js');
+      const FIXTURE_DIR = fileURLToPath(
+        new URL('../fixtures/shards/obsidian-mind-like', import.meta.url),
+      );
+      vault = await createEmptyVault('obs-mind-case-insensitive');
+      const result = await spawnCli(['install', SHARD_REF, '--defaults'], {
+        cwd: vault.root,
+        env: envWithStub(),
+      });
+      expect(result.exitCode).toBe(0);
+
+      const report = await verifyInvariant1({
+        cloneDir: FIXTURE_DIR,
+        installDir: vault.root,
+      });
+      // The case-folding-sensitive arrays (mismatches + missing) must
+      // be empty: a case-insensitive FS that produced spurious
+      // divergence would surface here. `extrasInInstall` legitimately
+      // contains the post-install hook's unmanaged markers
+      // (.hook-ctx-install.json + .post-install-marker.txt) — those
+      // are unmanaged files the hook writes per its contract, not
+      // a case-folding bug.
+      expect(report.staticByteMismatches).toEqual([]);
+      expect(report.missingFromInstall).toEqual([]);
+      expect(report.extrasInInstall).toEqual([
+        '.hook-ctx-install.json',
+        '.post-install-marker.txt',
+      ]);
+    },
+    60_000,
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Additive principle — see issue #92 §Additive principle +
