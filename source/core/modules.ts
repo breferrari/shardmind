@@ -119,7 +119,7 @@ async function walk(
       throw new ShardMindError(
         `Shard source contains a symbolic link: ${relPath}`,
         'WALK_SYMLINK_REJECTED',
-        'Symlinks are rejected during install — an untrusted shard could symlink outside the install target. Replace the symlink with a regular file or directory.',
+        'Symlinks are blocked at install time as a security baseline — an untrusted shard could link outside the install target. This is a shard-authoring issue, not something you can fix locally; report it to the shard author (or downgrade to a version that pre-dates the symlink).',
       );
     }
 
@@ -130,7 +130,7 @@ async function walk(
       throw new ShardMindError(
         `Shard source contains an unsupported entry type: ${relPath}`,
         'WALK_INVALID_ENTRY',
-        'Only regular files and directories are allowed in a shard source tree.',
+        'A shard source must contain only regular files and directories — no sockets, FIFOs, or device entries. This is almost always a shard-creation bug; report it to the shard author.',
       );
     }
 
