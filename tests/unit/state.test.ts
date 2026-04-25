@@ -9,10 +9,12 @@ import {
   initShardDir,
   cacheTemplates,
   cacheManifest,
+  rehashManagedFiles,
 } from '../../source/core/state.js';
 import type { ShardState, ShardManifest, ShardSchema } from '../../source/runtime/types.js';
 import { ShardMindError } from '../../source/runtime/types.js';
-import { makeShardSource } from '../helpers/index.js';
+import { makeShardSource, makeShardState, makeFileState } from '../helpers/index.js';
+import { sha256 } from '../../source/core/fs-utils.js';
 
 function makeState(overrides: Partial<ShardState> = {}): ShardState {
   return {
@@ -257,5 +259,179 @@ describe('core/state', () => {
 
       await expect(readState(vault)).rejects.toBeInstanceOf(ShardMindError);
     });
+  });
+
+  describe('rehashManagedFiles', () => {
+    async function writeManagedFile(rel: string, content: string): Promise<string> {
+      const abs = path.join(vault, rel);
+      await fsp.mkdir(path.dirname(abs), { recursive: true });
+      await fsp.writeFile(abs, content, 'utf-8');
+      return sha256(content);
+    }
+
+    it('returns the input state unchanged when nothing on disk has shifted', async () => {
+      const helloHash = await writeManagedFile('a.md', 'hello');
+      const state = makeShardState({
+        files: { 'a.md': makeFileState({ rendered_hash: helloHash }) },
+      });
+
+      const result = await rehashManagedFiles(vault, state);
+      expect(result.changed).toEqual([]);
+      expect(result.missing).toEqual([]);
+      expect(result.failed).toEqual([]);
+      expect(result.state.files['a.md']!.rendered_hash).toBe(helloHash);
+    });
+
+    it('updates rendered_hash for the single file a hook modified', async () => {
+      const oldHash = await writeManagedFile('brain/Index.md', 'before');
+      await writeManagedFile('brain/Static.md', 'static');
+      const staticHash = sha256('static');
+
+      const state = makeShardState({
+        files: {
+          'brain/Index.md': makeFileState({ rendered_hash: oldHash }),
+          'brain/Static.md': makeFileState({ rendered_hash: staticHash }),
+        },
+      });
+      // Simulate a hook editing the file:
+      const newHash = await writeManagedFile('brain/Index.md', 'after edit');
+
+      const result = await rehashManagedFiles(vault, state);
+      expect(result.changed).toEqual(['brain/Index.md']);
+      expect(result.missing).toEqual([]);
+      expect(result.failed).toEqual([]);
+      expect(result.state.files['brain/Index.md']!.rendered_hash).toBe(newHash);
+      expect(result.state.files['brain/Static.md']!.rendered_hash).toBe(staticHash);
+    });
+
+    it('preserves FileState fields (ownership, template, iterator_key) on a rehash', async () => {
+      const oldHash = await writeManagedFile('iter.md', 'old');
+      const state = makeShardState({
+        files: {
+          'iter.md': makeFileState({
+            rendered_hash: oldHash,
+            template: 'iter.md.njk',
+            ownership: 'managed',
+            iterator_key: 'persona-1',
+          }),
+        },
+      });
+      await writeManagedFile('iter.md', 'new');
+
+      const result = await rehashManagedFiles(vault, state);
+      expect(result.state.files['iter.md']).toMatchObject({
+        template: 'iter.md.njk',
+        ownership: 'managed',
+        iterator_key: 'persona-1',
+      });
+    });
+
+    it('reports a hook-deleted managed file via `missing` and leaves the prior hash intact', async () => {
+      const priorHash = await writeManagedFile('gone.md', 'orig');
+      const state = makeShardState({
+        files: { 'gone.md': makeFileState({ rendered_hash: priorHash }) },
+      });
+      await fsp.unlink(path.join(vault, 'gone.md'));
+
+      const result = await rehashManagedFiles(vault, state);
+      expect(result.missing).toEqual(['gone.md']);
+      expect(result.changed).toEqual([]);
+      expect(result.state.files['gone.md']!.rendered_hash).toBe(priorHash);
+    });
+
+    it('ignores files the hook added that are not in state.files (unmanaged)', async () => {
+      const aHash = await writeManagedFile('a.md', 'one');
+      // Hook adds an unmanaged file:
+      await writeManagedFile('side-effect.md', 'unmanaged content');
+
+      const state = makeShardState({
+        files: { 'a.md': makeFileState({ rendered_hash: aHash }) },
+      });
+      const result = await rehashManagedFiles(vault, state);
+      expect(Object.keys(result.state.files)).toEqual(['a.md']);
+      expect(result.changed).toEqual([]);
+    });
+
+    it('handles a mixed scenario — modified + deleted + unmanaged-added — in one pass', async () => {
+      const aHash = await writeManagedFile('a.md', 'a-old');
+      const bHash = await writeManagedFile('b.md', 'b-orig');
+      const cHash = await writeManagedFile('c.md', 'c-untouched');
+      const state = makeShardState({
+        files: {
+          'a.md': makeFileState({ rendered_hash: aHash }),
+          'b.md': makeFileState({ rendered_hash: bHash }),
+          'c.md': makeFileState({ rendered_hash: cHash }),
+        },
+      });
+      // Hook: modifies a.md, deletes b.md, adds an unmanaged d.md.
+      const aNewHash = await writeManagedFile('a.md', 'a-new');
+      await fsp.unlink(path.join(vault, 'b.md'));
+      await writeManagedFile('d.md', 'd-from-hook');
+
+      const result = await rehashManagedFiles(vault, state);
+      expect(result.changed).toEqual(['a.md']);
+      expect(result.missing).toEqual(['b.md']);
+      expect(result.failed).toEqual([]);
+      expect(result.state.files['a.md']!.rendered_hash).toBe(aNewHash);
+      expect(result.state.files['b.md']!.rendered_hash).toBe(bHash);
+      expect(result.state.files['c.md']!.rendered_hash).toBe(cHash);
+      expect(Object.keys(result.state.files)).toHaveLength(3);
+    });
+
+    it('returns input untouched on an empty managed-file set', async () => {
+      const state = makeShardState({ files: {} });
+      const result = await rehashManagedFiles(vault, state);
+      expect(result).toEqual({ state, changed: [], missing: [], failed: [] });
+    });
+
+    it('hashes 50 managed files correctly under the concurrency cap', async () => {
+      const files: Record<string, ReturnType<typeof makeFileState>> = {};
+      const expected: Record<string, string> = {};
+      for (let i = 0; i < 50; i++) {
+        const rel = `f-${i.toString().padStart(3, '0')}.md`;
+        const hash = await writeManagedFile(rel, `content-${i}`);
+        // Seed state with stale hashes so changed[] surfaces every entry.
+        files[rel] = makeFileState({ rendered_hash: 'stale' });
+        expected[rel] = hash;
+      }
+      const state = makeShardState({ files });
+      const result = await rehashManagedFiles(vault, state);
+      expect(result.changed).toHaveLength(50);
+      expect(result.missing).toEqual([]);
+      expect(result.failed).toEqual([]);
+      for (const [rel, hash] of Object.entries(expected)) {
+        expect(result.state.files[rel]!.rendered_hash).toBe(hash);
+      }
+    });
+
+    // Permission-denied / EACCES — POSIX only. Windows lacks meaningful
+    // chmod for read-bit removal, and the unprivileged tests run as root
+    // on some CI images (which can read 000 files anyway). This test is
+    // skipped on those paths.
+    const isPosixUnprivileged =
+      process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() !== 0;
+
+    it.skipIf(!isPosixUnprivileged)(
+      'reports an EACCES read failure via `failed` and keeps the prior hash',
+      async () => {
+        const priorHash = await writeManagedFile('locked.md', 'sealed');
+        const abs = path.join(vault, 'locked.md');
+        await fsp.chmod(abs, 0o000);
+        try {
+          const state = makeShardState({
+            files: { 'locked.md': makeFileState({ rendered_hash: priorHash }) },
+          });
+          const result = await rehashManagedFiles(vault, state);
+          expect(result.failed).toHaveLength(1);
+          expect(result.failed[0]!.path).toBe('locked.md');
+          expect(result.changed).toEqual([]);
+          expect(result.missing).toEqual([]);
+          expect(result.state.files['locked.md']!.rendered_hash).toBe(priorHash);
+        } finally {
+          // Restore permissions so afterEach's rm can clean up.
+          await fsp.chmod(abs, 0o644);
+        }
+      },
+    );
   });
 });

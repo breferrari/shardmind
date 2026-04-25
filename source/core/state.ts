@@ -11,7 +11,7 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { ShardState, ShardManifest, ShardSchema } from '../runtime/types.js';
+import type { ShardState, ShardManifest, ShardSchema, FileState } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { stringify as stringifyYaml } from 'yaml';
 import {
@@ -23,11 +23,11 @@ import {
   SHARD_SOURCE_DIR,
   SHARD_MANIFEST_FILE,
 } from '../runtime/vault-paths.js';
-import { errnoCode } from '../runtime/errno.js';
+import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { migrateState } from './state-migrator.js';
 import { walkShardSource } from './modules.js';
 import { loadShardmindignore } from './shardmindignore.js';
-import { mapConcurrent } from './fs-utils.js';
+import { mapConcurrent, sha256 } from './fs-utils.js';
 
 /**
  * Cap on parallel `copyFile` operations during cache population. Same budget
@@ -35,6 +35,14 @@ import { mapConcurrent } from './fs-utils.js';
  * bounded while shaving wall-clock on shards with hundreds of files.
  */
 const CACHE_COPY_CONCURRENCY = 16;
+
+/**
+ * Cap on parallel `readFile + sha256` operations during the post-hook
+ * re-hash pass. Same budget as the cache copy fan-out for the same
+ * reasons — most managed-file sets are bounded in the low hundreds, but
+ * we don't want a 5000-file shard to open 5000 file descriptors at once.
+ */
+const REHASH_CONCURRENCY = 16;
 
 const STATE_SCHEMA_VERSION = 1;
 
@@ -167,5 +175,74 @@ export async function cacheManifest(
 
   await fsp.writeFile(path.join(vaultRoot, CACHED_MANIFEST), serializedManifest, 'utf-8');
   await fsp.writeFile(path.join(vaultRoot, CACHED_SCHEMA), serializedSchema, 'utf-8');
+}
+
+export interface RehashResult {
+  state: ShardState;
+  /** Paths whose `rendered_hash` changed during the re-hash pass. */
+  changed: string[];
+  /**
+   * Files that disappeared between the prior write and the re-read pass
+   * (typically because a buggy hook deleted them). Drift detection will
+   * flag them as `missing` on the next status run; we do not remove them
+   * from `state.files` here since rehash is a hash-update operation, not
+   * a state-membership operation.
+   */
+  missing: string[];
+  /** I/O failures other than ENOENT (permission, EBUSY, …). */
+  failed: Array<{ path: string; reason: string }>;
+}
+
+/**
+ * Recompute `rendered_hash` for every managed file in `state.files` by
+ * reading the current bytes off disk. Returns a NEW state value; the
+ * input is not mutated. Per `docs/SHARD-LAYOUT.md §Hooks, state, and
+ * re-hash semantics`, the engine runs this after every post-install /
+ * post-update hook (success OR failure) so `state.json` reflects actual
+ * file content even when a hook touched managed files.
+ *
+ * Per-file ENOENT and other I/O errors are tolerated — the file's hash
+ * stays at its prior value and the path is reported via `missing` /
+ * `failed`. The hook contract is non-fatal (Helm pattern), so a hook
+ * that broke the world cannot break the engine; the next `shardmind`
+ * status run surfaces drift on the affected paths.
+ */
+export async function rehashManagedFiles(
+  vaultRoot: string,
+  state: ShardState,
+): Promise<RehashResult> {
+  const paths = Object.keys(state.files);
+  const changed: string[] = [];
+  const missing: string[] = [];
+  const failed: Array<{ path: string; reason: string }> = [];
+  const nextFiles: Record<string, FileState> = { ...state.files };
+
+  await mapConcurrent(paths, REHASH_CONCURRENCY, async (rel) => {
+    const prior = state.files[rel]!;
+    try {
+      const buf = await fsp.readFile(path.join(vaultRoot, rel));
+      const hash = sha256(buf);
+      if (hash !== prior.rendered_hash) {
+        nextFiles[rel] = { ...prior, rendered_hash: hash };
+        changed.push(rel);
+      }
+    } catch (err) {
+      if (isEnoent(err)) {
+        missing.push(rel);
+        return;
+      }
+      failed.push({
+        path: rel,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  return {
+    state: { ...state, files: nextFiles },
+    changed,
+    missing,
+    failed,
+  };
 }
 
