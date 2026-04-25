@@ -575,8 +575,8 @@ describe('shardmind install — post-install hook', () => {
     const homeContent = await vault.readFile('Home.md');
     expect(homeContent).toContain('<!-- POST-HOOK-EDIT -->');
 
-    const { createHash } = await import('node:crypto');
-    const expectedHash = createHash('sha256').update(homeContent, 'utf-8').digest('hex');
+    const { sha256 } = await import('../../source/core/fs-utils.js');
+    const expectedHash = sha256(homeContent);
 
     const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
       files: Record<string, { rendered_hash: string }>;

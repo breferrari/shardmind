@@ -31,6 +31,7 @@
  * defensively by returning `false` when a schema key has no default.
  */
 
+import { isDeepStrictEqual } from 'node:util';
 import type { ShardSchema } from '../runtime/types.js';
 import { isComputedDefault } from './schema.js';
 import { resolveComputedDefaults } from './install-planner.js';
@@ -40,50 +41,34 @@ export function valuesAreDefaults(
   schema: ShardSchema,
 ): boolean {
   const literalDefaults: Record<string, unknown> = {};
+  let hasComputed = false;
   for (const [key, def] of Object.entries(schema.values)) {
     if (def.default === undefined) return false;
-    if (isComputedDefault(def.default)) continue;
+    if (isComputedDefault(def.default)) {
+      hasComputed = true;
+      continue;
+    }
     literalDefaults[key] = def.default;
   }
 
+  // Skip the Nunjucks `Environment` instantiation in `resolveComputedDefaults`
+  // when no value declares a computed default — the literal-default map is
+  // already the would-be-default map.
   let wouldBeDefaults: Record<string, unknown>;
-  try {
-    wouldBeDefaults = resolveComputedDefaults(schema, literalDefaults);
-  } catch {
-    return false;
+  if (hasComputed) {
+    try {
+      wouldBeDefaults = resolveComputedDefaults(schema, literalDefaults);
+    } catch {
+      return false;
+    }
+  } else {
+    wouldBeDefaults = literalDefaults;
   }
 
   for (const key of Object.keys(schema.values)) {
     if (!(key in wouldBeDefaults)) return false;
-    if (!deepEqual(values[key], wouldBeDefaults[key])) return false;
+    if (!isDeepStrictEqual(values[key], wouldBeDefaults[key])) return false;
   }
 
-  return true;
-}
-
-function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a === null || b === null) return a === b;
-  if (typeof a !== typeof b) return false;
-  if (typeof a !== 'object') return false;
-
-  if (Array.isArray(a)) {
-    if (!Array.isArray(b) || a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-      if (!deepEqual(a[i], b[i])) return false;
-    }
-    return true;
-  }
-  if (Array.isArray(b)) return false;
-
-  const aKeys = Object.keys(a as Record<string, unknown>);
-  const bKeys = Object.keys(b as Record<string, unknown>);
-  if (aKeys.length !== bKeys.length) return false;
-  for (const key of aKeys) {
-    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
-    if (!deepEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key])) {
-      return false;
-    }
-  }
   return true;
 }
