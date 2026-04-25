@@ -8,6 +8,27 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (v6 layout: schema defaults + drop `partials`)
+
+Closes [#74](https://github.com/breferrari/shardmind/issues/74). Track 2 of the v6 contract work tracked in [#70](https://github.com/breferrari/shardmind/issues/70). Spec: [`docs/SHARD-LAYOUT.md §Values, schema, and modules`](docs/SHARD-LAYOUT.md). **Breaking** for any in-flight shard authoring — v0.1 has no published shards, so no migration path is needed. Resolves the forward-reference left in the #73 entry below: `mod.partials` is now fully gone (validator + type), and `parseSchema` rejects schemas with values lacking a `default`.
+
+- **`parseSchema` rejects values missing `default`**. The check runs against the raw YAML (post-zod, the `default: z.unknown().optional()` schema strips missing keys, collapsing missing-vs-undefined). Sentinel defaults (`null`, `""`, `false`, `0`, `[]`, bare `default:`) are accepted — the rule is presence, not non-emptiness. Error code `SCHEMA_VALIDATION_FAILED`; the message lists every offending key (not just the first). Source: `source/core/schema.ts`.
+- **`partials` field removed**. `ModuleDefinitionSchema.partials` (`source/core/schema.ts`) and `ModuleDefinition.partials?: string[]` (`source/runtime/types.ts`) deleted. Zod object schemas are non-strict, so v5 shards still shipping `partials: [...]` parse cleanly — the field is silently discarded. Pinned by a regression test in `tests/unit/schema.test.ts`.
+- **v6-only update path: dead `newRequiredKeys` branch dialed back**. The integration test `prompts only for genuinely missing new required values` is now obsolete under the v6 contract (every value has a default, so `computeSchemaAdditions().newRequiredKeys` always returns `[]`). Rewritten as the v6 negative — adding a new value with a default does not contribute to `newRequiredKeys`, pinning the no-prompt branch.
+- **Test rewrites for v5-only paths made unreachable**:
+  - `tests/e2e/cli.test.ts`: "VALUES_MISSING when --yes is used without --values for required keys" rewritten as the positive v6 case — `--yes` without `--values` succeeds and writes state + values, since every schema value default-fills.
+  - `tests/unit/runtime.test.ts` `validateValues`: "rejects missing required values" rewritten to assert default-fill on empty input (the v6 contract).
+- **Fixtures migrated**:
+  - `examples/minimal-shard/.shardmind/shard-schema.yaml`: `user_name` and `vault_purpose` gain literal defaults.
+  - `tests/fixtures/schema/valid-{minimal,all-types,computed-defaults}.yaml`: every value gets a `default`.
+  - `tests/fixtures/schema/invalid-{missing-group,reserved-name,select-no-options,min-gt-max}.yaml`: gain `default` so each fixture continues to fail on its intended check (the new presence check runs last).
+  - `tests/fixtures/schema/invalid-missing-default.yaml` (new): one value without `default` — pins the new error path.
+  - `tests/unit/runtime.test.ts` inline schema: same migration.
+  - `tests/fixtures/shards/minimal-shard.tar.gz`: regenerated.
+- **Adversarial cases covered** in `tests/unit/schema.test.ts` (4 new cases, total 24): missing-default (single + multiple), sentinel defaults (`null`, `""`, `false`, `0`, `[]`, bare `default:`), partials silent-ignore. Existing reserved-name / group-cross-ref / structural fixtures still surface their intended error first; adding the missing-default check at the end of the validation chain preserves their behavior without requiring test changes.
+- **Docs**: `docs/ARCHITECTURE.md §5.2` (modules) drops `partials` from prose + YAML examples; `§7.3` rewritten as "CLAUDE.md as a Single Template" describing the v6 single-template + `{% if %}` approach with a back-reference to `docs/SHARD-LAYOUT.md`; `§15` vault tree, `§16` reshape note, `§18` `ModuleDefinition` type, and `§20` Day-5 build summary all updated. `docs/IMPLEMENTATION.md §8 D9` rewritten as the v6 decision (single template) with the v0.1 partials/assembly explicitly marked as the rejected alternative — preserves decision-trail. `README.md`: drop "(partials per module)" annotation on `CLAUDE.md.njk` and "partials" from the minimal-shard description. Left intact: `docs/SHARD-LAYOUT.md` (canonical v6 statements), the explicitly-superseded `IMPLEMENTATION.md §1204+` build-plan block, and the `#73` CHANGELOG entry's forward-reference to `#74` (now a closed loop).
+- **Tests: 663 → 667 (+4)**.
+
 ### Changed (v6 layout: flat shard-root walk)
 
 Closes [#73](https://github.com/breferrari/shardmind/issues/73). First engine-side track of the v6 contract design landed in [#70](https://github.com/breferrari/shardmind/issues/70) / [#72](https://github.com/breferrari/shardmind/issues/72). Spec: [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md). **Breaking** for any in-flight shard authoring against the v0.1 `templates/` contract — v0.1 has no published shards, so no migration path is needed.
