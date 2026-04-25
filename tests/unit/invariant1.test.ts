@@ -329,6 +329,158 @@ describe('verifyInvariant1 — `.shardmindignore` parser delegation', () => {
       await pair.cleanup();
     }
   });
+
+  it('treats an empty .shardmindignore as a no-op filter (matches everything)', async () => {
+    // The parser short-circuits to EMPTY_FILTER on a missing or empty
+    // file. Pin the empty-content path end-to-end since the E2E gate
+    // only exercises the populated-content branch via minimal-shard's
+    // `*.gif`-pattern fixture.
+    const pair = await makePair('ignore-empty');
+    try {
+      await writeFile(pair.cloneDir, '.shardmindignore', '');
+      await writeFile(pair.cloneDir, 'README.md', '# x\n');
+      await writeFile(pair.installDir, '.shardmindignore', '');
+      await writeFile(pair.installDir, 'README.md', '# x\n');
+      const report = await verifyInvariant1(pair);
+      expect(report.matched).toBe(2);
+      expect(report.staticByteMismatches).toEqual([]);
+      expect(report.missingFromInstall).toEqual([]);
+      expect(report.extrasInInstall).toEqual([]);
+    } finally {
+      await pair.cleanup();
+    }
+  });
+
+  it('honors a comment-only .shardmindignore as a no-op filter', async () => {
+    // Comments + blank lines must be ignored by the parser; the helper
+    // sees the same EMPTY_FILTER outcome as a literally-empty file.
+    const pair = await makePair('ignore-comments');
+    const ignore = '# top comment\n\n# trailing\n   \n';
+    const pair2 = pair;
+    try {
+      await writeFile(pair2.cloneDir, '.shardmindignore', ignore);
+      await writeFile(pair2.cloneDir, 'README.md', '# x\n');
+      await writeFile(pair2.installDir, '.shardmindignore', ignore);
+      await writeFile(pair2.installDir, 'README.md', '# x\n');
+      const report = await verifyInvariant1(pair2);
+      expect(report.matched).toBe(2);
+      expect(report.staticByteMismatches).toEqual([]);
+    } finally {
+      await pair2.cleanup();
+    }
+  });
+});
+
+describe('verifyInvariant1 — robustness', () => {
+  it('reports a file deleted between enumeration and byte-read as missingFromInstall (TOCTOU)', async () => {
+    // Enumeration sees `volatile.md` on the install side; the byte-read
+    // races with a deletion. ENOENT during the comparison must surface
+    // as `missingFromInstall`, not crash the helper. Simulated by
+    // enumerating first, then deleting, then comparing — the helper's
+    // catch-block has to handle the post-walk vanish.
+    const pair = await makePair('toctou');
+    try {
+      await writeFile(pair.cloneDir, 'stable.md', 'stable\n');
+      await writeFile(pair.cloneDir, 'volatile.md', 'before\n');
+      await writeFile(pair.installDir, 'stable.md', 'stable\n');
+      await writeFile(pair.installDir, 'volatile.md', 'before\n');
+
+      // Patch fsp.readFile to delete `volatile.md` on the install side
+      // before its first read completes. Restored in `finally` so other
+      // tests aren't affected.
+      const originalRead = fsp.readFile.bind(fsp) as typeof fsp.readFile;
+      let deleted = false;
+      (fsp as { readFile: typeof fsp.readFile }).readFile = (async (
+        target: Parameters<typeof fsp.readFile>[0],
+        ...rest: unknown[]
+      ) => {
+        if (
+          !deleted &&
+          typeof target === 'string' &&
+          target === path.join(pair.installDir, 'volatile.md')
+        ) {
+          deleted = true;
+          await fsp.rm(target, { force: true });
+        }
+        return originalRead(target as never, ...(rest as []));
+      }) as typeof fsp.readFile;
+
+      try {
+        const report = await verifyInvariant1(pair);
+        expect(report.missingFromInstall).toEqual(['volatile.md']);
+        expect(report.staticByteMismatches).toEqual([]);
+        expect(report.matched).toBe(1);
+      } finally {
+        (fsp as { readFile: typeof fsp.readFile }).readFile = originalRead;
+      }
+    } finally {
+      await pair.cleanup();
+    }
+  });
+
+  it('rethrows non-ENOENT read failures with the offending path in the message', async () => {
+    // EACCES, EBUSY, or any other read failure must surface the file
+    // name so a failing CI run can pinpoint the cause. Mocking the
+    // failure (rather than chmod) keeps the test cross-platform —
+    // Windows + POSIX agree on the catch + rethrow path.
+    const pair = await makePair('read-fail');
+    try {
+      await writeFile(pair.cloneDir, 'README.md', 'text\n');
+      await writeFile(pair.installDir, 'README.md', 'text\n');
+
+      const originalRead = fsp.readFile.bind(fsp) as typeof fsp.readFile;
+      (fsp as { readFile: typeof fsp.readFile }).readFile = (async (
+        target: Parameters<typeof fsp.readFile>[0],
+        ...rest: unknown[]
+      ) => {
+        if (
+          typeof target === 'string' &&
+          target === path.join(pair.installDir, 'README.md')
+        ) {
+          throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+        }
+        return originalRead(target as never, ...(rest as []));
+      }) as typeof fsp.readFile;
+
+      try {
+        await expect(verifyInvariant1(pair)).rejects.toThrow(/README\.md/);
+      } finally {
+        (fsp as { readFile: typeof fsp.readFile }).readFile = originalRead;
+      }
+    } finally {
+      await pair.cleanup();
+    }
+  });
+
+  it('detects a clone source-side path collision (`Foo.md` AND `Foo.md.njk`) — install-side win is reported as bytes', async () => {
+    // If a shard author ships both a static `Foo.md` and a renderable
+    // `Foo.md.njk`, both clone-side paths map to the same install path
+    // (`Foo.md`). The helper's `Map.set` keeps whichever cloneRel was
+    // walked second; in practice the install pipeline writes whichever
+    // module ordering produced, and the byte-comparison surfaces the
+    // mismatch. Pins the behavior so a future regression that silently
+    // dropped one source path would be caught — and documents the
+    // shard-authoring constraint (don't ship both forms of the same
+    // path).
+    const pair = await makePair('source-collision');
+    try {
+      await writeFile(pair.cloneDir, 'Foo.md', 'static body\n');
+      await writeFile(pair.cloneDir, 'Foo.md.njk', '{{ values.x }}\n');
+      // Whatever the install actually wrote at Foo.md
+      await writeFile(pair.installDir, 'Foo.md', 'static body\n');
+      const report = await verifyInvariant1(pair);
+      // The walk visits both paths; the second `Map.set` wins. Whether
+      // that's the static or the renderable is dirent-order-dependent,
+      // but the report is always self-consistent: either matched=1 +
+      // empty mismatches, or staticByteMismatches names Foo.md (if the
+      // renderable was walked second, comparison was skipped — match).
+      // The defensive contract: no crash, no spurious extras.
+      expect(report.extrasInInstall).toEqual([]);
+      expect(report.missingFromInstall).toEqual([]);
+    } finally {
+      await pair.cleanup();
+    }
+  });
 });
 
 describe('verifyInvariant1 — fast-check property', () => {

@@ -26,6 +26,7 @@ import path from 'node:path';
 import { walkShardSource } from '../../../source/core/modules.js';
 import { loadShardmindignore } from '../../../source/core/shardmindignore.js';
 import { mapConcurrent } from '../../../source/core/fs-utils.js';
+import { isEnoent } from '../../../source/runtime/errno.js';
 import {
   SHARDMIND_DIR,
   VALUES_FILE,
@@ -82,6 +83,15 @@ export async function verifyInvariant1(
   const cloneWalk = await walkShardSource(input.cloneDir, cloneFilter);
   const cloneFiles = cloneWalk.map((f) => f.relPath);
 
+  // listRecursive enumerates regular files only — symlinks are silently
+  // skipped, matching the install pipeline's contract: the engine never
+  // writes symlinks during install (`runInstall` uses `writeFile` /
+  // `copyFile` exclusively). A symlink in `installDir` therefore implies
+  // pre-existing user state outside the install pipeline's surface, which
+  // Invariant 1 doesn't speak to. The clone-side walk is asymmetric on
+  // purpose: `walkShardSource` rejects symlinks because the install
+  // *would* refuse them upstream, so the helper tracks the engine's
+  // contract on each side.
   const installFiles = (await listRecursive(input.installDir)).filter(
     (rel) => !isEngineMetadata(rel),
   );
@@ -118,10 +128,27 @@ export async function verifyInvariant1(
         return { kind: 'missing', installRel };
       }
       if (entry.kind === 'static') {
-        const [cloneBytes, installBytes] = await Promise.all([
-          fsp.readFile(path.join(input.cloneDir, entry.cloneRel)),
-          fsp.readFile(path.join(input.installDir, installRel)),
-        ]);
+        let cloneBytes: Buffer;
+        let installBytes: Buffer;
+        try {
+          [cloneBytes, installBytes] = await Promise.all([
+            fsp.readFile(path.join(input.cloneDir, entry.cloneRel)),
+            fsp.readFile(path.join(input.installDir, installRel)),
+          ]);
+        } catch (err) {
+          // A file that survived enumeration vanished or became
+          // unreadable before the byte-read. Treat ENOENT as
+          // `missing` (post-walk deletion is observationally
+          // identical to "install never produced it"); other I/O
+          // failures rethrow with the path in scope so the failing
+          // test can pinpoint the file.
+          if (isEnoent(err)) {
+            return { kind: 'missing', installRel };
+          }
+          throw new Error(
+            `verifyInvariant1: failed to read ${installRel}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
         if (!cloneBytes.equals(installBytes)) {
           return { kind: 'mismatch', installRel };
         }

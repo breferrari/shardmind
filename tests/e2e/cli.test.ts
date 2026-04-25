@@ -452,6 +452,29 @@ describe('shardmind install', () => {
     expect(result.stdout).not.toMatch(/Your name/);
   });
 
+  it('--defaults auto-backs-up pre-existing user content at a planned-write path', async () => {
+    // The non-interactive backup path was previously gated on `--yes`;
+    // the simplify pass widened it to fire on either flag (`yes ||
+    // defaults`), since the collision UI requires interactive input
+    // neither mode can provide. Pin the new branch end-to-end so a
+    // future regression that re-narrows it to `--yes` is caught.
+    vault = await createEmptyVault('install-defaults-collision');
+    await vault.writeFile('Home.md', 'hand-crafted user content\n');
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--defaults'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    const files = await vault.listFiles();
+    const backup = files.find((f) => f.startsWith('Home.md.shardmind-backup-'));
+    expect(backup).toBeDefined();
+    const backed = await vault.readFile(backup!);
+    expect(backed).toBe('hand-crafted user content\n');
+    // Home.md is the rendered template, not the user's original.
+    const rendered = await vault.readFile('Home.md');
+    expect(rendered).not.toBe('hand-crafted user content\n');
+  });
+
   it('backs up pre-existing user content under --yes', async () => {
     vault = await createEmptyVault('install-collision');
     await vault.writeFile('Home.md', 'hand-crafted user content\n');
