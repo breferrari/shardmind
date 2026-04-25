@@ -71,13 +71,15 @@ export GITHUB_TOKEN=ghe_pat_xxxxxxxxxxxxxxxx
 shardmind install acme/internal-shard --yes --values values.yaml
 ```
 
-**Mirror / caching proxy**: point the API base at the proxy; the proxy forwards to real GitHub. Tarball GETs, HEAD checks, and `releases/latest` all route through the same base.
+**Mirror / caching proxy**: point the API base at the proxy; the proxy forwards to real GitHub. The `/releases` listing, `/commits/<ref>`, tarball HEAD checks, and tarball GETs all route through the same base.
 
-**Air-gapped**: pair `SHARDMIND_GITHUB_API_BASE` with a local HTTP server that serves tarballs and release metadata — the same interface the E2E harness stub uses (see [`tests/e2e/helpers/github-stub.ts`](../tests/e2e/helpers/github-stub.ts) for the protocol). Three endpoints are enough:
+**Air-gapped**: pair `SHARDMIND_GITHUB_API_BASE` with a local HTTP server that serves tarballs and release metadata — the same interface the E2E harness stub uses (see [`tests/e2e/helpers/github-stub.ts`](../tests/e2e/helpers/github-stub.ts) for the protocol). Five endpoints cover every install / update / status path:
 
-- `GET /repos/:owner/:repo/releases/latest` → `{ "tag_name": "v<version>" }`
-- `HEAD /repos/:owner/:repo/tarball/v<version>` → 200 if the tag exists
-- `GET /repos/:owner/:repo/tarball/v<version>` → the tarball bytes (gzipped tar)
+- `GET /repos/:owner/:repo/releases?per_page=100` → array of `{ tag_name, prerelease }` sorted by `created_at` DESC. Powers default-stable resolution + `--include-prerelease`.
+- `HEAD /repos/:owner/:repo/tarball/v<version>` → 200 if the tag exists. Tag-install verify.
+- `GET /repos/:owner/:repo/tarball/v<version>` → tarball bytes (gzipped tar). Tag-install download.
+- `GET /repos/:owner/:repo/commits/<ref>` → `{ "sha": "<40-char hex>" }`. Powers `github:owner/repo#<ref>` ref installs and `shardmind update` re-resolution on ref-installed vaults.
+- `HEAD` + `GET /repos/:owner/:repo/tarball/<sha>` (no `v` prefix) → tarball bytes addressed by commit SHA. Ref-install download.
 
 ---
 
@@ -113,8 +115,9 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 
 ShardMind's own version is semver-pinned. Shards are semver-pinned by their GitHub tags (the `v` prefix is stripped before parsing).
 
-- Latest version: `shardmind install acme/demo` (omits `@version`; resolves via `releases/latest`).
-- Pinned: `shardmind install acme/demo@1.2.3` (exact tag).
-- Pre-release: pre-release tags work if GitHub exposes them via `releases/latest`; otherwise pin explicitly.
+- Latest stable: `shardmind install acme/demo` (omits `@version`; resolves the newest `prerelease: false` entry from `/releases?per_page=100`).
+- Pinned tag: `shardmind install acme/demo@1.2.3` (exact tag).
+- Pre-release: `shardmind install acme/demo@1.2.3-beta.1` for an explicit prerelease pin. On update, `shardmind update --include-prerelease` widens latest-resolution to all releases; `shardmind update --release 1.2.3-beta.1` pins. Beta-only repos throw `NO_RELEASES_PUBLISHED` with a `--include-prerelease` hint.
+- Branch / commit: `shardmind install github:acme/demo#main` (or `#feature/foo`, `#abc1234`). Resolves via `/commits/<ref>` to a 40-char SHA, recorded in `state.resolvedSha`. Future `shardmind update` runs re-resolve the same ref so the vault tracks branch movement.
 
 Shard migrations run during `update` when the schema's `migrations` array covers the version range — see [`docs/IMPLEMENTATION.md §4.10`](IMPLEMENTATION.md).

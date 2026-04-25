@@ -278,6 +278,20 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         // it's manifest-version + tarball-sha equality (the existing
         // contract — a retagged release surfaces as a tarball-sha
         // mismatch and runs through the merge engine).
+        //
+        // For ref installs we explicitly assert `resolved.ref` is set
+        // — it's guaranteed by `resolveRefInstall` for any ref-shaped
+        // source string, but a future regression that constructed the
+        // ref source string without the `#<ref>` suffix would silently
+        // give us `state.resolvedSha === undefined === undefined ===
+        // true`, falsely classifying a stale vault as up-to-date.
+        if (state.ref && !resolved.ref) {
+          throw new ShardMindError(
+            `Internal: ref install resolved without a ref descriptor (state.ref='${state.ref}')`,
+            'REGISTRY_NETWORK',
+            'This is a bug. Please report — the registry should always return ResolvedShard.ref for ref-shaped sources.',
+          );
+        }
         const upToDate = state.ref
           ? state.resolvedSha === resolved.ref?.commit
           : newManifest.version === state.version &&

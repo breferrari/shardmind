@@ -642,6 +642,29 @@ describe('registry.resolve', () => {
       expect(err.code).toBe('NO_RELEASES_PUBLISHED');
     });
 
+    it('skips entries with empty / whitespace-only tag_name', async () => {
+      // A whitespace-only tag would produce a useless `tarball/v   ` URL
+      // downstream. Defensive against a malformed upstream response — the
+      // canonical GitHub API never emits this, but we don't want a
+      // misbehaving mirror or third-party proxy to wedge resolution.
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (isReleasesListing(u)) {
+          return jsonResponse([
+            { tag_name: '', prerelease: false },
+            { tag_name: '   ', prerelease: false },
+            { tag_name: '\t\n', prerelease: false },
+            { tag_name: 'v1.0.0', prerelease: false },
+          ]);
+        }
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolve('github:acme/widget');
+      expect(result.version).toBe('1.0.0');
+    });
+
     it('skips malformed entries (missing tag_name / non-boolean prerelease)', async () => {
       globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const u = typeof url === 'string' ? url : url.toString();

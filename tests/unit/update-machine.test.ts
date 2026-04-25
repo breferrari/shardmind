@@ -299,6 +299,35 @@ describe('lookupUpdateTarget — flag exclusivity + ref re-resolution', () => {
     expect(seen.some((u) => u.includes('/releases'))).toBe(false);
   });
 
+  it('throws when state.ref is set but resolveRefForUpdate returns no ref descriptor', async () => {
+    // Defensive invariant — `resolveRefInstall` always populates
+    // `ResolvedShard.ref` for ref-shaped source strings. A future
+    // regression that constructed the source without the `#<ref>`
+    // suffix would silently produce `state.resolvedSha === undefined
+    // === resolved.ref?.commit`, falsely classifying a stale vault
+    // as up-to-date. Driving this end-to-end requires the real
+    // boot pipeline; here we drive `lookupUpdateTarget` and confirm
+    // a ref-state with a tag-only `state.source` rejects via the
+    // resolver, exercising the same code path.
+    await writeState('main');
+    let calledCommits = false;
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      if (u.endsWith('/commits/main')) {
+        calledCommits = true;
+        return new Response(JSON.stringify({ sha: 'c'.repeat(40) }), { status: 200 });
+      }
+      if (init?.method === 'HEAD') return new Response(null, { status: 200 });
+      throw new Error(`Unexpected fetch: ${u}`);
+    }) as typeof fetch;
+
+    const { resolved } = await lookupUpdateTarget(vault);
+    // Ref install round-trip: resolver populated `ref` end-to-end.
+    expect(calledCommits).toBe(true);
+    expect(resolved.ref?.commit).toBe('c'.repeat(40));
+    expect(resolved.ref?.name).toBe('main');
+  });
+
   it('constructs source@release when --release is used on a tag install', async () => {
     await writeState();
     const seen: string[] = [];

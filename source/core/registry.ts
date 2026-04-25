@@ -416,14 +416,15 @@ async function fetchLatestRelease(
   }
 
   // Skip malformed entries silently — a single bad entry shouldn't take down
-  // an otherwise-resolvable list. Empty `tag_name` strings are also dropped
-  // because they would produce a useless `tarball/v` URL downstream.
+  // an otherwise-resolvable list. Empty / whitespace-only `tag_name` strings
+  // are also dropped because they would produce a useless `tarball/v` URL
+  // downstream and make the eventual error confusing.
   const releases = data.filter((entry): entry is ReleaseEntry => {
     if (!entry || typeof entry !== 'object') return false;
     const e = entry as { tag_name?: unknown; prerelease?: unknown };
     return (
       typeof e.tag_name === 'string' &&
-      e.tag_name.length > 0 &&
+      e.tag_name.trim().length > 0 &&
       typeof e.prerelease === 'boolean'
     );
   });
