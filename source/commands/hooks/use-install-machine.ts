@@ -178,7 +178,6 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         const schema = await parseSchema(temp.schema);
 
         const prefill = valuesFile ? await loadValuesFile(valuesFile, schema) : {};
-        const merged = mergePrefill(schema, prefill);
 
         const { moduleFileCounts, alwaysIncludedFileCount } = await planOutputs(
           schema,
@@ -186,6 +185,11 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           defaultModuleSelections(schema),
         );
 
+        // `prefillValues` carries the *raw* user input from --values (or {}).
+        // Both the wizard and the non-interactive path merge schema defaults
+        // in themselves (`mergePrefill`). Threading raw user input lets the
+        // wizard distinguish user-supplied vs default-supplied values, which
+        // matters under v6 where every value has a default.
         const ctx: PreparedContext = {
           resolved,
           manifest,
@@ -193,7 +197,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           tempDir: temp.tempDir,
           tarballSha256: temp.tarball_sha256,
           cleanup: temp.cleanup,
-          prefillValues: merged,
+          prefillValues: prefill,
           moduleFileCounts,
           alwaysIncludedFileCount,
         };
@@ -228,7 +232,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
   const runNonInteractive = useCallback(
     async (ctx: PreparedContext) => {
-      const missing = missingValueKeys(ctx.schema, ctx.prefillValues);
+      const merged = mergePrefill(ctx.schema, ctx.prefillValues);
+      const missing = missingValueKeys(ctx.schema, merged);
       if (missing.length > 0) {
         throw new ShardMindError(
           `Missing required values for --yes: ${missing.join(', ')}`,
@@ -238,7 +243,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       }
       const validator = buildValuesValidator(ctx.schema);
       const validated = validator.parse(
-        resolveComputedDefaults(ctx.schema, ctx.prefillValues),
+        resolveComputedDefaults(ctx.schema, merged),
       ) as Record<string, unknown>;
       await handleWizardCompleteRef.current(
         { values: validated, selections: defaultModuleSelections(ctx.schema) },

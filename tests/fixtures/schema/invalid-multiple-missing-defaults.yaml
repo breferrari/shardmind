@@ -1,0 +1,24 @@
+schema_version: 1
+
+values:
+  alpha:
+    type: string
+    message: "x"
+    group: setup
+  beta:
+    type: number
+    message: "y"
+    group: setup
+  gamma:
+    type: string
+    message: "z"
+    default: ""
+    group: setup
+
+groups:
+  - { id: setup, label: "Setup" }
+
+modules: {}
+signals: []
+frontmatter: {}
+migrations: []

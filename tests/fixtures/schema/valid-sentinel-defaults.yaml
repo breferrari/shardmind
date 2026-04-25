@@ -1,0 +1,31 @@
+schema_version: 1
+
+values:
+  empty_string_default:
+    type: string
+    message: "a"
+    default: ""
+    group: setup
+  false_default:
+    type: boolean
+    message: "b"
+    default: false
+    group: setup
+  zero_default:
+    type: number
+    message: "c"
+    default: 0
+    group: setup
+  empty_list_default:
+    type: list
+    message: "d"
+    default: []
+    group: setup
+
+groups:
+  - { id: setup, label: "Setup" }
+
+modules: {}
+signals: []
+frontmatter: {}
+migrations: []

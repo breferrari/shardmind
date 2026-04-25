@@ -5,6 +5,7 @@ values:
     type: select
     required: true
     message: "Purpose?"
+    default: ""
     group: setup
 
 groups:

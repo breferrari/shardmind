@@ -309,6 +309,14 @@ parseSchema(filePath: string): Promise<ShardSchema>
 buildValuesValidator(schema: ShardSchema): z.ZodObject<any>
 ```
 
+**`parseSchema` validation chain** (after the zod safe-parse pass):
+
+1. **Reserved-name guard**: reject value keys that collide with the render context (`shard`, `install_date`, `year`, `included_modules`, `values`) → `SCHEMA_RESERVED_NAME`.
+2. **Group cross-ref**: every value's `group` must reference an entry in the `groups` array → `SCHEMA_VALIDATION_FAILED`.
+3. **`default` presence (v6 contract)**: every value MUST declare a `default` field. Empty/falsey literals (`""`, `false`, `0`, `[]`) are accepted as long as they match the value's `type` — the presence rule is satisfied by the key existing, not by any "no default" semantics. The check reads the **raw** parsed YAML, not the post-zod object: zod's `default: z.unknown().optional()` strips missing keys and collapses missing-vs-explicit-undefined. This step only verifies that the `default` key exists; type-specific meaning of the value is handled by the next rule. Error lists every offending key, not just the first → `SCHEMA_VALIDATION_FAILED`.
+4. **`default` type-match + select-options match (v6)**: when `default` is not a `{{ }}` computed expression, validate `typeof default` against `type`. `null` does not match any of the six value types and is rejected here — authors who want an "empty" default use a type-matching literal (`""`, `0`, `false`, `[]`, or the first option value for `select`). For `select`, the literal default must equal one of `options[].value`; for `multiselect`, every item in the array default must be in `options[].value`. Catches typos (`type: number, default: "fortytwo"` or `type: select, default: "engineerring"`) at parse time rather than failing later inside `buildValuesValidator`. Implemented as a `.check()` rule on `ValueDefinitionSchema` so the issues surface alongside `options`/`min`/`max` problems.
+5. **Frontmatter normalization**: shorthand arrays (`global: [date, tags]`) expand into `{ required: [...] }` objects.
+
 **Algorithm for `buildValuesValidator`**:
 1. For each entry in `schema.values`:
    - `string` → `z.string()`
@@ -1191,7 +1199,7 @@ Decisions made during architecture that should be preserved:
 | D6 | Modules over value toggles | File existence is a structural decision, not a template variable. Empty folders are harmless but feel wrong. | `enable_X` booleans (over-engineering, 15-question wizard, poisoned the update engine) |
 | D7 | 4 values, 1 group | Convention over configuration. Obsidian handles unused features gracefully. | 15+ values with depends_on chains (wizard fatigue, complexity) |
 | D8 | TypeScript hooks over Python/shell | Unify the stack. One runtime. Hooks can import `shardmind/runtime`. | Keep Python (extra dependency, two languages, can't share code) |
-| D9 | CLAUDE.md partials | 338-line monolith is unmaintainable as one template. Per-module partials are independently editable. | Single CLAUDE.md.njk with `{% if %}` blocks (spaghetti) |
+| D9 | CLAUDE.md as a single `.njk` template (v6) | v6 contract drops the partials/assembly system in favor of a single shard-root `CLAUDE.md.njk`, gated per-module via `{% if 'mod' in included_modules %}` blocks (or file-path gating for whole-section inclusion). Reverses the v0.1 design (Per-module partials assembled via `{% include %}`); v6 simplification keeps the shard contract flat — no wrapper directories, no assembly-side magic — at the cost of slightly larger conditional blocks in the template. | v0.1 partials/assembly (rejected in v6 — implicit ordering, more files, harder to read end-to-end) |
 | D10 | `/vault-upgrade` stays in Claude Code | Semantic content classification is an AI operation. ShardMind is a package manager. | ShardMind handles migration (scope creep, AI dependency in CLI) |
 | D11 | Status as root command, not menu | CLI users know what they want. Status answers "is my vault healthy" immediately. | Interactive menu (over-designed for 3 actions) |
 | D12 | Cached templates for 3-way merge base | Without cached templates, can't compute proper base for modified files. | Re-download old version during update (network dependency, slow) |

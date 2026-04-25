@@ -3,18 +3,14 @@ schema_version: 1
 values:
   user_name:
     type: string
-    required: true
     message: "Your name"
-    default: ""
+    default: null
     group: setup
 
 groups:
-  - id: setup
-    label: "Setup"
+  - { id: setup, label: "Setup" }
 
 modules: {}
-
-frontmatter:
-  global: [date, description]
-
+signals: []
+frontmatter: {}
 migrations: []

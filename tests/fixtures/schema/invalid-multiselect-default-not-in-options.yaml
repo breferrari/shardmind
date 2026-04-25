@@ -1,0 +1,19 @@
+schema_version: 1
+
+values:
+  plugins:
+    type: multiselect
+    message: "Plugins"
+    default: ["dataview", "nonexistent"]
+    options:
+      - { value: dataview, label: "Dataview" }
+      - { value: templater, label: "Templater" }
+    group: setup
+
+groups:
+  - { id: setup, label: "Setup" }
+
+modules: {}
+signals: []
+frontmatter: {}
+migrations: []

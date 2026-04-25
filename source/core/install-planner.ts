@@ -164,6 +164,21 @@ export function mergePrefill(
   return merged;
 }
 
+/**
+ * Keys missing from `snapshot` that the wizard should prompt for.
+ *
+ * `snapshot` is the **raw** user-supplied prefill (from `--values`
+ * file) — not the post-`mergePrefill` map. Threading raw user input
+ * here keeps the v6 prompt logic correct: under v6 every value has a
+ * `default`, so a merged map would always be complete and this would
+ * always return `[]`, silently skipping the wizard's value step. The
+ * wizard merges literal defaults internally to seed `ValueInput`'s
+ * initial display.
+ *
+ * Computed defaults (`{{ … }}`) are excluded — they're resolved by
+ * `resolveComputedDefaults` after the user provides the values they
+ * depend on.
+ */
 export function missingValueKeys(
   schema: ShardSchema,
   snapshot: Record<string, unknown>,

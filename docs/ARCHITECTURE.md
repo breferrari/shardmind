@@ -266,7 +266,7 @@ Four values. One group. One TUI screen. Done in 30 seconds.
 
 ### 5.2 Modules — What Files Exist
 
-Modules are vault sections that can be included or excluded during install. Each declares its paths, CLAUDE.md partials, commands, agents, and bases.
+Modules are vault sections that can be included or excluded during install. Each declares its paths, commands, agents, and bases.
 
 ```yaml
 modules:
@@ -293,14 +293,12 @@ modules:
   org:
     label: "People, teams"
     paths: ["org/"]
-    partials: ["claude/_org.md.njk"]
     commands: ["slack-scan"]
     removable: true
 
   perf:
     label: "Brag doc, competencies, reviews"
     paths: ["perf/"]
-    partials: ["claude/_perf.md.njk"]
     commands: ["review-brief", "self-review", "review-peer", "peer-scan"]
     agents: ["brag-spotter", "review-prep", "review-fact-checker"]
     bases: ["competency-map", "review-evidence"]
@@ -309,7 +307,6 @@ modules:
   incidents:
     label: "Incident tracking"
     paths: ["work/incidents/"]
-    partials: ["claude/_incidents.md.njk"]
     commands: ["incident-capture"]
     agents: ["slack-archaeologist"]
     bases: ["incidents"]
@@ -318,7 +315,6 @@ modules:
   1on1s:
     label: "1:1 meeting notes"
     paths: ["work/1-1/"]
-    partials: ["claude/_1on1s.md.njk"]
     commands: ["capture-1on1"]
     bases: ["1-1-history"]
     removable: true
@@ -474,19 +470,18 @@ graph TD
     style G fill:#1a1a2e,stroke:#0f9d58,color:#fff
 ```
 
-### 7.3 CLAUDE.md Partials
+### 7.3 CLAUDE.md as a Single Template
 
-CLAUDE.md is too monolithic to templatize as one file. Instead, it's assembled from per-module partials. The root template includes partials for included modules only:
+Under the v6 contract, `CLAUDE.md` (and `AGENTS.md`, `GEMINI.md`) ships as a single Nunjucks template at the shard root — `CLAUDE.md.njk` — rendered like any other `.njk` file. There is no partials/assembly system; per-module conditional content is expressed via `{% if %}` blocks gated on `included_modules`, e.g.:
 
-```markdown
-{% include "claude/_core.md.njk" %}
-
-{% for module in included_modules %}
-{% include "claude/_" + module + ".md.njk" ignore missing %}
-{% endfor %}
+```nunjucks
+{% if 'perf' in included_modules %}
+## Performance reviews
+…
+{% endif %}
 ```
 
-Each partial is independently maintained. On upgrade, if only `_incidents.md.njk` changes, only users who included the incidents module see the diff.
+Module deselection means file-path gating (the file is not installed), not section pruning of an assembled CLAUDE.md. See [`docs/SHARD-LAYOUT.md`](SHARD-LAYOUT.md) "no wrapper directories, no partials/assembly system" for the contract rationale.
 
 ### 7.4 Dynamic File Generation
 
@@ -957,7 +952,7 @@ my-vault/
 │
 ├── shard-values.yaml                  # USER OWNS. Never overwritten. 4 values.
 │
-├── CLAUDE.md                          # Rendered from partials (managed)
+├── CLAUDE.md                          # Rendered from CLAUDE.md.njk (managed)
 ├── Home.md                            # Rendered (managed)
 │
 ├── brain/                             # Core (always included)
@@ -1080,7 +1075,7 @@ guided_files:
 > [!warning] Deferred — flag for future
 > The Vigil Mind Reshape revealed that different purposes need different folder structures (not just different modules). Engineers use `work/active/`, creators use `projects/<name>/`, researchers use `raw/` + `wiki/`. This isn't adding/removing a module — it's changing how a core module is organized.
 >
-> For v0.1: different purposes are different shards. obsidian-mind is the engineering shard. Creator-builder is a separate shard sharing core partials. Research wiki is its own shard.
+> For v0.1: different purposes are different shards. obsidian-mind is the engineering shard. Creator-builder is a separate shard sharing core templates. Research wiki is its own shard.
 >
 > For v0.2: modules gain a `structure` field with purpose-driven variants. Design doc: the reshape decision record IS the spec for this feature.
 
@@ -1187,7 +1182,6 @@ export interface ShardSchema {
 export interface ModuleDefinition {
   label: string;
   paths: string[];
-  partials?: string[];
   commands?: string[];
   agents?: string[];
   bases?: string[];
@@ -1450,7 +1444,7 @@ staying hermetic. No test reaches the public internet.
 | 2 | `commands/install.tsx`: 4-value wizard + module review multiselect. State file. First E2E install of obsidian-mind. |
 | 3 | Write all 16 merge fixtures. Implement drift.ts + differ.ts (TDD). node-diff3 integration. All scenarios passing. |
 | 4 | `commands/update.tsx` wired to drift engine + DiffView. `commands/index.tsx` status display + verbose mode. |
-| 5 | obsidian-mind v6: shard.yaml, shard-schema.yaml, .njk templates, CLAUDE.md partials, TypeScript hooks. |
+| 5 | obsidian-mind v6: shard.yaml, shard-schema.yaml, .njk templates, CLAUDE.md.njk, TypeScript hooks. |
 | 6 | Research-wiki shard. E2E tests. README. npm publish. Announce. |
 
 ---

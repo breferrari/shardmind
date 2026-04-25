@@ -1,9 +1,17 @@
 import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import { parseSchema, buildValuesValidator, isComputedDefault } from '../../source/core/schema.js';
 
 const FIXTURES = path.resolve('tests/fixtures/schema');
 const EXAMPLE_SCHEMA = path.resolve('examples/minimal-shard/.shardmind/shard-schema.yaml');
+
+// Unique tmp filename per call. `Date.now()` collides under parallel
+// vitest workers (two tests within the same millisecond share a path,
+// and the second `unlink` throws ENOENT after the first cleans up).
+const tmpYaml = (prefix: string): string =>
+  path.join(os.tmpdir(), `${prefix}-${crypto.randomUUID()}.yaml`);
 
 describe('parseSchema', () => {
   it('parses valid-minimal fixture', async () => {
@@ -58,9 +66,8 @@ describe('parseSchema', () => {
   });
 
   it('rejects invalid YAML syntax', async () => {
-    const os = await import('node:os');
     const fs = await import('node:fs/promises');
-    const tmp = path.join(os.tmpdir(), `schema-test-${Date.now()}.yaml`);
+    const tmp = tmpYaml('schema-test');
     await fs.writeFile(tmp, ':\n  - [\ninvalid');
     try {
       const err = await parseSchema(tmp).catch(e => e);
@@ -99,10 +106,71 @@ describe('parseSchema', () => {
     expect(err.message).toContain('min');
   });
 
+  it('rejects literal `default` whose type does not match the value type', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-default-type-mismatch.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('default');
+    expect(err.message).toContain('number');
+  });
+
+  it('rejects select `default` not present in `options[].value`', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-select-default-not-in-options.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('default');
+    expect(err.message).toContain('options');
+    expect(err.message).toContain('purple');
+  });
+
+  it('rejects multiselect `default` containing values not in `options[].value`', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-multiselect-default-not-in-options.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('default');
+    expect(err.message).toContain('nonexistent');
+  });
+
+  it('rejects values missing the required `default` field', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-missing-default.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('user_name');
+    expect(err.message).toContain('default');
+    expect(err.hint).toContain('Every value must declare a `default`');
+  });
+
+  it('reports every value missing `default` (not just the first)', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-multiple-missing-defaults.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('alpha');
+    expect(err.message).toContain('beta');
+    expect(err.message).not.toContain('gamma');
+  });
+
+  it('silently ignores the dead `partials` field on modules (v5 → v6 tolerance)', async () => {
+    const schema = await parseSchema(path.join(FIXTURES, 'valid-partials-tolerated.yaml'));
+    const mod = schema.modules['legacy_mod']!;
+    expect(mod.label).toBe('Has v5 partials field');
+    expect(mod.paths).toEqual(['legacy/']);
+    expect('partials' in mod).toBe(false);
+  });
+
+  it('accepts type-matching empty/falsey literal defaults ("", false, 0, [])', async () => {
+    const schema = await parseSchema(path.join(FIXTURES, 'valid-sentinel-defaults.yaml'));
+    expect(Object.keys(schema.values)).toHaveLength(4);
+    expect(schema.values['empty_string_default']!.default).toBe('');
+    expect(schema.values['false_default']!.default).toBe(false);
+    expect(schema.values['zero_default']!.default).toBe(0);
+    expect(schema.values['empty_list_default']!.default).toEqual([]);
+  });
+
+  it('rejects literal `default: null` — null does not match any value type', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-default-null.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('default');
+    expect(err.message).toContain('string');
+  });
+
   it('reports every reserved-name collision when multiple', async () => {
-    const os = await import('node:os');
     const fs = await import('node:fs/promises');
-    const tmp = path.join(os.tmpdir(), `schema-reserved-${Date.now()}.yaml`);
+    const tmp = tmpYaml('schema-reserved');
     await fs.writeFile(tmp, [
       'schema_version: 1',
       'values:',

@@ -68,7 +68,6 @@ export interface GroupDefinition {
 export interface ModuleDefinition {
   label: string;
   paths: string[];
-  partials?: string[];
   commands?: string[];
   agents?: string[];
   bases?: string[];

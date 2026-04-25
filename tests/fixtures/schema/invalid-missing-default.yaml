@@ -5,7 +5,12 @@ values:
     type: string
     required: true
     message: "Your name"
-    default: ""
+    group: setup
+
+  org_name:
+    type: string
+    message: "Organization"
+    default: "Independent"
     group: setup
 
 groups:
@@ -14,7 +19,6 @@ groups:
 
 modules: {}
 
-frontmatter:
-  global: [date, description]
+frontmatter: {}
 
 migrations: []

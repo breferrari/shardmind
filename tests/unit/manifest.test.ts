@@ -1,8 +1,16 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import { parseManifest, ShardManifestSchema } from '../../source/core/manifest.js';
+
+// Unique tmp filename per call. `Date.now()` collides under parallel
+// vitest workers (two tests within the same millisecond share a path,
+// and the second `unlink` throws ENOENT after the first cleans up).
+// `randomUUID()` is collision-resistant under cryptographic guarantees.
+const tmpYaml = (prefix: string): string =>
+  path.join(os.tmpdir(), `${prefix}-${crypto.randomUUID()}.yaml`);
 
 const FIXTURE_DIR = path.resolve('examples/minimal-shard');
 const VALID_MANIFEST = path.join(FIXTURE_DIR, '.shardmind', 'shard.yaml');
@@ -24,7 +32,7 @@ describe('parseManifest', () => {
 
   it('defaults dependencies to [] and hooks to {} when omitted', async () => {
     const yaml = `apiVersion: v1\nname: test\nnamespace: dev\nversion: 1.0.0`;
-    const tmp = path.join(os.tmpdir(), `manifest-test-${Date.now()}.yaml`);
+    const tmp = tmpYaml('manifest-test');
     await fs.writeFile(tmp, yaml);
     try {
       const manifest = await parseManifest(tmp);
@@ -56,7 +64,7 @@ describe('parseManifest', () => {
       '  post-install: hooks/post-install.ts',
       '  post-update: hooks/post-update.ts',
     ].join('\n');
-    const tmp = path.join(os.tmpdir(), `manifest-test-${Date.now()}.yaml`);
+    const tmp = tmpYaml('manifest-test');
     await fs.writeFile(tmp, yaml);
     try {
       const manifest = await parseManifest(tmp);
@@ -75,7 +83,7 @@ describe('parseManifest', () => {
   });
 
   it('rejects invalid YAML syntax', async () => {
-    const tmp = path.join(os.tmpdir(), `manifest-test-${Date.now()}.yaml`);
+    const tmp = tmpYaml('manifest-test');
     await fs.writeFile(tmp, ':\n  bad:\n    - [\ninvalid');
     try {
       const err = await parseManifest(tmp).catch(e => e);
@@ -87,7 +95,7 @@ describe('parseManifest', () => {
 
   it('rejects missing required field (apiVersion)', async () => {
     const yaml = `name: test\nnamespace: dev\nversion: 1.0.0`;
-    const tmp = path.join(os.tmpdir(), `manifest-test-${Date.now()}.yaml`);
+    const tmp = tmpYaml('manifest-test');
     await fs.writeFile(tmp, yaml);
     try {
       const err = await parseManifest(tmp).catch(e => e);
@@ -100,7 +108,7 @@ describe('parseManifest', () => {
 
   it('rejects invalid semver version', async () => {
     const yaml = `apiVersion: v1\nname: test\nnamespace: dev\nversion: not-a-version`;
-    const tmp = path.join(os.tmpdir(), `manifest-test-${Date.now()}.yaml`);
+    const tmp = tmpYaml('manifest-test');
     await fs.writeFile(tmp, yaml);
     try {
       const err = await parseManifest(tmp).catch(e => e);
@@ -113,7 +121,7 @@ describe('parseManifest', () => {
 
   it('rejects name with uppercase letters', async () => {
     const yaml = `apiVersion: v1\nname: BadName\nnamespace: dev\nversion: 1.0.0`;
-    const tmp = path.join(os.tmpdir(), `manifest-test-${Date.now()}.yaml`);
+    const tmp = tmpYaml('manifest-test');
     await fs.writeFile(tmp, yaml);
     try {
       const err = await parseManifest(tmp).catch(e => e);
@@ -126,7 +134,7 @@ describe('parseManifest', () => {
 
   it('rejects namespace with spaces', async () => {
     const yaml = `apiVersion: v1\nname: test\nnamespace: "bad space"\nversion: 1.0.0`;
-    const tmp = path.join(os.tmpdir(), `manifest-test-${Date.now()}.yaml`);
+    const tmp = tmpYaml('manifest-test');
     await fs.writeFile(tmp, yaml);
     try {
       const err = await parseManifest(tmp).catch(e => e);

@@ -6,6 +6,7 @@ import Header from './Header.js';
 import ValueInput from './ValueInput.js';
 import ModuleReview from './ModuleReview.js';
 import {
+  mergePrefill,
   missingValueKeys,
   resolveComputedDefaults,
   defaultModuleSelections,
@@ -45,6 +46,16 @@ export default function InstallWizard({
   onCancel,
   onError,
 }: InstallWizardProps) {
+  // `prefillValues` carries the user's *raw* input (from `--values`), pre-merge.
+  // The wizard merges in literal schema defaults below to seed the live `values`
+  // state so each ValueInput pre-fills with the default. Keeping the raw user
+  // map separate lets `missingValueKeys` drive the prompt list correctly under
+  // v6: with the v5 "missing required" bound to user-vs-default-supplied input,
+  // not just "any key missing from a merged map".
+  const merged = useMemo(
+    () => mergePrefill(schema, prefillValues),
+    [schema, prefillValues],
+  );
   const valueKeys = useMemo(
     () => missingValueKeys(schema, prefillValues),
     [schema, prefillValues],
@@ -56,11 +67,11 @@ export default function InstallWizard({
     if (hasComputed) return { kind: 'computed-preview' };
     return { kind: 'modules' };
   });
-  const [values, setValues] = useState<Record<string, unknown>>(prefillValues);
+  const [values, setValues] = useState<Record<string, unknown>>(merged);
   const [selections, setSelections] = useState<ModuleSelections>(
     () => defaultModuleSelections(schema),
   );
-  const [resolvedValues, setResolvedValues] = useState<Record<string, unknown>>(prefillValues);
+  const [resolvedValues, setResolvedValues] = useState<Record<string, unknown>>(merged);
 
   // If we're opening directly into computed-preview, resolve on mount.
   // Using an effect keeps the useState initializer pure (no side effect)
@@ -68,7 +79,7 @@ export default function InstallWizard({
   useEffect(() => {
     if (valueKeys.length === 0 && hasComputed) {
       try {
-        setResolvedValues(resolveComputedDefaults(schema, prefillValues));
+        setResolvedValues(resolveComputedDefaults(schema, merged));
       } catch (err) {
         onError(err as Error);
       }

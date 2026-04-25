@@ -146,6 +146,9 @@ Thrown by `source/core/schema.ts`.
 - A value's `group` references a non-existent group
 - A `select` or `multiselect` value is missing `options`
 - `schema_version` isn't `1`
+- A value is missing the required `default` field (v6 contract — every value must declare a `default`; the `default` key must be present, and may hold an empty/falsey literal like `""`, `false`, `0`, or `[]` matching the value's `type`)
+- A literal `default` doesn't match the value's `type` (e.g., `type: number, default: "x"`, or `default: null` — null is not a value type and is rejected)
+- A `select` `default` is not one of `options[].value` (or `multiselect` default contains values outside the option set)
 
 **Remedy:** Consult [`docs/AUTHORING.md`](AUTHORING.md) §4 or [`schemas/shard-schema.schema.json`](../schemas/shard-schema.schema.json).
 

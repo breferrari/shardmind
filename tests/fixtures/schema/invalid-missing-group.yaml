@@ -5,6 +5,7 @@ values:
     type: string
     required: true
     message: "Your name"
+    default: ""
     group: nonexistent_group
 
 groups:

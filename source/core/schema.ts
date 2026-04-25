@@ -52,6 +52,66 @@ const ValueDefinitionSchema = z.object({
       input: val,
     });
   }
+  // `default` type-match. Skipped only for `{{ … }}` computed
+  // expressions (resolved at install time against the user's other
+  // answers). Every other literal — including `null` — must match
+  // the declared `type`. Authors who want an empty default use a
+  // type-matching literal: `""` for string, `0` for number, `false`
+  // for boolean, `[]` for list/multiselect, the first option for
+  // select. Allowing `null` past this check would propagate to
+  // `mergePrefill` and `buildValuesValidator`, surfacing as a
+  // confusing zod runtime error far from the offending schema line.
+  if (val.default !== undefined && !isComputedDefault(val.default)) {
+    const d = val.default;
+    let typeMismatch: string | null = null;
+    switch (val.type) {
+      case 'string':
+        if (typeof d !== 'string') typeMismatch = `expected string, got ${typeof d}`;
+        break;
+      case 'boolean':
+        if (typeof d !== 'boolean') typeMismatch = `expected boolean, got ${typeof d}`;
+        break;
+      case 'number':
+        if (typeof d !== 'number' || !Number.isFinite(d)) typeMismatch = `expected finite number, got ${typeof d === 'number' ? String(d) : typeof d}`;
+        break;
+      case 'list':
+      case 'multiselect':
+        if (!Array.isArray(d)) typeMismatch = `expected array, got ${typeof d}`;
+        break;
+      case 'select':
+        if (typeof d !== 'string') typeMismatch = `expected string (one of options), got ${typeof d}`;
+        break;
+    }
+    if (typeMismatch !== null) {
+      ctx.issues.push({
+        code: 'custom',
+        path: ['default'],
+        message: `\`default\` does not match \`type: ${val.type}\` — ${typeMismatch}`,
+        input: val,
+      });
+    } else if (val.type === 'select' && val.options && typeof d === 'string') {
+      const allowed = val.options.map(o => o.value);
+      if (!allowed.includes(d)) {
+        ctx.issues.push({
+          code: 'custom',
+          path: ['default'],
+          message: `\`default: ${JSON.stringify(d)}\` is not one of \`options[].value\`: ${JSON.stringify(allowed)}`,
+          input: val,
+        });
+      }
+    } else if (val.type === 'multiselect' && val.options && Array.isArray(d)) {
+      const allowed = new Set(val.options.map(o => o.value));
+      const bad = d.filter(item => typeof item !== 'string' || !allowed.has(item));
+      if (bad.length > 0) {
+        ctx.issues.push({
+          code: 'custom',
+          path: ['default'],
+          message: `\`default\` contains values not in \`options[].value\`: ${JSON.stringify(bad)}`,
+          input: val,
+        });
+      }
+    }
+  }
 });
 
 const GroupDefinitionSchema = z.object({
@@ -63,7 +123,6 @@ const GroupDefinitionSchema = z.object({
 const ModuleDefinitionSchema = z.object({
   label: z.string(),
   paths: z.array(z.string()),
-  partials: z.array(z.string()).optional(),
   commands: z.array(z.string()).optional(),
   agents: z.array(z.string()).optional(),
   bases: z.array(z.string()).optional(),
@@ -196,6 +255,30 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
         `Add a group with id "${val.group}" to the groups array, or change the value's group.`,
       );
     }
+  }
+
+  // Every value MUST declare a `default` field. The check reads the raw
+  // YAML because zod's `default: z.unknown().optional()` strips the key
+  // when missing, so post-parse `'default' in val` can't distinguish
+  // missing from explicit-undefined. Empty/falsey values like `""`,
+  // `false`, `0`, `[]` are accepted — the rule is presence, not
+  // non-emptiness. (Type-match for the literal happens in the
+  // `ValueDefinitionSchema.check()` rule above; `null` is rejected
+  // there because it doesn't match any of the six value types.)
+  const rawValues = (parsed as { values?: Record<string, unknown> }).values ?? {};
+  const missingDefault: string[] = [];
+  for (const key of Object.keys(data.values)) {
+    const raw = rawValues[key];
+    if (raw && typeof raw === 'object' && !Array.isArray(raw) && !('default' in raw)) {
+      missingDefault.push(key);
+    }
+  }
+  if (missingDefault.length > 0) {
+    throw new ShardMindError(
+      `shard-schema.yaml: values missing required \`default\` field: ${missingDefault.join(', ')}`,
+      'SCHEMA_VALIDATION_FAILED',
+      'Every value must declare a `default` whose type matches the value\'s `type`: "" for string, false for boolean, 0 for number, [] for list/multiselect, one of `options[].value` for select.',
+    );
   }
 
   // Normalize frontmatter: shorthand arrays → { required: [...] }
