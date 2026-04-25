@@ -360,6 +360,85 @@ describe('shardmind install', () => {
     expect(await vault.exists('shard-values.yaml')).toBe(true);
   });
 
+  it('--defaults installs the shard non-interactively using schema defaults', async () => {
+    // Invariant 1 mode: no --values, all defaults, all modules. Pins the
+    // happy path the byte-equivalence test (later in this file) builds on.
+    vault = await createEmptyVault('install-defaults');
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--defaults'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+    expect(await vault.exists('shard-values.yaml')).toBe(true);
+    // Schema defaults render through to disk: org_name='Independent',
+    // user_name='' (empty literal default in examples/minimal-shard's schema).
+    const home = await vault.readFile('Home.md');
+    expect(home).toContain('Vault entry point for Independent');
+    // shard-values.yaml carries the defaults verbatim.
+    const values = await vault.readFile('shard-values.yaml');
+    expect(values).toContain("org_name: Independent");
+    expect(values).toContain('vault_purpose: engineering');
+    expect(values).toContain('qmd_enabled: false');
+  });
+
+  it('--defaults rejects --values with INSTALL_FLAG_CONFLICT before any network call', async () => {
+    // Pre-flight check: --defaults uses schema defaults; --values would
+    // override them. The two are contradictory by construction. Mirrors
+    // UPDATE_FLAG_CONFLICT (#76) for --release + --include-prerelease.
+    vault = await createEmptyVault('install-defaults-with-values');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--defaults', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/INSTALL_FLAG_CONFLICT/);
+    expect(result.stdout).toMatch(/--defaults and --values cannot be combined/);
+    // Pre-flight check: nothing on disk.
+    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+    expect(await vault.exists('shard-values.yaml')).toBe(false);
+  });
+
+  it('--defaults refuses to overwrite an existing install with INSTALL_DEFAULTS_OVER_EXISTING', async () => {
+    // --defaults is the deterministic CI mode: the existing-install gate
+    // requires interactive input that --defaults can't provide, so the
+    // engine errors cleanly before any network call. Hint points at
+    // `shardmind update` or removing .shardmind/.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'install-defaults-over-existing',
+    });
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--defaults'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/INSTALL_DEFAULTS_OVER_EXISTING/);
+    expect(result.stdout).toMatch(/already shardmind-managed/);
+    expect(result.stdout).toMatch(/shardmind update/);
+  });
+
+  it('--defaults skips the wizard (no value prompts in stdout)', async () => {
+    // Skipping the wizard is what makes --defaults usable in CI / scripts:
+    // no terminal-interaction strings hit stdout, so a non-TTY parent never
+    // sees a prompt that would block on stdin.
+    vault = await createEmptyVault('install-defaults-no-wizard');
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--defaults'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    // The wizard's value-collection screen renders prompts using messages
+    // from the schema; minimal-shard uses 'How will you use this vault?'
+    // and 'Your name'. Their absence in the captured stdout pins the
+    // wizard-skip path.
+    expect(result.stdout).not.toMatch(/How will you use this vault\?/);
+    expect(result.stdout).not.toMatch(/Your name/);
+  });
+
   it('backs up pre-existing user content under --yes', async () => {
     vault = await createEmptyVault('install-collision');
     await vault.writeFile('Home.md', 'hand-crafted user content\n');
@@ -603,6 +682,28 @@ describe('shardmind install — post-install hook', () => {
       valuesAreDefaults: boolean;
     };
     expect(ctx.valuesAreDefaults).toBe(true);
+  }, 60_000);
+
+  it('--defaults populates valuesAreDefaults: true without a --values file (#78)', async () => {
+    // Sibling to the test above, but driven by `--defaults` instead of
+    // `--yes --values <file>`. Pins that the Invariant 1 mode produces
+    // the same hook ctx as a hand-rolled defaults values file: any
+    // future divergence (e.g. `--defaults` skipping computed-default
+    // resolution) would silently break Invariant 2 for hook authors.
+    vault = await createEmptyVault('install-defaults-hook-ctx');
+    const result = await spawnCli(
+      ['install', 'github:acme/hook-demo', '--defaults'],
+      { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: hookStub.url } },
+    );
+    expect(result.exitCode).toBe(0);
+    const ctx = JSON.parse(await vault.readFile('.hook-ctx.json')) as {
+      valuesAreDefaults: boolean;
+      newFiles: string[];
+      removedFiles: string[];
+    };
+    expect(ctx.valuesAreDefaults).toBe(true);
+    expect(ctx.newFiles).toEqual([]);
+    expect(ctx.removedFiles).toEqual([]);
   }, 60_000);
 
   it('re-hashes managed files after a hook that edits one (#75)', async () => {

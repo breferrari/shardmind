@@ -95,6 +95,19 @@ export interface UseInstallMachineInput {
   shardRef: string;
   valuesFile: string | undefined;
   yes: boolean;
+  /**
+   * `--defaults` — Invariant 1 mode. Skips the wizard, ignores `--values`,
+   * uses schema defaults for every value and the default module selections.
+   * Mutually exclusive with `--values` (rejected at boot before any network
+   * call). Refuses to overwrite an existing install (state.json present)
+   * because the gate UI requires interactive input that a `--defaults` run
+   * cannot provide.
+   *
+   * Implies `yes` semantics internally — both flags route through the same
+   * `runNonInteractive` path. `--yes` is accepted alongside `--defaults`
+   * (redundant but harmless); only `--values` is rejected.
+   */
+  defaults: boolean;
   verbose: boolean;
   dryRun: boolean;
   vaultRoot: string;
@@ -110,8 +123,13 @@ export interface UseInstallMachineOutput {
 }
 
 export function useInstallMachine(input: UseInstallMachineInput): UseInstallMachineOutput {
-  const { shardRef, valuesFile, yes, verbose, dryRun, vaultRoot } = input;
+  const { shardRef, valuesFile, yes, defaults, verbose, dryRun, vaultRoot } = input;
   const { exit } = useApp();
+
+  // `--defaults` implies `--yes` semantics internally (single non-interactive
+  // path through `runNonInteractive`). Computed once so the boot effect and
+  // gate handler agree on which mode is active.
+  const nonInteractive = yes || defaults;
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
 
@@ -173,6 +191,27 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
     (async () => {
       try {
+        // Flag-conflict + over-existing checks fire BEFORE any network call so
+        // a misconfigured invocation fails in milliseconds. Mirrors the
+        // pre-flight discipline `runUpdate` and `runAdopt` follow.
+        if (defaults && valuesFile !== undefined) {
+          throw new ShardMindError(
+            '--defaults and --values cannot be combined',
+            'INSTALL_FLAG_CONFLICT',
+            '--defaults uses schema defaults for every value; --values would override them. Drop one of the two flags.',
+          );
+        }
+        if (defaults) {
+          const existing = await readState(vaultRoot);
+          if (existing) {
+            throw new ShardMindError(
+              `Vault already shardmind-managed (${existing.shard}@${existing.version}); --defaults refuses to overwrite`,
+              'INSTALL_DEFAULTS_OVER_EXISTING',
+              'Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.',
+            );
+          }
+        }
+
         setPhase({ kind: 'loading', message: `Resolving ${shardRef}…` });
         const resolved = await resolveRef(shardRef);
 
@@ -217,7 +256,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         }
 
         if (disposed) return;
-        if (yes) {
+        if (nonInteractive) {
           await runNonInteractive(ctx);
         } else {
           setPhase({ kind: 'wizard', ctx });
@@ -235,7 +274,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shardRef, valuesFile, yes]);
+  }, [shardRef, valuesFile, yes, defaults]);
 
   const runNonInteractive = useCallback(
     async (ctx: PreparedContext) => {
@@ -413,8 +452,13 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         const collisions = await detectCollisions(vaultRoot, outputs.map((o) => o.outputPath));
 
         if (collisions.length > 0) {
-          if (yes) {
-            // --yes policy: auto-backup. Dry-run must skip the disk action.
+          if (nonInteractive) {
+            // Non-interactive policy: auto-backup. Dry-run must skip the
+            // disk action. Applies to both `--yes` and `--defaults`; the
+            // collision UI requires interactive input neither mode can
+            // provide. (Under `--defaults` an existing managed install is
+            // already rejected pre-flight, but unmanaged user content at a
+            // planned-write path is still a legitimate collision case.)
             const backups = dryRun ? [] : await backupCollisions(collisions);
             await executeInstall(ctx, validatedResult, backups);
           } else {
@@ -428,7 +472,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         finish({ kind: 'error', error: err as Error });
       }
     },
-    [yes, dryRun, vaultRoot, executeInstall, finish],
+    [nonInteractive, dryRun, vaultRoot, executeInstall, finish],
   );
 
   useEffect(() => {
@@ -491,7 +535,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
               fsp.rm(path.join(vaultRoot, SHARDMIND_DIR), { recursive: true, force: true }),
               fsp.rm(path.join(vaultRoot, VALUES_FILE), { force: true }),
             ]);
-            if (yes) {
+            if (nonInteractive) {
               await runNonInteractive(phase.ctx);
             } else {
               setPhase({ kind: 'wizard', ctx: phase.ctx });
@@ -502,7 +546,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         })();
       }
     },
-    [phase, vaultRoot, yes, dryRun, finish, runNonInteractive],
+    [phase, vaultRoot, nonInteractive, dryRun, finish, runNonInteractive],
   );
 
   const onWizardComplete = useCallback(

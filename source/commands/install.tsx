@@ -21,6 +21,7 @@ export const args = zod.tuple([
 export const options = zod.object({
   values: zod.string().optional().describe('Path to a YAML file prefilling value answers'),
   yes: zod.boolean().default(false).describe('Skip all prompts; accept defaults for everything'),
+  defaults: zod.boolean().default(false).describe('Use schema defaults for every value (Invariant 1 mode); skips the wizard. Mutually exclusive with --values.'),
   verbose: zod.boolean().default(false).describe('Show per-file rendering progress'),
   dryRun: zod.boolean().default(false).describe('Preview what would be installed without writing'),
 });
@@ -32,7 +33,7 @@ type Props = {
 
 export default function Install({ args, options }: Props) {
   const [shardRef] = args;
-  const { values: valuesFile, yes, verbose, dryRun } = options;
+  const { values: valuesFile, yes, defaults, verbose, dryRun } = options;
 
   const {
     phase,
@@ -45,6 +46,7 @@ export default function Install({ args, options }: Props) {
     shardRef: shardRef!,
     valuesFile,
     yes,
+    defaults,
     verbose,
     dryRun,
     vaultRoot: process.cwd(),
