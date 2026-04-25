@@ -240,6 +240,36 @@ export interface HookContext {
   modules: ModuleSelections;
   shard: { name: string; version: string };
   previousVersion?: string;
+  /**
+   * True iff every user value equals its schema default (deep-equal,
+   * with computed defaults resolved against the literal-default map
+   * first). Hooks that modify *managed* files must no-op when this is
+   * true — see Invariant 2 in `docs/SHARD-LAYOUT.md`. Hooks that create
+   * *unmanaged* files (QMD indexes, MCP caches, etc.) may run
+   * unconditionally; they don't affect the byte-equivalence invariant.
+   */
+  valuesAreDefaults: boolean;
+  /**
+   * Vault-relative paths of managed files newly added by this run.
+   *
+   * - Empty on a clean install (every file is new — the signal would be
+   *   uninformative).
+   * - Empty for a no-op update.
+   * - Populated for an update with `UpdateAction.kind === 'add'` paths.
+   *   `overwrite`, `auto_merge`, `restore_missing`, and conflict
+   *   resolutions are excluded — those paths were already in state.files.
+   *
+   * Hooks restrict their writes to these paths by default per
+   * Invariant 3 (post-update hooks are additive-only).
+   */
+  newFiles: string[];
+  /**
+   * Vault-relative paths of managed files removed by this run
+   * (`UpdateAction.kind === 'delete'`). Empty on install. Hooks use
+   * this to maintain external state — QMD collection refs, MCP
+   * registrations — that referenced now-removed paths.
+   */
+  removedFiles: string[];
 }
 
 // ---------------------------------------------------------------------------

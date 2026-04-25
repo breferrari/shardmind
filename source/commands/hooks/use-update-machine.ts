@@ -35,7 +35,8 @@ import { primeLatestVersion } from '../../core/update-check.js';
 import { downloadShard } from '../../core/download.js';
 import { parseManifest } from '../../core/manifest.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
-import { readState } from '../../core/state.js';
+import { readState, rehashManagedFiles, writeState } from '../../core/state.js';
+import { valuesAreDefaults } from '../../core/values-defaults.js';
 import { detectDrift } from '../../core/drift.js';
 import { applyMigrations } from '../../core/migrator.js';
 import {
@@ -523,6 +524,9 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
               modules: selections,
               shard: { name: ctx.newManifest.name, version: ctx.newManifest.version },
               previousVersion: ctx.state.version,
+              valuesAreDefaults: valuesAreDefaults(values, ctx.newSchema),
+              newFiles: result.summary.addedFiles,
+              removedFiles: result.summary.deletedFiles,
             };
             const hookResult = await runPostUpdateHook(
               ctx.newTempDir,
@@ -537,6 +541,18 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
             hookSummary = summarizeHook(hookResult);
           } finally {
             hookAbortRef.current = null;
+          }
+
+          // Re-hash managed files after the hook exits — success OR
+          // failure. Mirror of use-install-machine; same rationale (Helm
+          // non-fatal contract + state.json must reflect actual content).
+          try {
+            const rehash = await rehashManagedFiles(vaultRoot, result.state);
+            if (rehash.changed.length > 0 || rehash.missing.length > 0 || rehash.failed.length > 0) {
+              await writeState(vaultRoot, rehash.state);
+            }
+          } catch {
+            // Defensive — see use-install-machine.ts for rationale.
           }
         }
 

@@ -917,6 +917,9 @@ describe('update pipeline (against examples/minimal-shard)', () => {
         modules: selections,
         shard: { name: newManifest.name, version: newManifest.version },
         previousVersion: state.version,
+        valuesAreDefaults: false,
+        newFiles: [],
+        removedFiles: [],
       });
       expect(hookResult.kind).toBe('ran');
       if (hookResult.kind !== 'ran') throw new Error('narrowing');
