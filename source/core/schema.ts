@@ -63,7 +63,6 @@ const GroupDefinitionSchema = z.object({
 const ModuleDefinitionSchema = z.object({
   label: z.string(),
   paths: z.array(z.string()),
-  partials: z.array(z.string()).optional(),
   commands: z.array(z.string()).optional(),
   agents: z.array(z.string()).optional(),
   bases: z.array(z.string()).optional(),

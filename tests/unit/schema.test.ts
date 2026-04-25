@@ -147,6 +147,43 @@ describe('parseSchema', () => {
     }
   });
 
+  it('silently ignores the dead `partials` field on modules (v5 → v6 tolerance)', async () => {
+    const os = await import('node:os');
+    const fs = await import('node:fs/promises');
+    const tmp = path.join(os.tmpdir(), `schema-partials-${Date.now()}.yaml`);
+    await fs.writeFile(tmp, [
+      'schema_version: 1',
+      'values:',
+      '  user_name:',
+      '    type: string',
+      '    message: "Your name"',
+      '    default: ""',
+      '    group: setup',
+      'groups:',
+      '  - { id: setup, label: "Setup" }',
+      'modules:',
+      '  legacy_mod:',
+      '    label: "Has v5 partials field"',
+      '    paths: ["legacy/"]',
+      '    partials: ["claude/_legacy.md.njk"]',
+      '    removable: true',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n'));
+
+    try {
+      const schema = await parseSchema(tmp);
+      const mod = schema.modules['legacy_mod']!;
+      expect(mod.label).toBe('Has v5 partials field');
+      expect(mod.paths).toEqual(['legacy/']);
+      expect((mod as Record<string, unknown>)['partials']).toBeUndefined();
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
   it('accepts sentinel default values (null, empty string, false, 0, empty list)', async () => {
     const os = await import('node:os');
     const fs = await import('node:fs/promises');
