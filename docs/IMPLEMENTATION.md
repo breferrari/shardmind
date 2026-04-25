@@ -218,31 +218,35 @@ downloadShard(tarballUrl: string): Promise<TempShard>
 **Outputs**:
 ```typescript
 interface TempShard {
-  tempDir: string;           // Absolute path to extracted shard
-  manifest: string;          // Path to shard.yaml within tempDir
-  schema: string;            // Path to shard-schema.yaml within tempDir
-  cleanup: () => Promise<void>;  // Removes tempDir
+  tempDir: string;             // Absolute path to extracted shard root
+  manifest: string;            // Path to .shardmind/shard.yaml within tempDir
+  schema: string;              // Path to .shardmind/shard-schema.yaml within tempDir
+  tarball_sha256: string;      // sha256 of the tarball bytes (recorded in state.json)
+  cleanup: () => Promise<void>;
 }
 ```
 
 **Algorithm**:
-1. Create temp directory: `os.tmpdir() + '/shardmind-' + crypto.randomUUID()`
-2. Fetch tarball URL with `fetch()`, following redirects (GitHub returns 302)
-3. Set headers: `Accept: application/vnd.github+json`, `Authorization: Bearer ${GITHUB_TOKEN}` if set
-4. Pipe response body through `tar.x({ strip: 1, C: tempDir })`
-   - `strip: 1` removes the GitHub archive's top-level directory (`owner-repo-sha/`)
-5. Verify `shard.yaml` exists in tempDir. If not → error.
-6. Verify `shard-schema.yaml` exists. If not → error.
-7. Return TempShard with cleanup function
+1. Create temp directory: `os.tmpdir() + '/shardmind-' + crypto.randomUUID()`.
+2. Fetch tarball URL with `fetch()`, following redirects (GitHub returns 302).
+3. Set headers: `Accept: application/vnd.github+json`, `Authorization: Bearer ${GITHUB_TOKEN}` for github.com/codeload.github.com hosts when the env var is set.
+4. Pipe response body through a hash-tap transform (sha256) and into `tar.x({ strip: 1, C: tempDir })`.
+   - `strip: 1` removes the GitHub archive's top-level directory (`owner-repo-sha/`).
+   - `tar.x` normalizes Windows path separators to forward slashes, so the engine never sees `\` in a relPath.
+5. Verify `<tempDir>/.shardmind/shard.yaml` exists. If not → throw `DOWNLOAD_MISSING_MANIFEST`.
+6. Verify `<tempDir>/.shardmind/shard-schema.yaml` exists. If not → throw `DOWNLOAD_MISSING_SCHEMA`.
+7. Return `TempShard` with `cleanup` function and `tarball_sha256` from the hash tap.
 
 **Error cases**:
-- HTTP non-200 → `"Failed to download: HTTP {status}"`
-- Tarball corrupted → `"Downloaded archive is not a valid tarball"`
-- Missing shard.yaml → `"Not a valid shard: shard.yaml not found"`
-- Missing shard-schema.yaml → `"Not a valid shard: shard-schema.yaml not found"`
-- Disk full → propagate OS error
+- HTTP non-200 → `DOWNLOAD_HTTP_ERROR` with `"Failed to download: HTTP {status}"`.
+- Network failure → `DOWNLOAD_HTTP_ERROR` with the underlying message.
+- Empty body → `DOWNLOAD_HTTP_ERROR`.
+- Tarball corrupted → `DOWNLOAD_INVALID_TARBALL`.
+- Missing `.shardmind/shard.yaml` → `DOWNLOAD_MISSING_MANIFEST`.
+- Missing `.shardmind/shard-schema.yaml` → `DOWNLOAD_MISSING_SCHEMA`.
+- Disk full → propagate OS error.
 
-**Dependencies**: `tar` (node-tar).
+**Dependencies**: `tar` (node-tar), `node:crypto`, `node:stream`.
 
 ---
 
@@ -325,15 +329,20 @@ buildValuesValidator(schema: ShardSchema): z.ZodObject<any>
 
 ### 4.5 `modules.ts`
 
-**Purpose**: Resolve which files to render, copy, or skip based on module inclusion.
+**Purpose**: Walk the shard root and classify every file into render / copy / skip based on module inclusion. Under the v6 layout (closed in [#73](https://github.com/breferrari/shardmind/issues/73)) the shard repo *is* the installed vault — no `templates/` wrapper, no separate `commands/` / `agents/` / `codex/` trees.
 
 **Inputs**:
 ```typescript
 resolveModules(
   schema: ShardSchema,
   selections: Record<string, 'included' | 'excluded'>,
-  tempDir: string,
+  rootDir: string,                           // shard tempDir (post-extract) or examples/<shard>
 ): Promise<ModuleResolution>
+
+walkShardSource(                             // shared with state.ts:cacheTemplates
+  rootDir: string,
+  ignoreFilter: IgnoreFilter,
+): Promise<WalkedFile[]>
 ```
 
 **Outputs**:
@@ -345,51 +354,123 @@ interface ModuleResolution {
 }
 
 interface FileEntry {
-  sourcePath: string;       // Path in tempDir
-  outputPath: string;       // Path in vault (relative to cwd)
-  module: string | null;    // Which module this belongs to, or null for core
+  sourcePath: string;       // Absolute path in rootDir
+  outputPath: string;       // Path in vault (= relPath, with .njk stripped if rendered)
+  module: string | null;    // Which module this belongs to, or null for always-included
   volatile: boolean;        // Has {# shardmind: volatile #} hint
-  iterator: string | null;  // For _each templates: the list value key
+  iterator: string | null;  // For _each templates: the parent dir name (iterator key)
+}
+
+interface WalkedFile {
+  relPath: string;          // Posix path from rootDir (e.g. "brain/North Star.md")
+  absPath: string;          // Absolute path on disk
 }
 ```
 
 **Algorithm**:
-1. Walk the shard's `templates/` directory recursively
-2. For each file:
-   a. Determine which module it belongs to by matching its path against `module.paths[]`
-   b. If module is excluded → add to `skip`
-   c. If file ends in `.njk`:
-      - Read first line, check for `{# shardmind: volatile #}`
-      - Check if filename starts with `_each` → extract iterator key from filename
-      - Compute output path: strip `templates/` prefix, strip `.njk` suffix
-      - Add to `render`
-   d. Else → add to `copy`
-3. Walk `commands/`, `agents/` directories:
-   - For each file, check if it's listed in any module's `commands[]` or `agents[]`
-   - If its module is excluded → skip
-   - Else → add to `copy` with output path under `.claude/commands/` or `.claude/agents/`
-4. Walk `scripts/`, `utilities/`, `skills/` → always add to `copy`
-5. Add `settings.json.njk` to `render` (always present)
+1. Load `.shardmindignore` from `rootDir` via `loadShardmindignore` (§4.5b). Returns `EMPTY_FILTER` if absent.
+2. Walk `rootDir` recursively (DFS). For each `Dirent`:
+   a. If `entry.isSymbolicLink()` → throw `WALK_SYMLINK_REJECTED` (security baseline; an untrusted shard could symlink outside the install target).
+   b. If neither file nor directory (socket, FIFO, device) → throw `WALK_INVALID_ENTRY`.
+   c. Compute `relPath = relDir === '' ? entry.name : relDir + '/' + entry.name`.
+   d. If `isTier1Excluded(relPath)` (§4.5a) → skip the entry entirely (no recursion for dirs).
+   e. If `ignoreFilter.ignores(relPath, isDir)` → skip.
+   f. Directory → recurse. File → push `{ relPath, absPath }`.
+3. For each walked file, classify:
+   a. **Module assignment** (priority order, returns first hit):
+      i. Path-prefix match against `mod.paths` (e.g. `brain/Index.md` → module `brain` with `paths: ['brain/']`).
+      ii. Exact match against `bases/<id>.base.njk` for `mod.bases`.
+      iii. Per-name match: when the file's parent-dir component (case-insensitive) is `commands` or `agents`, match basename-no-ext against `mod.commands` / `mod.agents` lists. Scopes the heuristic so a vault note named after a command isn't gated by it.
+      iv. Else `null` (always-included; e.g. agent operating manuals at the vault root).
+   b. **Excluded?** If `moduleId !== null && selections[moduleId] === 'excluded'` → push to `skip` and continue.
+   c. **Render or copy?** `relPath.endsWith('.njk')` → render entry; else copy entry.
+   d. **Render-only metadata**: read first 256 bytes for `{# shardmind: volatile #}` (volatile flag), and extract iterator key from `_each` parent dir name.
+   e. **Output path**: `relPath` for copies; `relPath` minus `.njk` for renders.
 
-**Output path mapping**:
+**Output path mapping under v6**: source path is preserved (no `templates/` to strip; no special-case rename for `settings.json.njk` since the source is already `.claude/settings.json.njk`).
+
 ```
-templates/CLAUDE.md.njk              → CLAUDE.md
-templates/AGENTS.md.njk              → AGENTS.md                    (if present)
-templates/GEMINI.md.njk              → GEMINI.md                    (if present)
-templates/brain/North Star.md.njk    → brain/North Star.md
-templates/bases/incidents.base.njk   → bases/incidents.base
-templates/settings.json.njk          → .claude/settings.json
-commands/review-brief.md             → .claude/commands/review-brief.md
-agents/brag-spotter.md               → .claude/agents/brag-spotter.md
-codex/standup.md                     → .codex/prompts/standup.md    (if present)
-scripts/session_start.ts             → .claude/scripts/session_start.ts
-utilities/charcount.sh               → .claude/utilities/charcount.sh
-skills/obsidian-markdown/SKILL.md    → .claude/skills/obsidian-markdown/SKILL.md
+.shardmind/shard.yaml                ← engine reads via download.ts (§4.2); excluded from install set by Tier 1
+CLAUDE.md                            → CLAUDE.md (Tier 2 default-included)
+Home.md.njk                          → Home.md (rendered; suffix stripped)
+brain/North Star.md.njk              → brain/North Star.md (rendered; module: 'brain')
+bases/incidents.base.njk             → bases/incidents.base (rendered; module via mod.bases)
+.claude/commands/reflect.md          → .claude/commands/reflect.md (copy verbatim; module via mod.commands per-name match)
+.claude/settings.json.njk            → .claude/settings.json (rendered; dotfolder convention)
+.codex/prompts/standup.md            → .codex/prompts/standup.md (copy verbatim)
+.shardmindignore                     → .shardmindignore (Tier 2 — installed verbatim, inert post-install)
 ```
 
-The engine maps all files it finds — it doesn't enforce which agent configs a shard includes.
+**Errors**:
+- `WALK_SYMLINK_REJECTED` — entry `<relPath>` is a symbolic link.
+- `WALK_INVALID_ENTRY` — entry `<relPath>` is neither file nor directory.
+- `SHARDMINDIGNORE_NEGATION_UNSUPPORTED` (from §4.5b) — author wrote `!negation` patterns; deferred to v0.2 #87.
+- `SHARDMINDIGNORE_READ_FAILED` (from §4.5b) — IO error reading `.shardmindignore` other than ENOENT.
 
-**Dependencies**: `node:fs`, `node:path`.
+**Shared with `state.ts:cacheTemplates`**: the walker is exported so the merge-base cache mirrors the install set (same Tier 1 + ignore + symlink filter applied to both sides).
+
+**Dependencies**: `node:fs/promises`, `node:path`, `./tier1`, `./shardmindignore`.
+
+### 4.5a `tier1.ts`
+
+**Purpose**: Engine-enforced source-side path exclusions. Authors can't toggle these off.
+
+**API**:
+```typescript
+export const TIER1: Readonly<{
+  excludedDirs: readonly ['.shardmind', '.git', '.github'];
+  excludedFiles: readonly [
+    '.obsidian/workspace.json',
+    '.obsidian/workspace-mobile.json',
+    '.obsidian/graph.json',
+  ];
+}>;
+export function isTier1Excluded(relPosixPath: string): boolean;
+```
+
+**Algorithm**: lowercase `relPosixPath`; for each excluded dir, return true on `lower === dir || lower.startsWith(dir + '/')`; for each excluded file, return true on `lower === file`. Case-insensitive for HFS+/APFS/NTFS parity (a shard committing `.GIT/HEAD` from Windows is still excluded).
+
+**Why each dir/file is excluded**:
+- `.shardmind/` (source-side) — engine metadata; the installed-side `.shardmind/` is written separately by `cacheManifest`.
+- `.git/` — VCS database.
+- `.github/` — defensive: prevents accidental Actions activation if the user later git-pushes their personal vault.
+- `.obsidian/{workspace,workspace-mobile,graph}.json` — Obsidian's user-specific ephemeral state. Other `.obsidian/*` is author-controlled.
+
+Symlinks are rejected by the walker (`WALK_SYMLINK_REJECTED`), not by Tier 1 path matching.
+
+**Dependencies**: none (pure data + matcher).
+
+### 4.5b `shardmindignore.ts`
+
+**Purpose**: Parse the root-level `.shardmindignore` into an `IgnoreFilter` that the walker consults per-entry.
+
+**API**:
+```typescript
+export interface IgnoreFilter {
+  ignores(relPosixPath: string, isDir: boolean): boolean;
+}
+export async function loadShardmindignore(rootDir: string): Promise<IgnoreFilter>;
+export function parseShardmindignore(source: string): IgnoreFilter;
+```
+
+**Algorithm**:
+1. `loadShardmindignore`: read `<rootDir>/.shardmindignore` as utf-8. ENOENT → return `EMPTY_FILTER`. Other IO errors → throw `SHARDMINDIGNORE_READ_FAILED`.
+2. `parseShardmindignore`:
+   a. Split on `\r?\n`. For each line, strip whitespace; skip blanks and `#`-comments.
+   b. If a non-comment line starts with `!` → record line number for the negation-rejection error.
+   c. If any negations were recorded → throw `SHARDMINDIGNORE_NEGATION_UNSUPPORTED` listing every line. Negation deferred to v0.2 ([#87](https://github.com/breferrari/shardmind/issues/87)).
+   d. Pass the full source to `ignore().add(source)` — the `ignore` package does the real glob compilation.
+3. `IgnoreFilter.ignores(relPosixPath, isDir)`: append `/` to the path when `isDir && !endsWith('/')` so dir-only patterns (`build/`) match correctly, then delegate to the `ignore` package.
+
+**Notes**:
+- Gitignore-spec escape semantics work: `\!literal-bang.md` is preserved by `trim()` (the backslash isn't stripped), so the negation pre-pass correctly recognizes only bare-bang lines.
+- The pre-pass + `ignore().add()` does a double scan of the source string. Acceptable cost (sources are typically <1KB) for clear error reporting.
+
+**Errors**:
+- `SHARDMINDIGNORE_NEGATION_UNSUPPORTED` — message lists every offending line; hint points at #87.
+- `SHARDMINDIGNORE_READ_FAILED` — non-ENOENT IO error; hint references the file path.
+
+**Dependencies**: `node:fs/promises`, `node:path`, `ignore` (npm), `runtime/types`, `runtime/errno`.
 
 ---
 
@@ -480,9 +561,22 @@ cacheManifest(vaultRoot: string, manifest: ShardManifest, schema: ShardSchema): 
 └── templates/
 ```
 
-**`cacheTemplates`**: copies the entire `templates/` directory from temp to `.shardmind/templates/`. This is the base for future three-way merges.
+**`cacheTemplates`**: under v6 ([#73](https://github.com/breferrari/shardmind/issues/73)) the source no longer has a `templates/` wrapper. The function:
 
-**Dependencies**: `yaml`, `node:fs`, `node:path`.
+1. Asserts `<tempDir>/.shardmind/shard.yaml` exists. If not → throws `STATE_CACHE_MISSING_MANIFEST`.
+2. Loads `.shardmindignore` from the source root via `loadShardmindignore` (§4.5b).
+3. Walks the source via `walkShardSource` (§4.5) — same Tier 1 + ignore + symlink-rejection filter that `resolveModules` applies to the install set.
+4. Removes any prior `.shardmind/templates/` (rebuild from scratch).
+5. Copies each walked file to `<vaultRoot>/.shardmind/templates/<relPath>` via `mapConcurrent(16)` (bounded parallelism — same budget the update planner uses).
+
+Module gating is **not** applied to the cache; toggling a module on at update time must be able to read its source from the cache without re-downloading. The cache mirrors the post-walk-filter set, not the post-selection set.
+
+**Errors**:
+- `STATE_CACHE_MISSING_MANIFEST` — `.shardmind/shard.yaml` absent in tempDir.
+- `WALK_SYMLINK_REJECTED` / `WALK_INVALID_ENTRY` (propagated from the walker).
+- `SHARDMINDIGNORE_*` (propagated from the ignore loader).
+
+**Dependencies**: `yaml`, `node:fs/promises`, `node:path`, `./modules` (walkShardSource), `./shardmindignore` (loadShardmindignore), `./fs-utils` (mapConcurrent).
 
 ---
 
