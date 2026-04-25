@@ -120,7 +120,13 @@ export async function cleanupAllVaults(): Promise<void> {
   }
 }
 
-async function listRecursive(root: string): Promise<string[]> {
+/**
+ * Recursive file listing. Returns relative paths in POSIX form, sorted.
+ * Skips symlinks and non-regular entries silently. Tolerates a directory
+ * vanishing mid-walk. Shared by the Vault factory and the Invariant 1
+ * helper so test code has one walker.
+ */
+export async function listRecursive(root: string): Promise<string[]> {
   const out: string[] = [];
   const stack: string[] = [root];
   while (stack.length > 0) {

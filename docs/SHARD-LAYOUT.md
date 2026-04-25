@@ -98,13 +98,23 @@ Three mechanisms.
 
 Three hard rules the engine + authors uphold. Enforced by CI.
 
-### Invariant 1 — `install --defaults` is byte-equivalent to clone
+### Invariant 1 — `install --defaults` is clone-equivalent
 
-If a user runs `shardmind install <shard>` and accepts every default value, the resulting vault is byte-identical to `git clone <shard>`, modulo:
-- Tier 1 engine exclusions (absent from install)
-- Engine metadata (present in install): `.shardmind/state.json`, `.shardmind/shard.yaml` (cached manifest), `.shardmind/shard-schema.yaml` (cached schema), `.shardmind/templates/` (merge-base cache), and vault-root `shard-values.yaml`
+When a user runs `shardmind install --defaults <shard>`, the resulting vault stands in a precise relationship to `git clone <shard>`:
 
-Enforced by a CI E2E test. Any other delta is a shard-design bug. Byte-equivalence = content hash + relative path; modes and mtimes are not compared.
+For every clone-side path P that survives Tier 1 exclusion + `.shardmindignore` filtering:
+- **Static file** (P does NOT end in `.njk`): the install has a file at the same path P with **byte-identical content**. Content hash + relative path are compared; modes and mtimes are not.
+- **Renderable template** (P ends in `.njk`): the install has a file at the **stripped** path (P with `.njk` removed). The rendered bytes legitimately differ from the source — `install_date`, value substitutions, frontmatter normalization. No byte comparison; presence-at-mapped-path is the contract.
+
+The install additionally contains, never present in the clone:
+- Engine metadata under `.shardmind/`: `state.json`, cached `shard.yaml` (manifest), cached `shard-schema.yaml`, and `templates/` (merge-base cache).
+- Vault-root `shard-values.yaml` with default values serialized.
+
+Any other delta — a clone path with no install counterpart, an install path with no clone source, a static-file byte mismatch, a Tier 1 entry that leaked through, a `.shardmindignore`-excluded file that ended up installed — is a shard-design or engine bug.
+
+Enforced by a CI E2E test. The `tests/e2e/helpers/invariant1.ts` helper encapsulates the comparison; `shardmind install --defaults` is the deterministic mode that makes the test reproducible across runs.
+
+**Author guidance.** The smaller a shard's render-delta surface, the closer the install is to a true clone byte-for-byte. Vault-visible content (`Home.md`, `brain/*.md`, …) is best authored as static `.md` and personalized via post-install hooks; renderable templates fit naturally in hidden dotfolders (`.claude/settings.json.njk`, `.codex/config.json.njk`) where Obsidian doesn't surface the `.njk` suffix to the user. See [`docs/AUTHORING.md §5`](AUTHORING.md) for the full convention.
 
 ### Invariant 2 — Hooks respect default-values
 

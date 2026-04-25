@@ -293,6 +293,24 @@ Thrown by `source/core/install-planner.ts` and `source/core/install-executor.ts`
 
 ---
 
+## Install command flags
+
+Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-flight, before any network call.
+
+### `INSTALL_FLAG_CONFLICT`
+
+**Meaning:** Two install flags would resolve through different policies and the engine refuses to silently pick one. Currently rejected: `--defaults` + `--values <file>` — `--defaults` uses schema defaults for every value; `--values` would override them.
+
+**Remedy:** Drop one of the two flags. Use `--values` for non-default scripted installs; use `--defaults` for the deterministic Invariant 1 mode.
+
+### `INSTALL_DEFAULTS_OVER_EXISTING`
+
+**Meaning:** `shardmind install --defaults` was invoked in a directory that already contains `.shardmind/state.json`. `--defaults` is the deterministic CI / non-TTY mode; the existing-install gate requires interactive input it can't provide, so the engine errors before any network call.
+
+**Remedy:** Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.
+
+---
+
 ## Render
 
 Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor.ts`.

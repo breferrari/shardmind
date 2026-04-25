@@ -11,17 +11,29 @@
  * No test reaches the public internet; rate limits and network flakes
  * can't destabilize the run.
  *
- * Coverage matrix (see `docs/IMPLEMENTATION.md` §20 for the methodology):
- *   Bootstrap (2)  — --version / --help
- *   Status    (7)  — not-in-vault, quick, verbose, update-available,
- *                    modified-files, corrupt state, offline fallback
- *   Install   (12) — happy + dry-run + verbose + @version + errors +
- *                    collision + BACKUP_FAILED + SIGINT rollback
- *   Update    (7)  — no-install typed error, up-to-date, real bump,
- *                    auto-merge with edits, UPDATE_SOURCE_MISMATCH,
- *                    dry-run, SIGINT rollback
- *   Property  (2)  — install determinism + dry-run safety under
- *                    arbitrary value subsets
+ * Coverage areas (see `docs/ARCHITECTURE.md §19.7` for the methodology):
+ *   Bootstrap          — --version / --help
+ *   Status             — not-in-vault, quick, verbose, update-available,
+ *                        modified-files, corrupt state, offline fallback
+ *   Install            — happy + dry-run + verbose + @version + errors +
+ *                        collision + BACKUP_FAILED + SIGINT rollback +
+ *                        --defaults flag (Invariant 1 mode) + flag conflict
+ *                        + over-existing + skips wizard
+ *   Install hook       — post-install hook ran + ctx fields + re-hash +
+ *                        dry-run note
+ *   Install Invariant 1— byte-equivalence vs minimal-shard via
+ *                        `verifyInvariant1` (helpers/invariant1.ts)
+ *   Install #ref       — branch install + unknown ref error
+ *   Update             — no-install typed error, up-to-date, real bump,
+ *                        auto-merge with edits, UPDATE_SOURCE_MISMATCH,
+ *                        dry-run, SIGINT rollback
+ *   Update #ref        — re-resolution on bump + up-to-date when SHA stable
+ *   Update flags       — --release pin, --release + --include-prerelease conflict,
+ *                        --include-prerelease against beta-only repo
+ *   Property           — install determinism + dry-run safety under
+ *                        arbitrary value subsets
+ *   Adopt              — empty / matching / existing-install / dry-run /
+ *                        --yes auto-keep-mine
  */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
@@ -46,6 +58,7 @@ import {
   cleanupAllVaults,
   type Vault,
 } from './helpers/vault.js';
+import { verifyInvariant1 } from './helpers/invariant1.js';
 
 const SHARD_SLUG = 'acme/demo';
 const SHARD_REF = `github:${SHARD_SLUG}`;
@@ -360,6 +373,108 @@ describe('shardmind install', () => {
     expect(await vault.exists('shard-values.yaml')).toBe(true);
   });
 
+  it('--defaults installs the shard non-interactively using schema defaults', async () => {
+    // Invariant 1 mode: no --values, all defaults, all modules. Pins the
+    // happy path the byte-equivalence test (later in this file) builds on.
+    vault = await createEmptyVault('install-defaults');
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--defaults'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+    expect(await vault.exists('shard-values.yaml')).toBe(true);
+    // Schema defaults render through to disk: org_name='Independent',
+    // user_name='' (empty literal default in examples/minimal-shard's schema).
+    const home = await vault.readFile('Home.md');
+    expect(home).toContain('Vault entry point for Independent');
+    // shard-values.yaml carries the defaults verbatim.
+    const values = await vault.readFile('shard-values.yaml');
+    expect(values).toContain("org_name: Independent");
+    expect(values).toContain('vault_purpose: engineering');
+    expect(values).toContain('qmd_enabled: false');
+  });
+
+  it('--defaults rejects --values with INSTALL_FLAG_CONFLICT before any network call', async () => {
+    // Pre-flight check: --defaults uses schema defaults; --values would
+    // override them. The two are contradictory by construction. Mirrors
+    // UPDATE_FLAG_CONFLICT (#76) for --release + --include-prerelease.
+    vault = await createEmptyVault('install-defaults-with-values');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--defaults', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/INSTALL_FLAG_CONFLICT/);
+    expect(result.stdout).toMatch(/--defaults and --values cannot be combined/);
+    // Pre-flight check: nothing on disk.
+    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+    expect(await vault.exists('shard-values.yaml')).toBe(false);
+  });
+
+  it('--defaults refuses to overwrite an existing install with INSTALL_DEFAULTS_OVER_EXISTING', async () => {
+    // --defaults is the deterministic CI mode: the existing-install gate
+    // requires interactive input that --defaults can't provide, so the
+    // engine errors cleanly before any network call. Hint points at
+    // `shardmind update` or removing .shardmind/.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'install-defaults-over-existing',
+    });
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--defaults'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/INSTALL_DEFAULTS_OVER_EXISTING/);
+    expect(result.stdout).toMatch(/already shardmind-managed/);
+    expect(result.stdout).toMatch(/shardmind update/);
+  });
+
+  it('--defaults skips the wizard (no value prompts in stdout)', async () => {
+    // Skipping the wizard is what makes --defaults usable in CI / scripts:
+    // no terminal-interaction strings hit stdout, so a non-TTY parent never
+    // sees a prompt that would block on stdin.
+    vault = await createEmptyVault('install-defaults-no-wizard');
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--defaults'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    // The wizard's value-collection screen renders prompts using messages
+    // from the schema; minimal-shard uses 'How will you use this vault?'
+    // and 'Your name'. Their absence in the captured stdout pins the
+    // wizard-skip path.
+    expect(result.stdout).not.toMatch(/How will you use this vault\?/);
+    expect(result.stdout).not.toMatch(/Your name/);
+  });
+
+  it('--defaults auto-backs-up pre-existing user content at a planned-write path', async () => {
+    // The non-interactive backup path was previously gated on `--yes`;
+    // the simplify pass widened it to fire on either flag (`yes ||
+    // defaults`), since the collision UI requires interactive input
+    // neither mode can provide. Pin the new branch end-to-end so a
+    // future regression that re-narrows it to `--yes` is caught.
+    vault = await createEmptyVault('install-defaults-collision');
+    await vault.writeFile('Home.md', 'hand-crafted user content\n');
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--defaults'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    const files = await vault.listFiles();
+    const backup = files.find((f) => f.startsWith('Home.md.shardmind-backup-'));
+    expect(backup).toBeDefined();
+    const backed = await vault.readFile(backup!);
+    expect(backed).toBe('hand-crafted user content\n');
+    // Home.md is the rendered template, not the user's original.
+    const rendered = await vault.readFile('Home.md');
+    expect(rendered).not.toBe('hand-crafted user content\n');
+  });
+
   it('backs up pre-existing user content under --yes', async () => {
     vault = await createEmptyVault('install-collision');
     await vault.writeFile('Home.md', 'hand-crafted user content\n');
@@ -451,7 +566,54 @@ describe('shardmind install', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Install — post-install hook execution.
+// 4. Install — Invariant 1 byte-equivalence gate.
+// `shardmind install --defaults` must produce a vault that satisfies
+// `verifyInvariant1` against `examples/minimal-shard/`. This is the
+// CI test the spec promises (docs/SHARD-LAYOUT.md §Installation invariants).
+// ---------------------------------------------------------------------------
+
+describe('shardmind install — Invariant 1', () => {
+  let vault: Vault;
+  afterEach(async () => vault?.cleanup());
+
+  it('--defaults produces a vault that satisfies Invariant 1 against examples/minimal-shard/', async () => {
+    // The contract test. Source-of-truth for "clone" is the example dir
+    // the tarball is built from — content-equivalent by construction
+    // (tarball.ts copies the tree verbatim and bumps shard.yaml's version
+    // field, which lives under .shardmind/ on both sides and is therefore
+    // Tier 1-excluded clone-side and engine-metadata-excluded install-side).
+    //
+    // A clean report — three mismatch arrays empty, with `matched`
+    // checked separately below — means the engine produced exactly the
+    // file set the contract demands: every clone-side static file present
+    // byte-equivalent, every clone-side `.njk` present at the stripped
+    // install path, no Tier 1 leak, no `.shardmindignore` leak, no
+    // extras beyond engine metadata.
+    vault = await createEmptyVault('install-invariant1');
+    const installResult = await spawnCli(
+      ['install', SHARD_REF, '--defaults'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(installResult.exitCode).toBe(0);
+
+    const cloneDir = fileURLToPath(new URL('../../examples/minimal-shard', import.meta.url));
+    const report = await verifyInvariant1({ cloneDir, installDir: vault.root });
+
+    // Failure messages need to point at the exact divergence — naming
+    // each array in its own assertion gives vitest's diff a useful
+    // header instead of one mega-object that hides which contract broke.
+    expect(report.staticByteMismatches).toEqual([]);
+    expect(report.missingFromInstall).toEqual([]);
+    expect(report.extrasInInstall).toEqual([]);
+    // Sanity check — minimal-shard has 6 paths after Tier 1 +
+    // .shardmindignore filtering (1 .shardmindignore + 1 CLAUDE.md +
+    // 1 .claude/commands/example-command.md + 3 `.njk` templates).
+    expect(report.matched).toBe(6);
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// 5. Install — post-install hook execution.
 // One scenario, its own stub mount because the main stub's shard roster is
 // frozen at suite-start. Builds a custom tarball that adds
 // hooks/post-install.ts on top of the minimal-shard tree, then installs
@@ -603,6 +765,28 @@ describe('shardmind install — post-install hook', () => {
       valuesAreDefaults: boolean;
     };
     expect(ctx.valuesAreDefaults).toBe(true);
+  }, 60_000);
+
+  it('--defaults populates valuesAreDefaults: true without a --values file (#78)', async () => {
+    // Sibling to the test above, but driven by `--defaults` instead of
+    // `--yes --values <file>`. Pins that the Invariant 1 mode produces
+    // the same hook ctx as a hand-rolled defaults values file: any
+    // future divergence (e.g. `--defaults` skipping computed-default
+    // resolution) would silently break Invariant 2 for hook authors.
+    vault = await createEmptyVault('install-defaults-hook-ctx');
+    const result = await spawnCli(
+      ['install', 'github:acme/hook-demo', '--defaults'],
+      { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: hookStub.url } },
+    );
+    expect(result.exitCode).toBe(0);
+    const ctx = JSON.parse(await vault.readFile('.hook-ctx.json')) as {
+      valuesAreDefaults: boolean;
+      newFiles: string[];
+      removedFiles: string[];
+    };
+    expect(ctx.valuesAreDefaults).toBe(true);
+    expect(ctx.newFiles).toEqual([]);
+    expect(ctx.removedFiles).toEqual([]);
   }, 60_000);
 
   it('re-hashes managed files after a hook that edits one (#75)', async () => {

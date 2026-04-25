@@ -1506,6 +1506,21 @@ staying hermetic. No test reaches the public internet.
   status command (`commands/index.tsx`) intentionally keeps exit 0 even
   on error: per §10.2 it's an ambient read-only surface and must never
   stack-trace the shell. The typed error code still surfaces to stdout.
+- **Invariant 1 byte-equivalence gate**: the E2E suite runs
+  `shardmind install --defaults` against the minimal-shard tarball and
+  asserts the resulting vault satisfies the precise mapping in
+  [`docs/SHARD-LAYOUT.md §Installation invariants`](SHARD-LAYOUT.md):
+  every static clone path is byte-identical at the same install path;
+  every renderable `.njk` template lives at the stripped install path
+  (no byte compare); engine metadata is excluded from comparison. The
+  helper that operationalizes this is `tests/e2e/helpers/invariant1.ts`;
+  it delegates clone-side enumeration to the engine's own filter modules
+  (`isTier1Excluded`, `loadShardmindignore`) so the gate cannot disagree
+  with the install walker on what "should be installed". A regression
+  that drops a file, leaks a Tier 1 entry, or corrupts a static byte
+  trips the gate via the three mismatch arrays (`staticByteMismatches`,
+  `missingFromInstall`, `extrasInInstall`); `matched` is a non-zero
+  count under "everything green" rather than an array.
 
 ---
 
