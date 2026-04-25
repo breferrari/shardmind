@@ -4,39 +4,59 @@ This guide walks through every file and concept a shard author needs. Read [`doc
 
 ## 1. What is a shard
 
-A shard is a git repository that ShardMind installs into a user's vault. It ships four things:
+A shard is a git repository that ShardMind installs into a user's vault. **A shard is an Obsidian vault** — the repo opens cleanly in Obsidian without shardmind. ShardMind adds install-time personalization, safe upgrades, and modular composition on top.
 
-1. **Templates** (`templates/`) — Nunjucks-rendered markdown, config, and settings files.
-2. **Declarations** (`shard.yaml`, `shard-schema.yaml`) — identity, values, modules, signals.
-3. **Resources** (`scripts/`, `utilities/`, `skills/`, `codex/`, `commands/`, `agents/`) — copied verbatim.
-4. **Hooks** (`hooks/*.ts`, optional) — post-install / post-update lifecycle scripts.
+A shard ships:
 
-Users run `shardmind install <namespace>/<shard>`. The engine downloads the tarball, prompts for values, lets the user opt out of removable modules, renders templates, writes state, and runs your hook. Users never edit your shard directly — they edit their vault, and the next `shardmind update` merges upstream changes into their customizations via three-way merge.
+1. **Vault content at native paths** — `brain/`, `Home.md`, `CLAUDE.md`, `bases/`, `.claude/`, `.obsidian/`, etc. The repo's content tree is what installs.
+2. **Engine metadata under `.shardmind/`** — `shard.yaml` (manifest), `shard-schema.yaml` (values + modules + signals), `hooks/*.ts` (optional, source-side only).
+3. **`.shardmindignore` at the repo root** — gitignore-spec excludes for repo-only artifacts (CONTRIBUTING.md, translations, marketing media).
+4. **`.njk` Nunjucks rendering** — author-explicit opt-in by suffix. Convention is to keep `.njk` to dotfolder configs (`.claude/settings.json.njk`) so the clone-UX cost stays zero, but iterator templates and any tagged vault-visible `.njk` also render.
+
+Users run `shardmind install <namespace>/<shard>`. The engine downloads the tarball, walks the shard root applying Tier 1 exclusions + `.shardmindignore` + symlink rejection, prompts for values, lets the user opt out of removable modules, renders + copies + caches, writes `state.json`, and runs your hook. Users never edit your shard directly — they edit their vault, and the next `shardmind update` merges upstream changes into their customizations via three-way merge.
 
 ## 2. File layout
 
+The shard repo's layout *is* the installed vault's layout — no `templates/` wrapper, no separate `commands/`/`agents/`/`codex/` trees. Vault content sits at native paths in the source tree.
+
 ```
-your-shard/
-├── shard.yaml              # manifest — who you are
-├── shard-schema.yaml       # schema — questions, modules, signals
-├── templates/              # Nunjucks templates, rendered into the vault
-│   ├── Home.md.njk
-│   ├── CLAUDE.md.njk
-│   └── brain/
-│       └── North Star.md.njk
-├── commands/               # Claude Code command files (copied verbatim)
-│   └── reflect.md
-├── agents/                 # Claude Code agent files (copied verbatim)
-├── scripts/                # Utility scripts
-├── utilities/              # Utility modules
-├── skills/                 # Skills
-├── codex/                  # Codex prompts → .codex/prompts/
-├── hooks/                  # Lifecycle hooks
-│   └── post-install.ts
-└── README.md
+your-shard/                    ← also opens cleanly as an Obsidian vault
+├── .shardmind/
+│   ├── shard.yaml             ← manifest — who you are
+│   ├── shard-schema.yaml      ← schema — questions, modules, signals
+│   └── hooks/                 ← optional lifecycle scripts (source-side only)
+│       ├── post-install.ts
+│       └── post-update.ts
+│
+├── .shardmindignore           ← repo-only excludes (CONTRIBUTING.md, *.gif, …)
+│
+├── CLAUDE.md                  ← agent operating manual (verbatim copy on install)
+├── AGENTS.md                  ← (optional) Codex
+├── GEMINI.md                  ← (optional) Gemini CLI
+├── Home.md                    ← Obsidian landing note (static or `Home.md.njk` to render)
+├── brain/
+│   └── North Star.md          ← static; personalize via post-install hook
+├── .claude/
+│   ├── commands/reflect.md    ← `mod.commands: ["reflect"]` gates this by name
+│   ├── agents/                ← `mod.agents` similarly
+│   └── settings.json.njk      ← dotfolder render fixture: `{{ values.X }}` → settings.json
+│
+├── .obsidian/                 ← Obsidian vault-shape config (themes, plugins, etc.)
+├── .mcp.json                  ← MCP server registry
+│
+├── scripts/                   ← vault-bundled scripts (e.g. QMD bootstrap)
+└── README.md, LICENSE
 ```
 
-Minimum: `shard.yaml`, `shard-schema.yaml`, and `templates/`. Everything else is optional.
+Minimum: `.shardmind/shard.yaml` + `.shardmind/shard-schema.yaml`. Everything else is optional.
+
+**Three testable properties** (binding contract):
+
+1. The shard repo at HEAD opens cleanly as a vault in Obsidian with no preparation.
+2. `shardmind install --defaults <shard>` produces a vault byte-equivalent to `git clone <shard>` (modulo Tier 1 exclusions + `.shardmind/` engine metadata + vault-root `shard-values.yaml`).
+3. Deleting `.shardmind/` on either side leaves a working vault.
+
+See [`docs/SHARD-LAYOUT.md`](../docs/SHARD-LAYOUT.md) for the full v6 layout contract.
 
 ## 3. `shard.yaml` — the manifest
 
@@ -125,7 +145,6 @@ modules:
   extras:
     label: "Optional features"
     paths: ["extras/"]
-    partials: ["claude/_extras.md.njk"]
     commands: ["reflect"]
     removable: true
 
@@ -188,14 +207,13 @@ Every value's `group` must reference a declared group `id`. Groups drive wizard 
 
 Users see non-removable modules as locked "always included"; removable modules are checkboxes with label + file count + live install total.
 
-A module owns:
-- `paths` — template directory prefixes (any `.njk` under `brain/` belongs to the `brain` module)
-- `partials` — specific partial templates gated by this module
-- `commands` — command file basenames (from your `commands/`) gated here
-- `agents` — agent file basenames
-- `bases` — base template IDs
+A module owns (priority order: paths > bases > per-name):
+- `paths` — directory prefixes (any file under `brain/` belongs to the `brain` module).
+- `bases` — base template IDs (matches `bases/<id>.base.njk` from the shard root).
+- `commands` — basenames matched only when the file's parent directory is `commands` (case-insensitive, any depth) — typically `.claude/commands/<name>.<ext>`.
+- `agents` — basenames matched the same way for `agents` parent dirs.
 
-Files under `scripts/`, `utilities/`, `skills/`, `codex/` are always copied regardless of module selection — these are framework-level.
+Files outside any module's `paths` / `bases` / per-name claim are always copied regardless of module selection — these are framework-level (e.g. agent operating manuals at the vault root, scripts in any non-claimed directory).
 
 ### `signals` — LLM routing hints
 
@@ -213,16 +231,16 @@ Ordered rules applied to `shard-values.yaml` when the shard version moves forwar
 
 ## 5. Templates
 
-Files under `templates/` use [Nunjucks](https://mozilla.github.io/nunjucks/). Engine settings:
+Any file ending in `.njk` anywhere in the shard root is rendered with [Nunjucks](https://mozilla.github.io/nunjucks/). Engine settings:
 
 - `autoescape: false` (you're rendering Markdown, not HTML)
 - `trimBlocks: true` / `lstripBlocks: true` (tidy output around `{% ... %}` tags)
 
 ### Naming
 
-- `.njk` suffix → template, rendered; suffix is stripped. `Home.md.njk` → `Home.md`.
+- `.njk` suffix → template, rendered; suffix is stripped. `Home.md.njk` → `Home.md`, `.claude/settings.json.njk` → `.claude/settings.json`.
 - No `.njk` → copy verbatim to the same relative path.
-- `settings.json.njk` is the special-cased rename to `.claude/settings.json`.
+- Author convention: keep `.njk` to dotfolder configs (`.claude/settings.json.njk`, `.mcp.json.njk`) so the clone-UX cost stays zero. Iterator templates (`<dir>/_each.<ext>.njk`) and any explicitly-tagged vault-visible `.njk` also render — the engine doesn't restrict by location.
 
 ### Frontmatter-aware rendering
 
