@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fc from 'fast-check';
 import { resolve } from '../../source/core/registry.js';
 import { ShardMindError } from '../../source/runtime/types.js';
 
@@ -89,6 +90,264 @@ describe('registry.resolve', () => {
       await expect(resolve('github:Acme/Widget')).rejects.toMatchObject({
         code: 'REGISTRY_INVALID_REF',
       });
+    });
+
+    it('rejects refs with combined @version and #ref', async () => {
+      // Either pin a tag or pin a commit-ref — never both. The regex
+      // makes the alternation mutually exclusive at parse time.
+      await expect(resolve('github:acme/widget@1.0.0#main')).rejects.toMatchObject({
+        code: 'REGISTRY_INVALID_REF',
+      });
+      await expect(resolve('github:acme/widget#main@1.0.0')).rejects.toMatchObject({
+        code: 'REGISTRY_INVALID_REF',
+      });
+    });
+
+    it('rejects refs with embedded whitespace', async () => {
+      await expect(resolve('github:acme/widget#with space')).rejects.toMatchObject({
+        code: 'REGISTRY_INVALID_REF',
+      });
+    });
+
+    it('rejects an empty ref after the # delimiter', async () => {
+      await expect(resolve('github:acme/widget#')).rejects.toMatchObject({
+        code: 'REGISTRY_INVALID_REF',
+      });
+    });
+
+    it('rejects #<ref> in registry mode (no github: prefix)', async () => {
+      // Registry-mode entries have no per-branch metadata; ref pinning
+      // requires committing to the direct flow with its different
+      // update semantics (re-resolve HEAD on every update).
+      const err = await resolve('acme/widget#main').catch((e) => e);
+      expect(err).toBeInstanceOf(ShardMindError);
+      expect(err.code).toBe('REGISTRY_INVALID_REF');
+      expect(err.hint).toContain('github:');
+    });
+  });
+
+  describe('ref installs (#<ref>)', () => {
+    /** 40-char hex SHA used across the ref-install test suite. */
+    const SHA = 'deadbeef00112233445566778899aabbccddeeff';
+
+    it('resolves #main to the commit SHA via /commits/main', async () => {
+      const seen: string[] = [];
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        seen.push(u);
+        if (u.endsWith('/commits/main')) return jsonResponse({ sha: SHA });
+        if (u.includes(`/tarball/${SHA}`) && init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolve('github:acme/widget#main');
+      expect(result.ref).toEqual({ name: 'main', commit: SHA });
+      expect(result.tarballUrl).toBe(
+        `https://api.github.com/repos/acme/widget/tarball/${SHA}`,
+      );
+      // resolved.version is the short SHA (display).
+      expect(result.version).toBe(SHA.slice(0, 7));
+      // No /releases call — ref installs skip the latest-version lookup.
+      expect(seen.some((u) => u.includes('/releases'))).toBe(false);
+    });
+
+    it('URL-encodes refs that contain a slash (feature/foo)', async () => {
+      const seen: string[] = [];
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        seen.push(u);
+        if (u.endsWith('/commits/feature%2Ffoo')) return jsonResponse({ sha: SHA });
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolve('github:acme/widget#feature/foo');
+      expect(result.ref?.name).toBe('feature/foo');
+      expect(seen.some((u) => u.includes('/commits/feature%2Ffoo'))).toBe(true);
+    });
+
+    it('accepts uppercase ref names (refs are case-sensitive on GitHub)', async () => {
+      // Owner / repo are lowercase-only by the existing regex, but ref
+      // names can carry case (`HEAD`, `Feature-1`, …).
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u.endsWith('/commits/Feature')) return jsonResponse({ sha: SHA });
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolve('github:acme/widget#Feature');
+      expect(result.ref?.name).toBe('Feature');
+    });
+
+    it('throws REF_NOT_FOUND when /commits returns 404', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u.includes('/commits/')) return new Response(null, { status: 404 });
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const err = await resolve('github:acme/widget#bogus').catch((e) => e);
+      expect(err).toBeInstanceOf(ShardMindError);
+      expect(err.code).toBe('REF_NOT_FOUND');
+      expect(err.hint).toContain('bogus');
+    });
+
+    it('throws REF_NOT_FOUND with an "ambiguous SHA" hint on 422', async () => {
+      // GitHub returns 422 when a SHA prefix matches multiple commits.
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u.includes('/commits/')) return new Response('ambiguous', { status: 422 });
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const err = await resolve('github:acme/widget#abc1').catch((e) => e);
+      expect(err).toBeInstanceOf(ShardMindError);
+      expect(err.code).toBe('REF_NOT_FOUND');
+      expect(err.hint).toMatch(/ambiguous|longer|prefix/i);
+    });
+
+    it('maps GitHub rate limit on /commits to REGISTRY_RATE_LIMITED', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u.includes('/commits/')) return rateLimited();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      await expect(resolve('github:acme/widget#main')).rejects.toMatchObject({
+        code: 'REGISTRY_RATE_LIMITED',
+      });
+    });
+
+    it('maps a /commits network failure to REGISTRY_NETWORK', async () => {
+      globalThis.fetch = vi.fn(async () => {
+        throw new TypeError('network offline');
+      }) as typeof fetch;
+
+      await expect(resolve('github:acme/widget#main')).rejects.toMatchObject({
+        code: 'REGISTRY_NETWORK',
+      });
+    });
+
+    it('rejects a /commits response missing the sha field', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u.includes('/commits/')) return jsonResponse({ message: 'no sha' });
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      await expect(resolve('github:acme/widget#main')).rejects.toMatchObject({
+        code: 'REGISTRY_NETWORK',
+      });
+    });
+
+    it('rejects a /commits response with a non-40-hex sha', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u.includes('/commits/')) return jsonResponse({ sha: 'not-a-sha' });
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      await expect(resolve('github:acme/widget#main')).rejects.toMatchObject({
+        code: 'REGISTRY_NETWORK',
+      });
+    });
+
+    it('throws REF_NOT_FOUND when the SHA-tarball HEAD returns 404', async () => {
+      // Rare but possible: the SHA resolved fine, but the tarball isn't
+      // fetchable — typically a force-push between the two API calls.
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u.includes('/commits/')) return jsonResponse({ sha: SHA });
+        if (init?.method === 'HEAD') return headNotFound();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const err = await resolve('github:acme/widget#main').catch((e) => e);
+      expect(err).toBeInstanceOf(ShardMindError);
+      expect(err.code).toBe('REF_NOT_FOUND');
+      expect(err.hint).toContain('main');
+    });
+
+    it('sends GITHUB_TOKEN on /commits when set', async () => {
+      process.env['GITHUB_TOKEN'] = 'tok_ref';
+      const seen: Array<{ url: string; auth: string | null }> = [];
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        seen.push({ url: u, auth: headers['Authorization'] ?? null });
+        if (u.includes('/commits/')) return jsonResponse({ sha: SHA });
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      await resolve('github:acme/widget#main');
+
+      const commitsCall = seen.find((c) => c.url.includes('/commits/'));
+      expect(commitsCall?.auth).toBe('Bearer tok_ref');
+    });
+
+    it('returns ResolvedShard.ref undefined for tag installs', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (isReleasesListing(u)) return singleStableRelease('v1.0.0');
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolve('github:acme/widget');
+      expect(result.ref).toBeUndefined();
+    });
+
+    it('property: arbitrary non-whitespace, no-`@` ref strings round-trip through resolve()', async () => {
+      // The ref string the user types is recorded verbatim in
+      // `state.ref` and forwarded to `/commits/<encoded>`. No matter
+      // what shape we accept (slashes, dots, mixed case, hyphens,
+      // numbers), the `parsed.ref.name` should equal the user's input
+      // and the encoded URL should round-trip via `decodeURIComponent`.
+      // The character class below mirrors what the regex's `[^@\s]+`
+      // accepts (anything but `@` and whitespace), constrained to
+      // visible ASCII so the property doesn't trip on UTF-8 cases the
+      // engine doesn't support yet.
+      const refChars = fc
+        .stringMatching(/^[A-Za-z0-9./_-]+$/)
+        .filter((s) => s.length > 0 && s.length <= 60);
+
+      await fc.assert(
+        fc.asyncProperty(refChars, async (refName) => {
+          let captured: string | null = null;
+          globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+            const u = typeof url === 'string' ? url : url.toString();
+            const m = /\/commits\/([^?]+)$/.exec(u);
+            if (m) {
+              captured = decodeURIComponent(m[1]!);
+              return jsonResponse({ sha: SHA });
+            }
+            if (init?.method === 'HEAD') return headOk();
+            throw new Error(`Unexpected fetch: ${u}`);
+          }) as typeof fetch;
+
+          const result = await resolve(`github:acme/widget#${refName}`);
+          expect(result.ref?.name).toBe(refName);
+          expect(captured).toBe(refName);
+        }),
+        { numRuns: 50 },
+      );
+    });
+
+    it('lowercases the resolved SHA so state.resolvedSha is canonicalized', async () => {
+      // GitHub returns SHAs lowercase, but a hand-stubbed test or future
+      // upstream change shouldn't be able to leak mixed case into state.
+      const upper = SHA.toUpperCase();
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u.includes('/commits/')) return jsonResponse({ sha: upper });
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+
+      const result = await resolve('github:acme/widget#main');
+      expect(result.ref?.commit).toBe(SHA);
     });
   });
 

@@ -53,9 +53,29 @@ interface ParsedRef {
   namespace: string;
   name: string;
   version: string | null;
+  /**
+   * Set when the input used `github:owner/repo#<ref>` syntax. Mutually
+   * exclusive with `version` — the regex below ensures a single ref can
+   * only carry a tag pin OR a commit-ref pin, never both.
+   */
+  ref: string | null;
 }
 
-const SHARD_REF_RE = /^(github:)?([a-z0-9][a-z0-9-]*)\/([a-z0-9][a-z0-9-]*)(?:@(.+))?$/;
+/**
+ * Shard reference syntax:
+ *   - `namespace/name` — registry index, latest stable.
+ *   - `namespace/name@version` — registry index, exact version.
+ *   - `github:namespace/name` — direct GitHub, latest stable.
+ *   - `github:namespace/name@version` — direct GitHub, exact tag.
+ *   - `github:namespace/name#<ref>` — direct GitHub, branch / tag / SHA.
+ *
+ * The `(?:@…|#…)?` alternation makes `@version` and `#ref` mutually
+ * exclusive at parse time. `[^#\s]+` for versions blocks `@v#ref`;
+ * `[^@\s]+` for refs blocks `#ref@v` and refs with embedded whitespace.
+ * Owner / repo stay strictly lowercase + hyphens (existing constraint).
+ */
+const SHARD_REF_RE =
+  /^(github:)?([a-z0-9][a-z0-9-]*)\/([a-z0-9][a-z0-9-]*)(?:@([^#\s]+)|#([^@\s]+))?$/;
 
 /**
  * Cheap read-only "what is the latest tag?" lookup for a `github:owner/repo`
@@ -124,6 +144,21 @@ export async function resolve(
 ): Promise<ResolvedShard> {
   const parsed = parseRef(shardRef);
 
+  if (parsed.ref !== null) {
+    // Direct-mode ref install. Already enforced by `parseRef`; the
+    // `direct` invariant is asserted here so a regex regression that
+    // accepts `o/r#main` without `github:` would surface as a typed
+    // error instead of a misrouted commit-API call.
+    if (!parsed.direct) {
+      throw new ShardMindError(
+        `Internal: ref install reached resolve() without direct mode: '${shardRef}'`,
+        'REGISTRY_INVALID_REF',
+        'This is a bug. Please report — parseRef should have rejected this earlier.',
+      );
+    }
+    return resolveRefInstall(parsed.namespace, parsed.name, parsed.ref);
+  }
+
   let version: string;
   let source: string;
   let repoOwner: string;
@@ -174,7 +209,7 @@ export async function resolve(
   }
 
   const tarballUrl = `${GITHUB_API_BASE}/repos/${repoOwner}/${repoName}/tarball/v${version}`;
-  await verifyTag(tarballUrl, repoOwner, repoName, version);
+  await verifyTarball(tarballUrl, repoOwner, repoName, version, 'tag');
 
   return {
     namespace: parsed.namespace,
@@ -185,21 +220,68 @@ export async function resolve(
   };
 }
 
+/**
+ * Resolve `github:owner/repo#<ref>` to a `ResolvedShard` whose tarball
+ * URL points at the resolved commit SHA. Two API calls:
+ *
+ *   1. `GET /repos/:o/:r/commits/<ref>` — get the 40-char SHA.
+ *   2. `HEAD /repos/:o/:r/tarball/<sha>` — verify the tarball is fetchable.
+ *
+ * SHA pinning is what makes ref installs reproducible: a retry mid-
+ * download (e.g. transient network) hits the same commit even if the
+ * branch HEAD moved between calls. `state.resolvedSha` records the SHA
+ * so a future `update` can detect commit movement on the tracked ref.
+ */
+async function resolveRefInstall(
+  namespace: string,
+  name: string,
+  ref: string,
+): Promise<ResolvedShard> {
+  const sha = await resolveCommit(namespace, name, ref);
+  const tarballUrl = `${GITHUB_API_BASE}/repos/${namespace}/${name}/tarball/${sha}`;
+  await verifyTarball(tarballUrl, namespace, name, sha, 'ref', ref);
+
+  return {
+    namespace,
+    name,
+    // Short SHA prefix matches `git log --oneline` convention. State-
+    // build sites use `manifest.version` for `state.version`, so this
+    // value never lands in state.json.
+    version: sha.slice(0, 7),
+    source: `github:${namespace}/${name}`,
+    tarballUrl,
+    ref: { name: ref, commit: sha },
+  };
+}
+
 function parseRef(shardRef: string): ParsedRef {
   const match = SHARD_REF_RE.exec(shardRef.trim());
   if (!match) {
     throw new ShardMindError(
       `Invalid shard reference: '${shardRef}'`,
       'REGISTRY_INVALID_REF',
-      'Expected "namespace/name", "namespace/name@version", or "github:namespace/name[@version]".',
+      'Expected "namespace/name", "namespace/name@version", "github:namespace/name[@version]", or "github:namespace/name#<ref>".',
     );
   }
-  const [, directPrefix, namespace, name, version] = match;
+  const [, directPrefix, namespace, name, version, ref] = match;
+  const direct = Boolean(directPrefix);
+  if (ref !== undefined && !direct) {
+    // Registry-mode entries don't have ref pinning — the index doesn't
+    // record per-branch metadata. Ref installs require the explicit
+    // github: prefix so the user is signing up for the direct flow with
+    // its different update semantics (re-resolves HEAD on every update).
+    throw new ShardMindError(
+      `Ref syntax requires the github: prefix: '${shardRef}'`,
+      'REGISTRY_INVALID_REF',
+      'Use "github:namespace/name#<ref>" to install from a branch, tag, or commit SHA. Registry-mode refs are not supported.',
+    );
+  }
   return {
-    direct: Boolean(directPrefix),
+    direct,
     namespace: namespace!,
     name: name!,
     version: version ?? null,
+    ref: ref ?? null,
   };
 }
 
@@ -368,11 +450,99 @@ async function fetchLatestRelease(
   return tag.startsWith('v') ? tag.slice(1) : tag;
 }
 
-async function verifyTag(
+/**
+ * Resolve a GitHub ref (branch / tag / commit-SHA prefix) to a 40-char
+ * commit SHA via `/repos/:o/:r/commits/{ref}`. The endpoint accepts any
+ * ref form GitHub recognizes; the encoded path covers refs with `/`
+ * separators (`feature/foo`).
+ *
+ * 404 → `REF_NOT_FOUND`. 422 → `REF_NOT_FOUND` with an "ambiguous SHA"
+ * hint (GitHub's documented response for SHA prefixes that match
+ * multiple commits). 403 + zero rate-limit-remaining → REGISTRY_RATE_LIMITED.
+ * Any other non-OK / network failure / malformed body → REGISTRY_NETWORK.
+ */
+async function resolveCommit(
+  namespace: string,
+  name: string,
+  ref: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const url = `${GITHUB_API_BASE}/repos/${namespace}/${name}/commits/${encodeURIComponent(ref)}`;
+  const response = await safeFetch(url, { ...githubHeaders(), signal });
+
+  if (response.status === 403 && isRateLimited(response)) {
+    throw rateLimitError();
+  }
+
+  if (response.status === 404) {
+    throw new ShardMindError(
+      `Ref '${ref}' not found in ${namespace}/${name}`,
+      'REF_NOT_FOUND',
+      `No branch, tag, or commit named '${ref}' on github.com/${namespace}/${name}. Check the spelling, or pick a different ref.`,
+    );
+  }
+
+  if (response.status === 422) {
+    // GitHub returns 422 for an ambiguous SHA prefix (matches more than
+    // one commit). The user has to disambiguate — extending the prefix
+    // is the obvious remedy.
+    throw new ShardMindError(
+      `Ref '${ref}' is ambiguous in ${namespace}/${name}`,
+      'REF_NOT_FOUND',
+      'A short SHA prefix matched more than one commit. Re-run with a longer prefix or the full 40-char SHA.',
+    );
+  }
+
+  if (!response.ok) {
+    throw new ShardMindError(
+      `Could not resolve ref '${ref}' for ${namespace}/${name}: HTTP ${response.status}`,
+      'REGISTRY_NETWORK',
+      'GitHub API returned an unexpected status.',
+    );
+  }
+
+  let data: { sha?: unknown };
+  try {
+    data = (await response.json()) as { sha?: unknown };
+  } catch (err) {
+    throw new ShardMindError(
+      `Malformed response from GitHub commits API for ref '${ref}'`,
+      'REGISTRY_NETWORK',
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  const sha = data.sha;
+  if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/i.test(sha)) {
+    throw new ShardMindError(
+      `Commit response for ref '${ref}' did not include a valid SHA`,
+      'REGISTRY_NETWORK',
+      'GitHub returned an unexpected commit shape.',
+    );
+  }
+
+  return sha.toLowerCase();
+}
+
+/**
+ * HEAD-verify a tarball URL is fetchable before the caller invests in a
+ * full download. The `mode` discriminant shapes the error message and
+ * code: tag installs throw `VERSION_NOT_FOUND` on 404 (the tag exists in
+ * `/releases` but the tarball couldn't be fetched — usually transient
+ * GitHub state); ref installs throw `REF_NOT_FOUND` (the SHA was
+ * resolved but the tarball is gone, e.g. a force-push that orphaned the
+ * commit between the two API calls).
+ *
+ * 200 OK and 302 (GitHub redirects tarball URLs to codeload.github.com)
+ * both pass.
+ */
+async function verifyTarball(
   tarballUrl: string,
   namespace: string,
   name: string,
-  version: string,
+  versionOrSha: string,
+  mode: 'tag' | 'ref',
+  refLabel?: string,
 ): Promise<void> {
   const response = await safeFetch(tarballUrl, { ...githubHeaders(), method: 'HEAD' });
 
@@ -383,15 +553,23 @@ async function verifyTag(
   }
 
   if (response.status === 404) {
+    if (mode === 'tag') {
+      throw new ShardMindError(
+        `Version ${versionOrSha} not found for ${namespace}/${name}`,
+        'VERSION_NOT_FOUND',
+        `Tag v${versionOrSha} does not exist on github.com/${namespace}/${name}.`,
+      );
+    }
     throw new ShardMindError(
-      `Version ${version} not found for ${namespace}/${name}`,
-      'VERSION_NOT_FOUND',
-      `Tag v${version} does not exist on github.com/${namespace}/${name}.`,
+      `Tarball for ref '${refLabel ?? versionOrSha}' not found in ${namespace}/${name}`,
+      'REF_NOT_FOUND',
+      `The commit ${versionOrSha.slice(0, 7)} resolved from '${refLabel ?? versionOrSha}' has no fetchable tarball — usually a force-push that orphaned the commit. Retry, or pick a different ref.`,
     );
   }
 
+  const subject = mode === 'tag' ? `tag v${versionOrSha}` : `tarball for ${versionOrSha.slice(0, 7)}`;
   throw new ShardMindError(
-    `Could not verify tag v${version} for ${namespace}/${name}: HTTP ${response.status}`,
+    `Could not verify ${subject} for ${namespace}/${name}: HTTP ${response.status}`,
     'REGISTRY_NETWORK',
     'GitHub API returned an unexpected status.',
   );
