@@ -3,11 +3,23 @@
  * `docs/SHARD-LAYOUT.md §Installation invariants` for the CI E2E gate.
  *
  * Each test builds a clone + install pair on disk and asserts the helper
- * detects exactly the divergence under test (clone-only, install-only,
- * static byte mismatch, Tier 1 leak, `.shardmindignore` leak, `.njk`
- * mapping, engine metadata exclusion). A property test with fast-check
- * pins the helper's mutation-detection invariant: any single byte
- * change to a static file must surface as `staticByteMismatches`.
+ * detects exactly the divergence under test:
+ *
+ *  - Pairing: clone-only, install-only, static byte mismatch, Tier 1
+ *    leak, `.shardmindignore` leak, `.njk → stripped` mapping, engine-
+ *    metadata exclusion, multi-divergence aggregation.
+ *  - Filter delegation: empty / comment-only / negation-pattern
+ *    `.shardmindignore` flow through `loadShardmindignore` exactly as
+ *    the engine sees them.
+ *  - Robustness: post-walk vanish (TOCTOU) routes to `missingFromInstall`,
+ *    EACCES (and any non-ENOENT read failure) rethrows with errno code
+ *    + path; clone-side path collision (`Foo.md` + `Foo.md.njk`) doesn't
+ *    crash the helper.
+ *  - Symlink asymmetry: clone-side rejected (engine contract); install-
+ *    side silently skipped (engine never writes them).
+ *  - A fast-check property pins the mutation-detection invariant: any
+ *    single byte change to a static file surfaces as
+ *    `staticByteMismatches`.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';

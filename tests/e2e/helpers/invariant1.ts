@@ -14,8 +14,10 @@
  * The helper enumerates both sides under exactly the engine's filters
  * (Tier 1 + `.shardmindignore` for clone via `walkShardSource`; engine-
  * metadata exclusions for install) and pairs every clone path to its
- * expected install path. Returns a structured report whose four fields
- * are empty under "everything green".
+ * expected install path. Returns a structured report whose three
+ * mismatch arrays (`staticByteMismatches`, `missingFromInstall`,
+ * `extrasInInstall`) are empty under "everything green"; `matched`
+ * carries the headline count of paired paths.
  *
  * Used by `tests/e2e/cli.test.ts` for the CI E2E gate. Pure (read-only,
  * no spawning); reusable for future shard-author CI.
