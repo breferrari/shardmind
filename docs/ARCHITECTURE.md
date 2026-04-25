@@ -82,48 +82,103 @@ Multiple vaults on one machine are independent:
 
 ## 3. File Anatomy of a Shard
 
+> A shard is an Obsidian vault with a `.shardmind/` sidecar. Three testable properties hold:
+> 1. The shard repo at HEAD opens cleanly as a vault in Obsidian with no preparation.
+> 2. `shardmind install <shard>` with all defaults produces a vault byte-equivalent to `git clone <shard>` (modulo Tier 1 exclusions + `.shardmind/` engine metadata + vault-root `shard-values.yaml`).
+> 3. Deleting `.shardmind/` on either side leaves a working vault.
+>
+> Full contract: [`SHARD-LAYOUT.md`](SHARD-LAYOUT.md). Closed under [#73](https://github.com/breferrari/shardmind/issues/73).
+
+### Source side (the shard repo)
+
 ```
-my-shard/
-├── shard.yaml                 # Package identity (name, version, deps, hooks)
-├── shard-schema.yaml          # Values + modules + signals + frontmatter + migrations
-├── templates/
-│   ├── CLAUDE.md.njk          # Claude Code operating manual (partials per module)
-│   ├── AGENTS.md.njk          # Codex operating manual (optional)
-│   ├── GEMINI.md.njk          # Gemini CLI operating manual (optional)
-│   ├── claude/                # CLAUDE.md partials (one per module)
-│   │   ├── _core.md.njk
-│   │   ├── _perf.md.njk
-│   │   ├── _incidents.md.njk
-│   │   ├── _1on1s.md.njk
-│   │   ├── _org.md.njk
-│   │   └── _research.md.njk
-│   ├── Home.md.njk
-│   ├── brain/
-│   │   └── North Star.md.njk
-│   ├── perf/                  # Only rendered if perf module included
-│   │   ├── Brag Doc.md.njk
-│   │   └── competencies/
-│   │       └── _each.md.njk
-│   ├── bases/
-│   │   └── *.base.njk
-│   └── work/
-│       └── Index.md.njk
-├── commands/                  # Slash commands — Claude Code (.claude/commands/)
-├── agents/                    # Subagents — Claude Code (.claude/agents/)
-├── codex/                     # Codex prompts (.codex/prompts/) — optional
-├── hooks/
-│   ├── post-install.ts        # ShardMind lifecycle hooks
-│   └── post-update.ts
-├── scripts/                   # Runtime hook scripts — Claude Code lifecycle
-│   ├── session_start.ts
-│   ├── classify.ts
-│   ├── validate_note.ts
-│   ├── backup_transcript.ts
-│   └── session_end.ts
-└── skills/                    # Agent skills (Agent Skills spec — multi-agent)
+my-shard/                             ← git repo root; also opens cleanly as an Obsidian vault
+│
+├── .shardmind/                       ← engine metadata (source-side)
+│   ├── shard.yaml                    ← manifest (name, version, values refs, modules, agents, hooks)
+│   ├── shard-schema.yaml             ← values schema → zod at runtime; every value MUST have a default
+│   └── hooks/                        ← source-side only; engine reads from tarball, NOT copied to install
+│       ├── post-install.ts           ← optional, non-fatal
+│       └── post-update.ts            ← optional, non-fatal
+│
+├── .shardmindignore                  ← repo root; gitignore-spec globs (negation deferred to v0.2)
+│
+├── <vault content at native paths>   ← brain/, work/, Home.md, perf/, bases/.base.njk, etc.
+│
+├── CLAUDE.md, AGENTS.md, GEMINI.md   ← agent operating manuals; included per agent selection
+│
+├── .claude/, .codex/, .gemini/       ← agent operational layers (dotfolders; .njk render allowed)
+├── .mcp.json, .obsidian/             ← config + Obsidian vault-shape config
+│
+├── README.md, LICENSE, CHANGELOG.md  ← Tier 2 default-included; vault-relevant docs
+├── ARCHITECTURE.md, .gitignore       ← installed if present
+│
+└── <repo-only artifacts>             ← .github/, CONTRIBUTING.md, README.<lang>.md, demo media
+                                        (excluded via .shardmindignore — see §10.6)
 ```
 
-Shard authors choose which agents to support. The engine renders all templates regardless — it doesn't know which AI reads the output.
+The walker is rooted at the shard repo and applies three filters in order: Tier 1 engine exclusions, root-level `.shardmindignore` globs, and symlink rejection. Files survive into the install set verbatim.
+
+`.njk` is the explicit-by-suffix render opt-in. Author convention: keep `.njk` to dotfolder configs (`.claude/settings.json.njk`, `.mcp.json.njk`) so the clone-UX cost stays zero. Iterator templates (`<dir>/_each.<ext>.njk`) and any author-tagged vault-visible `.njk` also render. Vault-visible `{{ }}` *without* the `.njk` suffix is the deferred `rendered_files` opt-in tracked in [#86](https://github.com/breferrari/shardmind/issues/86).
+
+### Installed side (after `shardmind install`)
+
+```
+my-vault/
+│
+├── .shardmind/                       ← engine metadata (installed-side)
+│   ├── state.json                    ← ownership hashes + module/agent selections + version + resolved ref
+│   ├── shard.yaml                    ← cached manifest
+│   ├── shard-schema.yaml             ← cached values schema
+│   └── templates/                    ← cached source files; merge base for three-way merge on update
+│
+├── shard-values.yaml                 ← user's wizard answers; vault-root, NOT under .shardmind/
+│                                       ("delete .shardmind/ and shard-values.yaml — the vault
+│                                       continues to work" — VISION's additive principle).
+│
+├── <same vault content as source, with:>
+│   ├── .njk files rendered with user values (suffix stripped)
+│   ├── optional modules/agents included per wizard (default: all)
+│   └── hook may have personalized managed files (bound by Invariants 2 + 3, see §10.6)
+│
+├── .shardmindignore                  ← installed verbatim (Tier 2); inert post-install
+├── README.md, LICENSE, CHANGELOG.md
+│
+└── (no .github/, no CONTRIBUTING.md, no translations, no demo media — Tier 1 + ignore filtered)
+```
+
+Installed-side path constants are authoritative in [`source/runtime/vault-paths.ts`](../source/runtime/vault-paths.ts): `STATE_FILE`, `CACHED_MANIFEST`, `CACHED_SCHEMA`, `CACHED_TEMPLATES` all live under `.shardmind/`; `VALUES_FILE` lives at vault root.
+
+### Tier 1 — engine-enforced exclusions (always excluded source-side)
+
+Not author-configurable. Defined in [`source/core/tier1.ts`](../source/core/tier1.ts):
+
+- `.shardmind/` — installed side gets a fresh metadata dir; source-side `.shardmind/` is engine-only.
+- `.git/` — VCS database.
+- `.github/` — CI, issue templates, `FUNDING.yml` (defensive: prevents accidental Actions activation if a user later git-pushes their personal vault).
+- `.obsidian/workspace.json`, `.obsidian/workspace-mobile.json`, `.obsidian/graph.json` — Obsidian's user-specific ephemeral state.
+- **Symbolic links anywhere in the shard source** — engine rejects with `WALK_SYMLINK_REJECTED`. Security baseline: an untrusted shard could symlink outside the install target.
+
+Other Obsidian user-state files (`starred.json`, `bookmarks.json`, `backlink.json`, `page-preview.json`) are author-controlled via `.shardmindignore`.
+
+### Tier 2 — author-controlled via `.shardmindignore`
+
+Glob-only in v0.1 (negation deferred to [#87](https://github.com/breferrari/shardmind/issues/87)). Typical obsidian-mind-shaped exclusions:
+
+```gitignore
+# Repo-meta — meaningful on GitHub, noise in a vault
+CONTRIBUTING.md
+README.*.md              # translations (README.ja.md, README.ko.md, …)
+
+# Marketing media — not vault content
+*.gif
+*.png
+obsidian-mind-logo.*
+```
+
+Rule of thumb: if a file is a property of *the GitHub repo*, exclude it; if it's *about the shard's content*, leave it installed.
+
+Shard authors choose which agents to support. The engine walks the shard root and writes the install set, agent-agnostic.
 
 ---
 
