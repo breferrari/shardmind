@@ -154,12 +154,20 @@ export const PTY_VIEWPORT_ROWS = 50;
 
 export interface PtyHandle {
   /**
-   * The child process's POSIX pid. Exposed so harness tests can verify
-   * the child has actually been reaped (e.g. `process.kill(pid, 0)`
-   * throws ESRCH after a forced kill) — `waitForExit`'s synthetic
-   * fallback at line 385 reports `signal: 'SIGKILL'` regardless of
-   * whether the kill landed, so a process-state check is the only
-   * way to pin the force-kill contract from outside the helper.
+   * The child process's POSIX pid at spawn time. Exposed so harness
+   * tests can verify the child has actually been reaped
+   * (`process.kill(pid, 0)` throws ESRCH after a forced kill) —
+   * `waitForExit`'s synthetic fallback at line 385 reports
+   * `signal: 'SIGKILL'` regardless of whether the kill landed, so a
+   * process-state check is the only way to pin the force-kill
+   * contract from outside the helper.
+   *
+   * Lifetime: only meaningful between spawn and reap. The kernel
+   * recycles pids quickly (Darwin's pid space is 16-bit / wraps under
+   * 32768), so a caller that reads `handle.pid` long after `dispose()`
+   * or after the child has exited may end up signalling an unrelated
+   * process. Use immediately after the kill window — the
+   * `waitForReaped` pattern in the harness tests demonstrates this.
    */
   pid: number;
   /** Bytes pushed into the master side of the PTY. */

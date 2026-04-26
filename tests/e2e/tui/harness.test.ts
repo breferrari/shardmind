@@ -273,27 +273,41 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
     }
   }, 10_000);
 
-  it('PtyHandle.dispose() is idempotent after a timeout (wedged-child path)', async () => {
-    // Companion to the clean-exit idempotency test above. The dangerous
-    // path is when `waitForExit` returned a synthetic SIGKILL because
-    // the grace window expired before `pty.onExit` fired. In that
-    // shape `exitInfo` may still be null when `dispose` runs, so the
-    // dispose-level early-return doesn't fire and the second dispose
-    // re-enters the kill+drain. The first dispose's drain timer
-    // already cleared, so the second's drain race is between an
-    // already-resolved `exitPromise` and a fresh 200ms timer — both
-    // safe, but only if neither path throws.
+  it('PtyHandle.dispose() handles concurrent calls on a live wedged child', async () => {
+    // The clean-exit idempotency test above pins SEQUENTIAL dispose
+    // calls on an already-exited child (both calls hit the
+    // `exitInfo !== null` early-return at pty-cli.ts:417). The
+    // dangerous path is two dispose calls running CONCURRENTLY before
+    // exitInfo is set: both check `exitInfo === null`, both enter
+    // kill+drain, both send SIGKILL, both await Promise.race —
+    // exercising the parallel re-entry the early-return path can't
+    // observe. `Promise.all` here is what forces concurrency in JS;
+    // sequential `await dispose(); await dispose();` cannot reach
+    // this state because the first await blocks until the first
+    // dispose returns (by which time exitInfo is set).
+    //
+    // Realistic trigger: a future scenario file with both an
+    // `afterEach` cleanup hook and a `finally { dispose() }` block
+    // could in principle fire dispose twice without serialization.
     const childScript = 'setInterval(() => {}, 1e9);';
     const handle = await spawnCliPty([], {
       cwd: os.tmpdir(),
-      timeoutMs: 800,
       nodeArgs: ['-e', childScript],
     });
     try {
-      await handle.waitForExit();
-      await handle.dispose();
-      await expect(handle.dispose()).resolves.toBeUndefined();
+      // Both dispose calls evaluate `exitInfo === null` at the same
+      // tick, then both enter kill+drain. node-pty's pty.kill is
+      // idempotent; the second SIGKILL is wrapped in try/catch inside
+      // `kill()` (pty-cli.ts:393-398), so the redundant kernel call
+      // doesn't surface as a throw. Both Promise.race timers race the
+      // same exitPromise; once SIGKILL is reaped, both unblock.
+      await expect(
+        Promise.all([handle.dispose(), handle.dispose()]),
+      ).resolves.toEqual([undefined, undefined]);
     } finally {
+      // Third dispose hits exitInfo !== null at this point (both
+      // earlier calls completed). Safe per the pinned sequential
+      // idempotency contract above.
       await handle.dispose();
     }
   }, 10_000);
@@ -382,7 +396,14 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
     const outDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'shardmind-fixture-throw-out-'),
     );
-    const uniqueVersion = '0.0.0-mutate-throw-test';
+    // Per-pid stamp: each vitest worker (and each `npx vitest run`
+    // invocation from a different shell) has a distinct process.pid,
+    // so concurrent runs never share a prefix and the pre-cleanup
+    // pass below only ever touches THIS process's own orphans. Without
+    // this, parallel-pressure runs (the project's standard 4× full +
+    // 8× isolated recipe) had the rm racing sibling processes'
+    // freshly-mkdtemp'd workRoots mid-build.
+    const uniqueVersion = `0.0.0-mutate-throw-test-${process.pid}`;
     const orphanPrefix = `${FIXTURE_TMP_PREFIX}${uniqueVersion}-`;
     try {
       // Pre-clean any orphans left by a prior run that detected this

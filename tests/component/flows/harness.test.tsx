@@ -144,7 +144,10 @@ describe('flow harness', () => {
     // The exported `CUSTOM_TAR_TMP_PREFIX` keeps the assertion in
     // sync with the helper's `mkdtemp` so a rename breaks both.
     const vault = await makeVaultDir('harness-mutate-throw');
-    const uniqueVersion = '0.0.0-mutate-throw-l1';
+    // Per-pid stamp: see the L2 sibling for the rationale —
+    // multi-process pressure would otherwise have the pre-cleanup
+    // racing sibling vitest invocations' workRoots.
+    const uniqueVersion = `0.0.0-mutate-throw-l1-${process.pid}`;
     const orphanPrefix = `${CUSTOM_TAR_TMP_PREFIX}${uniqueVersion}-`;
     try {
       // Pre-clean orphans from a prior run that detected the
