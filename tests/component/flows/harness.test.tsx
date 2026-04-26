@@ -11,6 +11,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { cleanup } from 'ink-testing-library';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -128,6 +129,39 @@ describe('flow harness', () => {
       // Tick once so the gzip stream is fully closed before afterEach
       // tries to clean up the parent dir.
       await tick(10);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 30_000);
+
+  it('buildCustomTarball cleans the tmp clone dir if mutate throws', async () => {
+    // Mirror of the Layer 2 contract test in
+    // `tests/e2e/tui/harness.test.ts`: the helper's try/finally must
+    // tidy `/tmp/shardmind-custom-tar-*` even when a contributor's
+    // mutate callback panics during scenario shake-out. Use a unique
+    // version stamp so the snapshot doesn't pick up unrelated runs.
+    const vault = await makeVaultDir('harness-mutate-throw');
+    const uniqueVersion = '0.0.0-mutate-throw-l1';
+    const matchingBefore = (await fs.readdir(os.tmpdir())).filter((n) =>
+      n.startsWith(`shardmind-custom-tar-${uniqueVersion}-`),
+    );
+    try {
+      await expect(
+        buildCustomTarball({
+          version: uniqueVersion,
+          manifestOverrides: { hooks: {} },
+          outDir: vault,
+          prefix: `mutate-throw-${uniqueVersion}`,
+          mutate: async () => {
+            throw new Error('intentional-l1-mutate-throw');
+          },
+        }),
+      ).rejects.toThrow('intentional-l1-mutate-throw');
+
+      const matchingAfter = (await fs.readdir(os.tmpdir())).filter((n) =>
+        n.startsWith(`shardmind-custom-tar-${uniqueVersion}-`),
+      );
+      expect(matchingAfter.length).toBe(matchingBefore.length);
     } finally {
       await cleanupVault(vault);
     }
