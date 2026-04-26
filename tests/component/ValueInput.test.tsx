@@ -211,7 +211,7 @@ describe('ValueInput', () => {
     };
     const onSubmit = vi.fn();
     const { stdin } = await mount(
-      <ValueInput id="vault_purpose" def={def} initialValue="" onSubmit={onSubmit} />,
+      <ValueInput id="vault_purpose" def={def} initialValue={undefined} onSubmit={onSubmit} />,
     );
 
     stdin.write(ENTER);
