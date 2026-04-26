@@ -143,11 +143,21 @@ export interface SetupSuiteOpts {
 export function setupFlowSuite(opts: SetupSuiteOpts): () => FlowSuiteContext {
   let ctx: FlowSuiteContext | null = null;
   const originalApiBase = process.env['SHARDMIND_GITHUB_API_BASE'];
+  // The self-update notifier (#113) fires `checkSelfUpdate` from each
+  // command's mount under `process.stdout.isTTY` ⇒ true (the dev runs
+  // `npm test` in a real terminal). Without this opt-out, every flow
+  // mount would race a live `registry.npmjs.org` GET — flaky, slow, and
+  // a network hit from tests is just wrong. Set the suppression env var
+  // for the suite's lifetime; the dedicated self-update flow file
+  // deletes it per-test to exercise the rendering path against a local
+  // stub.
+  const originalNoSelfUpdate = process.env['SHARDMIND_NO_UPDATE_CHECK'];
 
   beforeAll(async () => {
     const fixtures = await buildTarballFixtures();
     const stub = await createGitHubStub({ shards: opts.shards });
     process.env['SHARDMIND_GITHUB_API_BASE'] = stub.url;
+    process.env['SHARDMIND_NO_UPDATE_CHECK'] = '1';
     ctx = { stub, fixtures };
   }, 90_000);
 
@@ -157,6 +167,11 @@ export function setupFlowSuite(opts: SetupSuiteOpts): () => FlowSuiteContext {
       process.env['SHARDMIND_GITHUB_API_BASE'] = originalApiBase;
     } else {
       delete process.env['SHARDMIND_GITHUB_API_BASE'];
+    }
+    if (originalNoSelfUpdate !== undefined) {
+      process.env['SHARDMIND_NO_UPDATE_CHECK'] = originalNoSelfUpdate;
+    } else {
+      delete process.env['SHARDMIND_NO_UPDATE_CHECK'];
     }
     await cleanupAllVaults();
   });
