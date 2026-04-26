@@ -46,21 +46,6 @@ interface BaseShardOpts {
   /** Override `shard.yaml.namespace`. See `name`. */
   namespace?: string;
   /**
-   * Optional manifest hook timeout override (ms). When present,
-   * `shard.yaml.hooks.timeout_ms` is set so a hook that hangs
-   * longer than this terminates deterministically — used by
-   * scenario 28.
-   */
-  hookTimeoutMs?: number;
-  /**
-   * Whether to drop `manifest.hooks` entirely. Set true for
-   * scenarios that don't want the post-install phase to fire at
-   * all (e.g. multi-conflict update scenarios). Ignored when
-   * `hookSource` is used inside `buildHookFixtureShard` — that
-   * path always declares a hook.
-   */
-  dropHooks?: boolean;
-  /**
    * Tarball prefix (the single top-level directory the archive must
    * have so `download.ts`'s `tar.x({ strip: 1 })` strips it
    * cleanly).
@@ -73,6 +58,13 @@ interface BaseShardOpts {
 export interface HookShardOptions extends BaseShardOpts {
   /** Body of `hooks/post-install.ts`. Caller is responsible for valid TS. */
   hookSource: string;
+  /**
+   * Optional manifest hook timeout override (ms). When present,
+   * `shard.yaml.hooks.timeout_ms` is set so a hook that hangs
+   * longer than this terminates deterministically — used by
+   * scenario 28.
+   */
+  hookTimeoutMs?: number;
 }
 
 export interface MutatedShardOptions extends BaseShardOpts {
@@ -82,6 +74,14 @@ export interface MutatedShardOptions extends BaseShardOpts {
    * the absolute path to the cloned shard root.
    */
   mutate: (workDir: string) => Promise<void>;
+  /**
+   * Drop `manifest.hooks` entirely so the post-install phase never
+   * fires. Set true for scenarios where the hook would interfere
+   * with what's under test (e.g. multi-conflict update scenarios
+   * that need a clean install + update cycle without a hook
+   * running).
+   */
+  dropHooks?: boolean;
 }
 
 /**

@@ -192,9 +192,9 @@ describe.skipIf(skipOnWindows)(
               );
               // ARROW_DOWN once + ENTER selects "Keep mine".
               handle.write(ARROW_DOWN);
-              await tick(40);
+              await tick(80);
               handle.write(ENTER);
-              await tick(60);
+              await tick(120);
             }
 
             await handle.waitForScreen(

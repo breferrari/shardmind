@@ -106,8 +106,16 @@ export function createVirtualScreen(opts: VirtualScreenOptions = {}): VirtualScr
   const contains = (text: string): boolean => serialize().includes(text);
   const matches = (re: RegExp): boolean => re.test(serialize());
 
+  let disposed = false;
   const dispose = (): void => {
-    // xterm-headless cleans up on dispose; calling twice is harmless.
+    // xterm-headless's own dispose is documented as safe to call
+    // twice, but a follow-up `feed()` against a disposed Terminal
+    // throws inside the parser. The flag here is the explicit
+    // single-source-of-truth so PtyHandle.dispose can be called
+    // from multiple cleanup paths (test finally + global afterEach)
+    // without surprising the helper's later consumers.
+    if (disposed) return;
+    disposed = true;
     term.dispose();
   };
 

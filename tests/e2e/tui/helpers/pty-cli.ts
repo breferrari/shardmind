@@ -33,6 +33,7 @@
 import * as nodePty from 'node-pty';
 import type { IPty } from 'node-pty';
 import { chmodSync, readdirSync, statSync } from 'node:fs';
+import { constants as osConstants } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DIST_CLI, ensureBuilt } from '../../helpers/build-once.js';
@@ -244,11 +245,18 @@ export async function spawnCliPty(
   // Polling `exitInfo === null` would burn CPU on the 20 ms cadence
   // even on instant exits; awaiting the Promise lets the event loop
   // sleep until node-pty actually fires.
+  //
+  // node-pty's `signal` is a numeric POSIX code (2 for SIGINT, 9 for
+  // SIGKILL, etc.), not the symbolic name. We map back to the
+  // symbolic form via `os.constants.signals` so test assertions can
+  // compare against `'SIGINT'` etc. without knowing the platform's
+  // numeric mapping (which differs between BSD and Linux for some
+  // signals).
   let exitInfo: { exitCode: number | null; signal: string | null } | null = null;
   const exitPromise = new Promise<{ exitCode: number | null; signal: string | null }>(
     (resolve) => {
       pty.onExit(({ exitCode, signal }) => {
-        const info = { exitCode, signal: signal !== undefined ? String(signal) : null };
+        const info = { exitCode, signal: signalNumberToName(signal) };
         exitInfo = info;
         resolve(info);
       });
@@ -270,7 +278,18 @@ export async function spawnCliPty(
     let last = '';
     while (Date.now() - start < limit) {
       last = screen.serialize();
-      if (predicate(last)) return last;
+      if (predicate(last)) {
+        // Post-predicate settle: Ink renders the frame BEFORE the
+        // newly-mounted component's `useInput` subscription is fully
+        // registered. A keystroke written immediately after a match
+        // can land between render-commit and effect-flush, where no
+        // input handler exists yet — the byte gets dropped silently.
+        // Mirrors the same settle pattern in
+        // `tests/component/helpers.ts::waitFor` (Layer 1) for the same
+        // reason. 30 ms is empirically sufficient on a busy machine.
+        await tick(30);
+        return last;
+      }
       await tick(poll);
     }
     throw new Error(
@@ -306,11 +325,15 @@ export async function spawnCliPty(
       // The SIGKILL above eventually fires `onExit` and resolves
       // `exitPromise`. If it lands within the grace window, surface
       // the captured info; otherwise return a synthetic SIGKILL state
-      // (test workers can't wait forever on a wedged child).
-      const graceWinner = await Promise.race([
-        exitPromise,
-        new Promise<'killed'>((resolve) => setTimeout(() => resolve('killed'), 200)),
-      ]);
+      // (test workers can't wait forever on a wedged child). Either
+      // way, clear the grace timer so an orphan setTimeout doesn't
+      // pin the worker after this function returns.
+      let graceHandle: NodeJS.Timeout | undefined;
+      const gracePromise = new Promise<'killed'>((resolve) => {
+        graceHandle = setTimeout(() => resolve('killed'), 200);
+      });
+      const graceWinner = await Promise.race([exitPromise, gracePromise]);
+      if (graceHandle !== undefined) clearTimeout(graceHandle);
       if (graceWinner === 'killed') {
         return { exitCode: null, signal: 'SIGKILL', timedOut: true };
       }
@@ -329,14 +352,20 @@ export async function spawnCliPty(
   };
 
   const dispose = async (): Promise<void> => {
-    kill();
-    // Drain the exit so the screen's xterm Terminal isn't disposed
-    // while node-pty still has bytes queued for it. 200 ms grace
-    // matches `waitForExit`'s SIGKILL fallback.
-    await Promise.race([
-      exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 200)),
-    ]);
+    // Skip the kill + drain race when the child already exited.
+    // Without the early-return, every clean test path waits 200 ms
+    // for nothing — across the L2 suite that's tens of seconds of
+    // orphan-timer cost. Clearing the timer below is what keeps the
+    // worker from being pinned after dispose returns.
+    if (exitInfo === null) {
+      kill();
+      let drainHandle: NodeJS.Timeout | undefined;
+      const drainPromise = new Promise<void>((resolve) => {
+        drainHandle = setTimeout(resolve, 200);
+      });
+      await Promise.race([exitPromise, drainPromise]);
+      if (drainHandle !== undefined) clearTimeout(drainHandle);
+    }
     screen.dispose();
   };
 
@@ -403,4 +432,23 @@ function stripUndefined(env: NodeJS.ProcessEnv): { [key: string]: string } {
     if (v !== undefined) out[k] = v;
   }
   return out;
+}
+
+/**
+ * Map node-pty's numeric `signal` field back to its POSIX symbolic
+ * name (`2` → `'SIGINT'`). Falls back to the numeric stringification
+ * for codes not present in `os.constants.signals` (e.g. real-time
+ * signals on Linux), which keeps the field always-stringy without
+ * losing information. Returns null when the child exited normally
+ * (no signal involved).
+ */
+function signalNumberToName(num: number | undefined): string | null {
+  if (num === undefined) return null;
+  // os.constants.signals is a record `{ SIGINT: 2, SIGKILL: 9, ... }`.
+  // The reverse lookup is small (~30 entries) and runs once per
+  // process exit — no need to memoize.
+  for (const [name, code] of Object.entries(osConstants.signals)) {
+    if (code === num) return name;
+  }
+  return String(num);
 }

@@ -130,7 +130,7 @@ describe.skipIf(skipOnWindows)(
                 },
               );
               handle.write(ENTER);
-              await tick(60);
+              await tick(120);
             }
 
             await handle.waitForScreen(

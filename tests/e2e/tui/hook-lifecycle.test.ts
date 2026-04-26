@@ -175,14 +175,21 @@ describe.skipIf(skipOnWindows)(
           );
           try {
             // Live tail: the marker should appear DURING the
-            // running-hook phase, before the Summary frame swaps in.
-            // The hook sleeps 1.5s after the first print, so this
-            // poll has a comfortable window to catch it.
+            // running-hook phase, before the Summary frame swaps
+            // in. The Summary frame ALSO captures the hook's stdout
+            // (via HookSummarySection), so a naive `contains(marker)`
+            // would match either. Pin the running-hook phase by
+            // requiring the marker AND the absence of the Summary
+            // headline — the hook sleeps 1.5 s between the first
+            // print and exit, so the live-tail window is wide enough
+            // to land the matching frame deterministically.
             await handle.waitForScreen(
-              (s) => s.includes(LIVE_TAIL_MARKER),
+              (s) =>
+                s.includes(LIVE_TAIL_MARKER) &&
+                !s.includes('Post-install hook completed'),
               {
                 timeoutMs: 30_000,
-                description: 'live tail marker mid-hook',
+                description: 'live tail marker mid-hook (pre-summary)',
               },
             );
 
