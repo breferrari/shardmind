@@ -151,6 +151,8 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] Enforce tarball size cap in `downloadShard` ([#32](https://github.com/breferrari/shardmind/issues/32))
 - [ ] `--force` flag on install for scripted collision overwrite without backup ([#55](https://github.com/breferrari/shardmind/issues/55))
 - [ ] E2E: bridge SIGINT delivery reliably on GH Actions Windows runner ([#57](https://github.com/breferrari/shardmind/issues/57))
+- [ ] Hook-runner pre-throw stdout dropped under parallel CPU pressure (test-only flake; `process.exit()` race vs piped buffer) ([#106](https://github.com/breferrari/shardmind/issues/106))
+- [ ] Split `release.yml` into two pipelines — GitHub Release (reversible) before npm publish (irreversible) ([#108](https://github.com/breferrari/shardmind/issues/108))
 
 ---
 
