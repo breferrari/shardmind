@@ -357,11 +357,13 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
 
 function minimalShardSchemaWithExtraRequired(): object {
   // Schema mirrors examples/minimal-shard/.shardmind/shard-schema.yaml
-  // but adds a new REQUIRED value (`project_id`) without a literal
-  // default in the migration list. The migration framework's `added`
-  // step would normally fill this in via `migrations:`; omitting a
-  // matching migration steers the engine into the NewValuesPrompt
-  // path that scenario 16 exercises.
+  // but adds a new REQUIRED value (`project_id`) with a literal
+  // default ('PROJ-AUTO'). Scenario 16 exercises the realistic v6
+  // update path: a new required value that ships with a default is
+  // auto-applied during update without entering the NewValuesPrompt
+  // flow (`computeSchemaAdditions` short-circuits on `default !== undefined`).
+  // See the scenario's docstring for why the prompt branch is
+  // effectively unreachable under v6's default-required schema contract.
   return {
     schema_version: 1,
     values: {

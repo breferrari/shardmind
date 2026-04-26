@@ -30,7 +30,7 @@ Closes [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1 (Layer
 
 - **Tests: 875 → 904 (+29)**: 2 registry unit (lazy env reads) + 4 harness smoke (route / cwd / setVersion-throw / custom-tarball) + 10 install scenarios + 5 update scenarios + 5 adopt scenarios + 2 status scenarios + 1 framework-level case observed during scenario shake-out. Suite wall-clock grows by ~30 s in isolation; vitest parallelizes across files so the full-suite delta is bounded.
 
-- **Engine surface intact**: no production code change beyond `source/core/registry.ts`'s lazy reads (the seam Phase 1 needed). No new error code. No new component. No `docs/ARCHITECTURE.md` / `docs/IMPLEMENTATION.md` / `docs/SHARD-LAYOUT.md` edit.
+- **Engine surface intact**: no production code change beyond `source/core/registry.ts`'s lazy reads (the seam Phase 1 needed). No new error code. No new component. No `docs/IMPLEMENTATION.md` / `docs/SHARD-LAYOUT.md` edit; `docs/ARCHITECTURE.md §19.7` (Hermetic E2E methodology) is updated only to document the call-time env-read change so the methodology section doesn't claim "read once at module load" any more.
 
 - **Two engine artifacts surfaced and left intact** for separate follow-up:
   - `differ.ts::computeMergeAction` renders both old + new content through Nunjucks even for static files — minimal-shard's CLAUDE.md contains a literal `{{ }}` token in its prose that fails the parse, so static-file conflicts with embedded template syntax can't be merged today. Scenario 14 sidesteps by targeting three `.njk` paths (Home.md.njk, brain/North Star.md.njk, .claude/settings.json.njk).

@@ -308,9 +308,11 @@ export interface BuildCustomTarballOpts {
   /** Output dir; tarball lands as `<outDir>/<prefix>.tar.gz`. */
   outDir: string;
   /**
-   * Tarball prefix. Must match GitHub's `<repo>-<sha>/` pattern shape so
-   * `download.ts`'s `tar.x({ strip: 1 })` works. Defaults to
-   * `minimal-shard-<version>`.
+   * Tarball prefix. The archive must contain a single top-level directory
+   * (one shared leading path segment across every entry) so
+   * `download.ts`'s `tar.x({ strip: 1 })` can strip it. The directory's
+   * name doesn't matter; the production tarballs we mirror happen to use
+   * GitHub's `<repo>-<sha>/` shape. Defaults to `minimal-shard-<version>`.
    */
   prefix?: string;
 }
