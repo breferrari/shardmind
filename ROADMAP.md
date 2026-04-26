@@ -92,12 +92,13 @@ Iterated diff-review prompts (`shardmind adopt`, `shardmind update`) froze after
 
 - [x] Iterated diff-review menus freeze after the first decision (firedRef leaks across files) ([#109](https://github.com/breferrari/shardmind/issues/109))
 
-### 0.1.x — Test foundation — **BLOCKING** all interactive 0.1.x work below
+### 0.1.x — Foundation — **BLOCKING** all interactive 0.1.x work below
 
-Two interactive bugs in two days proved the existing test layers don't catch the class of bug a first-time flagship user hits immediately. These two tickets close the gap. Until they land, every additional interactive ticket on the v0.1.x track risks repeating the failure mode.
+Three tickets address the v0.1.x reliability story head-on. **#111** + **#112** stop bad releases from shipping; **#113** helps users on prior bad releases discover the fix without manually checking npm. All three are top priority, foundation-level, and ship before any further wizard / diff-prompt UX work.
 
 - [ ] **TUI end-to-end testing framework** — three layers (command-level component, real-PTY, status-quo subprocess), 28 scenarios covering wizard, multi-file diff review, module review, hooks, cancellation, validation ([#111](https://github.com/breferrari/shardmind/issues/111)). **Phase 1** (Layer 1 command-level flow tests for install / update / adopt) blocks the Flagship UX stabilization tickets below. Phase 2 (real-PTY via `node-pty` + `@xterm/headless`) and Phase 3 (ongoing extensions as bug classes surface) follow.
 - [ ] **Pre-release manual smoke gate** — `RELEASE-SMOKE.md` checklist + binding `CLAUDE.md` §Release Process rule that `npm run release:*` does not run without a completed smoke table pasted into the release tag body ([#112](https://github.com/breferrari/shardmind/issues/112)). Stopgap for the manual phase between now and #111 Phase 1 covering the matrix in CI; relaxed once automation lands.
+- [ ] **Self-update notifier** — every command checks the npm registry once per 24h (cached) and prints a one-line banner when a newer `shardmind` is available. Silent on fetch failure; opt-out via `--no-update-check`, `SHARDMIND_NO_UPDATE_CHECK`, or `CI` env var. Closes the loop between "we cut a hotfix" and "users on the broken prior version know to upgrade" ([#113](https://github.com/breferrari/shardmind/issues/113)).
 
 ### 0.1.x — Flagship UX stabilization (blocked on [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1)
 
