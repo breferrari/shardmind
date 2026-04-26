@@ -55,10 +55,10 @@ interface AdoptDiffViewProps {
  * sizes only. The `Select` action stays available so the user can pick
  * a side without seeing the (unrenderable) bytes.
  *
- * The `firedRef` guard mirrors `DiffView.tsx` and `CollisionReview.tsx`:
- * Ink's `Select` can fire `onChange` more than once if the instance
- * re-focuses. A double-fire on `use_shard` would queue two writes for
- * the same path; the ref clamps each mount to a single emission.
+ * The `firedPathRef` guard mirrors `DiffView.tsx`. The ref records
+ * WHICH path it last fired for — `adopt.tsx` advances `currentIndex`
+ * without remounting this component, so a boolean ref would leak
+ * `true` across files and freeze every prompt after the first.
  */
 export default function AdoptDiffView({
   path: filePath,
@@ -69,7 +69,7 @@ export default function AdoptDiffView({
   isBinary,
   onChoice,
 }: AdoptDiffViewProps) {
-  const firedRef = useRef(false);
+  const firedPathRef = useRef<string | null>(null);
 
   const hunks = useMemo(() => {
     if (isBinary) return null;
@@ -114,9 +114,9 @@ export default function AdoptDiffView({
         key={filePath}
         options={SELECT_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
         onChange={(choice) => {
-          if (firedRef.current) return;
+          if (firedPathRef.current === filePath) return;
           if (!ADOPT_DIFF_ACTIONS.has(choice as AdoptDiffAction)) return;
-          firedRef.current = true;
+          firedPathRef.current = filePath;
           onChoice(choice as AdoptDiffAction);
         }}
       />

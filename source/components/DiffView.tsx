@@ -36,11 +36,13 @@ interface DiffViewProps {
 
 export default function DiffView({ path: filePath, index, total, result, onChoice }: DiffViewProps) {
   const mergedLines = useMemo(() => result.content.split(LINE_SPLIT), [result.content]);
-  // `Select` may fire onChange more than once if Ink re-focuses the
-  // instance; once the user's pick is in, ignore everything else for
-  // this mount. `key={filePath}` below forces a fresh ref per file so
-  // this only blocks same-file duplicates.
-  const firedRef = useRef(false);
+  // Block duplicate fires within the same file. The ref tracks WHICH
+  // path it last fired for — so when the parent advances `currentIndex`
+  // without remounting (no `key` prop), the new path doesn't match and
+  // the next file's first Enter is allowed through. A boolean ref leaks
+  // across files because React keeps the same component instance and
+  // `useRef` returns the same object.
+  const firedPathRef = useRef<string | null>(null);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -69,9 +71,9 @@ export default function DiffView({ path: filePath, index, total, result, onChoic
         key={filePath}
         options={SELECT_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
         onChange={(choice) => {
-          if (firedRef.current) return;
+          if (firedPathRef.current === filePath) return;
           if (!DIFF_ACTIONS.has(choice as DiffAction)) return;
-          firedRef.current = true;
+          firedPathRef.current = filePath;
           onChoice(choice as DiffAction);
         }}
       />

@@ -3,7 +3,7 @@ import { render, cleanup } from 'ink-testing-library';
 import React from 'react';
 import DiffView, { type DiffAction } from '../../source/components/DiffView.js';
 import type { MergeResult } from '../../source/runtime/types.js';
-import { ARROW_DOWN, ENTER, tick, waitFor } from './helpers.js';
+import { ARROW_DOWN, ENTER, tick, waitFor, waitForCall } from './helpers.js';
 
 afterEach(() => {
   cleanup();
@@ -235,6 +235,31 @@ describe('DiffView', () => {
     stdin.write(ENTER);
     await tick(80);
     expect(onChoice).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires onChoice for the next conflict after the parent advances path without remounting (#109)', async () => {
+    // Repro of the iterated-firedRef bug: update.tsx renders <DiffView>
+    // without a `key` prop, so when phase.currentIndex advances React keeps
+    // the same component instance. A boolean firedRef would leak `true`
+    // across files and freeze every prompt after the first.
+    const onChoice = vi.fn<(a: DiffAction) => void>();
+    const r = render(
+      <DiffView path="file-1.md" index={1} total={2} result={makeResult()} onChoice={onChoice} />,
+    );
+    await tick(30);
+    r.stdin.write(ENTER);
+    await waitForCall(onChoice);
+    expect(onChoice).toHaveBeenNthCalledWith(1, 'accept_new');
+
+    // Parent advances to the next file — no key prop, same instance.
+    r.rerender(
+      <DiffView path="file-2.md" index={2} total={2} result={makeResult()} onChoice={onChoice} />,
+    );
+    await tick(30);
+    r.stdin.write(ENTER);
+    await waitFor(() => (onChoice.mock.calls.length >= 2 ? 'ok' : ''), (f) => f === 'ok');
+    expect(onChoice).toHaveBeenCalledTimes(2);
+    expect(onChoice).toHaveBeenNthCalledWith(2, 'accept_new');
   });
 
   it('does not show context lines when the conflict starts at line 1', () => {

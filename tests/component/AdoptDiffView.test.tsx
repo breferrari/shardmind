@@ -4,7 +4,7 @@ import React from 'react';
 import AdoptDiffView, {
   type AdoptDiffAction,
 } from '../../source/components/AdoptDiffView.js';
-import { ARROW_DOWN, ENTER, tick, waitFor } from './helpers.js';
+import { ARROW_DOWN, ENTER, tick, waitFor, waitForCall } from './helpers.js';
 
 afterEach(() => {
   cleanup();
@@ -143,6 +143,48 @@ describe('AdoptDiffView', () => {
     stdin.write(ENTER);
     await tick(80);
     expect(onChoice).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires onChoice for the next file after the parent advances path without remounting (#109)', async () => {
+    // Repro of the iterated-firedRef bug: adopt.tsx renders <AdoptDiffView>
+    // without a `key` prop, so when phase.currentIndex advances React keeps
+    // the same component instance. A boolean firedRef would leak `true`
+    // across files and freeze every prompt after the first. Here we mimic
+    // the parent by re-rendering the SAME root with new props.
+    const onChoice = vi.fn<(a: AdoptDiffAction) => void>();
+    const r = render(
+      <AdoptDiffView
+        path="file-1.md"
+        index={1}
+        total={2}
+        shardContent={SHARD}
+        userContent={MINE}
+        isBinary={false}
+        onChoice={onChoice}
+      />,
+    );
+    await tick(30);
+    r.stdin.write(ENTER);
+    await waitForCall(onChoice);
+    expect(onChoice).toHaveBeenNthCalledWith(1, 'keep_mine');
+
+    // Parent advances to the next file — no key prop, same instance.
+    r.rerender(
+      <AdoptDiffView
+        path="file-2.md"
+        index={2}
+        total={2}
+        shardContent={SHARD}
+        userContent={MINE}
+        isBinary={false}
+        onChoice={onChoice}
+      />,
+    );
+    await tick(30);
+    r.stdin.write(ENTER);
+    await waitFor(() => (onChoice.mock.calls.length >= 2 ? 'ok' : ''), (f) => f === 'ok');
+    expect(onChoice).toHaveBeenCalledTimes(2);
+    expect(onChoice).toHaveBeenNthCalledWith(2, 'keep_mine');
   });
 
   it('does NOT render \\r artifacts on CRLF input', () => {
