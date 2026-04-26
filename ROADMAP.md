@@ -66,9 +66,9 @@ Engine rework required by the v6 shard-layout contract. Must land before Milesto
 
 ### Milestone 5: Flagship Shard (Day 5) — blocked on Milestone 4.5
 
-- [ ] obsidian-mind v6 conversion — `.shardmind/` sidecar, hooks, `.shardmindignore` ([#14](https://github.com/breferrari/shardmind/issues/14), under [#70](https://github.com/breferrari/shardmind/issues/70))
+- [x] obsidian-mind v6 conversion — `.shardmind/` sidecar, hooks, `.shardmindignore` ([#14](https://github.com/breferrari/shardmind/issues/14), under [#70](https://github.com/breferrari/shardmind/issues/70))
 - [x] Finalize post-install hook runtime ([#30](https://github.com/breferrari/shardmind/issues/30))
-- [ ] Verify: `shardmind install github:breferrari/obsidian-mind` (direct mode) produces a vault byte-equivalent to git clone under Invariant 1 ([#78](https://github.com/breferrari/shardmind/issues/78))
+- [x] Verify: `shardmind install github:breferrari/obsidian-mind` (direct mode) produces a vault byte-equivalent to git clone under Invariant 1 ([#78](https://github.com/breferrari/shardmind/issues/78))
 
 ### Milestone 6: Ship (Day 6) — blocked on Milestone 5
 
