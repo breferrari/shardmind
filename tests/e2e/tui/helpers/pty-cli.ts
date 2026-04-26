@@ -153,6 +153,15 @@ export interface SpawnCliPtyOptions {
 export const PTY_VIEWPORT_ROWS = 50;
 
 export interface PtyHandle {
+  /**
+   * The child process's POSIX pid. Exposed so harness tests can verify
+   * the child has actually been reaped (e.g. `process.kill(pid, 0)`
+   * throws ESRCH after a forced kill) — `waitForExit`'s synthetic
+   * fallback at line 385 reports `signal: 'SIGKILL'` regardless of
+   * whether the kill landed, so a process-state check is the only
+   * way to pin the force-kill contract from outside the helper.
+   */
+  pid: number;
   /** Bytes pushed into the master side of the PTY. */
   write: (data: string) => void;
   /** Cell-grid view of what the child has rendered. */
@@ -417,7 +426,7 @@ export async function spawnCliPty(
     screen.dispose();
   };
 
-  return { write, screen, waitForScreen, sigint, waitForExit, kill, dispose };
+  return { pid: pty.pid, write, screen, waitForScreen, sigint, waitForExit, kill, dispose };
 }
 
 /**

@@ -35,6 +35,35 @@ import {
 
 const skipOnWindows = process.platform === 'win32';
 
+/**
+ * Poll `process.kill(pid, 0)` until the kernel reports the process as
+ * gone (ESRCH). Returns true if reaped within `timeoutMs`, false on
+ * timeout. The 0 signal is a permissions/existence probe — it doesn't
+ * actually deliver a signal, just throws ESRCH when the pid no longer
+ * names a live process.
+ *
+ * Used by the wedged-child harness test to verify the helper's
+ * force-kill path actually unwedges the child, separately from the
+ * `waitForExit` return shape (which can synthesize SIGKILL on grace-
+ * window expiry whether or not the kill landed).
+ */
+async function waitForReaped(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ESRCH') return true;
+      // EPERM means the pid exists but we can't signal it. Treat as
+      // alive — relevant only if a privilege-dropping shell ran the
+      // test, which doesn't apply here, but pinning the predicate
+      // avoids surprises.
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return false;
+}
+
 describe.skipIf(skipOnWindows)('Layer 2 harness — virtual screen', () => {
   it('renders plain text into the visible viewport', async () => {
     const screen = createVirtualScreen({ cols: 20, rows: 3 });
@@ -188,52 +217,82 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
     await expect(handle.dispose()).resolves.toBeUndefined();
   }, 30_000);
 
-  it('waitForExit on a wedged child returns timedOut + SIGKILL with screen captured', async () => {
-    // Spawn a node child that ignores BOTH SIGINT and SIGTERM, so the
-    // helper's only escape is the SIGKILL force-kill path inside
-    // `waitForExit`. Use `nodeArgs` to bypass the CLI — we're testing
-    // the helper, not the product. `timeoutMs: 1500` keeps the test
-    // bounded; the helper grants a 200 ms grace for SIGKILL to land.
+  it('waitForExit on a wedged child force-kills the process and reaps it', async () => {
+    // Spawn a node child that wedges in `setInterval` — uncatchable
+    // SIGKILL is the only way to free the worker slot. Use `nodeArgs`
+    // to bypass the CLI; we're testing the helper, not the product.
+    // `timeoutMs: 1500` bounds the test; the helper grants a 200 ms
+    // grace for SIGKILL to be reaped after firing.
     //
-    // The child writes a sentinel string to stdout before wedging so
-    // the screen has SOMETHING for the assertion to inspect — proves
-    // the screen capture survives all the way through the timeout +
-    // kill + drain pipeline. Without the print, an empty screen could
-    // mean either "captured correctly but child didn't write" or
-    // "screen lost during disposal" — ambiguous.
+    // The contract pinned: the helper's timeout branch ACTUALLY
+    // delivers SIGKILL and the child is gone after `waitForExit`
+    // returns. `result.signal === 'SIGKILL'` alone is insufficient —
+    // the synthetic-grace branch at `pty-cli.ts:386` returns that
+    // shape unconditionally, so an audit-mutation that removes the
+    // `pty.kill('SIGKILL')` line at line 369 would still pass on
+    // signal+timedOut alone. `process.kill(pid, 0)` is the real
+    // contract: ESRCH means the kernel has reaped the process, which
+    // happens iff SIGKILL was actually delivered.
+    const childScript =
+      'process.stdout.write("WEDGED-SENTINEL\\n"); ' +
+      'setInterval(() => {}, 1e9);';
     const handle = await spawnCliPty([], {
       cwd: os.tmpdir(),
       timeoutMs: 1500,
-      nodeArgs: [
-        '-e',
-        // eslint-disable-next-line no-template-curly-in-string
-        'process.stdout.write("WEDGED-SENTINEL\\n"); ' +
-          'process.on("SIGINT", () => {}); ' +
-          'process.on("SIGTERM", () => {}); ' +
-          'setInterval(() => {}, 1e9);',
-      ],
+      nodeArgs: ['-e', childScript],
     });
     try {
-      // No pre-wait: `pty.onData` streams the sentinel into the screen
-      // independent of when we enter `waitForExit`, and the assertion
-      // runs only after `waitForExit` returns (≤1500ms timeout window),
-      // by which time the child has had ample wall-clock to flush.
+      // Pre-check: confirm the sentinel arrived through the PTY before
+      // we enter the timeout dance. Without this, a slow node cold-
+      // start under heavy parallel pressure could collide with the
+      // 1500ms window and the post-test sentinel assertion would
+      // fail-flake. The waitForScreen guarantees the child started
+      // and is now wedged in `setInterval`.
+      await handle.waitForScreen(
+        (s) => s.includes('WEDGED-SENTINEL'),
+        { timeoutMs: 5_000, description: 'wedged-child sentinel' },
+      );
+
       const result = await handle.waitForExit();
       expect(result.timedOut).toBe(true);
-      // SIGKILL came from the helper's force-kill on timeout. The
-      // signal field rides through `signalNumberToName` so a regression
-      // in the mapping function would surface here as numeric '9'
-      // instead of 'SIGKILL'.
       expect(result.signal).toBe('SIGKILL');
-      // exitCode is intentionally not asserted: node-pty's IExitEvent
-      // populates exitCode even on signal termination (platform-
-      // dependent — typically 0 on Darwin/Linux when SIGKILL fires
-      // before any user exit() call), which doesn't match the POSIX
-      // "null on signal" reading. The signal field above is the
-      // load-bearing part; exitCode under signal kill is flake.
-      // Screen captured everything the child wrote before it went
-      // unresponsive. The sentinel is the proof.
-      expect(handle.screen.contains('WEDGED-SENTINEL')).toBe(true);
+
+      // The load-bearing assertion: the child must actually be reaped.
+      // Retry briefly because POSIX makes no hard guarantee about how
+      // quickly the kernel reflects a SIGKILL'd process as ESRCH after
+      // `pty.kill` returns. The 200ms grace inside `waitForExit`
+      // already gave the kernel time to do this; this loop is a final
+      // 500ms safety belt for very contended runners.
+      const reaped = await waitForReaped(handle.pid, 500);
+      expect(
+        reaped,
+        `child pid ${handle.pid} still alive ${500}ms after waitForExit returned timedOut — force-kill did not land`,
+      ).toBe(true);
+    } finally {
+      await handle.dispose();
+    }
+  }, 10_000);
+
+  it('PtyHandle.dispose() is idempotent after a timeout (wedged-child path)', async () => {
+    // Companion to the clean-exit idempotency test above. The dangerous
+    // path is when `waitForExit` returned a synthetic SIGKILL because
+    // the grace window expired before `pty.onExit` fired. In that
+    // shape `exitInfo` may still be null when `dispose` runs, so the
+    // dispose-level early-return doesn't fire and the second dispose
+    // re-enters the kill+drain. The first dispose's drain timer
+    // already cleared, so the second's drain race is between an
+    // already-resolved `exitPromise` and a fresh 200ms timer — both
+    // safe, but only if neither path throws.
+    const childScript = 'setInterval(() => {}, 1e9);';
+    const handle = await spawnCliPty([], {
+      cwd: os.tmpdir(),
+      timeoutMs: 800,
+      nodeArgs: ['-e', childScript],
+    });
+    try {
+      await handle.waitForExit();
+      await handle.dispose();
+      await expect(handle.dispose()).resolves.toBeUndefined();
     } finally {
       await handle.dispose();
     }
@@ -317,18 +376,39 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
     // tidy — otherwise `/tmp` accumulates `shardmind-fixture-*` clones
     // until the dev box rebuilds. Use a unique version stamp so this
     // test's signature doesn't collide with leftover dirs from prior
-    // runs.
+    // runs. The exported `FIXTURE_TMP_PREFIX` keeps the assertion's
+    // glob in sync with the helper's `mkdtemp` so a future rename
+    // breaks both at once.
     const outDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'shardmind-fixture-throw-out-'),
     );
-    // Unique version stamp: vitest workers run files in isolation, so
-    // no concurrent run can collide on this prefix. With the prefix
-    // exported from the helper (FIXTURE_TMP_PREFIX), a future rename
-    // breaks both the `mkdtemp` and the assertion at the same time
-    // rather than silently letting the test pass on no matches.
     const uniqueVersion = '0.0.0-mutate-throw-test';
     const orphanPrefix = `${FIXTURE_TMP_PREFIX}${uniqueVersion}-`;
     try {
+      // Pre-clean any orphans left by a prior run that detected this
+      // exact regression and surfaced it. Without this, the test
+      // sticks-fail across runs after the first true positive: the
+      // test discovers the orphan, the assertion fails, the dev fixes
+      // the helper, but the orphan from the prior failing run is
+      // still on disk and the test keeps reporting non-empty until a
+      // manual cleanup. Running the cleanup at the top makes the
+      // assertion deterministic across runs.
+      for (const stale of (await fs.readdir(os.tmpdir())).filter((n) =>
+        n.startsWith(orphanPrefix),
+      )) {
+        await fs.rm(path.join(os.tmpdir(), stale), {
+          recursive: true,
+          force: true,
+        });
+      }
+
+      // Force the throw from inside the try block by flipping a flag
+      // before throwing — pinned afterwards. Without the flag, a
+      // future refactor that moves `mkdtemp` out of the try (or wraps
+      // the build in a precondition check that throws BEFORE entering
+      // the try) would still pass this test even though `mutate`
+      // never ran.
+      let mutateRan = false;
       await expect(
         buildMutatedShard({
           version: uniqueVersion,
@@ -336,10 +416,12 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
           outDir,
           dropHooks: true,
           mutate: async () => {
+            mutateRan = true;
             throw new Error('intentional-mutate-throw');
           },
         }),
       ).rejects.toThrow('intentional-mutate-throw');
+      expect(mutateRan).toBe(true);
 
       const orphans = (await fs.readdir(os.tmpdir())).filter((n) =>
         n.startsWith(orphanPrefix),

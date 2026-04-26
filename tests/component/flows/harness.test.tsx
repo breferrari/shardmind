@@ -141,15 +141,31 @@ describe('flow harness', () => {
     // tidy `/tmp/shardmind-custom-tar-*` even when a contributor's
     // mutate callback panics during scenario shake-out. Use a unique
     // version stamp so the snapshot doesn't pick up unrelated runs.
+    // The exported `CUSTOM_TAR_TMP_PREFIX` keeps the assertion in
+    // sync with the helper's `mkdtemp` so a rename breaks both.
     const vault = await makeVaultDir('harness-mutate-throw');
-    // Unique version stamp: vitest workers run files in isolation, so
-    // no concurrent run can collide on this prefix. With the prefix
-    // exported from the helper (CUSTOM_TAR_TMP_PREFIX), a future
-    // rename breaks both the `mkdtemp` and the assertion at the same
-    // time rather than silently letting the test pass on no matches.
     const uniqueVersion = '0.0.0-mutate-throw-l1';
     const orphanPrefix = `${CUSTOM_TAR_TMP_PREFIX}${uniqueVersion}-`;
     try {
+      // Pre-clean orphans from a prior run that detected the
+      // regression and reported correctly. Without this the test
+      // sticks-fail across runs after the first true positive — see
+      // the equivalent block in the Layer 2 sibling for the rationale.
+      for (const stale of (await fs.readdir(os.tmpdir())).filter((n) =>
+        n.startsWith(orphanPrefix),
+      )) {
+        await fs.rm(path.join(os.tmpdir(), stale), {
+          recursive: true,
+          force: true,
+        });
+      }
+
+      // `mutateRan` flag pins that the throw came from inside the
+      // helper's try block, not from a precondition check before
+      // mkdtemp. Without it, a future refactor that moves the
+      // `mkdtemp` out of the try (or fails earlier) would still pass
+      // this test even though `mutate` never ran.
+      let mutateRan = false;
       await expect(
         buildCustomTarball({
           version: uniqueVersion,
@@ -157,10 +173,12 @@ describe('flow harness', () => {
           outDir: vault,
           prefix: `mutate-throw-${uniqueVersion}`,
           mutate: async () => {
+            mutateRan = true;
             throw new Error('intentional-l1-mutate-throw');
           },
         }),
       ).rejects.toThrow('intentional-l1-mutate-throw');
+      expect(mutateRan).toBe(true);
 
       const orphans = (await fs.readdir(os.tmpdir())).filter((n) =>
         n.startsWith(orphanPrefix),
