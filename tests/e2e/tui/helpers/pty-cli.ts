@@ -157,7 +157,7 @@ export interface PtyHandle {
    * The child process's POSIX pid at spawn time. Exposed so harness
    * tests can verify the child has actually been reaped
    * (`process.kill(pid, 0)` throws ESRCH after a forced kill) —
-   * `waitForExit`'s synthetic fallback at line 385 reports
+   * `waitForExit`'s synthetic-grace fallback reports
    * `signal: 'SIGKILL'` regardless of whether the kill landed, so a
    * process-state check is the only way to pin the force-kill
    * contract from outside the helper.

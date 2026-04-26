@@ -227,12 +227,12 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
     // The contract pinned: the helper's timeout branch ACTUALLY
     // delivers SIGKILL and the child is gone after `waitForExit`
     // returns. `result.signal === 'SIGKILL'` alone is insufficient —
-    // the synthetic-grace branch at `pty-cli.ts:386` returns that
-    // shape unconditionally, so an audit-mutation that removes the
-    // `pty.kill('SIGKILL')` line at line 369 would still pass on
-    // signal+timedOut alone. `process.kill(pid, 0)` is the real
-    // contract: ESRCH means the kernel has reaped the process, which
-    // happens iff SIGKILL was actually delivered.
+    // the synthetic-grace branch in `waitForExit` returns that shape
+    // unconditionally, so a regression that removes the
+    // `pty.kill('SIGKILL')` call would still pass on signal+timedOut
+    // alone. `process.kill(pid, 0)` is the real contract: ESRCH means
+    // the kernel has reaped the process, which happens iff SIGKILL
+    // was actually delivered.
     const childScript =
       'process.stdout.write("WEDGED-SENTINEL\\n"); ' +
       'setInterval(() => {}, 1e9);';
@@ -302,9 +302,9 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
       // Both dispose calls evaluate `exitInfo === null` at the same
       // tick, then both enter kill+drain. node-pty's pty.kill is
       // idempotent; the second SIGKILL is wrapped in try/catch inside
-      // `kill()` (pty-cli.ts:393-398), so the redundant kernel call
-      // doesn't surface as a throw. Both Promise.race timers race the
-      // same exitPromise; once SIGKILL is reaped, both unblock.
+      // pty-cli's `kill()`, so the redundant kernel call doesn't
+      // surface as a throw. Both Promise.race timers race the same
+      // exitPromise; once SIGKILL is reaped, both unblock.
       await expect(
         Promise.all([handle.dispose(), handle.dispose()]),
       ).resolves.toEqual([undefined, undefined]);
