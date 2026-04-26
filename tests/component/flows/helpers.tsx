@@ -359,15 +359,20 @@ export async function buildCustomTarball(
  *
  * Returns once the modules step is rendered. The caller continues
  * with whatever post-modules step its scenario needs (Confirm for
- * install, plan + diff for adopt). `headerTimeoutMs` accommodates
- * the slower adopt path (resolve → download → wizard) — install
- * goes through the same network calls but tests reuse cached
- * tarballs by then.
+ * install, plan + diff for adopt).
+ *
+ * `headerTimeoutMs` defaults to 30 s because the wizard-header frame
+ * is gated on the full resolve → download → parseManifest →
+ * parseSchema → planOutputs pipeline. Under parallel test load
+ * (multiple `npm test` workers + multiple github-stub HTTP servers
+ * + concurrent tarball reads), CPU contention can stretch that
+ * pipeline well past 10 s on a worker. The 30 s ceiling is the
+ * same shape `tests/e2e/cli.test.ts` uses for its slower CI cells.
  */
 export async function driveMinimalWizard(
   r: RenderResult,
   userName = 'Alice',
-  headerTimeoutMs = 10_000,
+  headerTimeoutMs = 30_000,
 ): Promise<void> {
   await waitFor(r.lastFrame, (f) => /4 questions to answer/.test(f), headerTimeoutMs);
   r.stdin.write(ENTER);

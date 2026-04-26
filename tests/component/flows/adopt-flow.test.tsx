@@ -72,9 +72,15 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
       });
       await driveAdoptWizard(r);
       // No differing files → planner goes straight to executing →
-      // running-hook → summary. Wait for the Adopt summary header.
-      await waitFor(r.lastFrame, (f) => /Adopted shardmind\/minimal/.test(f), 30_000);
-      const frame = r.lastFrame() ?? '';
+      // running-hook → summary. Capture the matched frame from
+      // waitFor; reading r.lastFrame() afterwards races the 100 ms
+      // exit() timer that clears the testing-library buffer (same
+      // pattern as status-flow's two scenarios).
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Adopted shardmind\/minimal/.test(f),
+        30_000,
+      );
       // All adopted files should be in the "installed fresh" bucket
       // since the vault was empty pre-adopt.
       expect(frame).toMatch(/installed fresh/i);
@@ -175,13 +181,15 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
         shardRef: SHARD_REF,
         vaultRoot: installedVault.root,
       });
-      await waitFor(
+      // Capture the matched frame from waitFor; r.lastFrame() races
+      // the exit() that clears the buffer once the error phase fires
+      // (same pattern as scenario 19 + status-flow).
+      const frame = await waitFor(
         r.lastFrame,
         (f) => f.includes('ADOPT_EXISTING_INSTALL'),
         20_000,
       );
       // Hint mentions `shardmind update` as the upgrade path.
-      const frame = r.lastFrame() ?? '';
       expect(frame).toMatch(/shardmind update/);
     } finally {
       if (installedVault) await installedVault.cleanup();

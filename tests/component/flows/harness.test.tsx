@@ -55,7 +55,16 @@ describe('flow harness', () => {
         shardRef: `github:${SHARD_SLUG}#main`,
         vaultRoot: vault,
       });
-      await waitFor(r.lastFrame, (f) => /questions to answer|Choose modules|Ready to install/.test(f));
+      // 15 s timeout (vs waitFor's 2 s default) because the install
+      // pipeline under parallel test load (resolve → download →
+      // parse) routinely exceeds 2 s on CPU-contended workers — the
+      // scenario tests bump the wizard-header waitFor for the same
+      // reason (see `driveMinimalWizard`).
+      await waitFor(
+        r.lastFrame,
+        (f) => /questions to answer|Choose modules|Ready to install/.test(f),
+        15_000,
+      );
     } finally {
       await cleanupVault(vault);
     }

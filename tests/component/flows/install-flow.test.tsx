@@ -146,7 +146,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         shardRef: `github:${SLUG_MIDDLE_DEFAULT}#v0.1.0`,
         vaultRoot: vault,
       });
-      await waitFor(r.lastFrame, (f) => /1 question to answer/.test(f), 10_000);
+      await waitFor(r.lastFrame, (f) => /1 question to answer/.test(f), 30_000);
       r.stdin.write(ENTER);
       await waitFor(r.lastFrame, (f) => f.includes('Pick a color'));
       // Cursor pre-positions on the default (middle option, reordered to
@@ -176,7 +176,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         shardRef: `${SHARD_REF}#v0.1.0`,
         vaultRoot: vault,
       });
-      await waitFor(r.lastFrame, (f) => /4 questions to answer/.test(f), 10_000);
+      await waitFor(r.lastFrame, (f) => /4 questions to answer/.test(f), 30_000);
       r.stdin.write(ENTER);
       await waitFor(r.lastFrame, (f) => f.includes('Your name'));
       // Empty Enter on required field → validation error.
@@ -231,7 +231,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         shardRef: `github:${SLUG_NUMBER_TYPE}#v0.1.0`,
         vaultRoot: vault,
       });
-      await waitFor(r.lastFrame, (f) => /1 question to answer/.test(f), 10_000);
+      await waitFor(r.lastFrame, (f) => /1 question to answer/.test(f), 30_000);
       r.stdin.write(ENTER);
       await waitFor(r.lastFrame, (f) => f.includes('Age?'));
       // The default value (25) is pre-filled in the input. Append '999'
@@ -329,7 +329,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       // No missing required values (the only value has a computed
       // default that resolves automatically). Wizard skips the value
       // step and lands on the computed-preview screen.
-      await waitFor(r.lastFrame, (f) => f.includes('Auto-filled values'), 15_000);
+      await waitFor(r.lastFrame, (f) => f.includes("Auto-filled values"), 30_000);
       const previewFrame = r.lastFrame() ?? '';
       expect(previewFrame).toMatch(/install_token/);
       expect(previewFrame).toMatch(/DERIVED-VALUE/);
@@ -349,7 +349,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         shardRef: `${SHARD_REF}#v0.1.0`,
         vaultRoot: vault,
       });
-      await waitFor(r.lastFrame, (f) => /4 questions to answer/.test(f), 10_000);
+      await waitFor(r.lastFrame, (f) => /4 questions to answer/.test(f), 30_000);
       r.stdin.write(ENTER);
       await waitFor(r.lastFrame, (f) => f.includes('Your name'));
       await typeText(r.stdin, 'Charlie');
