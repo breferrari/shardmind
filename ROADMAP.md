@@ -94,33 +94,69 @@ Iterated diff-review prompts (`shardmind adopt`, `shardmind update`) froze after
 
 ### 0.1.x — Foundation — **BLOCKING** all interactive 0.1.x work below
 
-Three tickets address the v0.1.x reliability story head-on. **#111** + **#112** stop bad releases from shipping; **#113** helps users on prior bad releases discover the fix without manually checking npm. All three are top priority, foundation-level, and ship before any further wizard / diff-prompt UX work.
+Two tickets stop bad releases from shipping. Both are top priority and ship before any further wizard / diff-prompt UX work.
 
-- **TUI end-to-end testing framework** — three layers (command-level component, real-PTY, status-quo subprocess), 28 scenarios covering wizard, multi-file diff review, module review, hooks, cancellation, validation ([#111](https://github.com/breferrari/shardmind/issues/111)). All three phases shipped; parent issue closed.
+- **TUI end-to-end testing framework** — three layers (command-level component, real-PTY, status-quo subprocess), 28 scenarios covering wizard, multi-file diff review, module review, hooks, cancellation, validation ([#111](https://github.com/breferrari/shardmind/issues/111)). All three phases shipped; parent issue closed. Continuing-hardening tracker: [#121](https://github.com/breferrari/shardmind/issues/121).
   - [x] **Phase 1** — Layer 1 command-level flow tests (22 scenarios across install / update / adopt / status), shipped under `tests/component/flows/`. Closes the regression matrix #103 and #109 fell through and unblocks the Flagship UX stabilization tickets below.
   - [x] **Phase 2** — Layer 2 real-PTY scenarios via `node-pty` + `@xterm/headless` (6 scenarios marked L2 in [#111](https://github.com/breferrari/shardmind/issues/111)'s matrix + 3 hook scenarios 26-28). Catches SIGINT delivery, ANSI rendering, raw-mode quirks that only surface under a real PTY. Shipped under `tests/e2e/tui/`; macOS + Linux only (Windows skipped — tracked via [#57](https://github.com/breferrari/shardmind/issues/57)).
   - [x] **Phase 3** — TUI testing framework extensibility validated under hostile contributor scenarios (double-dispose, late-PTY-data, wedged-child + signal-name mapping, fixture-shard mutate-throw cleanup at both layers) plus a contributor section in `docs/ARCHITECTURE.md §19.7` ("Adding a TUI scenario"). Closes the parent issue: every acceptance criterion satisfied across Phases 1+2+3. Future TUI scenarios are mechanical to add — see the contributor section.
 - [x] **Pre-release manual smoke gate** — [`RELEASE-SMOKE.md`](RELEASE-SMOKE.md) checklist + binding [`CLAUDE.md` §Release Process](CLAUDE.md#release-process) rule that `npm run release:*` does not run without a completed smoke table pasted into the release tag body ([#112](https://github.com/breferrari/shardmind/issues/112)). Scope shrank with #111 closing the engine matrix in CI: the gate now covers only what fixtures can't reach — the published npm tarball, the live flagship shard, real-GitHub fetch, and Ctrl+C against the live shard. Relaxes when CI installs the npm tarball + drives a recorded flagship snapshot (see [`RELEASE-SMOKE.md §When the gate may relax`](RELEASE-SMOKE.md#when-the-gate-may-relax)).
-- [ ] **Self-update notifier** — every command checks the npm registry once per 24h (cached) and prints a one-line banner when a newer `shardmind` is available. Silent on fetch failure; opt-out via `--no-update-check`, `SHARDMIND_NO_UPDATE_CHECK`, or `CI` env var. Closes the loop between "we cut a hotfix" and "users on the broken prior version know to upgrade" ([#113](https://github.com/breferrari/shardmind/issues/113)).
 
-### 0.1.x — Flagship UX stabilization (blocked on [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1)
+### 0.1.x — Parallel (ships alongside the flagship-UX track, not before it)
 
-UX gaps surfaced during real obsidian-mind v6 install + adopt runs. None block the engine; each materially improves first-run experience for the flagship and any shard that triggers the same code path. **Each of these touches the wizard or a diff prompt — the exact surface where #103 / #109 lived. None ships before [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1 covers the regression matrix in CI, and no release containing them ships until the smoke gate ([`RELEASE-SMOKE.md`](RELEASE-SMOKE.md), [#112](https://github.com/breferrari/shardmind/issues/112)) has been run against `breferrari/obsidian-mind`.**
+Demoted from "Foundation BLOCKING" on 2026-04-27 (see [#113 comment](https://github.com/breferrari/shardmind/issues/113#issuecomment-4323200504)): with [#112](https://github.com/breferrari/shardmind/issues/112) preventing broken releases from shipping, the self-update notifier is defense-in-depth, not a prerequisite. High priority but not a hard blocker on the flagship-UX track.
 
-- [ ] Wizard scroll indicator + boolean prompt consistency (Y/n typed input → selectable Yes/No) ([#100](https://github.com/breferrari/shardmind/issues/100))
+- [ ] **Self-update notifier** — every command checks the npm registry once per 24h (cached) and prints a one-line banner when a newer `shardmind` is available. Silent on fetch failure; opt-out via `--no-update-check`, `SHARDMIND_NO_UPDATE_CHECK`, or `CI` env var. Ships in the same release window as the first flagship-UX item, but does not block its start ([#113](https://github.com/breferrari/shardmind/issues/113)).
+- [ ] **Release cadence policy** — pin hotfix vs UX vs foundation cadence rules in `RELEASE-SMOKE.md` so smoke-run wall-clock time bounds don't drive ad-hoc batching ([#122](https://github.com/breferrari/shardmind/issues/122)).
+
+### 0.1.x — Hook lifecycle (breaking change)
+
+[#102](https://github.com/breferrari/shardmind/issues/102) was previously listed as a peer to #100 (wizard scroll) and #101 (multiselect) in the flagship-UX list. It is not a peer — it deprecates the `post-install` hook (which obsidian-mind v6.0 ships with), changes Invariants 2 + 3 from comment-checked to engine-checked, requires a `docs/SHARD-LAYOUT.md` spec update, and forces every shard author to migrate. Reclassified as a single-issue release block on 2026-04-27.
+
+- [ ] **Hook lifecycle split — bootstrap / personalize / post-update** ([#102](https://github.com/breferrari/shardmind/issues/102)). Acceptance:
+  - [ ] [#119](https://github.com/breferrari/shardmind/issues/119) (engine version-compatibility check) lands first or in the same release.
+  - [ ] `docs/SHARD-LAYOUT.md` updated with the new lifecycle.
+  - [ ] `docs/AUTHORING.md` documents the migration path with a worked example.
+  - [ ] obsidian-mind hook migration ships in the same release window (cross-repo coupling — see Cross-repo dependencies below).
+  - [ ] Deprecation period for `post-install` documented in CHANGELOG; honored for at least one minor version.
+
+### 0.1.x — Flagship UX stabilization (Foundation green, ready to start)
+
+UX gaps surfaced during real obsidian-mind v6 install + adopt runs. None block the engine; each materially improves first-run experience for the flagship and any shard that triggers the same code path. **Each of these touches the wizard or a diff prompt — the exact surface where #103 / #109 lived. No release containing them ships until the smoke gate ([`RELEASE-SMOKE.md`](RELEASE-SMOKE.md), [#112](https://github.com/breferrari/shardmind/issues/112)) has been run against `breferrari/obsidian-mind`.** [#102](https://github.com/breferrari/shardmind/issues/102) was previously listed here; now its own section above (Hook lifecycle).
+
+- [ ] Wizard scroll indicator + boolean prompt consistency (Y/n typed input → selectable Yes/No) ([#100](https://github.com/breferrari/shardmind/issues/100)) — smallest item, recommended starting point.
 - [ ] `multiselect` value type for module-set questions ([#101](https://github.com/breferrari/shardmind/issues/101)) — pairs with #100 (shortens module list)
-- [ ] Hook lifecycle split: bootstrap / personalize / post-update ([#102](https://github.com/breferrari/shardmind/issues/102)) — turns Invariants 2 + 3 from comment-checked into engine-checked; deprecates today's single `post-install` hook
 - [ ] Adopt: replace step-by-step install wizard with confirm-or-override values flow ([#104](https://github.com/breferrari/shardmind/issues/104))
+- [ ] Adopt batch operations (keep all mine / use all theirs / auto-merge non-conflicting) ([#120](https://github.com/breferrari/shardmind/issues/120)) — pairs with #104.
 - [ ] Hook stderr presentation in Summary (truncate, dim, label as non-fatal) ([#105](https://github.com/breferrari/shardmind/issues/105))
+
+### 0.1.x — Done gate
+
+v0.1.x ships when:
+- [ ] All Foundation issues closed: [#111](https://github.com/breferrari/shardmind/issues/111) ✅, [#112](https://github.com/breferrari/shardmind/issues/112) ✅, [#113](https://github.com/breferrari/shardmind/issues/113), [#122](https://github.com/breferrari/shardmind/issues/122).
+- [ ] Hook lifecycle (#102) shipped with [#119](https://github.com/breferrari/shardmind/issues/119) (version-compatibility check) and obsidian-mind hook migration in the same release window.
+- [ ] All Flagship-UX items closed: [#100](https://github.com/breferrari/shardmind/issues/100), [#101](https://github.com/breferrari/shardmind/issues/101), [#104](https://github.com/breferrari/shardmind/issues/104), [#105](https://github.com/breferrari/shardmind/issues/105), [#120](https://github.com/breferrari/shardmind/issues/120).
+- [ ] Research-wiki shard ([#15](https://github.com/breferrari/shardmind/issues/15)) shipped with E2E tests + registry-mode end-to-end proof.
+- [ ] v6 docs polish ([#85](https://github.com/breferrari/shardmind/issues/85)) closed.
+- [ ] Smoke gate green against both shards (obsidian-mind + research-wiki).
+
+When all boxes check, cut the v0.1.x stabilization line and start v0.2.
+
+### 0.1.x — Cross-repo dependencies
+
+Items where shardmind work blocks (or is blocked by) work in other repos. Track here so a planner reading either side has visibility.
+
+- [#88](https://github.com/breferrari/shardmind/issues/88) (rename migrations + `adopt --from-version`) blocks `breferrari/obsidian-mind#71` (v6.x rename track). Until #88 ships, obsidian-mind cannot rename managed-file paths without breaking installed users.
+- [#102](https://github.com/breferrari/shardmind/issues/102) (hook lifecycle split) requires obsidian-mind to migrate its hook from `post-install` to the new lifecycle. Both must ship in the same release window.
+- [#119](https://github.com/breferrari/shardmind/issues/119) (engine version-compatibility check) precedes any shard that declares `shardmind_version` requirements. obsidian-mind should add the field as soon as #119 ships.
 
 ### 0.1.x — Deferred from Milestone 6
 
 Not blockers for engine use, but needed before the registry-mode flow (`shardmind install owner/repo`) works end-to-end and before a second flagship-quality shard exists.
 
-- [ ] Research-wiki shard + E2E tests ([#15](https://github.com/breferrari/shardmind/issues/15))
-- [ ] Create `shardmind/registry` repo with index.json (2 shards) — finalize schema per [#29](https://github.com/breferrari/shardmind/issues/29)
+- [ ] **Research-wiki shard + E2E tests** ([#15](https://github.com/breferrari/shardmind/issues/15)) — including the fresh-machine smoke (`npm install -g shardmind` → `shardmind install breferrari/obsidian-mind` and `shardmind install <research-wiki>`). Single tracker; covers the second-shard build, registry-mode end-to-end proof, and registry shape validation.
+- [ ] Create `shardmind/registry` repo with index.json (2 shards). Schema discussion lives in #29 (closed) and is finalized as part of this work; no separate ticket.
 - [ ] v6 docs polish: fold remaining SHARD-LAYOUT.md content into ARCHITECTURE §3 + IMPLEMENTATION §4.5/§4.5a/§4.5b; rewrite IMPLEMENTATION §9 (Build Plan) to match the actual #70 task series ([#85](https://github.com/breferrari/shardmind/issues/85)) — partial rewrites already landed with #73
-- [ ] Final test: fresh machine → `npm install -g shardmind` → `shardmind install breferrari/obsidian-mind` (registry mode, proves [#29](https://github.com/breferrari/shardmind/issues/29) shape works end-to-end) ([#15](https://github.com/breferrari/shardmind/issues/15))
 
 ---
 
@@ -130,12 +166,15 @@ Deferred from v0.1 per [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT
 
 ### Core features
 
-- [ ] Guided file creation (`guided_files` schema + third install phase) ([#79](https://github.com/breferrari/shardmind/issues/79))
-- [ ] Structural variants (`modules.structure` + `vault_purpose`) ([#80](https://github.com/breferrari/shardmind/issues/80))
-- [ ] Shard composition (multi-shard per vault) ([#81](https://github.com/breferrari/shardmind/issues/81))
-- [ ] Dependency fetching (recursive + lock file) ([#82](https://github.com/breferrari/shardmind/issues/82))
-- [ ] `shardmind eject` command ([#83](https://github.com/breferrari/shardmind/issues/83))
-- [ ] `shardmind init` command for shard authors ([#84](https://github.com/breferrari/shardmind/issues/84))
+Ordered by cost ascending. Sizes are rough — small (≤1 PR), medium (2–4 PRs), large (5+ PRs touching multiple subsystems), anchor (multi-month, rideable releases on top).
+
+- [ ] **small** — Engine version-compatibility check on install ([#119](https://github.com/breferrari/shardmind/issues/119)). Should land first or with #102 — see Hook lifecycle.
+- [ ] **small** — `shardmind eject` command ([#83](https://github.com/breferrari/shardmind/issues/83))
+- [ ] **medium** — `shardmind init` command for shard authors ([#84](https://github.com/breferrari/shardmind/issues/84))
+- [ ] **medium** — Guided file creation (`guided_files` schema + third install phase) ([#79](https://github.com/breferrari/shardmind/issues/79))
+- [ ] **medium** — Structural variants (`modules.structure` + `vault_purpose`) ([#80](https://github.com/breferrari/shardmind/issues/80))
+- [ ] **large** — Dependency fetching (recursive + lock file) ([#82](https://github.com/breferrari/shardmind/issues/82))
+- [ ] **anchor** — Shard composition (multi-shard per vault) ([#81](https://github.com/breferrari/shardmind/issues/81)). Touches state, planner, executor, conflicts, runtime, hooks. Plan the v0.2 release schedule around this; smaller items ride alongside.
 
 ### Layout / contract extensions (deferred from v0.1)
 
@@ -170,6 +209,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] E2E: bridge SIGINT delivery reliably on GH Actions Windows runner ([#57](https://github.com/breferrari/shardmind/issues/57))
 - [ ] Hook-runner pre-throw stdout dropped under parallel CPU pressure (test-only flake; `process.exit()` race vs piped buffer) ([#106](https://github.com/breferrari/shardmind/issues/106))
 - [ ] Split `release.yml` into two pipelines — GitHub Release (reversible) before npm publish (irreversible) ([#108](https://github.com/breferrari/shardmind/issues/108))
+- [ ] Flaky test: `merge-adversarial 10K-lines tokenize` times out under parallel pressure ([#114](https://github.com/breferrari/shardmind/issues/114)) — retroactive `/take-next` §4 three-condition review documented [in the issue](https://github.com/breferrari/shardmind/issues/114#issuecomment-4323200506); deciding factor is whether the fix is a timeout bump (close as fix-in-PR) or algorithmic (keep deferred). Investigate scope before next `tests/unit/` touch.
 
 ---
 
