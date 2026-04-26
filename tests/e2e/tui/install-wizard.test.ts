@@ -35,7 +35,7 @@ import {
   spawnCliPty,
   ENTER,
   ARROW_DOWN,
-  typeIntoPty,
+  driveMinimalWizard,
 } from './helpers/pty-cli.js';
 
 const SHARD_SLUG = 'acme/demo';
@@ -105,50 +105,16 @@ describe.skipIf(skipOnWindows)(
           env: { SHARDMIND_GITHUB_API_BASE: stub.url },
         });
         try {
-          // Wizard intro: "<N> question to answer" / "questions to answer".
-          // Stub-served minimal shard has 4 schema values.
-          await handle.waitForScreen(
-            (s) => /4 questions to answer/.test(s),
-            { timeoutMs: 30_000, description: 'wizard intro frame' },
-          );
-          handle.write(ENTER);
+          // The #103 fingerprint sits inside `driveMinimalWizard` —
+          // step 3 (vault_purpose select with default = first option:
+          // engineering) presses ENTER on a pre-positioned cursor,
+          // which must advance rather than re-render. Under PTY raw
+          // mode, this is the actual production path the bug shipped
+          // against; if the helper times out at any internal step, the
+          // regression is back.
+          await driveMinimalWizard(handle);
+          handle.write(ENTER); // commit at confirm
 
-          // Q1 — user_name (required string). Type a value, advance.
-          await handle.waitForScreen((s) => s.includes('Your name'));
-          await typeIntoPty(handle, 'Alice');
-          handle.write(ENTER);
-
-          // Q2 — org_name (default present). Default is fine.
-          await handle.waitForScreen((s) => s.includes('Organization'));
-          handle.write(ENTER);
-
-          // Q3 — vault_purpose (select, default = first option:
-          // engineering). The #103 fingerprint: pressing Enter on a
-          // pre-positioned cursor must advance, not re-render the same
-          // prompt. Under PTY raw mode, this is the actual production
-          // path the bug shipped against.
-          await handle.waitForScreen((s) =>
-            s.includes('How will you use this vault'),
-          );
-          handle.write(ENTER);
-
-          // Q4 — qmd_enabled (boolean). 'n' answers + advances.
-          await handle.waitForScreen((s) => s.includes('QMD'));
-          handle.write('n');
-
-          // Module review.
-          await handle.waitForScreen(
-            (s) => s.includes('Choose modules to install'),
-            { timeoutMs: 15_000 },
-          );
-          handle.write(ENTER);
-
-          // Confirm.
-          await handle.waitForScreen((s) => s.includes('Ready to install'));
-          handle.write(ENTER);
-
-          // Final summary — vault must be written + frame names the
-          // shard slug and version.
           await handle.waitForScreen(
             (s) => /Installed shardmind\/minimal@0\.1\.0/.test(s),
             { timeoutMs: 30_000, description: 'final install summary' },
@@ -157,14 +123,13 @@ describe.skipIf(skipOnWindows)(
           const exit = await handle.waitForExit();
           expect(exit.exitCode).toBe(0);
 
-          // Vault state — install actually happened on disk.
           const stateExists = await fs
             .stat(path.join(vault, '.shardmind', 'state.json'))
             .then((s) => s.isFile())
             .catch(() => false);
           expect(stateExists).toBe(true);
         } finally {
-          handle.kill();
+          await handle.dispose();
         }
       },
       90_000,
@@ -181,29 +146,8 @@ describe.skipIf(skipOnWindows)(
           env: { SHARDMIND_GITHUB_API_BASE: stub.url },
         });
         try {
-          await handle.waitForScreen(
-            (s) => /4 questions to answer/.test(s),
-            { timeoutMs: 30_000, description: 'wizard intro' },
-          );
-          handle.write(ENTER);
-          await handle.waitForScreen((s) => s.includes('Your name'));
-          await typeIntoPty(handle, 'Dana');
-          handle.write(ENTER);
-          await handle.waitForScreen((s) => s.includes('Organization'));
-          handle.write(ENTER);
-          await handle.waitForScreen((s) =>
-            s.includes('How will you use this vault'),
-          );
-          handle.write(ENTER);
-          await handle.waitForScreen((s) => s.includes('QMD'));
-          handle.write('n');
-          await handle.waitForScreen(
-            (s) => s.includes('Choose modules to install'),
-            { timeoutMs: 15_000 },
-          );
-          handle.write(ENTER);
-          await handle.waitForScreen((s) => s.includes('Ready to install'));
-          handle.write(ENTER);
+          await driveMinimalWizard(handle, 'Dana');
+          handle.write(ENTER); // commit at confirm
 
           await handle.waitForScreen(
             (s) => /Installed shardmind\/minimal@0\.1\.0/.test(s),
@@ -226,7 +170,7 @@ describe.skipIf(skipOnWindows)(
             .catch(() => false);
           expect(stateExists).toBe(true);
         } finally {
-          handle.kill();
+          await handle.dispose();
         }
       },
       90_000,
@@ -243,28 +187,7 @@ describe.skipIf(skipOnWindows)(
           env: { SHARDMIND_GITHUB_API_BASE: stub.url },
         });
         try {
-          await handle.waitForScreen(
-            (s) => /4 questions to answer/.test(s),
-            { timeoutMs: 30_000, description: 'wizard intro' },
-          );
-          handle.write(ENTER);
-          await handle.waitForScreen((s) => s.includes('Your name'));
-          await typeIntoPty(handle, 'Eve');
-          handle.write(ENTER);
-          await handle.waitForScreen((s) => s.includes('Organization'));
-          handle.write(ENTER);
-          await handle.waitForScreen((s) =>
-            s.includes('How will you use this vault'),
-          );
-          handle.write(ENTER);
-          await handle.waitForScreen((s) => s.includes('QMD'));
-          handle.write('n');
-          await handle.waitForScreen(
-            (s) => s.includes('Choose modules to install'),
-            { timeoutMs: 15_000 },
-          );
-          handle.write(ENTER);
-          await handle.waitForScreen((s) => s.includes('Ready to install'));
+          await driveMinimalWizard(handle, 'Eve');
 
           // Confirm Select options: [Install, Back to module review,
           // Cancel]. Two ARROW_DOWN advances + Enter selects Cancel.
@@ -283,23 +206,16 @@ describe.skipIf(skipOnWindows)(
           // Vault must be untouched: no engine metadata, no rendered
           // content, no values file. The cancel branch returns from
           // the wizard before any write phase begins.
-          const stateExists = await fs
-            .stat(path.join(vault, '.shardmind'))
-            .then(() => true)
-            .catch(() => false);
+          const [stateExists, homeExists, valuesExists] = await Promise.all([
+            fs.stat(path.join(vault, '.shardmind')).then(() => true).catch(() => false),
+            fs.stat(path.join(vault, 'Home.md')).then(() => true).catch(() => false),
+            fs.stat(path.join(vault, 'shard-values.yaml')).then(() => true).catch(() => false),
+          ]);
           expect(stateExists).toBe(false);
-          const homeExists = await fs
-            .stat(path.join(vault, 'Home.md'))
-            .then(() => true)
-            .catch(() => false);
           expect(homeExists).toBe(false);
-          const valuesExists = await fs
-            .stat(path.join(vault, 'shard-values.yaml'))
-            .then(() => true)
-            .catch(() => false);
           expect(valuesExists).toBe(false);
         } finally {
-          handle.kill();
+          await handle.dispose();
         }
       },
       90_000,

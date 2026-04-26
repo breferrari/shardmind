@@ -29,7 +29,7 @@ import {
   type GitHubStub,
 } from '../helpers/github-stub.js';
 import { ensureBuilt } from '../helpers/build-once.js';
-import { spawnCliPty } from './helpers/pty-cli.js';
+import { spawnCliPty, PTY_VIEWPORT_ROWS } from './helpers/pty-cli.js';
 import { buildHookFixtureShard } from './helpers/build-fixture-shard.js';
 
 const STDOUT_SLUG = 'l2hooks/stdout';
@@ -170,7 +170,7 @@ describe.skipIf(skipOnWindows)(
             {
               cwd: vault,
               env: { SHARDMIND_GITHUB_API_BASE: stub.url },
-              rows: 50,
+              rows: PTY_VIEWPORT_ROWS,
             },
           );
           try {
@@ -201,7 +201,7 @@ describe.skipIf(skipOnWindows)(
             const exit = await handle.waitForExit();
             expect(exit.exitCode).toBe(0);
           } finally {
-            handle.kill();
+            await handle.dispose();
           }
         } finally {
           await fs.rm(vault, { recursive: true, force: true });
@@ -233,7 +233,7 @@ describe.skipIf(skipOnWindows)(
             {
               cwd: vault,
               env: { SHARDMIND_GITHUB_API_BASE: stub.url },
-              rows: 50,
+              rows: PTY_VIEWPORT_ROWS,
             },
           );
           try {
@@ -265,7 +265,7 @@ describe.skipIf(skipOnWindows)(
             // failed (the contract).
             expect(exit.exitCode).toBe(0);
           } finally {
-            handle.kill();
+            await handle.dispose();
           }
         } finally {
           await fs.rm(vault, { recursive: true, force: true });
@@ -297,7 +297,7 @@ describe.skipIf(skipOnWindows)(
             {
               cwd: vault,
               env: { SHARDMIND_GITHUB_API_BASE: stub.url },
-              rows: 50,
+              rows: PTY_VIEWPORT_ROWS,
             },
           );
           try {
@@ -317,7 +317,7 @@ describe.skipIf(skipOnWindows)(
             const exit = await handle.waitForExit();
             expect(exit.exitCode).toBe(0);
           } finally {
-            handle.kill();
+            await handle.dispose();
           }
         } finally {
           await fs.rm(vault, { recursive: true, force: true });

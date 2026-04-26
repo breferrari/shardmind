@@ -36,6 +36,7 @@ import { chmodSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DIST_CLI, ensureBuilt } from '../../helpers/build-once.js';
+import { tick } from '../../../component/helpers.js';
 import { createVirtualScreen, type VirtualScreen } from './virtual-screen.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -130,6 +131,16 @@ export interface SpawnCliPtyOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Default rows for diff / hook scenarios. 80x24 is fine for plain
+ * wizard prompts; busy diffs (DiffView, AdoptDiffView) and hook
+ * Summary frames overflow that surface and scroll counters off
+ * before `waitForScreen` can match. Bumping rows to 50 keeps every
+ * frame in-viewport. Cols stay 80 — matches a real terminal column
+ * width and is wide enough for status bars.
+ */
+export const PTY_VIEWPORT_ROWS = 50;
+
 export interface PtyHandle {
   /** Bytes pushed into the master side of the PTY. */
   write: (data: string) => void;
@@ -155,6 +166,13 @@ export interface PtyHandle {
   waitForExit: () => Promise<{ exitCode: number | null; signal: string | null; timedOut: boolean }>;
   /** Best-effort SIGKILL. Idempotent. */
   kill: () => void;
+  /**
+   * Tear down everything: SIGKILLs the child if alive and disposes the
+   * underlying xterm-headless terminal. Idempotent. Tests that aren't
+   * sure whether they reached `waitForExit` should call this in a
+   * `finally` block — leaks an xterm Terminal otherwise.
+   */
+  dispose: () => Promise<void>;
 }
 
 /**
@@ -222,10 +240,20 @@ export async function spawnCliPty(
     void screen.feed(chunk);
   });
 
+  // Capture exit info via a single Promise resolved by `pty.onExit`.
+  // Polling `exitInfo === null` would burn CPU on the 20 ms cadence
+  // even on instant exits; awaiting the Promise lets the event loop
+  // sleep until node-pty actually fires.
   let exitInfo: { exitCode: number | null; signal: string | null } | null = null;
-  pty.onExit(({ exitCode, signal }) => {
-    exitInfo = { exitCode, signal: signal !== undefined ? String(signal) : null };
-  });
+  const exitPromise = new Promise<{ exitCode: number | null; signal: string | null }>(
+    (resolve) => {
+      pty.onExit(({ exitCode, signal }) => {
+        const info = { exitCode, signal: signal !== undefined ? String(signal) : null };
+        exitInfo = info;
+        resolve(info);
+      });
+    },
+  );
 
   const write = (data: string): void => {
     pty.write(data);
@@ -243,7 +271,7 @@ export async function spawnCliPty(
     while (Date.now() - start < limit) {
       last = screen.serialize();
       if (predicate(last)) return last;
-      await sleep(poll);
+      await tick(poll);
     }
     throw new Error(
       `waitForScreen timed out after ${limit}ms waiting for ${description}.\nLast screen:\n${last}`,
@@ -262,26 +290,33 @@ export async function spawnCliPty(
     signal: string | null;
     timedOut: boolean;
   }> => {
-    const start = Date.now();
-    while (exitInfo === null) {
-      if (Date.now() - start >= timeoutMs) {
-        // Force-kill so vitest workers don't hang on a stuck child.
-        try {
-          pty.kill('SIGKILL');
-        } catch {
-          // Already dead.
-        }
-        // Give the kernel a beat to deliver the close event so exitInfo
-        // is populated; if not, return synthetic timeout state.
-        await sleep(100);
-        if (exitInfo === null) {
-          return { exitCode: null, signal: 'SIGKILL', timedOut: true };
-        }
-        return { ...exitInfo, timedOut: true };
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<'timeout'>((resolve) => {
+      timeoutHandle = setTimeout(() => resolve('timeout'), timeoutMs);
+    });
+    const winner = await Promise.race([exitPromise, timeoutPromise]);
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    if (winner === 'timeout') {
+      // Force-kill so vitest workers don't hang on a stuck child.
+      try {
+        pty.kill('SIGKILL');
+      } catch {
+        // Already dead.
       }
-      await sleep(20);
+      // The SIGKILL above eventually fires `onExit` and resolves
+      // `exitPromise`. If it lands within the grace window, surface
+      // the captured info; otherwise return a synthetic SIGKILL state
+      // (test workers can't wait forever on a wedged child).
+      const graceWinner = await Promise.race([
+        exitPromise,
+        new Promise<'killed'>((resolve) => setTimeout(() => resolve('killed'), 200)),
+      ]);
+      if (graceWinner === 'killed') {
+        return { exitCode: null, signal: 'SIGKILL', timedOut: true };
+      }
+      return { ...graceWinner, timedOut: true };
     }
-    return { ...exitInfo, timedOut: false };
+    return { ...winner, timedOut: false };
   };
 
   const kill = (): void => {
@@ -293,7 +328,19 @@ export async function spawnCliPty(
     }
   };
 
-  return { write, screen, waitForScreen, sigint, waitForExit, kill };
+  const dispose = async (): Promise<void> => {
+    kill();
+    // Drain the exit so the screen's xterm Terminal isn't disposed
+    // while node-pty still has bytes queued for it. 200 ms grace
+    // matches `waitForExit`'s SIGKILL fallback.
+    await Promise.race([
+      exitPromise,
+      new Promise<void>((resolve) => setTimeout(resolve, 200)),
+    ]);
+    screen.dispose();
+  };
+
+  return { write, screen, waitForScreen, sigint, waitForExit, kill, dispose };
 }
 
 /**
@@ -312,8 +359,42 @@ export async function typeIntoPty(
 ): Promise<void> {
   for (const ch of text) {
     handle.write(ch);
-    await new Promise((r) => setTimeout(r, perCharDelayMs));
+    await tick(perCharDelayMs);
   }
+}
+
+/**
+ * Drive the standard 4-question minimal-shard wizard through the
+ * confirm step. Returns once "Ready to install" is on screen and the
+ * caller can decide whether to commit (ENTER) or cancel
+ * (ARROW_DOWN×2 + ENTER). Mirrors the Layer 1 helper of the same
+ * name in `tests/component/flows/helpers.tsx` — same wizard shape,
+ * driven through the PTY rather than ink-testing-library's stdin.
+ */
+export async function driveMinimalWizard(
+  handle: PtyHandle,
+  userName = 'Alice',
+): Promise<void> {
+  await handle.waitForScreen(
+    (s) => /4 questions to answer/.test(s),
+    { timeoutMs: 30_000, description: 'wizard intro frame' },
+  );
+  handle.write(ENTER);
+  await handle.waitForScreen((s) => s.includes('Your name'));
+  await typeIntoPty(handle, userName);
+  handle.write(ENTER);
+  await handle.waitForScreen((s) => s.includes('Organization'));
+  handle.write(ENTER);
+  await handle.waitForScreen((s) => s.includes('How will you use this vault'));
+  handle.write(ENTER);
+  await handle.waitForScreen((s) => s.includes('QMD'));
+  handle.write('n');
+  await handle.waitForScreen(
+    (s) => s.includes('Choose modules to install'),
+    { timeoutMs: 15_000 },
+  );
+  handle.write(ENTER);
+  await handle.waitForScreen((s) => s.includes('Ready to install'));
 }
 
 function stripUndefined(env: NodeJS.ProcessEnv): { [key: string]: string } {
@@ -322,8 +403,4 @@ function stripUndefined(env: NodeJS.ProcessEnv): { [key: string]: string } {
     if (v !== undefined) out[k] = v;
   }
   return out;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }

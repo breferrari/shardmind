@@ -16,9 +16,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import * as tar from 'tar';
-import { stringify as stringifyYaml, parse as parseYaml } from 'yaml';
-import { fileURLToPath } from 'node:url';
+import { stringify as stringifyYaml } from 'yaml';
 
 import {
   createGitHubStub,
@@ -30,7 +28,6 @@ import {
   type TarballFixtures,
 } from '../helpers/tarball.js';
 import { ensureBuilt } from '../helpers/build-once.js';
-import { copyDir } from '../helpers/tarball-utils.js';
 import {
   createInstalledVault,
   type Vault,
@@ -39,12 +36,10 @@ import {
   spawnCliPty,
   ENTER,
   ARROW_DOWN,
+  PTY_VIEWPORT_ROWS,
 } from './helpers/pty-cli.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const REPO_ROOT = path.resolve(__dirname, '../../..');
-const MINIMAL_SHARD = path.join(REPO_ROOT, 'examples', 'minimal-shard');
+import { buildMutatedShard } from './helpers/build-fixture-shard.js';
+import { tick } from '../../component/helpers.js';
 
 // Standard slugs.
 const SHARD_SLUG = 'acme/demo';
@@ -65,62 +60,40 @@ let fixtures: TarballFixtures;
 const skipOnWindows = process.platform === 'win32';
 
 /**
- * Inline custom-tarball builder. Mirrors `tests/component/flows/helpers.tsx::buildCustomTarball`
- * but lives here so we don't pull a `.tsx` (React-importing) module
- * into a `.ts` test. The mutation surface needed for scenario 14 is
- * small — append to three `.njk` paths to manufacture multi-file
- * conflicts on update.
+ * v0.1.0 stays as the unmodified minimal-shard baseline; only v0.2.0
+ * appends to three .njk paths so the user's bottom edits produce real
+ * three-way conflicts on update. Appending to v0.1.0 too would put
+ * the new line in the common ancestor and let node-diff3 auto-resolve.
+ *
+ * CLAUDE.md is deliberately skipped — its prose contains a literal
+ * `{{ }}` token that `differ.ts::computeMergeAction`'s Nunjucks render
+ * rejects on static-file conflicts (a known engine artifact,
+ * sidestepped here and in Layer 1 scenario 14).
  */
 async function buildMultiConflictTarball(
   version: string,
   outDir: string,
   appendLines: { home: string; northStar: string; settings: string } | null,
 ): Promise<string> {
-  const prefix = `multi-conflict-${version}`;
-  const workRoot = await fs.mkdtemp(
-    path.join(os.tmpdir(), `shardmind-l2-mc-${version}-`),
-  );
-  try {
-    const workDir = path.join(workRoot, prefix);
-    await copyDir(MINIMAL_SHARD, workDir);
-
-    const manifestPath = path.join(workDir, '.shardmind', 'shard.yaml');
-    const manifest = parseYaml(await fs.readFile(manifestPath, 'utf-8')) as Record<
-      string,
-      unknown
-    >;
-    manifest['version'] = version;
-    manifest['name'] = 'multi-conflict';
-    manifest['namespace'] = 'l2test';
-    manifest['hooks'] = {};
-    await fs.writeFile(manifestPath, stringifyYaml(manifest), 'utf-8');
-
-    // Append distinguishable lines to three .njk templates only when
-    // `appendLines` is provided. v0.1.0 stays as the unmodified
-    // minimal-shard baseline so that the v0.2.0 append + user bottom
-    // edit produce real conflicts on update — appending to v0.1.0 too
-    // would put the new line in the common ancestor and let the
-    // 3-way merge auto-resolve on top.
-    //
-    // CLAUDE.md is deliberately skipped — its prose contains a
-    // literal `{{ }}` token that `differ.ts::computeMergeAction`'s
-    // Nunjucks render rejects on static-file conflicts (a known
-    // engine artifact, sidestepped here and in Layer 1 scenario 14).
-    if (appendLines) {
-      const home = path.join(workDir, 'Home.md.njk');
-      await fs.writeFile(home, (await fs.readFile(home, 'utf-8')) + `\n${appendLines.home}\n`, 'utf-8');
-      const ns = path.join(workDir, 'brain', 'North Star.md.njk');
-      await fs.writeFile(ns, (await fs.readFile(ns, 'utf-8')) + `\n${appendLines.northStar}\n`, 'utf-8');
-      const settings = path.join(workDir, '.claude', 'settings.json.njk');
-      await fs.writeFile(settings, (await fs.readFile(settings, 'utf-8')) + `\n${appendLines.settings}\n`, 'utf-8');
-    }
-
-    const tarPath = path.join(outDir, `${prefix}.tar.gz`);
-    await tar.c({ file: tarPath, gzip: true, cwd: workRoot }, [prefix]);
-    return tarPath;
-  } finally {
-    await fs.rm(workRoot, { recursive: true, force: true });
-  }
+  return buildMutatedShard({
+    version,
+    name: 'multi-conflict',
+    namespace: 'l2test',
+    dropHooks: true,
+    prefix: `multi-conflict-${version}`,
+    outDir,
+    mutate: async (workDir) => {
+      if (!appendLines) return;
+      const append = async (rel: string, line: string): Promise<void> => {
+        const abs = path.join(workDir, rel);
+        const cur = await fs.readFile(abs, 'utf-8');
+        await fs.writeFile(abs, `${cur}\n${line}\n`, 'utf-8');
+      };
+      await append('Home.md.njk', appendLines.home);
+      await append('brain/North Star.md.njk', appendLines.northStar);
+      await append('.claude/settings.json.njk', appendLines.settings);
+    },
+  });
 }
 
 describe.skipIf(skipOnWindows)(
@@ -198,15 +171,13 @@ describe.skipIf(skipOnWindows)(
           stub.setVersion(MULTI_CONFLICT_SLUG, '0.2.0', v02);
           stub.setLatest(MULTI_CONFLICT_SLUG, '0.2.0');
 
-          // 80x24 is too small for DiffView's full body (header +
-          // diff regions + Select). The counter scrolls off the
-          // viewport on busy diffs, defeating waitForScreen's
-          // `(N of 3)` predicate. 50 rows fits a typical conflict
-          // body comfortably; cols stay 80 to match a real terminal.
+          // PTY_VIEWPORT_ROWS (50) keeps the `(N of 3)` counter on
+          // screen — 80x24 scrolls it off as the diff body fills the
+          // viewport.
           const handle = await spawnCliPty(['update'], {
             cwd: vault.root,
             env: { SHARDMIND_GITHUB_API_BASE: stub.url },
-            rows: 50,
+            rows: PTY_VIEWPORT_ROWS,
           });
           try {
             // Walk three sequential conflict prompts. The #109
@@ -221,9 +192,9 @@ describe.skipIf(skipOnWindows)(
               );
               // ARROW_DOWN once + ENTER selects "Keep mine".
               handle.write(ARROW_DOWN);
-              await sleep(40);
+              await tick(40);
               handle.write(ENTER);
-              await sleep(60);
+              await tick(60);
             }
 
             await handle.waitForScreen(
@@ -245,7 +216,7 @@ describe.skipIf(skipOnWindows)(
               'modified',
             );
           } finally {
-            handle.kill();
+            await handle.dispose();
           }
         } finally {
           if (vault) await vault.cleanup();
@@ -288,7 +259,7 @@ describe.skipIf(skipOnWindows)(
           try {
             // 500 ms in: well before download finishes (we slowed the
             // stream to 2 s) and well before any write begins.
-            await sleep(500);
+            await tick(500);
             handle.sigint();
 
             const exit = await handle.waitForExit();
@@ -319,7 +290,7 @@ describe.skipIf(skipOnWindows)(
               .catch(() => false);
             expect(homeExists).toBe(false);
           } finally {
-            handle.kill();
+            await handle.dispose();
           }
         } finally {
           stub.setTarballDelay(0);
@@ -330,7 +301,3 @@ describe.skipIf(skipOnWindows)(
     );
   },
 );
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}

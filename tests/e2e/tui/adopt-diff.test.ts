@@ -27,8 +27,10 @@ import { ensureBuilt } from '../helpers/build-once.js';
 import {
   spawnCliPty,
   ENTER,
-  typeIntoPty,
+  PTY_VIEWPORT_ROWS,
+  driveMinimalWizard,
 } from './helpers/pty-cli.js';
+import { tick } from '../../component/helpers.js';
 
 const SHARD_SLUG = 'acme/demo';
 const SHARD_REF = `github:${SHARD_SLUG}`;
@@ -104,39 +106,14 @@ describe.skipIf(skipOnWindows)(
           // Pin to v0.1.0 via the SHA-routed ref path so the wizard
           // resolves quickly and the planner runs against a known
           // tarball.
-          // 50 rows so AdoptDiffView's diff body + Select + counter
-          // all fit on screen — 80x24 scrolls the `(N of 3)` counter
-          // off-viewport on busy diffs.
           const handle = await spawnCliPty(['adopt', `${SHARD_REF}#v0.1.0`], {
             cwd: vault,
             env: { SHARDMIND_GITHUB_API_BASE: stub.url },
-            rows: 50,
+            rows: PTY_VIEWPORT_ROWS,
           });
           try {
-            // Drive the 4-question wizard + module review + Confirm.
-            await handle.waitForScreen(
-              (s) => /4 questions to answer/.test(s),
-              { timeoutMs: 30_000, description: 'wizard intro' },
-            );
-            handle.write(ENTER);
-            await handle.waitForScreen((s) => s.includes('Your name'));
-            await typeIntoPty(handle, 'Alice');
-            handle.write(ENTER);
-            await handle.waitForScreen((s) => s.includes('Organization'));
-            handle.write(ENTER);
-            await handle.waitForScreen((s) =>
-              s.includes('How will you use this vault'),
-            );
-            handle.write(ENTER);
-            await handle.waitForScreen((s) => s.includes('QMD'));
-            handle.write('n');
-            await handle.waitForScreen(
-              (s) => s.includes('Choose modules to install'),
-              { timeoutMs: 15_000 },
-            );
-            handle.write(ENTER);
-            await handle.waitForScreen((s) => s.includes('Ready to install'));
-            handle.write(ENTER);
+            await driveMinimalWizard(handle);
+            handle.write(ENTER); // commit at confirm
 
             // Walk three sequential AdoptDiffView prompts. ENTER
             // alone selects "Keep mine" (first option). The #109
@@ -153,7 +130,7 @@ describe.skipIf(skipOnWindows)(
                 },
               );
               handle.write(ENTER);
-              await sleep(60);
+              await tick(60);
             }
 
             await handle.waitForScreen(
@@ -171,7 +148,7 @@ describe.skipIf(skipOnWindows)(
               .catch(() => false);
             expect(stateExists).toBe(true);
           } finally {
-            handle.kill();
+            await handle.dispose();
           }
         } finally {
           await fs.rm(vault, { recursive: true, force: true });
@@ -181,7 +158,3 @@ describe.skipIf(skipOnWindows)(
     );
   },
 );
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
