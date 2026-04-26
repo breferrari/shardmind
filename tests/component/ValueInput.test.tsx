@@ -126,6 +126,160 @@ describe('ValueInput', () => {
     expect(onSubmit).toHaveBeenCalledWith('research');
   });
 
+  // --- #103 regression + adversarial matrix ---
+  // The bug: passing @inkjs/ui's Select a `defaultValue` that matches the
+  // first option seeds `previousValue === value`, which the post-dispatch
+  // `previousValue !== value` guard rejects → onChange never fires. Fix
+  // reorders options so the default sits at index 0 (still under the
+  // pre-positioned cursor) and drops `defaultValue` so `previousValue`
+  // initializes to undefined.
+
+  it('select: default = first option + single Enter fires (#103 regression)', async () => {
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Purpose?',
+      default: 'engineering',
+      options: [
+        { value: 'engineering', label: 'Engineering' },
+        { value: 'independent', label: 'Independent' },
+        { value: 'freelance', label: 'Freelance' },
+      ],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="vault_purpose" def={def} initialValue="engineering" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+
+    expect(onSubmit).toHaveBeenCalledWith('engineering');
+  });
+
+  it('select: default = middle option + single Enter fires the default', async () => {
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Purpose?',
+      default: 'research',
+      options: [
+        { value: 'engineering', label: 'Engineering' },
+        { value: 'research', label: 'Research' },
+        { value: 'general', label: 'General' },
+      ],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="vault_purpose" def={def} initialValue="research" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+
+    expect(onSubmit).toHaveBeenCalledWith('research');
+  });
+
+  it('select: single-option default-matches Enter fires (#103 degenerate edge)', async () => {
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Mode?',
+      default: 'only',
+      options: [{ value: 'only', label: 'Only Choice' }],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="mode" def={def} initialValue="only" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+
+    expect(onSubmit).toHaveBeenCalledWith('only');
+  });
+
+  it('select: no default + no initialValue, Enter fires the first option', async () => {
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Purpose?',
+      options: [
+        { value: 'engineering', label: 'Engineering' },
+        { value: 'research', label: 'Research' },
+        { value: 'general', label: 'General' },
+      ],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="vault_purpose" def={def} initialValue="" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+
+    expect(onSubmit).toHaveBeenCalledWith('engineering');
+  });
+
+  it('select: back-nav initialValue ≠ default, Enter fires initialValue', async () => {
+    // User previously picked 'general', then navigated back. The wizard
+    // re-mounts ValueInput with initialValue='general' even though the
+    // schema default is 'engineering'. Cursor must land on 'general'
+    // and a single Enter must commit it.
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Purpose?',
+      default: 'engineering',
+      options: [
+        { value: 'engineering', label: 'Engineering' },
+        { value: 'research', label: 'Research' },
+        { value: 'general', label: 'General' },
+      ],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="vault_purpose" def={def} initialValue="general" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+
+    expect(onSubmit).toHaveBeenCalledWith('general');
+  });
+
+  it('select: initialValue not in options falls back to first option', async () => {
+    // Stored state references a value that no longer exists in the
+    // schema (e.g. option got renamed). The wizard must not freeze;
+    // a graceful fallback to the first option is acceptable.
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Purpose?',
+      default: 'engineering',
+      options: [
+        { value: 'engineering', label: 'Engineering' },
+        { value: 'research', label: 'Research' },
+        { value: 'general', label: 'General' },
+      ],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="vault_purpose" def={def} initialValue="renamed-old-value" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+
+    expect(onSubmit).toHaveBeenCalledWith('engineering');
+  });
+
   it('boolean: y confirms → onSubmit(true)', async () => {
     const def: ValueDefinition = {
       type: 'boolean',

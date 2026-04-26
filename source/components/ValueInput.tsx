@@ -103,17 +103,30 @@ function renderInput(
       );
     }
     case 'select': {
-      const options = (def.options ?? []).map((o) => ({ label: o.label, value: o.value }));
+      const rawOptions = (def.options ?? []).map((o) => ({ label: o.label, value: o.value }));
       const initial = typeof initialValue === 'string'
         ? initialValue
         : typeof def.default === 'string'
         ? def.default
         : undefined;
+      // Reorder so `initial` sits at index 0 (where @inkjs/ui's Select
+      // pre-positions its cursor) and drop `defaultValue`. Passing
+      // `defaultValue` seeds @inkjs/ui's `previousValue === value`; on
+      // Enter the change-fire effect's `previousValue !== value` guard
+      // fails when the focused option (always the first option) equals
+      // `defaultValue`, freezing the wizard. With no defaultValue,
+      // `previousValue` initializes to undefined and the first Enter
+      // always fires onChange. See #103.
+      const options = initial && rawOptions.some((o) => o.value === initial)
+        ? [
+            ...rawOptions.filter((o) => o.value === initial),
+            ...rawOptions.filter((o) => o.value !== initial),
+          ]
+        : rawOptions;
       return (
         <Select
           key={key}
           options={options}
-          defaultValue={initial}
           onChange={(v) => onSubmit(v)}
         />
       );
