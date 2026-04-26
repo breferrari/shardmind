@@ -1505,6 +1505,48 @@ staying hermetic. No test reaches the public internet.
   Layer 2 carries only the 9 scenarios where the real-TTY path is the
   thing under test (issue body §Strategy: Layer 2 scenarios 1, 9, 11,
   14, 18, 20, 26, 27, 28).
+- **Adding a TUI scenario** (#111 Phase 3 contributor guide): the
+  framework is designed so a new scenario is a single file under
+  `tests/component/flows/` (Layer 1) or `tests/e2e/tui/` (Layer 2)
+  with no plumbing changes required. **Pick the layer first**: Layer 1
+  is the default — it's an order of magnitude faster, runs on every
+  OS the project supports, and catches every state-machine /
+  iteration-shape bug reachable from React state (which is most of
+  them). Reach for Layer 2 only when the bug surface needs real-
+  terminal semantics: OS SIGINT delivery via the kernel (not
+  `process.emit`), raw-mode keystroke handling that diverges with
+  `stdin.isRaw === true`, ANSI rendering during incremental phases
+  like `running-hook`, or anything else that requires `stdout.isTTY`
+  to be genuinely true. **Layer 1 file shape**: import
+  `setupFlowSuite` + the relevant `mountInstall` / `mountUpdate` /
+  `mountAdopt` / `mountStatus` from `tests/component/flows/helpers.tsx`,
+  drive the React tree via `r.stdin.write(...)`, assert against
+  `r.lastFrame()` and on-disk vault state. The `helpers.tsx` module
+  also exports `buildCustomTarball({ version, schema,
+  manifestOverrides, mutate, outDir, prefix })` for scenarios that
+  need shapes the minimal-shard fixture can't supply (additional
+  value types, computed defaults, multi-file mutations, schema
+  additions, file removals). **Layer 2 file shape**: import
+  `spawnCliPty` and the keystroke constants (`ENTER`, `ESC`,
+  `ARROW_DOWN`, etc.) from `tests/e2e/tui/helpers/pty-cli.ts`, drive
+  the PTY via `handle.write(byte)`, assert via
+  `handle.screen.serialize()` / `.contains(text)` / `.matches(regex)`
+  or `handle.waitForScreen(predicate, { timeoutMs, description })`.
+  For PTY scenarios that need a custom shard (per-test slug,
+  hook script body, multi-file mutations), the `.ts`-importable
+  `tests/e2e/tui/helpers/build-fixture-shard.ts` exposes
+  `buildHookFixtureShard({ name, namespace, hookSource,
+  hookTimeoutMs, ... })` and `buildMutatedShard({ mutate, dropHooks,
+  ... })` — distinct from Layer 1's `buildCustomTarball` only because
+  the L1 helper lives in a `.tsx` file (it pulls Ink in transitively
+  via the rest of the module) and a Layer 2 `.ts` consumer can't
+  import from there without dragging React into the graph. Both
+  Layer 2 helpers clean up their tmp clone dirs on throw — pinned by
+  the Phase 3 harness contract tests. The harness smoke files
+  (`tests/component/flows/harness.test.tsx` and
+  `tests/e2e/tui/harness.test.ts`) are themselves the executable
+  documentation for the helpers' shapes — start there when adding a
+  scenario that uses an API the existing scenarios don't.
 - **Cross-platform SIGINT — production vs CI**: Node's `child.kill('SIGINT')`
   force-terminates on Windows instead of delivering a catchable signal.
   `source/core/cancellation.ts` compensates in the **production** CLI: it

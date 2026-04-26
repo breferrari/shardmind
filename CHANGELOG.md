@@ -8,6 +8,29 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (TUI testing framework extensibility — #111 Phase 3)
+
+Closes [#111](https://github.com/breferrari/shardmind/issues/111). The parent issue's "Phase 3 — ongoing extensions as bug classes surface; framework cheap to extend; no fixed scenario list" closes here by *demonstrating and pinning* that extensibility under hostile contributor scenarios. Phases 1 (PR [#115](https://github.com/breferrari/shardmind/pull/115)) and 2 (PR [#116](https://github.com/breferrari/shardmind/pull/116)) shipped the harnesses and 31 scenarios; Phase 3 ships the seven contract tests + a contributor doc section that turn "ongoing" from a posture into an earned closure. The forward references in Phase 1's CHANGELOG ("Phase 2 + Phase 3 follow as separate PRs") and Phase 2's CHANGELOG ("Phase 3 is open-ended and tracked via the roadmap row") are now both retired.
+
+- **7 new harness tests** across two layers:
+  - **Layer 2 — virtual-screen lifecycle (`tests/e2e/tui/harness.test.ts`)**: `dispose()` is idempotent; `feed()` after `dispose()` resolves silently. Pins the disposed-flag guard that absorbs late `pty.onData` chunks during cleanup races.
+  - **Layer 2 — PtyHandle lifecycle**: `dispose()` is idempotent at the integration level (kill + drain dance must short-circuit on already-exited child); `waitForExit` on a child that ignores both SIGINT and SIGTERM returns `{timedOut: true, signal: 'SIGKILL'}` with the screen captured up to the wedge point. Bypasses the CLI via the new `nodeArgs?: string[]` override on `SpawnCliPtyOptions` — a harness-only escape hatch (scenario callers continue to use `args` to drive the CLI as users do).
+  - **Layer 2 — signal mapping**: `signalNumberToName(2/9/15)` maps to `'SIGINT' / 'SIGKILL' / 'SIGTERM'` via `os.constants.signals` reverse lookup; returns null on undefined (clean exit); falls back to numeric stringification for codes outside the constants table (Linux real-time signals, Darwin-only entries). Pins the function scenario 18's diagnostic messages depend on; previously a private helper, now exported.
+  - **Layer 2 — fixture builders**: `buildHookFixtureShard` honors `name` + `namespace` overrides (Summary frame depends on per-fixture identity); `buildMutatedShard` cleans the tmp clone dir if `mutate` throws (try/finally already in place — this pins it).
+  - **Layer 1 — custom-tarball cleanup (`tests/component/flows/harness.test.tsx`)**: `buildCustomTarball` cleans the tmp clone dir if `mutate` throws. Mirror of the Layer 2 contract at the in-process layer.
+
+- **Contributor section in `docs/ARCHITECTURE.md §19.7`** ("Adding a TUI scenario"): how to pick Layer 1 vs Layer 2, the file shape for each, the helper inventory (`mountInstall` / `mountUpdate` / `mountAdopt` / `mountStatus` + `buildCustomTarball` for L1; `spawnCliPty` + keystroke constants + `screen.serialize` / `.contains` / `.matches` + `buildHookFixtureShard` / `buildMutatedShard` for L2), and the harness smoke files as executable documentation. Future TUI scenarios are mechanical: open the existing harness, mirror an adjacent scenario, run the suite.
+
+- **`tests/e2e/tui/helpers/pty-cli.ts`** gains a `nodeArgs?: string[]` option on `SpawnCliPtyOptions` (additive, default unchanged) so harness tests can spawn a known-shape node child against the helper's lifecycle plumbing without depending on CLI behavior. Documented as harness-only — scenario callers must not use it. `signalNumberToName` is now exported for direct unit testing.
+
+- **`ROADMAP.md`** Phase 3 box checks; the wrapper bullet for #111 collapses to "all three phases shipped; parent issue closed".
+
+- **Engine surface unchanged**. No production code touched. No new error code, component, or core module. Phase 3 is purely additive at the test + doc layer — same envelope as Phase 1 and Phase 2.
+
+- **Tests: 921 → 928 (+7)**: 5 added under `tests/e2e/tui/harness.test.ts` (Layer 2 lifecycle 2 + PtyHandle lifecycle 2 + signal mapping 3 — counted as 5 distinct `it` blocks), 1 added under the same file's new "fixture builders" describe (name override + mutate-throw cleanup counted as 2 sub-cases of the surface), 1 added under `tests/component/flows/harness.test.tsx`. Suite wall-clock delta < 5 s.
+
+- **Acceptance criteria** (#111 issue body): all five satisfied across Phases 1+2+3 — 28 scenarios green on macOS + Linux × Node 22 + 24 (Phase 1+2), regression scenarios for #103 and #109 live in both Layer 1 and Layer 2 (the "golden test" criterion is satisfied by these scenarios — checking out 0.1.0 and re-running them would flag both bugs), `npm test` wall-clock grows by ~35 s (well under the 90 s budget), `CLAUDE.md` §Testing convention rules landed in Phases 1+2, and `tests/e2e/cli.test.ts` stayed green throughout.
+
 ### Added (TUI Layer 2 real-PTY tests — #111 Phase 2)
 
 Closes [#111](https://github.com/breferrari/shardmind/issues/111) Phase 2 (Layer 2 — real-PTY scenarios via `node-pty` + `@xterm/headless`). Phase 1 (PR [#115](https://github.com/breferrari/shardmind/pull/115)) shipped Layer 1's 22 in-process scenarios; Phase 2 covers the 9 scenarios where Layer 1's faked TTY can't reach the bug surface — real OS SIGINT delivery, raw-mode keystroke handling, ANSI rendering during the `running-hook` phase, and live stdout tail. Phase 1's PR auto-closed #111 via "Closes #111", so the parent issue is reopened in this PR; Phase 3 ("ongoing extensions as bug classes surface") is open-ended and tracked via the roadmap row, not a permanent open issue.
