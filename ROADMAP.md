@@ -133,9 +133,10 @@ UX gaps surfaced during real obsidian-mind v6 install + adopt runs. None block t
 ### 0.1.x — Done gate
 
 v0.1.x ships when:
-- [ ] All Foundation issues closed: [#111](https://github.com/breferrari/shardmind/issues/111) ✅, [#112](https://github.com/breferrari/shardmind/issues/112) ✅, [#113](https://github.com/breferrari/shardmind/issues/113), [#122](https://github.com/breferrari/shardmind/issues/122).
+- [ ] Foundation closed: [#111](https://github.com/breferrari/shardmind/issues/111) ✅, [#112](https://github.com/breferrari/shardmind/issues/112) ✅.
+- [ ] Parallel closed: [#113](https://github.com/breferrari/shardmind/issues/113) (self-update notifier), [#122](https://github.com/breferrari/shardmind/issues/122) (release cadence policy).
 - [ ] Hook lifecycle (#102) shipped with [#119](https://github.com/breferrari/shardmind/issues/119) (version-compatibility check) and obsidian-mind hook migration in the same release window.
-- [ ] All Flagship-UX items closed: [#100](https://github.com/breferrari/shardmind/issues/100), [#101](https://github.com/breferrari/shardmind/issues/101), [#104](https://github.com/breferrari/shardmind/issues/104), [#105](https://github.com/breferrari/shardmind/issues/105), [#120](https://github.com/breferrari/shardmind/issues/120).
+- [ ] Flagship-UX closed: [#100](https://github.com/breferrari/shardmind/issues/100), [#101](https://github.com/breferrari/shardmind/issues/101), [#104](https://github.com/breferrari/shardmind/issues/104), [#105](https://github.com/breferrari/shardmind/issues/105), [#120](https://github.com/breferrari/shardmind/issues/120).
 - [ ] Research-wiki shard ([#15](https://github.com/breferrari/shardmind/issues/15)) shipped with E2E tests + registry-mode end-to-end proof.
 - [ ] v6 docs polish ([#85](https://github.com/breferrari/shardmind/issues/85)) closed.
 - [ ] Smoke gate green against both shards (obsidian-mind + research-wiki).
@@ -147,7 +148,7 @@ When all boxes check, cut the v0.1.x stabilization line and start v0.2.
 Items where shardmind work blocks (or is blocked by) work in other repos. Track here so a planner reading either side has visibility.
 
 - [#88](https://github.com/breferrari/shardmind/issues/88) (rename migrations + `adopt --from-version`) blocks `breferrari/obsidian-mind#71` (v6.x rename track). Until #88 ships, obsidian-mind cannot rename managed-file paths without breaking installed users.
-- [#102](https://github.com/breferrari/shardmind/issues/102) (hook lifecycle split) requires obsidian-mind to migrate its hook from `post-install` to the new lifecycle. Both must ship in the same release window.
+- [#102](https://github.com/breferrari/shardmind/issues/102) (hook lifecycle split) requires obsidian-mind to migrate its hook from `post-install` to the new lifecycle, tracked at [`breferrari/obsidian-mind#75`](https://github.com/breferrari/obsidian-mind/issues/75). Both must ship in the same release window.
 - [#119](https://github.com/breferrari/shardmind/issues/119) (engine version-compatibility check) precedes any shard that declares `shardmind_version` requirements. obsidian-mind should add the field as soon as #119 ships.
 
 ### 0.1.x — Deferred from Milestone 6
