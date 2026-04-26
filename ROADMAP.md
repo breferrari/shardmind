@@ -14,9 +14,9 @@
 
 ---
 
-## v0.1.0 — The Engine (April 2026)
+## v0.1.0 — The Engine (April 2026, **shipped on npm**)
 
-Ship the core: install, update, status. Prove that vault template upgrades work where every other tool failed.
+Ship the core: install, update, status. Prove that vault template upgrades work where every other tool failed. The engine surface (install / update / adopt / status / runtime / hooks) shipped as `shardmind@0.1.0` on 2026-04-26 with 862 tests covering the full v6 contract (install / update / adopt / additive principle / hook failure / adversarial). The flagship shard registry index + research-wiki shard land in **v0.1.x** (see below).
 
 ### Milestone 1: Foundation (Day 1) — shipped
 
@@ -64,17 +64,45 @@ Engine rework required by the v6 shard-layout contract. Must land before Milesto
 - [x] `install --defaults` flag + **Invariant 1 byte-equivalence CI test** ([#78](https://github.com/breferrari/shardmind/issues/78))
 - [x] **Contract acceptance suite** — full install / update (no-conflict + with-conflict) / adopt / additive-principle / hook-failure / adversarial scenario matrix ([#92](https://github.com/breferrari/shardmind/issues/92))
 
-### Milestone 5: Flagship Shard (Day 5) — blocked on Milestone 4.5
+### Milestone 5: Flagship Shard (Day 5) — shipped
 
 - [x] obsidian-mind v6 conversion — `.shardmind/` sidecar, hooks, `.shardmindignore` ([#14](https://github.com/breferrari/shardmind/issues/14), under [#70](https://github.com/breferrari/shardmind/issues/70))
 - [x] Finalize post-install hook runtime ([#30](https://github.com/breferrari/shardmind/issues/30))
 - [x] Verify: `shardmind install github:breferrari/obsidian-mind` (direct mode) produces a vault byte-equivalent to git clone under Invariant 1 ([#78](https://github.com/breferrari/shardmind/issues/78))
 
-### Milestone 6: Ship (Day 6) — blocked on Milestone 5
+### Milestone 6: Ship (Day 6) — engine shipped 0.1.0; registry + second shard moved to v0.1.x
 
-- [ ] Research-wiki shard + E2E tests + npm publish ([#15](https://github.com/breferrari/shardmind/issues/15))
+The engine artifact (`shardmind@0.1.0`) shipped on npm on 2026-04-26. The remaining Milestone 6 deliverables (research-wiki shard, registry index, fresh-machine smoke) move to the **v0.1.x stabilization track** below — they're follow-on work, not blockers for the engine being usable.
+
+---
+
+## v0.1.x — Stabilization (active)
+
+The engine shipped at 0.1.0 with the v6 contract covered end-to-end against fixtures. Real-world install of the flagship obsidian-mind v6 shard (and adopt against a private fork) surfaced one hard bug + a cluster of UX gaps that the test suite didn't catch. This track ships those fixes plus the deferred Milestone 6 items as point releases.
+
+### 0.1.1 — Hotfix (next)
+
+The select-Enter bug blocks any shard whose schema has a `select` value with `default = first option` — including obsidian-mind. Fix is mechanical (drop `defaultValue`, reorder options); regression test pins the failure mode.
+
+- [ ] Wizard select stuck on Enter when default = first option ([#103](https://github.com/breferrari/shardmind/issues/103))
+
+### 0.1.x — Flagship UX stabilization
+
+UX gaps surfaced during real obsidian-mind v6 install + adopt runs. None block the engine; each materially improves first-run experience for the flagship and any shard that triggers the same code path.
+
+- [ ] Wizard scroll indicator + boolean prompt consistency (Y/n typed input → selectable Yes/No) ([#100](https://github.com/breferrari/shardmind/issues/100))
+- [ ] `multiselect` value type for module-set questions ([#101](https://github.com/breferrari/shardmind/issues/101)) — pairs with #100 (shortens module list)
+- [ ] Hook lifecycle split: bootstrap / personalize / post-update ([#102](https://github.com/breferrari/shardmind/issues/102)) — turns Invariants 2 + 3 from comment-checked into engine-checked; deprecates today's single `post-install` hook
+- [ ] Adopt: replace step-by-step install wizard with confirm-or-override values flow ([#104](https://github.com/breferrari/shardmind/issues/104))
+- [ ] Hook stderr presentation in Summary (truncate, dim, label as non-fatal) ([#105](https://github.com/breferrari/shardmind/issues/105))
+
+### 0.1.x — Deferred from Milestone 6
+
+Not blockers for engine use, but needed before the registry-mode flow (`shardmind install owner/repo`) works end-to-end and before a second flagship-quality shard exists.
+
+- [ ] Research-wiki shard + E2E tests ([#15](https://github.com/breferrari/shardmind/issues/15))
 - [ ] Create `shardmind/registry` repo with index.json (2 shards) — finalize schema per [#29](https://github.com/breferrari/shardmind/issues/29)
-- [ ] v6 docs polish: fold remaining SHARD-LAYOUT.md content into ARCHITECTURE §3 + IMPLEMENTATION §4.5/§4.5a/§4.5b once #74-#78 land; rewrite IMPLEMENTATION §9 (Build Plan) to match the actual #70 task series ([#85](https://github.com/breferrari/shardmind/issues/85)) — partial rewrites for §3, AUTHORING §2, IMPLEMENTATION §4.2/§4.5/§4.5a/§4.5b/§4.7 already landed with #73
+- [ ] v6 docs polish: fold remaining SHARD-LAYOUT.md content into ARCHITECTURE §3 + IMPLEMENTATION §4.5/§4.5a/§4.5b; rewrite IMPLEMENTATION §9 (Build Plan) to match the actual #70 task series ([#85](https://github.com/breferrari/shardmind/issues/85)) — partial rewrites already landed with #73
 - [ ] Final test: fresh machine → `npm install -g shardmind` → `shardmind install breferrari/obsidian-mind` (registry mode, proves [#29](https://github.com/breferrari/shardmind/issues/29) shape works end-to-end) ([#15](https://github.com/breferrari/shardmind/issues/15))
 
 ---
