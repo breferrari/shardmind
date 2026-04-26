@@ -416,12 +416,17 @@ export default {
 
 ## Release Process
 
+**Binding gate:** `npm run release:*` does not run until the smoke checklist in [`RELEASE-SMOKE.md`](RELEASE-SMOKE.md) has been completed against `dist/cli.js` at the release SHA, and the result table has been pasted into the v\<version> release tag body. CI green is necessary, not sufficient — two consecutive 0.1.x patches ([#103](https://github.com/breferrari/shardmind/issues/103), [#109](https://github.com/breferrari/shardmind/issues/109)) shipped green and broke the flagship install on day one.
+
 ```bash
 # 1. Update CHANGELOG.md: move [Unreleased] items to a new version section
-# 2. Bump version + tag + push:
+# 2. Run RELEASE-SMOKE.md end-to-end against the release SHA
+# 3. Bump version + tag + push:
 npm run release:patch    # 0.1.0 → 0.1.1
 npm run release:minor    # 0.1.0 → 0.2.0
 npm run release:major    # 0.1.0 → 1.0.0
+# 4. After the workflow publishes, paste the smoke result table into the
+#    v<version> release tag body via the GitHub UI or `gh release edit`.
 ```
 
 This triggers `.github/workflows/release.yml`:
