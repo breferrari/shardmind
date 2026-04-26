@@ -263,17 +263,21 @@ describe.skipIf(skipOnWindows)(
             handle.sigint();
 
             const exit = await handle.waitForExit();
-            // Either the cancellation handler fires and exits 130, or
-            // the kernel terminates with the signal directly. Both
-            // surfaces are fine — what matters is the vault stays
-            // clean.
+            // The CLI must respond to SIGINT itself — either the
+            // cancellation handler fires and exits 130, or the kernel
+            // delivers the signal directly. Accepting SIGKILL would
+            // mask a wedged CLI that the helper's own timeout had to
+            // force-kill, defeating the point of the test.
+            // `timedOut: false` AND (130 OR SIGINT) is the contract.
+            expect(
+              exit.timedOut,
+              `waitForExit timed out — CLI didn't respond to SIGINT. exitCode=${exit.exitCode} signal=${exit.signal} screen:\n${handle.screen.serialize()}`,
+            ).toBe(false);
             const exitOk =
-              exit.exitCode === 130 ||
-              exit.signal === 'SIGINT' ||
-              exit.signal === 'SIGKILL';
+              exit.exitCode === 130 || exit.signal === 'SIGINT';
             expect(
               exitOk,
-              `exitCode=${exit.exitCode} signal=${exit.signal} timedOut=${exit.timedOut} screen:\n${handle.screen.serialize()}`,
+              `exitCode=${exit.exitCode} signal=${exit.signal} screen:\n${handle.screen.serialize()}`,
             ).toBe(true);
 
             // Vault invariant: no engine metadata, no rendered files,

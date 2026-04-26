@@ -63,15 +63,22 @@ export interface VirtualScreen {
 export function createVirtualScreen(opts: VirtualScreenOptions = {}): VirtualScreen {
   const cols = opts.cols ?? 80;
   const rows = opts.rows ?? 24;
-  // `allowProposedApi: true` is required for `Terminal.serialize()` —
-  // marked proposed in 6.0.0 even though it's stable in practice. We
-  // implement our own serialization below to avoid the dependency,
-  // which keeps the API surface narrow if a future xterm release
-  // gates more of the buffer behind the proposed flag.
+  // `allowProposedApi: true` is required because the serializer below
+  // reads xterm's buffer APIs directly (`term.buffer.active`,
+  // `viewportY`, `getLine()`) rather than calling `Terminal.serialize()`.
+  // Those buffer-traversal APIs sit behind the proposed-API flag in
+  // 6.x; without it, xterm throws on first access. Keep the flag so a
+  // future cleanup pass doesn't treat it as dead code.
   const term = new Terminal({ cols, rows, allowProposedApi: true });
 
-  const feed = (chunk: string | Uint8Array): Promise<void> =>
-    new Promise((resolve) => {
+  let disposed = false;
+  const feed = (chunk: string | Uint8Array): Promise<void> => {
+    // No-op once disposed: late `pty.onData` chunks can arrive after
+    // a test's `finally` ran `screen.dispose()`, and xterm's parser
+    // throws on writes to a disposed Terminal. Resolving immediately
+    // is harmless — the screen is no longer being observed by anyone.
+    if (disposed) return Promise.resolve();
+    return new Promise((resolve) => {
       // xterm.write() is fire-and-forget by default; the callback
       // form fires once the data is processed and reflected in the
       // buffer. node-pty hands us strings (utf-8 encoded by default);
@@ -79,6 +86,7 @@ export function createVirtualScreen(opts: VirtualScreenOptions = {}): VirtualScr
       // to a Buffer.
       term.write(chunk, () => resolve());
     });
+  };
 
   const serialize = (): string => {
     const buf = term.buffer.active;
@@ -106,14 +114,15 @@ export function createVirtualScreen(opts: VirtualScreenOptions = {}): VirtualScr
   const contains = (text: string): boolean => serialize().includes(text);
   const matches = (re: RegExp): boolean => re.test(serialize());
 
-  let disposed = false;
   const dispose = (): void => {
-    // xterm-headless's own dispose is documented as safe to call
-    // twice, but a follow-up `feed()` against a disposed Terminal
-    // throws inside the parser. The flag here is the explicit
-    // single-source-of-truth so PtyHandle.dispose can be called
-    // from multiple cleanup paths (test finally + global afterEach)
-    // without surprising the helper's later consumers.
+    // The `disposed` flag declared above also guards `feed()`: late
+    // `pty.onData` chunks can arrive after the test's cleanup ran
+    // (especially under SIGINT scenarios where the child writes
+    // before the kernel completes the kill), and xterm's parser
+    // throws on writes to a disposed Terminal. Single-source-of-truth
+    // here so PtyHandle.dispose can be called from multiple cleanup
+    // paths (test finally + global afterEach) without surprising the
+    // helper's later consumers.
     if (disposed) return;
     disposed = true;
     term.dispose();

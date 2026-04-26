@@ -211,6 +211,31 @@ export async function spawnCliPty(
   for (const key of Object.keys(env)) {
     if (key.startsWith('SHARDMIND_')) delete env[key];
   }
+  // Strip CI-detection env vars. Ink uses `is-ci` to decide whether
+  // to render incrementally or batch into a single final frame; when
+  // any of these are set, it picks the batched path even with
+  // `stdin.isTTY === true`. Layer 2's whole reason to exist is real
+  // interactive rendering, so we delete every CI hint the inherited
+  // env carries and let `process.stdout.isTTY` (true under PTY)
+  // drive Ink's mode choice. Mirrors `is-ci`'s detection list.
+  for (const key of [
+    'CI',
+    'CONTINUOUS_INTEGRATION',
+    'BUILD_NUMBER',
+    'RUN_ID',
+    'GITHUB_ACTIONS',
+    'GITLAB_CI',
+    'CIRCLECI',
+    'TRAVIS',
+    'APPVEYOR',
+    'BUILDKITE',
+    'DRONE',
+    'SEMAPHORE',
+    'TEAMCITY_VERSION',
+    'TF_BUILD',
+  ]) {
+    delete env[key];
+  }
   // Real-TTY env. xterm-256color is what most modern emulators
   // advertise; Ink + @inkjs/ui adapt to it, and our virtual-screen
   // emulator parses everything they emit.

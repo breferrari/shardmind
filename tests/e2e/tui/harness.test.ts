@@ -74,30 +74,31 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
       expect(exit.exitCode).toBe(0);
       expect(handle.screen.matches(/\d+\.\d+\.\d+/)).toBe(true);
     } finally {
-      handle.kill();
+      await handle.dispose();
     }
   }, 30_000);
 
-  it('write() reaches the child and triggers a state transition', async () => {
-    // `shardmind` (status command) on a non-vault directory renders
-    // the "no shard installed" view + the standard `Press q to quit`
-    // hint. Pressing 'q' exits the app via useApp().exit() — the
-    // round-trip proves the master-side write reaches the child.
+  it('--help renders synchronously and the screen captures the usage line', async () => {
+    // Pin two harness contracts in a non-interactive shape:
+    //   1. `spawnCliPty` actually spawns the child and reaches its
+    //      stdout (the screen ends up with rendered content), and
+    //   2. a fast-exit child doesn't deadlock the helper — `waitForExit`
+    //      returns within seconds, not minutes.
+    // The original test description claimed to verify `write()` round-
+    // trips through the child, but `--help` exits immediately without
+    // ever reading stdin; renaming so the assertion shape is honest.
+    // A genuine input round-trip is exercised by every scenario suite
+    // (typeIntoPty / waitForScreen), which is the real coverage.
     const handle = await spawnCliPty(['--help'], {
       cwd: os.tmpdir(),
     });
     try {
-      // --help also exits immediately and renders synchronously. The
-      // only goal here is to assert the spawn happens AND the helper
-      // returns before the child wedges. If --help ever blocks, this
-      // catches it before scenario suites do.
       const exit = await handle.waitForExit();
       expect(exit.exitCode).toBe(0);
-      // Help content includes an "install" verb in the usage line.
       const screen = handle.screen.serialize();
       expect(screen.toLowerCase()).toContain('install');
     } finally {
-      handle.kill();
+      await handle.dispose();
     }
   }, 30_000);
 
@@ -117,9 +118,7 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
         }),
       ).rejects.toThrow(/impossible predicate/);
     } finally {
-      handle.kill();
-      // Drain the child so vitest doesn't see open handles.
-      await handle.waitForExit();
+      await handle.dispose();
     }
   }, 30_000);
 
