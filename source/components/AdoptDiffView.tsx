@@ -1,7 +1,8 @@
-import { useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { diffLines } from 'diff';
 import { Select } from './ui.js';
+import { useOncePerKey } from './use-once-per-key.js';
 
 /**
  * Per-file resolution returned to the adopt state machine. Two values
@@ -55,10 +56,10 @@ interface AdoptDiffViewProps {
  * sizes only. The `Select` action stays available so the user can pick
  * a side without seeing the (unrenderable) bytes.
  *
- * The `firedRef` guard mirrors `DiffView.tsx` and `CollisionReview.tsx`:
- * Ink's `Select` can fire `onChange` more than once if the instance
- * re-focuses. A double-fire on `use_shard` would queue two writes for
- * the same path; the ref clamps each mount to a single emission.
+ * The `useOncePerKey(filePath)` guard mirrors `DiffView.tsx`. `adopt.tsx`
+ * advances `currentIndex` without remounting this component, so the
+ * dedup ref must be scoped to the per-file key — see Pattern B in
+ * `docs/COMPONENTS.md` for the broader convention.
  */
 export default function AdoptDiffView({
   path: filePath,
@@ -69,7 +70,7 @@ export default function AdoptDiffView({
   isBinary,
   onChoice,
 }: AdoptDiffViewProps) {
-  const firedRef = useRef(false);
+  const tryFire = useOncePerKey(filePath);
 
   const hunks = useMemo(() => {
     if (isBinary) return null;
@@ -114,9 +115,8 @@ export default function AdoptDiffView({
         key={filePath}
         options={SELECT_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
         onChange={(choice) => {
-          if (firedRef.current) return;
           if (!ADOPT_DIFF_ACTIONS.has(choice as AdoptDiffAction)) return;
-          firedRef.current = true;
+          if (!tryFire()) return;
           onChoice(choice as AdoptDiffAction);
         }}
       />

@@ -1,6 +1,7 @@
-import { useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { Select } from './ui.js';
+import { useOncePerKey } from './use-once-per-key.js';
 import type { ConflictRegion, MergeResult } from '../runtime/types.js';
 
 /** Conflict-resolution choices returned to the state machine. */
@@ -36,11 +37,12 @@ interface DiffViewProps {
 
 export default function DiffView({ path: filePath, index, total, result, onChoice }: DiffViewProps) {
   const mergedLines = useMemo(() => result.content.split(LINE_SPLIT), [result.content]);
-  // `Select` may fire onChange more than once if Ink re-focuses the
-  // instance; once the user's pick is in, ignore everything else for
-  // this mount. `key={filePath}` below forces a fresh ref per file so
-  // this only blocks same-file duplicates.
-  const firedRef = useRef(false);
+  // `update.tsx` advances `phase.currentIndex` without remounting this
+  // component, so the dedup ref must be scoped to the per-file key.
+  // A boolean `useRef(false)` would leak across files and freeze every
+  // conflict prompt after the first. See Pattern B in
+  // `docs/COMPONENTS.md` for the broader convention.
+  const tryFire = useOncePerKey(filePath);
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -69,9 +71,8 @@ export default function DiffView({ path: filePath, index, total, result, onChoic
         key={filePath}
         options={SELECT_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
         onChange={(choice) => {
-          if (firedRef.current) return;
           if (!DIFF_ACTIONS.has(choice as DiffAction)) return;
-          firedRef.current = true;
+          if (!tryFire()) return;
           onChoice(choice as DiffAction);
         }}
       />

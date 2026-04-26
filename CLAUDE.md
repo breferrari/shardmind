@@ -15,6 +15,7 @@ This project is **spec-driven**. The architecture and implementation are fully d
 | **`docs/SHARD-LAYOUT.md`** | **v6 shard-layout contract + three binding invariants. Active design spec.** Folded into `ARCHITECTURE.md §3` and `IMPLEMENTATION.md §4.5` / `§4.5a` / `§4.5b` for the engine specs; this doc remains the canonical contract for the binding properties + author-facing layout. | Before implementing anything related to shard layout, install walk, hook context, adopt command, or obsidian-mind v6. Authoritative over ARCHITECTURE.md / IMPLEMENTATION.md where they conflict. |
 | `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. | Before making any architectural decision. |
 | `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, module specs with TypeScript signatures, algorithms as numbered steps, error cases, 20 merge test fixtures, 6-day build plan. **§9 (Build Plan) is stale — see [#70](https://github.com/breferrari/shardmind/issues/70) for the current task list.** | Before implementing any module. |
+| `docs/COMPONENTS.md` | Iterated UI patterns (A/B), `useOncePerKey` hook, `rerender()` regression-test convention. Codifies why state-machine-iterated prompts (`AdoptDiffView`, `DiffView`) need per-iteration ref scoping vs. boolean refs. | Before adding a new Ink component that may be iterated by a parent state machine, or before changing a `useRef` shape inside one. |
 | `examples/minimal-shard/` | Minimal test shard for development. 4 values, 2 modules, signals. Flat v6 layout (`.shardmind/` sidecar, content at native paths, dotfolder `.njk` for rendering). | Use as a fixture for engine-level tests; obsidian-mind v6 conversion lands at Milestone 5. |
 
 **Read the relevant spec section before writing code.** The specs define inputs, outputs, algorithms, error cases, and test expectations for every module. Don't improvise — implement what the spec says.
@@ -151,6 +152,7 @@ shardmind/
 │   │   ├── UpdateSummary.tsx          # Final update report
 │   │   ├── ValueInput.tsx             # Typed input widget (string/number/select…)
 │   │   ├── Header.tsx                 # Branded header
+│   │   ├── use-once-per-key.ts        # Per-iteration dedup hook for state-machine-iterated prompts (see docs/COMPONENTS.md Pattern B)
 │   │   └── ui.ts                      # Barrel re-export of @inkjs/ui primitives
 │   ├── core/
 │   │   ├── manifest.ts                # Parse + validate shard.yaml
@@ -217,7 +219,12 @@ shardmind/
 │       └── migration/                 # Value migration scenarios
 ├── docs/
 │   ├── ARCHITECTURE.md                # The what and why (22 sections)
-│   └── IMPLEMENTATION.md              # The how exactly (10 sections)
+│   ├── IMPLEMENTATION.md              # The how exactly (10 sections)
+│   ├── SHARD-LAYOUT.md                # v6 shard-layout contract — Invariants 1/2/3, file disposition tiers, engine change scope
+│   ├── AUTHORING.md                   # Shard author guide — schema, modules, hooks, dotfolder convention
+│   ├── ERRORS.md                      # Typed error code registry — codes, messages, hints, remediation
+│   ├── OPERATIONS.md                  # Deployment notes — air-gapped install, GitHub endpoints, registry config
+│   └── COMPONENTS.md                  # Iterated UI patterns (A/B), useOncePerKey hook, testing convention for state-machine-iterated prompts
 ├── package.json
 ├── tsconfig.json
 └── vitest.config.ts
@@ -330,6 +337,7 @@ Read the spec section before implementing. It has inputs, outputs, algorithm ste
 - **Fixtures before code** for the merge engine. Write all 17 fixture directories (see spec §19.2), then implement until they pass. TDD is mandatory for `drift.ts` and `differ.ts`.
 - **Unit tests** for pure functions in `source/core/`. Test files: `tests/unit/<module>.test.ts`.
 - **Component tests** for Ink components via `ink-testing-library`. Files: `tests/component/<Component>.test.tsx`.
+- **Iterated-component regression tests are mandatory.** If a component is rendered inside a parent's iteration loop (state machine advances `phase.currentIndex`, `setIndex`, etc.) without a `key` prop forcing remount, its component test MUST include a `rerender()` case asserting the next iteration's interaction fires. Rationale: see [`docs/COMPONENTS.md`](docs/COMPONENTS.md) (Pattern B) — [#109](https://github.com/breferrari/shardmind/issues/109) shipped because `AdoptDiffView` and `DiffView` had only single-mount tests; the iteration-shape bug lived in the gap.
 - **Integration tests** for pipelines: install (temp dir → full vault), update (install → modify → update → verify).
 - **E2E tests** for CLI: spawn `dist/cli.js` as a subprocess via `node:child_process` and route through the local GitHub stub (`tests/e2e/helpers/github-stub.ts`). No `execa` dependency; no public network. See `docs/ARCHITECTURE.md §19.7` for the hermetic-E2E methodology.
 - Each merge fixture is a self-contained directory with `scenario.yaml`, template files, values files, actual file, and expected output. See `tests/fixtures/merge/01-managed-no-change/` for the pattern.

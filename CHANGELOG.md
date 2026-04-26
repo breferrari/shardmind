@@ -8,6 +8,20 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-26
+
+### Fixed (iterated diff prompts freeze after the first decision)
+
+Closes [#109](https://github.com/breferrari/shardmind/issues/109). Hit during a real `shardmind adopt github:breferrari/obsidian-mind` run on the flagship right after #103's 0.1.1 fix unblocked the install wizard: 35 differing files, "Keep mine" worked on file 1, every prompt thereafter was frozen.
+
+- **`source/components/AdoptDiffView.tsx`** + **`source/components/DiffView.tsx`** — both held a boolean `firedRef = useRef(false)` to dedupe `Select.onChange` within a single mount. The parents (`adopt.tsx`, `update.tsx`) advance `phase.currentIndex` via the state machine without passing a `key` prop, so React kept the same component instance, `useRef` returned the same object, and `firedRef.current` stayed `true` from the previous file's resolution. Replace with a per-iteration scoped guard (see hook below); when the path changes, the next file's first Enter goes through. No parent-side `key` prop required — the encapsulation lives with the component.
+- **`source/components/use-once-per-key.ts`** (new) — extracts the per-iteration dedup pattern into `useOncePerKey<K>(currentKey: K): () => boolean`. Both diff views consume it; future state-machine-iterated prompts get a single canonical implementation harder to misuse than reinventing the ref-key gate inline. Six unit tests in `tests/component/use-once-per-key.test.tsx` pin the contract: first-call-true, second-call-same-key-false, key-change-true-again, key-back-to-prior-key (treats as fresh — the hook only remembers the last key, matching forward-only iteration semantics), null-key gotcha.
+- **Two component regression tests** in `tests/component/AdoptDiffView.test.tsx` + `tests/component/DiffView.test.tsx` re-render the same root with a new path (the iteration shape both parents use in production) and assert the second file's `onChoice` fires. The existing same-mount double-fire tests still pass.
+- **Audit across every menu component** for the same pattern. `RemovedFilesReview` and `NewValuesPrompt` iterate internally with `setIndex` + `key={iterationKey}` on the inner widget, and their dedup ref only flips on the terminal item — correct as-is (Pattern A in the new doc). `CollisionReview`, `ExistingInstallGate`, `NewModulesReview`, and the three `Select`s inside `InstallWizard` (HeaderStep / ComputedPreview / ConfirmStep) are single-mount per phase and not vulnerable. State-machine hooks (`use-{install,update,adopt}-machine.ts`) hold per-command refs (phase, backupDir, addedPaths, hookAbort) that fire once per command invocation — different surface, also not vulnerable. No other instances of the bug pattern across `source/`.
+- **`docs/COMPONENTS.md`** (new) — codifies the two valid shapes (Pattern A: internal iteration, Pattern B: state-machine iteration with `useOncePerKey`), the anti-pattern that broke `AdoptDiffView` and `DiffView`, the single-mount cases where boolean `useRef` is correct, and the `rerender()` regression-test convention with a canonical example.
+- **`CLAUDE.md`** updates: source-of-truth table grows a `docs/COMPONENTS.md` row; project tree adds `source/components/use-once-per-key.ts` and lists the previously-omitted `docs/SHARD-LAYOUT.md` / `AUTHORING.md` / `ERRORS.md` / `OPERATIONS.md` (a separate stale-tree finding from the audit, fixed in scope); §Testing gets a binding rule that iterated-component regression tests via `rerender()` are mandatory.
+- **Tests: 868 → 876 (+8)**.
+
 ## [0.1.1] - 2026-04-26
 
 ### Fixed (wizard select stuck on Enter when default = first option)
