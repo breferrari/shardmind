@@ -8,6 +8,17 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-04-26
+
+### Fixed (wizard select stuck on Enter when default = first option)
+
+Closes [#103](https://github.com/breferrari/shardmind/issues/103). First entry on the v0.1.x stabilization track. Surfaced during a real `shardmind adopt` against `breferrari/obsidian-mind`, where the schema default for `vault_purpose` (`engineering`) matches the first option in the list — pressing Enter on the focused option did nothing and the wizard froze. Blocks any shard whose schema has a `select` value with `default = first option`.
+
+- **`source/components/ValueInput.tsx`** — `select` branch reorders options so the option matching `initial` (`initialValue ?? def.default`) sits at index 0, and drops the `defaultValue` prop. Root cause is upstream in `@inkjs/ui`'s `use-select-state.js`: the reducer seeds `previousValue === value === defaultValue` while `focusedValue` initializes to the first option; on Enter, `select-focused-option` sets `value = focusedValue` and `previousValue = the old value`, so when `defaultValue` equals the first option the change-fire guard `previousValue !== value` fails and `onChange` never fires. Dropping `defaultValue` lets `previousValue` initialize to `undefined`, and the reorder keeps the cursor visually pre-positioned on the default. WHY-comment in place so a future reader doesn't "clean up" the reorder + dropped prop without understanding the upstream constraint.
+- **Adversarial cases covered** — `tests/component/ValueInput.test.tsx` adds 6 cases pinning the regression + the orthogonal paths: default = first option (the regression proper); default = middle option (reorder must surface non-first defaults at the cursor); single-option select with the bug pattern; no default + no initialValue (the path that never had the bug must still work post-fix); back-navigation prefill (`initialValue ≠ default`); `initialValue` not in options (legacy / renamed schema — graceful fallback to the first option, no freeze). The existing `arrow + Enter` test stays as the navigation-then-Enter coverage. Total `select`-branch coverage: 7 component tests across the Enter / arrow / cursor-placement matrix.
+- **No `source/core/` change.** Pure component-layer fix; no engine surface, no new error code, no new module, no schema migration, no docs in `ARCHITECTURE.md` / `IMPLEMENTATION.md` / `SHARD-LAYOUT.md` (no architectural surface change).
+- **Tests: 862 → 868 (+6)**.
+
 ## [0.1.0] - 2026-04-26
 
 First public release. Ships the v6 engine: install (with `--defaults` and Invariant 1 byte-equivalence guarantee), update (with `--release`, `--include-prerelease`, and ref re-resolution), adopt (retrofit existing shard clones), status, and post-install / post-update hooks. The flagship obsidian-mind v6 conversion + research-wiki shard land in subsequent point releases.
