@@ -64,3 +64,19 @@ export async function typeText(
     await tick(perCharDelayMs);
   }
 }
+
+/**
+ * Resolves once a vitest mock has been called at least once (or rejects
+ * via the underlying waitFor timeout). Folds the common
+ * "wait for onSubmit to fire" idiom across component tests.
+ */
+export async function waitForCall(
+  fn: { mock: { calls: unknown[] } },
+  timeoutMs = 2000,
+): Promise<void> {
+  await waitFor(
+    () => (fn.mock.calls.length > 0 ? 'ok' : ''),
+    (f) => f === 'ok',
+    timeoutMs,
+  );
+}

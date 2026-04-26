@@ -3,7 +3,7 @@ import { render, cleanup } from 'ink-testing-library';
 import React from 'react';
 import ValueInput from '../../source/components/ValueInput.js';
 import type { ValueDefinition } from '../../source/runtime/types.js';
-import { ENTER, ARROW_DOWN, tick, typeText, waitFor } from './helpers.js';
+import { ENTER, ARROW_DOWN, tick, typeText, waitFor, waitForCall } from './helpers.js';
 
 afterEach(() => {
   cleanup();
@@ -126,13 +126,8 @@ describe('ValueInput', () => {
     expect(onSubmit).toHaveBeenCalledWith('research');
   });
 
-  // --- #103 regression + adversarial matrix ---
-  // The bug: passing @inkjs/ui's Select a `defaultValue` that matches the
-  // first option seeds `previousValue === value`, which the post-dispatch
-  // `previousValue !== value` guard rejects → onChange never fires. Fix
-  // reorders options so the default sits at index 0 (still under the
-  // pre-positioned cursor) and drops `defaultValue` so `previousValue`
-  // initializes to undefined.
+  // #103 select-Enter regression + adversarial matrix.
+  // Upstream-bug context lives next to the fix in source/components/ValueInput.tsx.
 
   it('select: default = first option + single Enter fires (#103 regression)', async () => {
     const def: ValueDefinition = {
@@ -153,7 +148,7 @@ describe('ValueInput', () => {
     );
 
     stdin.write(ENTER);
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
 
     expect(onSubmit).toHaveBeenCalledWith('engineering');
   });
@@ -177,7 +172,7 @@ describe('ValueInput', () => {
     );
 
     stdin.write(ENTER);
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
 
     expect(onSubmit).toHaveBeenCalledWith('research');
   });
@@ -197,7 +192,7 @@ describe('ValueInput', () => {
     );
 
     stdin.write(ENTER);
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
 
     expect(onSubmit).toHaveBeenCalledWith('only');
   });
@@ -220,16 +215,12 @@ describe('ValueInput', () => {
     );
 
     stdin.write(ENTER);
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
 
     expect(onSubmit).toHaveBeenCalledWith('engineering');
   });
 
   it('select: back-nav initialValue ≠ default, Enter fires initialValue', async () => {
-    // User previously picked 'general', then navigated back. The wizard
-    // re-mounts ValueInput with initialValue='general' even though the
-    // schema default is 'engineering'. Cursor must land on 'general'
-    // and a single Enter must commit it.
     const def: ValueDefinition = {
       type: 'select',
       required: true,
@@ -248,15 +239,12 @@ describe('ValueInput', () => {
     );
 
     stdin.write(ENTER);
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
 
     expect(onSubmit).toHaveBeenCalledWith('general');
   });
 
-  it('select: initialValue not in options falls back to first option', async () => {
-    // Stored state references a value that no longer exists in the
-    // schema (e.g. option got renamed). The wizard must not freeze;
-    // a graceful fallback to the first option is acceptable.
+  it('select: initialValue not in options falls back to first option (no freeze)', async () => {
     const def: ValueDefinition = {
       type: 'select',
       required: true,
@@ -275,7 +263,7 @@ describe('ValueInput', () => {
     );
 
     stdin.write(ENTER);
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
 
     expect(onSubmit).toHaveBeenCalledWith('engineering');
   });
