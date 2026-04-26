@@ -274,21 +274,25 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
   }, 10_000);
 
   it('PtyHandle.dispose() handles concurrent calls on a live wedged child', async () => {
-    // The clean-exit idempotency test above pins SEQUENTIAL dispose
-    // calls on an already-exited child (both calls hit the
-    // `exitInfo !== null` early-return at pty-cli.ts:417). The
-    // dangerous path is two dispose calls running CONCURRENTLY before
-    // exitInfo is set: both check `exitInfo === null`, both enter
-    // kill+drain, both send SIGKILL, both await Promise.race —
-    // exercising the parallel re-entry the early-return path can't
-    // observe. `Promise.all` here is what forces concurrency in JS;
-    // sequential `await dispose(); await dispose();` cannot reach
-    // this state because the first await blocks until the first
-    // dispose returns (by which time exitInfo is set).
+    // Defense-in-depth over the sequential idempotency tests above.
+    // Sequential `await dispose(); await dispose();` always hits
+    // `exitInfo !== null` on the second call (the first await sets
+    // it), so a future regression that introduced a shared-mutable
+    // inside dispose's kill+drain race — safe sequentially because
+    // only one caller runs at a time, broken concurrently because
+    // two callers would clobber the state — would not surface in
+    // the existing tests. `Promise.all` forces both calls past the
+    // `exitInfo === null` gate at the same tick: both enter kill+
+    // drain, both send SIGKILL (second swallowed by node-pty's own
+    // try/catch), both await Promise.race against the same
+    // `exitPromise`. Today's helper has no such shared state — the
+    // drainHandle is local per call — so the test is narrow but
+    // honest about what it pins.
     //
-    // Realistic trigger: a future scenario file with both an
-    // `afterEach` cleanup hook and a `finally { dispose() }` block
-    // could in principle fire dispose twice without serialization.
+    // Realistic trigger this guards against: a future scenario file
+    // with both an `afterEach` cleanup hook and a `finally {
+    // dispose() }` block could fire dispose twice without
+    // serialization.
     const childScript = 'setInterval(() => {}, 1e9);';
     const handle = await spawnCliPty([], {
       cwd: os.tmpdir(),
@@ -406,14 +410,14 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
     const uniqueVersion = `0.0.0-mutate-throw-test-${process.pid}`;
     const orphanPrefix = `${FIXTURE_TMP_PREFIX}${uniqueVersion}-`;
     try {
-      // Pre-clean any orphans left by a prior run that detected this
-      // exact regression and surfaced it. Without this, the test
-      // sticks-fail across runs after the first true positive: the
-      // test discovers the orphan, the assertion fails, the dev fixes
-      // the helper, but the orphan from the prior failing run is
-      // still on disk and the test keeps reporting non-empty until a
-      // manual cleanup. Running the cleanup at the top makes the
-      // assertion deterministic across runs.
+      // Pre-clean orphans from THIS process's prior runs — only
+      // load-bearing in vitest watch mode where the worker pool
+      // persists across reruns (same `process.pid`, accumulating
+      // orphans on red paths). CI runs in fresh processes and the
+      // per-pid stamp above already guarantees a fresh prefix, so
+      // this loop is a no-op there. Together they make the assertion
+      // deterministic across watch reruns without bleeding into
+      // sibling vitest invocations.
       for (const stale of (await fs.readdir(os.tmpdir())).filter((n) =>
         n.startsWith(orphanPrefix),
       )) {

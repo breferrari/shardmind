@@ -150,10 +150,11 @@ describe('flow harness', () => {
     const uniqueVersion = `0.0.0-mutate-throw-l1-${process.pid}`;
     const orphanPrefix = `${CUSTOM_TAR_TMP_PREFIX}${uniqueVersion}-`;
     try {
-      // Pre-clean orphans from a prior run that detected the
-      // regression and reported correctly. Without this the test
-      // sticks-fail across runs after the first true positive — see
-      // the equivalent block in the Layer 2 sibling for the rationale.
+      // Pre-clean orphans from THIS process's prior runs — only
+      // load-bearing in vitest watch mode (same pid, repeated reruns
+      // accumulating orphans). CI's fresh-process runs make this a
+      // no-op via the per-pid stamp. See the Layer 2 sibling for the
+      // full rationale.
       for (const stale of (await fs.readdir(os.tmpdir())).filter((n) =>
         n.startsWith(orphanPrefix),
       )) {

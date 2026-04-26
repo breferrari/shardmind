@@ -162,12 +162,15 @@ export interface PtyHandle {
    * process-state check is the only way to pin the force-kill
    * contract from outside the helper.
    *
-   * Lifetime: only meaningful between spawn and reap. The kernel
-   * recycles pids quickly (Darwin's pid space is 16-bit / wraps under
-   * 32768), so a caller that reads `handle.pid` long after `dispose()`
-   * or after the child has exited may end up signalling an unrelated
-   * process. Use immediately after the kill window — the
-   * `waitForReaped` pattern in the harness tests demonstrates this.
+   * Lifetime: valid until `waitForExit()` resolves OR `dispose()`
+   * returns, whichever comes first — by then the kernel has typically
+   * reaped the zombie (or will momentarily) and the pid is fair game
+   * for recycling. Darwin's pid space is 16-bit / wraps under 32768,
+   * so the recycle window is tight on busy machines. Read
+   * `handle.pid` BEFORE awaiting either, capture the local value, and
+   * use the captured value for any post-exit `process.kill(pid, 0)`
+   * probe. The `waitForReaped` pattern in the harness tests
+   * demonstrates this.
    */
   pid: number;
   /** Bytes pushed into the master side of the PTY. */
