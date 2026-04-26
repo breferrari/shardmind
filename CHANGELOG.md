@@ -36,6 +36,8 @@ Closes [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1 (Layer
   - `differ.ts::computeMergeAction` renders both old + new content through Nunjucks even for static files — minimal-shard's CLAUDE.md contains a literal `{{ }}` token in its prose that fails the parse, so static-file conflicts with embedded template syntax can't be merged today. Scenario 14 sidesteps by targeting three `.njk` paths (Home.md.njk, brain/North Star.md.njk, .claude/settings.json.njk).
   - `ModuleReview` renders no interactive widget when the schema declares zero removable modules — the user is stuck at the modules step. Custom-tarball schemas in scenarios 2 / 4 / 6 declare a removable module alongside the non-removable one to sidestep.
 
+- **Pre-existing flake observed during parallel-pressure hardening** ([#114](https://github.com/breferrari/shardmind/issues/114)): `tests/unit/merge-adversarial.test.ts:616` (10K-line token-interning stress) times out at 60 s under 4× concurrent full-suite + 8× isolated runs. Predates this PR (first appears in [#48](https://github.com/breferrari/shardmind/pull/48)); not introduced by Phase 1. Filed as a follow-up — flow tests stay clean under the same parallel pressure (8/8 isolated runs at 26/26).
+
 ## [0.1.2] - 2026-04-26
 
 ### Fixed (iterated diff prompts freeze after the first decision)
