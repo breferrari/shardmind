@@ -19,8 +19,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { constants as osConstants } from 'node:os';
 import os from 'node:os';
-import * as tar from 'tar';
 import { parse as parseYaml } from 'yaml';
+import { unpackInto } from '../helpers/tarball-utils.js';
 import { createVirtualScreen } from './helpers/virtual-screen.js';
 import {
   spawnCliPty,
@@ -30,6 +30,7 @@ import {
 import {
   buildHookFixtureShard,
   buildMutatedShard,
+  FIXTURE_TMP_PREFIX,
 } from './helpers/build-fixture-shard.js';
 
 const skipOnWindows = process.platform === 'win32';
@@ -175,10 +176,14 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
     // `kill()` short-circuits when `exitInfo` is set, so the second
     // dispose must traverse cleanly. Pin it here so a future refactor
     // that re-orders the kill / drain dance surfaces immediately.
+    //
+    // First dispose kills + drains (exit fires within ~200ms);
+    // second dispose hits the `exitInfo !== null` early-return.
+    // Skipping `waitForExit` saves the spawn-to-`--version`-exit
+    // wall-clock without changing what's pinned.
     const handle = await spawnCliPty(['--version'], {
       cwd: os.tmpdir(),
     });
-    await handle.waitForExit();
     await handle.dispose();
     await expect(handle.dispose()).resolves.toBeUndefined();
   }, 30_000);
@@ -209,11 +214,10 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
       ],
     });
     try {
-      // Give the child a tick to write its sentinel before we go into
-      // waitForExit's timeout dance. 200ms is plenty for a one-line
-      // synchronous write.
-      await new Promise((r) => setTimeout(r, 200));
-
+      // No pre-wait: `pty.onData` streams the sentinel into the screen
+      // independent of when we enter `waitForExit`, and the assertion
+      // runs only after `waitForExit` returns (≤1500ms timeout window),
+      // by which time the child has had ample wall-clock to flush.
       const result = await handle.waitForExit();
       expect(result.timedOut).toBe(true);
       // SIGKILL came from the helper's force-kill on timeout. The
@@ -288,18 +292,16 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
         outDir,
         hookSource: 'export default async () => {};',
       });
-      // Extract the tarball into a sibling dir and read its manifest.
+      // `unpackInto` strips the top-level prefix dir (matches the
+      // engine's own `tar.x({ strip: 1 })` extraction path), so the
+      // manifest lands directly under `<extractDir>/.shardmind/`.
       const extractDir = path.join(outDir, 'extract');
-      await fs.mkdir(extractDir, { recursive: true });
-      await tar.x({ file: tarPath, cwd: extractDir });
-      const manifestPath = path.join(
-        extractDir,
-        'phase3-named-shard-0.1.0',
-        '.shardmind',
-        'shard.yaml',
-      );
+      await unpackInto(tarPath, extractDir);
       const manifest = parseYaml(
-        await fs.readFile(manifestPath, 'utf-8'),
+        await fs.readFile(
+          path.join(extractDir, '.shardmind', 'shard.yaml'),
+          'utf-8',
+        ),
       ) as Record<string, unknown>;
       expect(manifest.name).toBe('phase3-named-shard');
       expect(manifest.namespace).toBe('l2test');
@@ -319,10 +321,13 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
     const outDir = await fs.mkdtemp(
       path.join(os.tmpdir(), 'shardmind-fixture-throw-out-'),
     );
+    // Unique version stamp: vitest workers run files in isolation, so
+    // no concurrent run can collide on this prefix. With the prefix
+    // exported from the helper (FIXTURE_TMP_PREFIX), a future rename
+    // breaks both the `mkdtemp` and the assertion at the same time
+    // rather than silently letting the test pass on no matches.
     const uniqueVersion = '0.0.0-mutate-throw-test';
-    const matchingBefore = (await fs.readdir(os.tmpdir())).filter((n) =>
-      n.startsWith(`shardmind-fixture-${uniqueVersion}-`),
-    );
+    const orphanPrefix = `${FIXTURE_TMP_PREFIX}${uniqueVersion}-`;
     try {
       await expect(
         buildMutatedShard({
@@ -336,14 +341,10 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
         }),
       ).rejects.toThrow('intentional-mutate-throw');
 
-      // No new tmp clone dirs with our unique version after the throw.
-      // The before-list is the baseline (should be empty unless a
-      // prior crashed run left orphans, in which case those orphans
-      // are also matched by both lists and the delta is zero).
-      const matchingAfter = (await fs.readdir(os.tmpdir())).filter((n) =>
-        n.startsWith(`shardmind-fixture-${uniqueVersion}-`),
+      const orphans = (await fs.readdir(os.tmpdir())).filter((n) =>
+        n.startsWith(orphanPrefix),
       );
-      expect(matchingAfter.length).toBe(matchingBefore.length);
+      expect(orphans).toEqual([]);
     } finally {
       await fs.rm(outDir, { recursive: true, force: true });
     }

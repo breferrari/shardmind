@@ -21,6 +21,7 @@ import {
   makeVaultDir,
   cleanupVault,
   buildCustomTarball,
+  CUSTOM_TAR_TMP_PREFIX,
   SHARD_SLUG,
   STUB_SHA,
 } from './helpers.js';
@@ -141,10 +142,13 @@ describe('flow harness', () => {
     // mutate callback panics during scenario shake-out. Use a unique
     // version stamp so the snapshot doesn't pick up unrelated runs.
     const vault = await makeVaultDir('harness-mutate-throw');
+    // Unique version stamp: vitest workers run files in isolation, so
+    // no concurrent run can collide on this prefix. With the prefix
+    // exported from the helper (CUSTOM_TAR_TMP_PREFIX), a future
+    // rename breaks both the `mkdtemp` and the assertion at the same
+    // time rather than silently letting the test pass on no matches.
     const uniqueVersion = '0.0.0-mutate-throw-l1';
-    const matchingBefore = (await fs.readdir(os.tmpdir())).filter((n) =>
-      n.startsWith(`shardmind-custom-tar-${uniqueVersion}-`),
-    );
+    const orphanPrefix = `${CUSTOM_TAR_TMP_PREFIX}${uniqueVersion}-`;
     try {
       await expect(
         buildCustomTarball({
@@ -158,10 +162,10 @@ describe('flow harness', () => {
         }),
       ).rejects.toThrow('intentional-l1-mutate-throw');
 
-      const matchingAfter = (await fs.readdir(os.tmpdir())).filter((n) =>
-        n.startsWith(`shardmind-custom-tar-${uniqueVersion}-`),
+      const orphans = (await fs.readdir(os.tmpdir())).filter((n) =>
+        n.startsWith(orphanPrefix),
       );
-      expect(matchingAfter.length).toBe(matchingBefore.length);
+      expect(orphans).toEqual([]);
     } finally {
       await cleanupVault(vault);
     }

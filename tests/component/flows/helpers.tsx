@@ -317,12 +317,21 @@ export interface BuildCustomTarballOpts {
   prefix?: string;
 }
 
+/**
+ * Tmp dir prefix `buildCustomTarball` uses under `os.tmpdir()`.
+ * Exported so the harness's mutate-throw cleanup test can scan for
+ * orphans against the same prefix the helper writes — without the
+ * shared constant, a future rename here would silently let the
+ * test pass even on a regression that leaks tmp dirs.
+ */
+export const CUSTOM_TAR_TMP_PREFIX = 'shardmind-custom-tar-';
+
 export async function buildCustomTarball(
   opts: BuildCustomTarballOpts,
 ): Promise<string> {
   const prefix = opts.prefix ?? `minimal-shard-${opts.version}`;
   const workRoot = await fs.mkdtemp(
-    path.join(os.tmpdir(), `shardmind-custom-tar-${opts.version}-`),
+    path.join(os.tmpdir(), `${CUSTOM_TAR_TMP_PREFIX}${opts.version}-`),
   );
   try {
     const workDir = path.join(workRoot, prefix);
