@@ -92,8 +92,11 @@ export async function buildHookFixtureShard(
   opts: HookShardOptions,
 ): Promise<string> {
   return cloneAndPack(opts, async (workDir) => {
-    // Hook fixtures always declare the post-install slot; the
-    // optional `dropHooks` BaseShardOpts flag is ignored here.
+    // Re-read the manifest after `cloneAndPack`'s base write — that
+    // pass set `version` / `name` / `namespace`; we now layer the
+    // hook declaration on top. Two writes is intentional: the base
+    // identity is the same for every fixture, the hook section is
+    // unique to this builder.
     const manifest = await readManifest(workDir);
     manifest.hooks = manifest.hooks ?? {};
     manifest.hooks['post-install'] = 'hooks/post-install.ts';

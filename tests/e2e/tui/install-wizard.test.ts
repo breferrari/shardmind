@@ -16,7 +16,7 @@
  * Windows: ConPTY divergence + cancellation bridge mismatch (#57).
  */
 
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -85,13 +85,6 @@ describe.skipIf(skipOnWindows)(
       await stub?.close();
       await cleanupTarballFixtures();
       await cleanupVaults();
-    });
-
-    afterEach(async () => {
-      // Don't drop vaults yet — individual tests sometimes need their
-      // tempdir contents inspected post-exit. Roots are batched on
-      // afterAll. The afterEach hook stays for symmetry with other
-      // suites + a safety net for accidental open files.
     });
 
     // ───── Scenario 1 — select default=first option, Enter advances ─────
