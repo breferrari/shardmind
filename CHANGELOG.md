@@ -8,6 +8,22 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (pre-release smoke gate — #112)
+
+Closes [#112](https://github.com/breferrari/shardmind/issues/112). Two consecutive 0.1.x patches ([#103](https://github.com/breferrari/shardmind/issues/103), [#109](https://github.com/breferrari/shardmind/issues/109)) shipped green from CI and broke the flagship install on day one — both caught only by manual `breferrari/obsidian-mind` runs after publish. This PR closes the structural gap: a binding pre-release gate that exercises the surfaces fixtures can't reach (the published npm tarball, the live flagship shard, real-GitHub fetch, real-OS Ctrl+C against the live shard).
+
+- **`RELEASE-SMOKE.md`** (new, repo root) — runnable checklist with concrete commands. Setup (clean `npm ci` + typecheck + test + build); flagship adopt against `breferrari/obsidian-mind` with a five-file marker recipe so the diff-review phase iterates >= 5 times (a fresh clone of the shard against itself produces 0 differs — the recipe seeds modifications at five known-managed paths so the #109 iteration check fires); flagship install fresh-dir covering the wizard's #103 select-default-first surface; cancellation smoke at the wizard prompt and during the post-install hook (both `useSigintRollback` and `addedPaths` cleanup paths). Includes a **Result table** template pasted into the v\<version> release tag body via `gh release edit` or the GitHub UI, plus a **When the gate may relax** subsection arguing the current residual surface so future maintainers read the gate as scoped, not superstition.
+
+- **`CLAUDE.md` §Release Process** gains a binding rule paragraph BEFORE the bash block: `npm run release:*` does not run until `RELEASE-SMOKE.md` has been completed against the release SHA and the result table has been pasted into the tag body. *"CI green is necessary, not sufficient"* — grounded in #103 / #109. The bash block's comment numbering grows from two steps to four (CHANGELOG → smoke → tag → paste).
+
+- **`ROADMAP.md`** Foundation row for #112 checks; the bullet's second sentence rewrites to argue the gate's *current* scope (published artifact + live flagship + real GitHub + live-shard cancellation) rather than promise a relaxation already partially earned by #111. New cross-references to `RELEASE-SMOKE.md` and `CLAUDE.md §Release Process`.
+
+- **Engine surface unchanged.** No production code touched. No tests added — process gate, validated by execution against the next release. No `package.json` change. `prepublishOnly` not enhanced (automation = future #111-shaped issue, deferred).
+
+- **Scope of the gate.** Validates the shardmind *engine* via a manual run against the production flagship shard `breferrari/obsidian-mind`. It is not a per-shard gate — shards are tested via their own release pipelines. The flagship is the test load; the engine is the subject. Stays in place at reduced scope until at least one of (a) CI installs the npm tarball, (b) CI fetches the live flagship, lands.
+
+- **Acceptance criteria** (#112 issue body): all four satisfied. RELEASE-SMOKE.md exists at repo root and is runnable without placeholders; CLAUDE.md §Release Process binds `npm run release:*` to a completed smoke table; ROADMAP.md row checked with current-scope rewrite; the iterated-diff and select-default-first regressions (the cases #103 and #109 fell through) are explicit checklist items, not abstract "wizard works" boxes.
+
 ### Added (TUI testing framework extensibility — #111 Phase 3)
 
 Closes [#111](https://github.com/breferrari/shardmind/issues/111). The parent issue's "Phase 3 — ongoing extensions as bug classes surface; framework cheap to extend; no fixed scenario list" closes here by *demonstrating and pinning* that extensibility under hostile contributor scenarios. Phases 1 (PR [#115](https://github.com/breferrari/shardmind/pull/115)) and 2 (PR [#116](https://github.com/breferrari/shardmind/pull/116)) shipped the harnesses and 31 scenarios; Phase 3 ships the eleven contract tests + a contributor doc section that turn "ongoing" from a posture into an earned closure. The forward references in Phase 1's CHANGELOG ("Phase 2 + Phase 3 follow as separate PRs") and Phase 2's CHANGELOG ("Phase 3 is open-ended and tracked via the roadmap row") are now both retired.
