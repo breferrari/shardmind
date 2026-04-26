@@ -66,16 +66,19 @@ export async function typeText(
 }
 
 /**
- * Resolves once a vitest mock has been called at least once (or rejects
- * via the underlying waitFor timeout). Folds the common
- * "wait for onSubmit to fire" idiom across component tests.
+ * Resolves once a vitest mock has been called at least `minCalls` times
+ * (default 1), or rejects via the underlying waitFor timeout. Folds the
+ * common "wait for onSubmit to fire" idiom across component tests, and
+ * — with `minCalls > 1` — the iterated-component regression-test idiom
+ * where a single mock collects calls from multiple parent rerenders.
  */
 export async function waitForCall(
   fn: { mock: { calls: unknown[] } },
+  minCalls = 1,
   timeoutMs = 2000,
 ): Promise<void> {
   await waitFor(
-    () => (fn.mock.calls.length > 0 ? 'ok' : ''),
+    () => (fn.mock.calls.length >= minCalls ? 'ok' : ''),
     (f) => f === 'ok',
     timeoutMs,
   );

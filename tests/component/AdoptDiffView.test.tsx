@@ -182,7 +182,7 @@ describe('AdoptDiffView', () => {
     );
     await tick(30);
     r.stdin.write(ENTER);
-    await waitFor(() => (onChoice.mock.calls.length >= 2 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onChoice, 2);
     expect(onChoice).toHaveBeenCalledTimes(2);
     expect(onChoice).toHaveBeenNthCalledWith(2, 'keep_mine');
   });
