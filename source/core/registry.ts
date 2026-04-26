@@ -3,15 +3,19 @@ import { ShardMindError } from '../runtime/types.js';
 
 /**
  * Base URL for the GitHub REST API. Defaults to the public endpoint; the
- * `SHARDMIND_GITHUB_API_BASE` environment variable overrides it. Read once
- * at module load because hot-swapping API endpoints mid-process would mean
- * install and update could reach different hosts on the same run, which
- * no downstream consumer is prepared to reason about.
+ * `SHARDMIND_GITHUB_API_BASE` environment variable overrides it.
+ *
+ * Read at call time (not module load) so in-process tests can mutate
+ * `process.env` in `beforeAll` AFTER this module has already been pulled
+ * in by the static-import graph. Production code paths set the env once
+ * before invoking the CLI, so call-time vs load-time read is observably
+ * identical there; the testability win is real.
  *
  * Used by `fetchLatestRelease`, `resolve` (tarball URL construction), and
  * indirectly by `verifyTarball` (which consumes `resolve`'s tarball URL).
- * The E2E suite sets this to the local GitHub-stub address so no test hits
- * the real internet; future work (#34 validate, #39 alternate registries,
+ * The E2E suite sets this to the local GitHub-stub address via spawned
+ * subprocess env; the in-process Layer 1 flow tests set it directly on
+ * `process.env`. Future work (#34 validate, #39 alternate registries,
  * GHE support) also consumes it.
  *
  * Surrounding whitespace is trimmed and trailing slashes are stripped —
@@ -20,20 +24,24 @@ import { ShardMindError } from '../runtime/types.js';
  * calls `new URL(url).host`, which throws on garbage input and turns a
  * network error into a confusing second exception.
  */
-const GITHUB_API_BASE = (process.env['SHARDMIND_GITHUB_API_BASE'] ?? 'https://api.github.com')
-  .trim()
-  .replace(/\/+$/, '');
+function getGitHubApiBase(): string {
+  return (process.env['SHARDMIND_GITHUB_API_BASE'] ?? 'https://api.github.com')
+    .trim()
+    .replace(/\/+$/, '');
+}
 
 /**
  * URL for the shared shard registry index. Overridable via
- * `SHARDMIND_REGISTRY_INDEX_URL` — same rationale as `GITHUB_API_BASE`.
- * Non-direct `namespace/name` refs go through this file. Whitespace is
- * trimmed for the same reason as above.
+ * `SHARDMIND_REGISTRY_INDEX_URL` — same call-time-read rationale as
+ * `getGitHubApiBase`. Non-direct `namespace/name` refs go through this
+ * file. Whitespace is trimmed for the same reason.
  */
-const REGISTRY_INDEX_URL = (
-  process.env['SHARDMIND_REGISTRY_INDEX_URL'] ??
-  'https://raw.githubusercontent.com/shardmind/registry/main/index.json'
-).trim();
+function getRegistryIndexUrl(): string {
+  return (
+    process.env['SHARDMIND_REGISTRY_INDEX_URL'] ??
+    'https://raw.githubusercontent.com/shardmind/registry/main/index.json'
+  ).trim();
+}
 
 // Provisional index.json shape. Not yet ratified in IMPLEMENTATION.md §4.1 —
 // the registry repo is created at Milestone 6 and the format will be finalized
@@ -208,7 +216,7 @@ export async function resolve(
     source = `github:${entry.repo}`;
   }
 
-  const tarballUrl = `${GITHUB_API_BASE}/repos/${repoOwner}/${repoName}/tarball/v${version}`;
+  const tarballUrl = `${getGitHubApiBase()}/repos/${repoOwner}/${repoName}/tarball/v${version}`;
   await verifyTarball(tarballUrl, repoOwner, repoName, version, 'tag');
 
   return {
@@ -238,7 +246,7 @@ async function resolveRefInstall(
   ref: string,
 ): Promise<ResolvedShard> {
   const sha = await resolveCommit(namespace, name, ref);
-  const tarballUrl = `${GITHUB_API_BASE}/repos/${namespace}/${name}/tarball/${sha}`;
+  const tarballUrl = `${getGitHubApiBase()}/repos/${namespace}/${name}/tarball/${sha}`;
   await verifyTarball(tarballUrl, namespace, name, sha, 'ref', ref);
 
   return {
@@ -293,7 +301,7 @@ function parseRef(shardRef: string): ParsedRef {
 }
 
 async function fetchRegistryIndex(): Promise<RegistryIndex> {
-  const response = await safeFetch(REGISTRY_INDEX_URL);
+  const response = await safeFetch(getRegistryIndexUrl());
 
   if (!response.ok) {
     throw new ShardMindError(
@@ -376,7 +384,7 @@ async function fetchLatestRelease(
   name: string,
   opts: { signal?: AbortSignal; includePrerelease?: boolean } = {},
 ): Promise<string> {
-  const url = `${GITHUB_API_BASE}/repos/${namespace}/${name}/releases?per_page=${RELEASES_PAGE_SIZE}`;
+  const url = `${getGitHubApiBase()}/repos/${namespace}/${name}/releases?per_page=${RELEASES_PAGE_SIZE}`;
   const response = await safeFetch(url, { ...githubHeaders(), signal: opts.signal });
 
   if (response.status === 403 && isRateLimited(response)) {
@@ -475,7 +483,7 @@ async function resolveCommit(
   ref: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const url = `${GITHUB_API_BASE}/repos/${namespace}/${name}/commits/${encodeURIComponent(ref)}`;
+  const url = `${getGitHubApiBase()}/repos/${namespace}/${name}/commits/${encodeURIComponent(ref)}`;
   const response = await safeFetch(url, { ...githubHeaders(), signal });
 
   if (response.status === 403 && isRateLimited(response)) {

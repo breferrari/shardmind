@@ -963,4 +963,67 @@ describe('registry.resolve', () => {
       }
     });
   });
+
+  // The endpoint env vars are read at call time, not at module load.
+  // In-process tests (the new Layer 1 flow tests under
+  // `tests/component/flows/`) need to mutate `process.env` from
+  // `beforeAll` AFTER `registry.ts` has been pulled in by the
+  // static-import graph; with module-load reads, those mutations would
+  // be observed as no-ops and every flow test would punch the public
+  // GitHub API. Pin the lazy-read contract here so a future refactor
+  // back to module-load constants surfaces in unit tests rather than as
+  // mysterious E2E network requests.
+  describe('lazy env-var reads', () => {
+    const originalApiBase = process.env['SHARDMIND_GITHUB_API_BASE'];
+    const originalIndexUrl = process.env['SHARDMIND_REGISTRY_INDEX_URL'];
+
+    afterEach(() => {
+      if (originalApiBase !== undefined) process.env['SHARDMIND_GITHUB_API_BASE'] = originalApiBase;
+      else delete process.env['SHARDMIND_GITHUB_API_BASE'];
+      if (originalIndexUrl !== undefined) process.env['SHARDMIND_REGISTRY_INDEX_URL'] = originalIndexUrl;
+      else delete process.env['SHARDMIND_REGISTRY_INDEX_URL'];
+    });
+
+    it('SHARDMIND_GITHUB_API_BASE set after import takes effect on next resolve()', async () => {
+      process.env['SHARDMIND_GITHUB_API_BASE'] = 'https://stub.example.invalid';
+      const seen: string[] = [];
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+        seen.push(u);
+        if (isReleasesListing(u)) return singleStableRelease('v1.0.0');
+        return headOk();
+      }) as typeof fetch;
+
+      await resolve('github:acme/demo');
+
+      // Every API request must target the stub host, not the production
+      // endpoint. A single hit on api.github.com here means the env-var
+      // refactor regressed.
+      expect(seen.every((u) => u.startsWith('https://stub.example.invalid/'))).toBe(true);
+      expect(seen.some((u) => u.includes('api.github.com'))).toBe(false);
+    });
+
+    it('SHARDMIND_REGISTRY_INDEX_URL set after import takes effect on next non-direct resolve()', async () => {
+      process.env['SHARDMIND_REGISTRY_INDEX_URL'] = 'https://stub.example.invalid/index.json';
+      process.env['SHARDMIND_GITHUB_API_BASE'] = 'https://stub.example.invalid';
+      const seen: string[] = [];
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+        seen.push(u);
+        if (u === 'https://stub.example.invalid/index.json') {
+          return indexResponse({
+            shards: { 'acme/demo': { repo: 'acme/demo', latest: '1.0.0', versions: ['1.0.0'] } },
+          });
+        }
+        if (isReleasesListing(u)) return singleStableRelease('v1.0.0');
+        return headOk();
+      }) as typeof fetch;
+
+      // Non-direct ref (no `github:` prefix) goes through the registry
+      // index — proves the index URL is read lazily too.
+      await resolve('acme/demo');
+
+      expect(seen[0]).toBe('https://stub.example.invalid/index.json');
+    });
+  });
 });
