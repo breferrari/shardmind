@@ -8,6 +8,17 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-26
+
+### Fixed (iterated diff prompts freeze after the first decision)
+
+Closes [#109](https://github.com/breferrari/shardmind/issues/109). Hit during a real `shardmind adopt github:breferrari/obsidian-mind` run on the flagship right after #103's 0.1.1 fix unblocked the install wizard: 35 differing files, "Keep mine" worked on file 1, every prompt thereafter was frozen.
+
+- **`source/components/AdoptDiffView.tsx`** + **`source/components/DiffView.tsx`** — both held a boolean `firedRef = useRef(false)` to dedupe `Select.onChange` within a single mount. The parents (`adopt.tsx`, `update.tsx`) advance `phase.currentIndex` via the state machine without passing a `key` prop, so React kept the same component instance, `useRef` returned the same object, and `firedRef.current` stayed `true` from the previous file's resolution. Replace with `firedPathRef = useRef<string | null>(null)` and gate on `firedPathRef.current === filePath`. The ref naturally encodes "have I fired for THIS file yet"; when path changes, the comparison evaluates to false and the next file's first Enter goes through. No parent-side `key` prop required — the encapsulation lives with the component.
+- **Two regression tests** in `tests/component/AdoptDiffView.test.tsx` + `tests/component/DiffView.test.tsx` re-render the same root with a new path (the iteration shape both parents use in production) and assert the second file's `onChoice` fires. The existing same-mount double-fire tests still pass.
+- **Audit performed** across every menu component for the same pattern. `RemovedFilesReview` iterates internally with `setIndex` + `key={filePath}` on its inner `Select`, and `submittedRef` only flips on the last file — correct as-is. `CollisionReview`, `ExistingInstallGate`, `NewModulesReview`, and the three `Select`s inside `InstallWizard` (HeaderStep / ComputedPreview / ConfirmStep) are single-mount per phase and not vulnerable. No other instances of the bug pattern.
+- **Tests: 868 → 870 (+2)**.
+
 ## [0.1.1] - 2026-04-26
 
 ### Fixed (wizard select stuck on Enter when default = first option)

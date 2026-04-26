@@ -80,11 +80,17 @@ The engine artifact (`shardmind@0.1.0`) shipped on npm on 2026-04-26. The remain
 
 The engine shipped at 0.1.0 with the v6 contract covered end-to-end against fixtures. Real-world install of the flagship obsidian-mind v6 shard (and adopt against a private fork) surfaced one hard bug + a cluster of UX gaps that the test suite didn't catch. This track ships those fixes plus the deferred Milestone 6 items as point releases.
 
-### 0.1.1 — Hotfix (next)
+### 0.1.1 — Hotfix — shipped
 
-The select-Enter bug blocks any shard whose schema has a `select` value with `default = first option` — including obsidian-mind. Fix is mechanical (drop `defaultValue`, reorder options); regression test pins the failure mode.
+The select-Enter bug blocked any shard whose schema had a `select` value with `default = first option` — including obsidian-mind. Mechanical fix (drop `defaultValue`, reorder options); regression test pinned the failure mode.
 
 - [x] Wizard select stuck on Enter when default = first option ([#103](https://github.com/breferrari/shardmind/issues/103))
+
+### 0.1.2 — Hotfix (next)
+
+Iterated diff-review prompts (`shardmind adopt`, `shardmind update`) froze after the first decision because `firedRef` leaked across files when the parent advanced state without a `key` prop. Surfaced one prompt later than #103 on the same flagship adopt run.
+
+- [x] Iterated diff-review menus freeze after the first decision (firedRef leaks across files) ([#109](https://github.com/breferrari/shardmind/issues/109))
 
 ### 0.1.x — Flagship UX stabilization
 
