@@ -38,7 +38,7 @@ cd obsidian-mind
 
 # Seed 5 user-side modifications. Append a one-line marker; original
 # content is preserved above.
-for f in Home.md "brain/North Star.md" "brain/Inbox.md" CLAUDE.md AGENTS.md; do
+for f in Home.md "brain/North Star.md" "brain/Patterns.md" CLAUDE.md AGENTS.md; do
   printf '\n\n<!-- release-smoke marker -->\n' >> "$f"
 done
 
@@ -51,7 +51,7 @@ Walk through the wizard. Then, in the diff-review phase, observe:
 
 - **Counter advances**: header reads `(1 of N)`, `(2 of N)`, … `(5 of N)` where N >= 5. The counter incrementing on Enter is the #109 regression check.
 - **Each prompt accepts a choice**: pick `keep_mine` on the first 4 differs and `use_shard` on the 5th. Both branches must fire — pinning that the per-iteration `useOncePerKey` guard re-arms across files.
-- **Summary frame renders**: `adopted-mine: 4`, `adopted-shard: 1` (plus the `matched-auto` count for the rest), and the post-install hook section surfaces (completed or non-fatal warning, both shapes are acceptable).
+- **Summary frame renders** the three count lines: "N matched the shard exactly (managed silently)" for the unmodified files, "4 kept your version (recorded as managed)" for the `keep_mine` decisions, "1 switched to the shard's version" for the `use_shard` decision. The post-install hook section surfaces (completed or non-fatal warning, both shapes are acceptable).
 - **Vault state is consistent**: `.shardmind/state.json` exists, `shard-values.yaml` exists, the four `keep_mine` files still contain the `release-smoke marker`, the one `use_shard` file no longer does.
 
 ## Flagship install smoke (fresh dir)
@@ -64,8 +64,8 @@ node /path/to/shardmind/dist/cli.js install github:breferrari/obsidian-mind
 
 - **Wizard advances on every value prompt**, including the select with `default = first option` (the #103 regression check). Pressing Enter on the default-focused option must advance — not freeze.
 - **Module multiselect** accepts arrow + space + Enter; live file count updates as modules toggle.
-- **Computed-default preview** renders before the confirm step.
-- **Confirm screen → Install** progresses through `downloading` → `rendering` → `writing` → `running-hook` → `summary` without a stuck phase indicator.
+- **Computed-default preview** renders in the summary frame before the confirm screen (values computed from entered module selections).
+- **Confirm screen → Install** progresses through phases `installing` (with per-file labels rolling through the history) → `running-hook` → `summary` without a stuck label. Pre-wizard the loader shows `loading` with messages like `Resolving …` / `Downloading …` / `Parsing manifest and schema…`.
 - **Vault content matches**: `Home.md` exists with rendered values; `.shardmind/state.json` exists; `shard-values.yaml` records the entered values.
 
 ## Cancellation smoke
@@ -79,7 +79,7 @@ node /path/to/shardmind/dist/cli.js install github:breferrari/obsidian-mind
 
 - Process exits with status 130 (SIGINT) within ~1s.
 - `.shardmind/` does not exist; `shard-values.yaml` does not exist; no `*.shardmind-backup-*` files; no managed-path content. The dir is exactly as it was pre-run modulo the empty mktemp shell.
-- Repeat with Ctrl+C during the `running-hook` phase (post-confirm, after the wizard). The rollback widens — addedPaths get cleaned, partial writes get reverted. Verify the same empty-dir post-state.
+- Repeat with Ctrl+C during the `running-hook` phase (post-confirm, after the wizard). The rollback widens: addedPaths files are deleted, partial YAML writes are reverted. Check post-run state matches pre-run (empty directory modulo the mktemp shell).
 
 ## Result table
 
