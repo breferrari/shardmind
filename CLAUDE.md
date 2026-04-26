@@ -198,6 +198,7 @@ shardmind/
 ├── tests/
 │   ├── unit/                          # Pure function tests
 │   ├── component/                     # Ink components via ink-testing-library
+│   │   └── flows/                     # Layer 1 TUI flow tests — drive whole-command React trees (Install / Update / Adopt / Index) through stdin (#111 Phase 1)
 │   ├── integration/                   # Multi-module pipeline tests
 │   ├── e2e/                           # Full CLI invocation tests (subprocess)
 │   │   ├── cli.test.ts                # End-to-end scenarios across status / install / update / adopt + post-install hook + Invariant 1 byte-equivalence
@@ -338,6 +339,7 @@ Read the spec section before implementing. It has inputs, outputs, algorithm ste
 - **Unit tests** for pure functions in `source/core/`. Test files: `tests/unit/<module>.test.ts`.
 - **Component tests** for Ink components via `ink-testing-library`. Files: `tests/component/<Component>.test.tsx`.
 - **Iterated-component regression tests are mandatory.** If a component is rendered inside a parent's iteration loop (state machine advances `phase.currentIndex`, `setIndex`, etc.) without a `key` prop forcing remount, its component test MUST include a `rerender()` case asserting the next iteration's interaction fires. Rationale: see [`docs/COMPONENTS.md`](docs/COMPONENTS.md) (Pattern B) — [#109](https://github.com/breferrari/shardmind/issues/109) shipped because `AdoptDiffView` and `DiffView` had only single-mount tests; the iteration-shape bug lived in the gap.
+- **Layer 1 TUI flow tests are mandatory** for new commands or major flow changes to existing commands. Each new command (or flow change) gets a `tests/component/flows/<command>-flow.test.tsx` file in the same PR. Layer 1 mounts the whole command React tree via `ink-testing-library` and drives stdin end-to-end against the local GitHub stub — the same surface that #103 (wizard select-Enter freeze) and #109 (iterated diff freeze) fell through. Rationale: per-component tests verify single-mount behavior; only Layer 1 covers the production-shape iteration. See [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1.
 - **Integration tests** for pipelines: install (temp dir → full vault), update (install → modify → update → verify).
 - **E2E tests** for CLI: spawn `dist/cli.js` as a subprocess via `node:child_process` and route through the local GitHub stub (`tests/e2e/helpers/github-stub.ts`). No `execa` dependency; no public network. See `docs/ARCHITECTURE.md §19.7` for the hermetic-E2E methodology.
 - Each merge fixture is a self-contained directory with `scenario.yaml`, template files, values files, actual file, and expected output. See `tests/fixtures/merge/01-managed-no-change/` for the pattern.
