@@ -130,6 +130,16 @@ export interface SpawnCliPtyOptions {
    * Layer 2 scenario (issue body Strategy §Layer 2).
    */
   timeoutMs?: number;
+  /**
+   * Override the default `[DIST_CLI, ...args]` argv handed to node.
+   * Harness-only escape hatch — lets a smoke test spawn a known-shape
+   * node child (e.g. a process that ignores SIGTERM) so the helper's
+   * own waitForExit / signal-mapping / dispose contract can be pinned
+   * without depending on CLI behavior. When set, `args` is ignored.
+   * Scenario callers MUST NOT use this — they drive the CLI as users
+   * do via `args`.
+   */
+  nodeArgs?: string[];
 }
 
 /**
@@ -197,7 +207,11 @@ export async function spawnCliPty(
     );
   }
 
-  await ensureBuilt();
+  // `ensureBuilt` is memoized after the first call so the build is
+  // amortized across the suite. Skip it when the caller is using a
+  // node-args override — those harness tests don't touch dist/cli.js
+  // and shouldn't pay the build cost on a fresh tree.
+  if (!opts.nodeArgs) await ensureBuilt();
 
   const cols = opts.cols ?? 80;
   const rows = opts.rows ?? 24;
@@ -243,7 +257,8 @@ export async function spawnCliPty(
 
   const screen = createVirtualScreen({ cols, rows });
 
-  const pty: IPty = nodePty.spawn(process.execPath, [DIST_CLI, ...args], {
+  const argv = opts.nodeArgs ?? [DIST_CLI, ...args];
+  const pty: IPty = nodePty.spawn(process.execPath, argv, {
     name: 'xterm-256color',
     cols,
     rows,
