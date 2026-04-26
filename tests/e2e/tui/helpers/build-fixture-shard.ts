@@ -31,6 +31,15 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const MINIMAL_SHARD = path.join(REPO_ROOT, 'examples', 'minimal-shard');
 
+/**
+ * Tmp dir prefix the builders use under `os.tmpdir()`. Exported so
+ * the harness's mutate-throw cleanup test can scan for orphans
+ * against the same prefix the helper writes — without the shared
+ * constant, a future rename here would silently let the test
+ * pass even on a regression that leaks tmp dirs.
+ */
+export const FIXTURE_TMP_PREFIX = 'shardmind-fixture-';
+
 interface BaseShardOpts {
   /** Tarball version stamp (`shard.yaml.version`). */
   version: string;
@@ -141,7 +150,7 @@ async function cloneAndPack(
   customize: (workDir: string) => Promise<void>,
 ): Promise<string> {
   const workRoot = await fs.mkdtemp(
-    path.join(os.tmpdir(), `shardmind-fixture-${opts.version}-`),
+    path.join(os.tmpdir(), `${FIXTURE_TMP_PREFIX}${opts.version}-`),
   );
   try {
     const workDir = path.join(workRoot, opts.prefix);
