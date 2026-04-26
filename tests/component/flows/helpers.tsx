@@ -27,6 +27,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { stringify as stringifyYaml, parse as parseYaml } from 'yaml';
 import * as tar from 'tar';
+import { tick, waitFor, ENTER, typeText } from '../helpers.js';
 
 import Install from '../../../source/commands/install.js';
 import Update from '../../../source/commands/update.js';
@@ -48,6 +49,39 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const MINIMAL_SHARD = path.join(REPO_ROOT, 'examples', 'minimal-shard');
+
+// ───── Shared test constants ───────────────────────────────────────
+
+/**
+ * Slug used by every flow-test file when installing minimal-shard
+ * via the github-stub. Picked arbitrarily; the engine doesn't enforce
+ * `manifest.namespace/name` equality with the install slug, so the
+ * stub maps `acme/demo` → minimal-shard tarballs and the rendered
+ * frames show the manifest's `shardmind/minimal` heading.
+ */
+export const SHARD_SLUG = 'acme/demo';
+export const SHARD_REF = `github:${SHARD_SLUG}`;
+
+/**
+ * The `--values` shape every scenario uses for non-interactive paths
+ * (createInstalledVault subprocess install + scenario 23's adopt
+ * `--yes` + values prefill). Mirrors minimal-shard's four schema
+ * values; coerced to YAML when written to disk by the helpers.
+ */
+export const DEFAULT_VALUES: Record<string, unknown> = {
+  user_name: 'Alice',
+  org_name: 'Acme Labs',
+  vault_purpose: 'engineering',
+  qmd_enabled: true,
+};
+
+/**
+ * 40-char hex placeholder for ref-install scenarios. The github-stub
+ * stores ref → SHA → tarball mappings byte-opaquely, so any 40-char
+ * hex value works as a stand-in. Hoisted so the regex shape doesn't
+ * leak into every scenario.
+ */
+export const STUB_SHA = 'a'.repeat(40);
 
 export interface FlowSuiteContext {
   stub: GitHubStub;
@@ -314,5 +348,70 @@ export async function buildCustomTarball(
     return tarPath;
   } finally {
     await fs.rm(workRoot, { recursive: true, force: true });
+  }
+}
+
+// ───── Shared wizard / diff drivers ─────────────────────────────────
+
+/**
+ * Drive the standard 4-question minimal-shard wizard (the same shape
+ * `<Install>` and `<Adopt>` both render via `<InstallWizard>`):
+ *
+ *   header → user_name (typed) → org_name (default) →
+ *   vault_purpose (default) → qmd_enabled ('n') → modules
+ *
+ * Returns once the modules step is rendered. The caller continues
+ * with whatever post-modules step its scenario needs (Confirm for
+ * install, plan + diff for adopt). `headerTimeoutMs` accommodates
+ * the slower adopt path (resolve → download → wizard) — install
+ * goes through the same network calls but tests reuse cached
+ * tarballs by then.
+ */
+export async function driveMinimalWizard(
+  r: RenderResult,
+  userName = 'Alice',
+  headerTimeoutMs = 10_000,
+): Promise<void> {
+  await waitFor(r.lastFrame, (f) => /4 questions to answer/.test(f), headerTimeoutMs);
+  r.stdin.write(ENTER);
+  await waitFor(r.lastFrame, (f) => f.includes('Your name'));
+  await typeText(r.stdin, userName);
+  r.stdin.write(ENTER);
+  await waitFor(r.lastFrame, (f) => f.includes('Organization'));
+  r.stdin.write(ENTER);
+  await waitFor(r.lastFrame, (f) => f.includes('How will you use this vault'));
+  r.stdin.write(ENTER);
+  await waitFor(r.lastFrame, (f) => f.includes('QMD'));
+  r.stdin.write('n');
+  await waitFor(r.lastFrame, (f) => f.includes('Choose modules to install'));
+}
+
+/**
+ * Walk N sequential DiffView / AdoptDiffView prompts, asserting that
+ * the i-of-N counter advances. Direct regression of [#109](https://github.com/breferrari/shardmind/issues/109): if the per-iteration dedup
+ * guard ever leaks across files again, the counter doesn't advance
+ * and the helper's waitFor times out on iteration 2.
+ *
+ * The `keystrokes` callback fires once per iteration and is responsible
+ * for picking an action — DiffView and AdoptDiffView differ on which
+ * option index maps to keep_mine vs use_shard, so the helper stays
+ * agnostic.
+ */
+export async function driveDiffIteration(
+  r: RenderResult,
+  total: number,
+  keystrokes: (r: RenderResult, index: number) => Promise<void> | void,
+): Promise<void> {
+  for (let i = 1; i <= total; i++) {
+    await waitFor(
+      r.lastFrame,
+      (f) => new RegExp(`\\(${i} of ${total}\\)`).test(f),
+      20_000,
+    );
+    await keystrokes(r, i);
+    // tick lets the iteration's setState commit before the next
+    // waitFor checks. Without it, the next iteration's frame may be
+    // observed mid-transition.
+    await tick(40);
   }
 }

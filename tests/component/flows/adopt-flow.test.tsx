@@ -19,19 +19,15 @@ import {
   mountAdopt,
   makeVaultDir,
   cleanupVault,
+  driveMinimalWizard,
+  driveDiffIteration,
+  SHARD_SLUG,
+  SHARD_REF,
+  STUB_SHA,
+  DEFAULT_VALUES,
 } from './helpers.js';
-import { tick, waitFor, ENTER, ARROW_DOWN, typeText } from '../helpers.js';
+import { tick, waitFor, ENTER, ARROW_DOWN } from '../helpers.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
-
-const SHARD_SLUG = 'acme/demo';
-const SHARD_REF = `github:${SHARD_SLUG}`;
-
-const DEFAULT_VALUES = {
-  user_name: 'Alice',
-  org_name: 'Acme Labs',
-  vault_purpose: 'engineering',
-  qmd_enabled: true,
-};
 
 describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)', () => {
   const getCtx = setupFlowSuite({
@@ -47,26 +43,18 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
     cleanup();
   });
 
-  // Drive the standard 4-question minimal-shard wizard for adopt. After
-  // the modules step, returns control to the caller (which then waits
-  // for diff prompts or the summary).
+  /**
+   * Drive the standard 4-question wizard, then advance through modules
+   * + Confirm. Adopt's wizard has the same shape as install's but is
+   * followed by the planning + diff-review phases rather than directly
+   * by the install summary.
+   */
   async function driveAdoptWizard(
     r: ReturnType<typeof mountAdopt>,
     userName = 'Alice',
   ): Promise<void> {
-    await waitFor(r.lastFrame, (f) => /4 questions to answer/.test(f), 15_000);
-    r.stdin.write(ENTER);
-    await waitFor(r.lastFrame, (f) => f.includes('Your name'));
-    await typeText(r.stdin, userName);
-    r.stdin.write(ENTER);
-    await waitFor(r.lastFrame, (f) => f.includes('Organization'));
-    r.stdin.write(ENTER);
-    await waitFor(r.lastFrame, (f) => f.includes('How will you use this vault'));
-    r.stdin.write(ENTER);
-    await waitFor(r.lastFrame, (f) => f.includes('QMD'));
-    r.stdin.write('n');
-    await waitFor(r.lastFrame, (f) => f.includes('Choose modules to install'));
-    r.stdin.write(ENTER);
+    await driveMinimalWizard(r, userName, 15_000);
+    r.stdin.write(ENTER); // module review default selections
     await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
     r.stdin.write(ENTER);
   }
@@ -75,7 +63,7 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
 
   it('19. empty vault → adopt → all shard-only → Summary', async () => {
     const { stub, fixtures } = getCtx();
-    stub.setRef(SHARD_SLUG, 'v0.1.0', 'a'.repeat(40), fixtures.byVersion['0.1.0']!);
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s19-empty');
     try {
       const r = mountAdopt({
@@ -99,7 +87,7 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
 
   it('20. ≥3 differing files → AdoptDiffView iterates each (#109 regression)', async () => {
     const { stub, fixtures } = getCtx();
-    stub.setRef(SHARD_SLUG, 'v0.1.0', 'a'.repeat(40), fixtures.byVersion['0.1.0']!);
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s20-multi-differ');
     try {
       // Pre-populate three shard-path files with content that diverges
@@ -123,19 +111,14 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
         vaultRoot: vault,
       });
       await driveAdoptWizard(r);
-      // Walk three AdoptDiffView prompts. The #109 regression was that
-      // the second/third prompts froze; if it returned, any of the
-      // waitFors below would time out because the iteration would be
-      // stuck at file 1 forever.
-      for (let i = 1; i <= 3; i++) {
-        await waitFor(
-          r.lastFrame,
-          (f) => new RegExp(`\\(${i} of 3\\)`).test(f),
-          20_000,
-        );
-        // ENTER on default option = "Keep mine".
+      // Walk three AdoptDiffView prompts via the shared iteration
+      // helper. ENTER on default option = "Keep mine". The #109
+      // regression would manifest as iteration 2 timing out on
+      // its (2 of 3) counter — the dedup ref would have leaked from
+      // iteration 1.
+      await driveDiffIteration(r, 3, (r) => {
         r.stdin.write(ENTER);
-      }
+      });
       await waitFor(r.lastFrame, (f) => /Adopted shardmind\/minimal/.test(f), 30_000);
     } finally {
       await cleanupVault(vault);
@@ -146,7 +129,7 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
 
   it('21. differing file + user picks use_shard → file overwritten with shard bytes', async () => {
     const { stub, fixtures } = getCtx();
-    stub.setRef(SHARD_SLUG, 'v0.1.0', 'a'.repeat(40), fixtures.byVersion['0.1.0']!);
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s21-use-shard');
     try {
       // Pre-populate a single differing file.
@@ -209,7 +192,7 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
 
   it('23. --yes + multi-divergent → all auto-keep_mine → Summary', async () => {
     const { stub, fixtures } = getCtx();
-    stub.setRef(SHARD_SLUG, 'v0.1.0', 'a'.repeat(40), fixtures.byVersion['0.1.0']!);
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s23-yes-multi');
     try {
       await writeRel(vault, 'Home.md', '# user-only Home\n');

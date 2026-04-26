@@ -20,10 +20,10 @@ import {
   makeVaultDir,
   cleanupVault,
   buildCustomTarball,
+  SHARD_SLUG,
+  STUB_SHA,
 } from './helpers.js';
 import { tick, waitFor } from '../helpers.js';
-
-const SHARD_SLUG = 'acme/demo';
 
 describe('flow harness', () => {
   const getCtx = setupFlowSuite({
@@ -41,32 +41,20 @@ describe('flow harness', () => {
 
   it('routes the install command through the github-stub (no public network)', async () => {
     const { stub, fixtures } = getCtx();
-    // Wire one version into the stub so resolve()'s tarball verify
-    // succeeds and the install reaches the wizard. The flow stops here
-    // (no stdin driving in this test) — what we're proving is that the
-    // env-var seam correctly routes through the stub URL.
-    stub.setLatest(SHARD_SLUG, '0.1.0');
-    const spec = (
-      stub as unknown as { _shards?: never }
-    );
-    void spec;
     const tar = fixtures.byVersion['0.1.0'];
     expect(tar).toBeTruthy();
 
     const vault = await makeVaultDir('harness-route');
     try {
-      // `setRef` is the shape that lets the stub register a
-      // version → tarball mapping at runtime; we pre-set this so
-      // `resolve` gets back a 200 from HEAD on the tarball.
-      stub.setRef(SHARD_SLUG, 'main', 'a'.repeat(40), tar!);
-
+      // Register a `#main` ref → tarball mapping. Reaching the wizard
+      // frame after mount proves the registry call hit the stub —
+      // otherwise `resolve()` would have thrown a network error long
+      // before any frame rendered.
+      stub.setRef(SHARD_SLUG, 'main', STUB_SHA, tar!);
       const r = mountInstall({
         shardRef: `github:${SHARD_SLUG}#main`,
         vaultRoot: vault,
       });
-      // Wait until the wizard frame shows up. Reaching this frame
-      // proves the registry call hit the stub (otherwise resolve()
-      // would have thrown a network error long before render).
       await waitFor(r.lastFrame, (f) => /questions to answer|Choose modules|Ready to install/.test(f));
     } finally {
       await cleanupVault(vault);

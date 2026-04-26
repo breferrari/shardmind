@@ -10,19 +10,15 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { cleanup } from 'ink-testing-library';
 
-import { setupFlowSuite, mountStatus } from './helpers.js';
+import {
+  setupFlowSuite,
+  mountStatus,
+  SHARD_SLUG,
+  SHARD_REF,
+  DEFAULT_VALUES,
+} from './helpers.js';
 import { waitFor } from '../helpers.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
-
-const SHARD_SLUG = 'acme/demo';
-const SHARD_REF = `github:${SHARD_SLUG}`;
-
-const DEFAULT_VALUES = {
-  user_name: 'Alice',
-  org_name: 'Acme Labs',
-  vault_purpose: 'engineering',
-  qmd_enabled: true,
-};
 
 describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)', () => {
   const getCtx = setupFlowSuite({

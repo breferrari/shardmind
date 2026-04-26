@@ -27,11 +27,12 @@ import {
   makeVaultDir,
   cleanupVault,
   buildCustomTarball,
+  driveMinimalWizard,
+  SHARD_SLUG,
+  SHARD_REF,
+  STUB_SHA,
 } from './helpers.js';
 import { tick, waitFor, ENTER, ESC, ARROW_DOWN, typeText } from '../helpers.js';
-
-const SHARD_SLUG = 'acme/demo';
-const SHARD_REF = `github:${SHARD_SLUG}`;
 
 // Custom-tarball slugs for scenarios that need a shape minimal-shard
 // can't supply. Each gets its own slug so the stub maps cleanly.
@@ -65,28 +66,6 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     cleanup();
   });
 
-  // Drive the standard 4-question minimal-shard wizard: user_name (typed),
-  // org_name (default), vault_purpose (default), qmd_enabled ('n'). Stops
-  // before the module-review step so callers can specialize behaviors.
-  // Returns once the modules step is rendered.
-  async function driveMinimalThroughValues(
-    r: ReturnType<typeof mountInstall>,
-    userName = 'Alice',
-  ): Promise<void> {
-    await waitFor(r.lastFrame, (f) => /4 questions to answer/.test(f), 10_000);
-    r.stdin.write(ENTER);
-    await waitFor(r.lastFrame, (f) => f.includes('Your name'));
-    await typeText(r.stdin, userName);
-    r.stdin.write(ENTER);
-    await waitFor(r.lastFrame, (f) => f.includes('Organization'));
-    r.stdin.write(ENTER);
-    await waitFor(r.lastFrame, (f) => f.includes('How will you use this vault'));
-    r.stdin.write(ENTER);
-    await waitFor(r.lastFrame, (f) => f.includes('QMD'));
-    r.stdin.write('n');
-    await waitFor(r.lastFrame, (f) => f.includes('Choose modules to install'));
-  }
-
   // ───── Scenario 1: select default = first option, Enter advances (#103 regression) ─────
 
   it('1. select default = first option → Enter advances (#103 regression)', async () => {
@@ -95,18 +74,18 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     // and default: engineering — exactly the #103 shape. Routing via `#v0.1.0`
     // sidesteps the per-version `versions` map (the stub stores those at
     // setup time; ref installs use `setRef` which can be called any time).
-    stub.setRef(SHARD_SLUG, 'v0.1.0', 'a'.repeat(40), fixtures.byVersion['0.1.0']!);
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s1-default-first');
     try {
       const r = mountInstall({
         shardRef: `${SHARD_REF}#v0.1.0`,
         vaultRoot: vault,
       });
-      await driveMinimalThroughValues(r);
+      await driveMinimalWizard(r);
       // The vault_purpose select had `default = engineering` = first option.
-      // Pressing Enter on it (inside driveMinimalThroughValues) must have
-      // advanced the wizard. If #103 regressed, we'd be stuck at that prompt
-      // and the helper's later waitFor for QMD would have timed out.
+      // Pressing Enter on it (inside driveMinimalWizard) must have advanced
+      // the wizard. If #103 regressed, we'd be stuck at that prompt and the
+      // helper's later waitFor for QMD would have timed out.
       r.stdin.write(ENTER); // module review default selections
       await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
       r.stdin.write(ENTER);
@@ -161,7 +140,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         },
         outDir: vault,
       });
-      stub.setRef(SLUG_MIDDLE_DEFAULT, 'v0.1.0', 'b'.repeat(40), tarPath);
+      stub.setRef(SLUG_MIDDLE_DEFAULT, 'v0.1.0', STUB_SHA, tarPath);
 
       const r = mountInstall({
         shardRef: `github:${SLUG_MIDDLE_DEFAULT}#v0.1.0`,
@@ -190,7 +169,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   it('3. required string + empty Enter → validation error → typed input → advances', async () => {
     const { stub, fixtures } = getCtx();
-    stub.setRef(SHARD_SLUG, 'v0.1.0', 'a'.repeat(40), fixtures.byVersion['0.1.0']!);
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s3-required-empty');
     try {
       const r = mountInstall({
@@ -246,7 +225,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         },
         outDir: vault,
       });
-      stub.setRef(SLUG_NUMBER_TYPE, 'v0.1.0', 'c'.repeat(40), tarPath);
+      stub.setRef(SLUG_NUMBER_TYPE, 'v0.1.0', STUB_SHA, tarPath);
 
       const r = mountInstall({
         shardRef: `github:${SLUG_NUMBER_TYPE}#v0.1.0`,
@@ -286,14 +265,14 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   it('5. boolean prompt — \'n\' advances and Confirm renders boolean as "false"', async () => {
     const { stub, fixtures } = getCtx();
-    stub.setRef(SHARD_SLUG, 'v0.1.0', 'a'.repeat(40), fixtures.byVersion['0.1.0']!);
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s5-boolean');
     try {
       const r = mountInstall({
         shardRef: `${SHARD_REF}#v0.1.0`,
         vaultRoot: vault,
       });
-      await driveMinimalThroughValues(r);
+      await driveMinimalWizard(r);
       r.stdin.write(ENTER); // modules → confirm
       await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
       // Confirm step shows resolved values; boolean false renders as
@@ -341,7 +320,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         },
         outDir: vault,
       });
-      stub.setRef(SLUG_COMPUTED, 'v0.1.0', 'd'.repeat(40), tarPath);
+      stub.setRef(SLUG_COMPUTED, 'v0.1.0', STUB_SHA, tarPath);
 
       const r = mountInstall({
         shardRef: `github:${SLUG_COMPUTED}#v0.1.0`,
@@ -363,7 +342,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   it('7. ESC mid-wizard → back-nav → prior answer pre-filled', async () => {
     const { stub, fixtures } = getCtx();
-    stub.setRef(SHARD_SLUG, 'v0.1.0', 'a'.repeat(40), fixtures.byVersion['0.1.0']!);
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s7-esc-prefill');
     try {
       const r = mountInstall({
@@ -389,14 +368,14 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   it('8. module review renders labels; confirm step lists IDs', async () => {
     const { stub, fixtures } = getCtx();
-    stub.setRef(SHARD_SLUG, 'v0.1.0', 'a'.repeat(40), fixtures.byVersion['0.1.0']!);
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s8-module-review');
     try {
       const r = mountInstall({
         shardRef: `${SHARD_REF}#v0.1.0`,
         vaultRoot: vault,
       });
-      await driveMinimalThroughValues(r);
+      await driveMinimalWizard(r);
       // Module review uses LABELS for both Always-included (brain →
       // "Goals, memories, patterns") and Optional (extras → "Extra
       // features (for testing module exclusion)").
@@ -421,14 +400,14 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   it('9. confirm → install → progress → summary (full happy path)', async () => {
     const { stub, fixtures } = getCtx();
-    stub.setRef(SHARD_SLUG, 'v0.1.0', 'a'.repeat(40), fixtures.byVersion['0.1.0']!);
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s9-happy-path');
     try {
       const r = mountInstall({
         shardRef: `${SHARD_REF}#v0.1.0`,
         vaultRoot: vault,
       });
-      await driveMinimalThroughValues(r, 'Dana');
+      await driveMinimalWizard(r, 'Dana');
       r.stdin.write(ENTER); // modules → confirm
       await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
       r.stdin.write(ENTER);
@@ -454,14 +433,14 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   it('10. confirm → Back to module review → re-submit', async () => {
     const { stub, fixtures } = getCtx();
-    stub.setRef(SHARD_SLUG, 'v0.1.0', 'a'.repeat(40), fixtures.byVersion['0.1.0']!);
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s10-back-to-modules');
     try {
       const r = mountInstall({
         shardRef: `${SHARD_REF}#v0.1.0`,
         vaultRoot: vault,
       });
-      await driveMinimalThroughValues(r, 'Eve');
+      await driveMinimalWizard(r, 'Eve');
       r.stdin.write(ENTER); // modules → confirm
       await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
       // Confirm options: [Install, Back to module review, Cancel].

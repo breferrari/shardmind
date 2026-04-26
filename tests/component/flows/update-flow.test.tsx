@@ -18,25 +18,21 @@ import {
   setupFlowSuite,
   mountUpdate,
   buildCustomTarball,
+  driveDiffIteration,
+  SHARD_SLUG,
+  SHARD_REF,
+  STUB_SHA,
+  DEFAULT_VALUES,
 } from './helpers.js';
 import { tick, waitFor, ENTER, ARROW_DOWN } from '../helpers.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
 
-const SHARD_SLUG = 'acme/demo';
-const SHARD_REF = `github:${SHARD_SLUG}`;
 const MULTI_CONFLICT_SLUG = 'acme/multi-conflict';
 const MULTI_CONFLICT_REF = `github:${MULTI_CONFLICT_SLUG}`;
 const NEW_VALUE_SLUG = 'acme/new-value';
 const NEW_VALUE_REF = `github:${NEW_VALUE_SLUG}`;
 const REMOVED_FILE_SLUG = 'acme/removed-file';
 const REMOVED_FILE_REF = `github:${REMOVED_FILE_SLUG}`;
-
-const DEFAULT_VALUES = {
-  user_name: 'Alice',
-  org_name: 'Acme Labs',
-  vault_purpose: 'engineering',
-  qmd_enabled: true,
-};
 
 describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)', () => {
   const getCtx = setupFlowSuite({
@@ -166,17 +162,15 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         stub.setLatest(MULTI_CONFLICT_SLUG, '0.2.0');
 
         const r = mountUpdate({ vaultRoot: vault.root });
-        for (let i = 1; i <= 3; i++) {
-          await waitFor(
-            r.lastFrame,
-            (f) => new RegExp(`Conflict in.+\\(${i} of 3\\)`).test(f),
-            20_000,
-          );
-          // ARROW_DOWN + ENTER → keep_mine on every prompt.
+        // Walk three DiffView prompts via the shared iteration helper.
+        // ARROW_DOWN + ENTER on each = keep_mine. The #109 regression
+        // would manifest as iteration 2 timing out on its (2 of 3)
+        // counter — the dedup ref would have leaked from iteration 1.
+        await driveDiffIteration(r, 3, async (r) => {
           r.stdin.write(ARROW_DOWN);
           await tick(40);
           r.stdin.write(ENTER);
-        }
+        });
         await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.2\.0/.test(f), 30_000);
         const state = JSON.parse(
           await fs.readFile(path.join(vault.root, '.shardmind', 'state.json'), 'utf-8'),
