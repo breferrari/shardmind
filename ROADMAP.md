@@ -78,7 +78,7 @@ The engine artifact (`shardmind@0.1.0`) shipped on npm on 2026-04-26. The remain
 
 ## v0.1.x — Stabilization (active)
 
-The engine shipped at 0.1.0 with the v6 contract covered end-to-end against fixtures. Real-world install of the flagship obsidian-mind v6 shard (and adopt against a private fork) surfaced one hard bug + a cluster of UX gaps that the test suite didn't catch. This track ships those fixes plus the deferred Milestone 6 items as point releases.
+The engine shipped at 0.1.0 with the v6 contract covered end-to-end against fixtures. Two consecutive 0.1.x hotfixes ([#103](https://github.com/breferrari/shardmind/issues/103) → 0.1.1, [#109](https://github.com/breferrari/shardmind/issues/109) → 0.1.2) shipped because the 870-test suite at each release measured the wrong axis: deep engine + widget coverage, zero "real user flow against the actual shard" coverage. The `--yes`/`--defaults` E2E tests bypass the wizard entirely; per-component tests verified single-mount behavior but never modeled production's iteration shape. **The two issues at the top of this list close that measurement gap before any further interactive UX work ships.**
 
 ### 0.1.1 — Hotfix — shipped
 
@@ -86,15 +86,22 @@ The select-Enter bug blocked any shard whose schema had a `select` value with `d
 
 - [x] Wizard select stuck on Enter when default = first option ([#103](https://github.com/breferrari/shardmind/issues/103))
 
-### 0.1.2 — Hotfix (next)
+### 0.1.2 — Hotfix — shipped
 
-Iterated diff-review prompts (`shardmind adopt`, `shardmind update`) froze after the first decision because `firedRef` leaked across files when the parent advanced state without a `key` prop. Surfaced one prompt later than #103 on the same flagship adopt run.
+Iterated diff-review prompts (`shardmind adopt`, `shardmind update`) froze after the first decision because `firedRef` leaked across files when the parent advanced state without a `key` prop. Surfaced one prompt later than #103 on the same flagship adopt run. Beyond the fix, the PR extracted `useOncePerKey` into a reusable hook, codified Patterns A/B in [`docs/COMPONENTS.md`](docs/COMPONENTS.md), and added a binding `CLAUDE.md` §Testing rule that iterated-component regression tests via `rerender()` are mandatory.
 
 - [x] Iterated diff-review menus freeze after the first decision (firedRef leaks across files) ([#109](https://github.com/breferrari/shardmind/issues/109))
 
-### 0.1.x — Flagship UX stabilization
+### 0.1.x — Test foundation — **BLOCKING** all interactive 0.1.x work below
 
-UX gaps surfaced during real obsidian-mind v6 install + adopt runs. None block the engine; each materially improves first-run experience for the flagship and any shard that triggers the same code path.
+Two interactive bugs in two days proved the existing test layers don't catch the class of bug a first-time flagship user hits immediately. These two tickets close the gap. Until they land, every additional interactive ticket on the v0.1.x track risks repeating the failure mode.
+
+- [ ] **TUI end-to-end testing framework** — three layers (command-level component, real-PTY, status-quo subprocess), 28 scenarios covering wizard, multi-file diff review, module review, hooks, cancellation, validation ([#111](https://github.com/breferrari/shardmind/issues/111)). **Phase 1** (Layer 1 command-level flow tests for install / update / adopt) blocks the Flagship UX stabilization tickets below. Phase 2 (real-PTY via `node-pty` + `@xterm/headless`) and Phase 3 (ongoing extensions as bug classes surface) follow.
+- [ ] **Pre-release manual smoke gate** — `RELEASE-SMOKE.md` checklist + binding `CLAUDE.md` §Release Process rule that `npm run release:*` does not run without a completed smoke table pasted into the release tag body ([#112](https://github.com/breferrari/shardmind/issues/112)). Stopgap for the manual phase between now and #111 Phase 1 covering the matrix in CI; relaxed once automation lands.
+
+### 0.1.x — Flagship UX stabilization (blocked on [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1)
+
+UX gaps surfaced during real obsidian-mind v6 install + adopt runs. None block the engine; each materially improves first-run experience for the flagship and any shard that triggers the same code path. **Each of these touches the wizard or a diff prompt — the exact surface where #103 / #109 lived. None ships before [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1 covers the regression matrix in CI.**
 
 - [ ] Wizard scroll indicator + boolean prompt consistency (Y/n typed input → selectable Yes/No) ([#100](https://github.com/breferrari/shardmind/issues/100))
 - [ ] `multiselect` value type for module-set questions ([#101](https://github.com/breferrari/shardmind/issues/101)) — pairs with #100 (shortens module list)
