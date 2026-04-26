@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-26
+
+First public release. Ships the v6 engine: install (with `--defaults` and Invariant 1 byte-equivalence guarantee), update (with `--release`, `--include-prerelease`, and ref re-resolution), adopt (retrofit existing shard clones), status, and post-install / post-update hooks. The flagship obsidian-mind v6 conversion + research-wiki shard land in subsequent point releases.
+
 ### Added (v6 layout: contract acceptance suite — full install / update / adopt scenario matrix)
 
 Closes [#92](https://github.com/breferrari/shardmind/issues/92). Final task in Milestone 4.5 of [#70](https://github.com/breferrari/shardmind/issues/70) (v6 contract). Spec: [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md) (every rule). #78 closed Invariant 1's byte-equivalence CI gate; this PR closes the **full behavioral matrix** — every combination of install / update / adopt × user choices × edit states × upstream changes that the v6 contract must handle. With this in, Milestone 5 (obsidian-mind v6 conversion + flagship Invariant 1 run, [#14](https://github.com/breferrari/shardmind/issues/14)) unblocks.
