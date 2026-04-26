@@ -23,7 +23,7 @@ Vault templates ship as monolithic git clones. Fork authors diverge from upstrea
 ShardMind separates templates from values. Users only ever edit their values. Templates upgrade cleanly. The system knows which files the user touched and which are still pristine.
 
 ```
-shardmind install breferrari/obsidian-mind
+shardmind install github:breferrari/obsidian-mind
 
   Quick Setup
 
@@ -60,6 +60,28 @@ shardmind update
 
 ---
 
+## Get started
+
+```bash
+npm install -g shardmind
+shardmind --version
+```
+
+Node 22+ required.
+
+```bash
+# In an empty directory you want to make into a vault
+shardmind install github:breferrari/obsidian-mind                # interactive wizard
+shardmind install --defaults github:breferrari/obsidian-mind     # accept all defaults
+
+# In an existing vault you cloned before shardmind support
+shardmind adopt github:breferrari/obsidian-mind
+```
+
+Status check at any time: `shardmind` (no args). Upgrade later: `shardmind update`. Full command reference below.
+
+---
+
 ## How It Works
 
 ### Three-State Model
@@ -84,17 +106,71 @@ Classification signals define how the vault routes content. Core signals (DECISI
 
 ## Commands
 
+Four commands. Three that write, one that reads. Status-first — `shardmind` with no args is the diagnostic, not a menu.
+
 ```bash
-shardmind                              # Status + health
-shardmind install <namespace/name>     # Install a shard
-shardmind update                       # Upgrade to a newer version
-shardmind adopt <namespace/name>       # Retrofit the engine into an existing clone
-shardmind --verbose                    # Detailed diagnostics
+# Status (read-only, default)
+shardmind                                # Quick status + drift summary
+shardmind --verbose                      # Full diagnostics (values, modules, files, env)
+shardmind --version                      # Print package version
+
+# Install a shard into the current directory
+shardmind install <shard>
+  --values <file>                          # Prefill answers from YAML
+  --defaults                               # Use schema defaults; skip wizard (Invariant 1 mode)
+  --yes                                    # Accept defaults for every prompt
+  --dry-run                                # Show plan, write nothing
+  --verbose                                # Per-file rendering progress
+
+# Upgrade the installed shard
+shardmind update
+  --release <tag>                          # Pin to a specific release tag (stable or prerelease)
+  --include-prerelease                     # Widen latest-release resolution to prereleases
+  --yes                                    # Auto-keep on every conflict
+  --dry-run                                # Plan without writing
+  --verbose                                # Per-file action history
+
+# Retrofit shardmind into an existing shard clone (pre-shardmind era)
+shardmind adopt <shard>
+  --values <file>                          # Prefill answers from YAML
+  --yes                                    # Auto-keep your version on every differs decision
+  --dry-run                                # Preview classification + plan
+  --verbose                                # Per-file action history
 ```
 
-Four commands. Three that write. One that reads. No menu, no wizard fatigue. Status-first. `adopt` is the migration path for users who cloned before shardmind support existed — see [`docs/ARCHITECTURE.md §10.5a`](docs/ARCHITECTURE.md) for the flow.
+`adopt` is the migration path for users who cloned a shard repo before shardmind support existed — see [`docs/ARCHITECTURE.md §10.5a`](docs/ARCHITECTURE.md) for the flow. `--defaults` on install is the determinism flag: paired with the same shard ref, two runs on different machines produce byte-equivalent vaults (Invariant 1).
 
-Wrapper scripts, CI pipelines, enterprise deployments — see [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for exit codes, environment variables (`GITHUB_TOKEN`, `SHARDMIND_GITHUB_API_BASE`, `SHARDMIND_REGISTRY_INDEX_URL`), file locations, and signal handling.
+### Shard references
+
+```
+breferrari/obsidian-mind                  # Registry, latest stable      (registry index lands in 0.1.x — see Status)
+breferrari/obsidian-mind@6.0.0            # Registry, exact version
+github:breferrari/obsidian-mind           # Direct GitHub, latest stable release
+github:breferrari/obsidian-mind@6.0.0     # Direct GitHub, exact tag
+github:breferrari/obsidian-mind#main      # Branch
+github:breferrari/obsidian-mind#a1b2c3d   # Commit SHA
+```
+
+### Common patterns
+
+```bash
+# Deterministic install for CI / fleet rollout — byte-equivalent to git clone
+shardmind install --defaults github:breferrari/obsidian-mind
+
+# Pre-canned values for a team
+shardmind install --values team-defaults.yaml github:breferrari/obsidian-mind
+
+# Pin an update to a specific release
+shardmind update --release 6.0.1
+
+# Pull a beta without affecting the latest dist-tag
+shardmind update --include-prerelease
+
+# Convert an existing pre-shardmind clone into a managed shard
+shardmind adopt github:breferrari/obsidian-mind
+```
+
+Wrapper scripts, CI pipelines, enterprise deployments — see [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for exit codes, environment variables (`GITHUB_TOKEN`, `SHARDMIND_GITHUB_API_BASE`, `SHARDMIND_REGISTRY_INDEX_URL`), file locations, and signal handling. Every typed error code with cause + remedy: [`docs/ERRORS.md`](docs/ERRORS.md).
 
 ---
 
@@ -194,7 +270,7 @@ The `shardmind/runtime` module is available to any TypeScript hook script. Claud
 
 ## Status
 
-**Pre-release.** The engine is complete — install, update (three-way merge + migrations + conflict resolution), status, and the runtime module all ship and are covered end-to-end. Flagship-shard conversion (obsidian-mind) and the shard registry are the remaining v0.1 milestones.
+**v0.1.0 shipped on npm** (April 2026). Install with `npm install -g shardmind`. The engine is complete: install (with `--defaults` byte-equivalence guarantee), update (three-way merge + migrations + `--release` / `--include-prerelease`), adopt, status, and the `shardmind/runtime` module are all covered end-to-end (862 tests). Flagship-shard conversion (obsidian-mind v6) and the shard registry index land in 0.1.x point releases.
 
 ---
 
