@@ -203,6 +203,13 @@ shardmind/
 │   ├── e2e/                           # Full CLI invocation tests (subprocess)
 │   │   ├── cli.test.ts                # End-to-end scenarios across status / install / update / adopt + post-install hook + Invariant 1 byte-equivalence
 │   │   ├── obsidian-mind-contract.test.ts  # v6 contract acceptance suite — install / update / adopt / refs / additive / hook failure / adversarial against the obsidian-mind-like fixture (#92)
+│   │   ├── tui/                       # Layer 2 real-PTY TUI scenarios — node-pty + @xterm/headless drive `dist/cli.js` under a real terminal (#111 Phase 2; macOS + Linux only, Windows skipped via #57)
+│   │   │   ├── helpers/               # pty-cli, virtual-screen, build-fixture-shard
+│   │   │   ├── harness.test.ts        # Smoke for pty-cli + virtual-screen contracts
+│   │   │   ├── install-wizard.test.ts # Scenarios 1, 9, 11
+│   │   │   ├── update-conflicts.test.ts # Scenarios 14, 18 (SIGINT rollback)
+│   │   │   ├── adopt-diff.test.ts     # Scenario 20
+│   │   │   └── hook-lifecycle.test.ts # Scenarios 26, 27, 28
 │   │   └── helpers/                   # build-once, tarball, github-stub,
 │   │                                  # spawn-cli, vault factories,
 │   │                                  # invariant1 byte-equivalence helper,
@@ -340,6 +347,7 @@ Read the spec section before implementing. It has inputs, outputs, algorithm ste
 - **Component tests** for Ink components via `ink-testing-library`. Files: `tests/component/<Component>.test.tsx`.
 - **Iterated-component regression tests are mandatory.** If a component is rendered inside a parent's iteration loop (state machine advances `phase.currentIndex`, `setIndex`, etc.) without a `key` prop forcing remount, its component test MUST include a `rerender()` case asserting the next iteration's interaction fires. Rationale: see [`docs/COMPONENTS.md`](docs/COMPONENTS.md) (Pattern B) — [#109](https://github.com/breferrari/shardmind/issues/109) shipped because `AdoptDiffView` and `DiffView` had only single-mount tests; the iteration-shape bug lived in the gap.
 - **Layer 1 TUI flow tests are mandatory** for new commands or major flow changes to existing commands. Each new command (or flow change) gets a `tests/component/flows/<command>-flow.test.tsx` file in the same PR. Layer 1 mounts the whole command React tree via `ink-testing-library` and drives stdin end-to-end against the local GitHub stub — the same surface that #103 (wizard select-Enter freeze) and #109 (iterated diff freeze) fell through. Rationale: per-component tests verify single-mount behavior; only Layer 1 covers the production-shape iteration. See [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1.
+- **Layer 2 real-PTY tests are added when a bug needs real-terminal semantics** (SIGINT delivery, ANSI rendering, raw-mode keystroke handling, or live stdout streaming during `running-hook`) to manifest. Layer 2 lives under `tests/e2e/tui/` and spawns `dist/cli.js` inside a `node-pty` pseudoterminal, rendering the byte stream through `@xterm/headless`. Use Layer 1 by default — it's faster and covers most regressions; reach for Layer 2 only when the bug surface requires the kernel signal pipe, the actual TTY raw-mode path, or incremental terminal rendering. macOS + Linux only; Windows is skipped at the `it.skipIf` level (ConPTY divergence — tracked via [#57](https://github.com/breferrari/shardmind/issues/57)). See [#111](https://github.com/breferrari/shardmind/issues/111) Phase 2 + `docs/ARCHITECTURE.md §19.7`.
 - **Integration tests** for pipelines: install (temp dir → full vault), update (install → modify → update → verify).
 - **E2E tests** for CLI: spawn `dist/cli.js` as a subprocess via `node:child_process` and route through the local GitHub stub (`tests/e2e/helpers/github-stub.ts`). No `execa` dependency; no public network. See `docs/ARCHITECTURE.md §19.7` for the hermetic-E2E methodology.
 - Each merge fixture is a self-contained directory with `scenario.yaml`, template files, values files, actual file, and expected output. See `tests/fixtures/merge/01-managed-no-change/` for the pattern.

@@ -8,6 +8,38 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (TUI Layer 2 real-PTY tests — #111 Phase 2)
+
+Closes [#111](https://github.com/breferrari/shardmind/issues/111) Phase 2 (Layer 2 — real-PTY scenarios via `node-pty` + `@xterm/headless`). Phase 1 (PR [#115](https://github.com/breferrari/shardmind/pull/115)) shipped Layer 1's 22 in-process scenarios; Phase 2 covers the 9 scenarios where Layer 1's faked TTY can't reach the bug surface — real OS SIGINT delivery, raw-mode keystroke handling, ANSI rendering during the `running-hook` phase, and live stdout tail. Phase 1's PR auto-closed #111 via "Closes #111", so the parent issue is reopened in this PR; Phase 3 ("ongoing extensions as bug classes surface") is open-ended and tracked via the roadmap row, not a permanent open issue.
+
+- **9 scenarios** under `tests/e2e/tui/` (4 files):
+  - **Install (3)** — `install-wizard.test.ts`: scenario 1 (#103 regression: select default = first option → Enter advances under TTY raw mode), 9 (full happy path → Summary frame contains shard slug + version), 11 (Confirm → Cancel → no vault writes; Layer 1 didn't cover the cancel branch).
+  - **Update (2)** — `update-conflicts.test.ts`: scenario 14 (#109 regression: ≥3 conflicts iterate cleanly under raw mode), 18 (L2-only: SIGINT during downloading phase → exit 130 + vault restored). Scenario 18 exercises the production `useSigintRollback` handler under real OS signal delivery — Layer 1's in-process `process.emit('SIGINT')` collapses the timing window real users hit.
+  - **Adopt (1)** — `adopt-diff.test.ts`: scenario 20 (#109 regression on adopt: ≥3 differing files → AdoptDiffView iterates cleanly under raw mode).
+  - **Hooks (3)** — `hook-lifecycle.test.ts`: scenario 26 (live stdout tail visible during `running-hook` phase — proves HookProgress renders incrementally before the Summary swap, not just on flush), 27 (hook throws → non-fatal warning + captured stderr; install itself exits 0 per Helm semantics), 28 (hook timeout: manifest declares `timeout_ms: 1000`, hook sleeps 5s → "timed out after 1.0s" surfaced through `executeHook`'s timedOut → result decision order).
+
+- **Helpers** in `tests/e2e/tui/helpers/`:
+  - `pty-cli.ts` — typed PTY wrapper around `node-pty`. `spawnCliPty(args, opts)` returns a handle with `write`, `screen`, `waitForScreen(predicate)`, `sigint()`, `waitForExit()`, `kill()`. Mirrors `tests/e2e/helpers/spawn-cli.ts`'s env-cleanup hardening (drop SHARDMIND_* before merging test overrides) but sets `TERM=xterm-256color` rather than `CI=1 / TERM=dumb / NO_COLOR=1` — the whole point is real-TTY rendering. Includes a one-shot fixer for the npm-tarball packaging bug that ships `prebuilds/<plat>-<arch>/spawn-helper` without the +x bit on POSIX (without it, the first `pty.spawn` after a fresh `npm ci` throws `posix_spawnp failed`); the chmod runs at module load, scoped to test code, no project-level postinstall.
+  - `virtual-screen.ts` — thin wrapper around `@xterm/headless`. Feeds bytes the PTY emitted into an 80x24 (or larger) cell grid, exposes `serialize()` / `contains(text)` / `matches(regex)`. Diff scenarios (14, 20) bump rows to 50 so `(N of 3)` counters don't scroll off the viewport on busy diffs; 80 cols stays.
+  - `build-fixture-shard.ts` — minimal-shard clone + custom `hooks/post-install.ts` write + tar pack for the hook scenarios. Mirrors the inline pattern in `tests/e2e/cli.test.ts:626`. Supports `name` / `namespace` / `hookTimeoutMs` overrides so each scenario fixture's Summary names its own shard rather than inheriting `shardmind/minimal`.
+  - `tests/e2e/tui/harness.test.ts` — 8 smoke cases pinning the helpers' contract: 4 virtual-screen (text / ANSI escape folding / cursor overdraw / regex match), 3 PTY (spawn `--version` / write reaches child / `waitForScreen` timeout error includes the last screen), 1 keystroke-constant pin (`ENTER === '\r'`).
+
+- **devDependencies**: `node-pty@1.1.0` (microsoft/node-pty — canonical, stable). `@xterm/headless@6.0.0` (mature; 6.x is the current major). On Linux the `node-pty` install falls back to `node-gyp rebuild` (no Linux prebuild ships in 1.1.0); CI's `ubuntu-latest` provides build-essential + Python 3 by default. macOS prebuilds ship for arm64 + x64; Windows ships ConPTY prebuilds but Layer 2 skips Windows entirely.
+
+- **Windows skip**: every Layer 2 `describe` is gated with `it.skipIf(process.platform === 'win32')` (or describe-level). ConPTY semantics diverge (TerminateProcess vs SIGINT, alt-screen behavior), and `source/core/cancellation.ts`'s ETX bridge targets the non-TTY pipe path — the Windows surface lives behind [#57](https://github.com/breferrari/shardmind/issues/57). Files still parse on Windows so import-shape regressions surface in CI.
+
+- **`docs/ARCHITECTURE.md §19.7`** gains a paragraph documenting the Layer 2 addition (PTY + `@xterm/headless`), what it catches that Layer 1 misses, and the Windows skip via #57.
+
+- **`CLAUDE.md` §Testing** gains a complementary rule: *"Layer 2 scenarios are added when a bug needs real-terminal semantics (SIGINT, ANSI, raw-mode) to manifest."* The Layer 1 mandate from Phase 1 stays.
+
+- **`CLAUDE.md` project-tree** gains `tests/e2e/tui/` with `helpers/` subfolder and the four scenario files, annotated `# Real-PTY TUI scenarios — Layer 2 (#111 Phase 2)`.
+
+- **`ROADMAP.md`** Phase 2 box checks; Phase 3 stays open as the ongoing-extensions placeholder.
+
+- **Tests: 904 → 921 (+17)**: 8 harness smokes + 3 install + 2 update + 1 adopt + 3 hooks. Layer 2 wall-clock ~5s in isolation; full-suite delta ~5s. The contract suite stays clean under the same parallel-pressure recipe Phase 1 used (4× full + 8× isolated).
+
+- **Engine surface unchanged**. No production code touched. No new error code. No new component or core module. The new test infrastructure is fully additive.
+
 ### Added (TUI Layer 1 flow tests — #111 Phase 1)
 
 Closes [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1 (Layer 1 — command-level component tests). Phase 2 (real-PTY via `node-pty`) and Phase 3 (ongoing extensions including hook scenarios 26–28) follow as separate PRs; the parent #111 stays open until all three sub-tracks land. Each Flagship UX stabilization ticket ([#100](https://github.com/breferrari/shardmind/issues/100), [#101](https://github.com/breferrari/shardmind/issues/101), [#102](https://github.com/breferrari/shardmind/issues/102), [#104](https://github.com/breferrari/shardmind/issues/104), [#105](https://github.com/breferrari/shardmind/issues/105)) was blocked on Phase 1 closing the regression matrix that #103 (0.1.1 hotfix) and #109 (0.1.2 hotfix) fell through; this PR unblocks them — every interactive UX change can now ride on top of Layer 1 coverage. The roadmap row for #111 grows three sub-bullets (Phase 1 / 2 / 3) so partial completion is visible without falsely closing the parent issue.
