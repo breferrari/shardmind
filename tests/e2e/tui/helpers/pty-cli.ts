@@ -296,6 +296,26 @@ export async function spawnCliPty(
   return { write, screen, waitForScreen, sigint, waitForExit, kill };
 }
 
+/**
+ * Type a string one character at a time, with a short pause between
+ * each keystroke so React commits each insert before the next byte
+ * arrives. Mirrors `tests/component/helpers.ts::typeText` — same
+ * rationale (see comment there) translated to PTY: @inkjs/ui's
+ * TextInput onSubmit captures `state.value` in a useCallback closure;
+ * batching multiple bytes into one render leaves the closure stale
+ * relative to the rendered string.
+ */
+export async function typeIntoPty(
+  handle: { write: (s: string) => void },
+  text: string,
+  perCharDelayMs = 25,
+): Promise<void> {
+  for (const ch of text) {
+    handle.write(ch);
+    await new Promise((r) => setTimeout(r, perCharDelayMs));
+  }
+}
+
 function stripUndefined(env: NodeJS.ProcessEnv): { [key: string]: string } {
   const out: { [key: string]: string } = {};
   for (const [k, v] of Object.entries(env)) {
