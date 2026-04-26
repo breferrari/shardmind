@@ -15,14 +15,22 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { constants as osConstants } from 'node:os';
 import os from 'node:os';
+import * as tar from 'tar';
+import { parse as parseYaml } from 'yaml';
 import { createVirtualScreen } from './helpers/virtual-screen.js';
 import {
   spawnCliPty,
   signalNumberToName,
   ENTER,
 } from './helpers/pty-cli.js';
+import {
+  buildHookFixtureShard,
+  buildMutatedShard,
+} from './helpers/build-fixture-shard.js';
 
 const skipOnWindows = process.platform === 'win32';
 
@@ -258,4 +266,86 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — signal mapping', () => {
     // so a future Node version growing new entries won't collide.
     expect(signalNumberToName(999)).toBe('999');
   });
+});
+
+describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
+  it('buildHookFixtureShard honors name + namespace overrides', async () => {
+    // Hook scenarios assert against the Summary frame, which prints
+    // `<namespace>/<name>@<version>`. Without per-fixture identity,
+    // every hook scenario's Summary would render `shardmind/minimal`
+    // and assertions for distinct slugs would fail. Pin the override
+    // path here so a future refactor of `cloneAndPack`'s manifest
+    // write can't silently drop one of the fields.
+    const outDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'shardmind-fixture-name-test-'),
+    );
+    try {
+      const tarPath = await buildHookFixtureShard({
+        version: '0.1.0',
+        name: 'phase3-named-shard',
+        namespace: 'l2test',
+        prefix: 'phase3-named-shard-0.1.0',
+        outDir,
+        hookSource: 'export default async () => {};',
+      });
+      // Extract the tarball into a sibling dir and read its manifest.
+      const extractDir = path.join(outDir, 'extract');
+      await fs.mkdir(extractDir, { recursive: true });
+      await tar.x({ file: tarPath, cwd: extractDir });
+      const manifestPath = path.join(
+        extractDir,
+        'phase3-named-shard-0.1.0',
+        '.shardmind',
+        'shard.yaml',
+      );
+      const manifest = parseYaml(
+        await fs.readFile(manifestPath, 'utf-8'),
+      ) as Record<string, unknown>;
+      expect(manifest.name).toBe('phase3-named-shard');
+      expect(manifest.namespace).toBe('l2test');
+      expect(manifest.version).toBe('0.1.0');
+    } finally {
+      await fs.rm(outDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('buildMutatedShard cleans the tmp clone dir if mutate throws', async () => {
+    // A future contributor's mutate callback may panic during scenario
+    // shake-out. The helper's try/finally must keep the filesystem
+    // tidy — otherwise `/tmp` accumulates `shardmind-fixture-*` clones
+    // until the dev box rebuilds. Use a unique version stamp so this
+    // test's signature doesn't collide with leftover dirs from prior
+    // runs.
+    const outDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'shardmind-fixture-throw-out-'),
+    );
+    const uniqueVersion = '0.0.0-mutate-throw-test';
+    const matchingBefore = (await fs.readdir(os.tmpdir())).filter((n) =>
+      n.startsWith(`shardmind-fixture-${uniqueVersion}-`),
+    );
+    try {
+      await expect(
+        buildMutatedShard({
+          version: uniqueVersion,
+          prefix: `mutate-throw-${uniqueVersion}`,
+          outDir,
+          dropHooks: true,
+          mutate: async () => {
+            throw new Error('intentional-mutate-throw');
+          },
+        }),
+      ).rejects.toThrow('intentional-mutate-throw');
+
+      // No new tmp clone dirs with our unique version after the throw.
+      // The before-list is the baseline (should be empty unless a
+      // prior crashed run left orphans, in which case those orphans
+      // are also matched by both lists and the delta is zero).
+      const matchingAfter = (await fs.readdir(os.tmpdir())).filter((n) =>
+        n.startsWith(`shardmind-fixture-${uniqueVersion}-`),
+      );
+      expect(matchingAfter.length).toBe(matchingBefore.length);
+    } finally {
+      await fs.rm(outDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
