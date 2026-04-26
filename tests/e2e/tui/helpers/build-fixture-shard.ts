@@ -43,6 +43,16 @@ export interface HookShardOptions {
    */
   hookTimeoutMs?: number;
   /**
+   * Override `shard.yaml.name` and `shard.yaml.namespace`. Without
+   * these, the manifest carries minimal-shard's `shardmind/minimal`
+   * identity; the engine renders that in the install/update Summary
+   * regardless of the install slug. Each scenario fixture should
+   * declare its own identity so a test failure's screen capture
+   * points at the right shard.
+   */
+  name?: string;
+  namespace?: string;
+  /**
    * Tarball prefix (the single top-level directory the archive must
    * have so `download.ts`'s `tar.x({ strip: 1 })` strips it cleanly).
    * Defaults to `<name>-<version>`.
@@ -73,6 +83,10 @@ export async function buildHookFixtureShard(
       version: string;
     };
     manifest.version = opts.version;
+    if (opts.name !== undefined) (manifest as Record<string, unknown>)['name'] = opts.name;
+    if (opts.namespace !== undefined) {
+      (manifest as Record<string, unknown>)['namespace'] = opts.namespace;
+    }
     manifest.hooks = manifest.hooks ?? {};
     manifest.hooks['post-install'] = 'hooks/post-install.ts';
     if (opts.hookTimeoutMs !== undefined) {
