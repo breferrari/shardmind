@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import { createRequire } from 'node:module';
 import { Spinner, StatusMessage, Alert } from '../components/ui.js';
 import zod from 'zod';
 
@@ -11,8 +12,17 @@ import CommandProgress from '../components/CommandProgress.js';
 import HookProgress from '../components/HookProgress.js';
 import Summary from '../components/Summary.js';
 import CommandFrame from '../components/CommandFrame.js';
+import SelfUpdateBanner from '../components/SelfUpdateBanner.js';
 
 import { useInstallMachine } from './hooks/use-install-machine.js';
+import { useSelfUpdateCheck } from './hooks/use-self-update-check.js';
+
+// Read the CLI version once at bundle entry. tsup emits each command as
+// `dist/commands/<name>.js`, so `../../package.json` resolves to the
+// package root in both dev and published layouts. Same pattern as cli.ts.
+const pkg = createRequire(import.meta.url)('../../package.json') as {
+  version: string;
+};
 
 export const args = zod.tuple([
   zod.string().describe('Shard reference, e.g. "breferrari/obsidian-mind" or "github:owner/repo"'),
@@ -24,6 +34,10 @@ export const options = zod.object({
   defaults: zod.boolean().default(false).describe('Use schema defaults for every value (Invariant 1 mode); skips the wizard. Mutually exclusive with --values.'),
   verbose: zod.boolean().default(false).describe('Show per-file rendering progress'),
   dryRun: zod.boolean().default(false).describe('Preview what would be installed without writing'),
+  noUpdateCheck: zod
+    .boolean()
+    .default(false)
+    .describe('Disable the once-per-day npm registry check for newer shardmind versions'),
 });
 
 type Props = {
@@ -33,7 +47,7 @@ type Props = {
 
 export default function Install({ args, options }: Props) {
   const [shardRef] = args;
-  const { values: valuesFile, yes, defaults, verbose, dryRun } = options;
+  const { values: valuesFile, yes, defaults, verbose, dryRun, noUpdateCheck } = options;
 
   const {
     phase,
@@ -52,6 +66,12 @@ export default function Install({ args, options }: Props) {
     vaultRoot: process.cwd(),
   });
 
+  const { info: selfUpdateInfo } = useSelfUpdateCheck({
+    noUpdateCheck,
+    currentVersion: pkg.version,
+  });
+  const banner = <SelfUpdateBanner info={selfUpdateInfo} />;
+
   // Exhaustive switch: adding a new Phase variant without a case here
   // is a compile error, not a silent render-nothing bug.
   switch (phase.kind) {
@@ -59,7 +79,7 @@ export default function Install({ args, options }: Props) {
     case 'loading': {
       const msg = phase.kind === 'loading' ? phase.message : 'Starting…';
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <Box gap={1}>
             <Spinner />
             <Text>{msg}</Text>
@@ -69,13 +89,13 @@ export default function Install({ args, options }: Props) {
     }
     case 'gate':
       return (
-        <CommandFrame dryRun={dryRun}>
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <ExistingInstallGate state={phase.state} onChoice={onGateChoice} />
         </CommandFrame>
       );
     case 'wizard':
       return (
-        <CommandFrame dryRun={dryRun}>
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <InstallWizard
             manifest={phase.ctx.manifest}
             schema={phase.ctx.schema}
@@ -90,13 +110,13 @@ export default function Install({ args, options }: Props) {
       );
     case 'collision':
       return (
-        <CommandFrame dryRun={dryRun}>
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <CollisionReview collisions={phase.collisions} onChoice={onCollisionChoice} />
         </CommandFrame>
       );
     case 'installing':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <CommandProgress
             current={phase.current}
             total={phase.total}
@@ -108,7 +128,7 @@ export default function Install({ args, options }: Props) {
       );
     case 'running-hook':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <HookProgress
             stage={phase.stage}
             output={phase.output}
@@ -118,7 +138,7 @@ export default function Install({ args, options }: Props) {
       );
     case 'summary':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <Summary
             manifest={phase.manifest}
             vaultRoot={phase.vaultRoot}
@@ -132,7 +152,7 @@ export default function Install({ args, options }: Props) {
       );
     case 'cancelled':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <Box flexDirection="column">
             <Alert variant="info">Cancelled</Alert>
             <Text dimColor>{phase.reason}</Text>
@@ -144,7 +164,7 @@ export default function Install({ args, options }: Props) {
       const code = err instanceof ShardMindError ? err.code : null;
       const hint = err instanceof ShardMindError ? err.hint : null;
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <Box flexDirection="column" gap={1}>
             <StatusMessage variant="error">{err.message}</StatusMessage>
             {code && <Text dimColor>code: {code}</Text>}

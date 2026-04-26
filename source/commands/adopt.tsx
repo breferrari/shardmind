@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import { createRequire } from 'node:module';
 import zod from 'zod';
 
 import { ShardMindError, assertNever } from '../runtime/types.js';
@@ -10,8 +11,14 @@ import AdoptSummary from '../components/AdoptSummary.js';
 import CommandFrame from '../components/CommandFrame.js';
 import CommandProgress from '../components/CommandProgress.js';
 import HookProgress from '../components/HookProgress.js';
+import SelfUpdateBanner from '../components/SelfUpdateBanner.js';
 
 import { useAdoptMachine } from './hooks/use-adopt-machine.js';
+import { useSelfUpdateCheck } from './hooks/use-self-update-check.js';
+
+const pkg = createRequire(import.meta.url)('../../package.json') as {
+  version: string;
+};
 
 export const args = zod.tuple([
   zod
@@ -32,6 +39,10 @@ export const options = zod.object({
     .boolean()
     .default(false)
     .describe('Preview classification + plan without writing'),
+  noUpdateCheck: zod
+    .boolean()
+    .default(false)
+    .describe('Disable the once-per-day npm registry check for newer shardmind versions'),
 });
 
 type Props = {
@@ -41,7 +52,7 @@ type Props = {
 
 export default function Adopt({ args, options }: Props) {
   const [shardRef] = args;
-  const { values: valuesFile, yes, verbose, dryRun } = options;
+  const { values: valuesFile, yes, verbose, dryRun, noUpdateCheck } = options;
 
   const {
     phase,
@@ -58,6 +69,12 @@ export default function Adopt({ args, options }: Props) {
     vaultRoot: process.cwd(),
   });
 
+  const { info: selfUpdateInfo } = useSelfUpdateCheck({
+    noUpdateCheck,
+    currentVersion: pkg.version,
+  });
+  const banner = <SelfUpdateBanner info={selfUpdateInfo} />;
+
   // Exhaustive switch: adding a new Phase variant without a case here is
   // a compile error, not a silent render-nothing bug.
   switch (phase.kind) {
@@ -65,7 +82,7 @@ export default function Adopt({ args, options }: Props) {
     case 'loading': {
       const msg = phase.kind === 'loading' ? phase.message : 'Starting…';
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <Box gap={1}>
             <Spinner />
             <Text>{msg}</Text>
@@ -75,7 +92,7 @@ export default function Adopt({ args, options }: Props) {
     }
     case 'wizard':
       return (
-        <CommandFrame dryRun={dryRun}>
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <InstallWizard
             manifest={phase.ctx.manifest}
             schema={phase.ctx.schema}
@@ -99,7 +116,7 @@ export default function Adopt({ args, options }: Props) {
       );
     case 'planning':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <Box gap={1}>
             <Spinner />
             <Text>Comparing your vault with the shard…</Text>
@@ -110,7 +127,7 @@ export default function Adopt({ args, options }: Props) {
       const target = phase.plan.differs[phase.currentIndex];
       if (!target || target.kind !== 'differs') return null;
       return (
-        <CommandFrame dryRun={dryRun}>
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <AdoptDiffView
             path={target.path}
             index={phase.currentIndex + 1}
@@ -125,7 +142,7 @@ export default function Adopt({ args, options }: Props) {
     }
     case 'executing':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <CommandProgress
             current={phase.current}
             total={phase.total}
@@ -137,7 +154,7 @@ export default function Adopt({ args, options }: Props) {
       );
     case 'running-hook':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <HookProgress
             stage={phase.stage}
             output={phase.output}
@@ -147,7 +164,7 @@ export default function Adopt({ args, options }: Props) {
       );
     case 'summary':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <AdoptSummary
             manifest={phase.manifest}
             vaultRoot={phase.vaultRoot}
@@ -160,7 +177,7 @@ export default function Adopt({ args, options }: Props) {
       );
     case 'cancelled':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <Box flexDirection="column">
             <Alert variant="info">Cancelled</Alert>
             <Text dimColor>{phase.reason}</Text>
@@ -172,7 +189,7 @@ export default function Adopt({ args, options }: Props) {
       const code = err instanceof ShardMindError ? err.code : null;
       const hint = err instanceof ShardMindError ? err.hint : null;
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <Box flexDirection="column" gap={1}>
             <StatusMessage variant="error">{err.message}</StatusMessage>
             {code && <Text dimColor>code: {code}</Text>}

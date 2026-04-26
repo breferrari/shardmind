@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import { createRequire } from 'node:module';
 import zod from 'zod';
 
 import { Spinner, StatusMessage, Alert } from '../components/ui.js';
@@ -13,8 +14,14 @@ import HookProgress from '../components/HookProgress.js';
 import UpdateSummary from '../components/UpdateSummary.js';
 import CommandFrame from '../components/CommandFrame.js';
 import Header from '../components/Header.js';
+import SelfUpdateBanner from '../components/SelfUpdateBanner.js';
 
 import { useUpdateMachine } from './hooks/use-update-machine.js';
+import { useSelfUpdateCheck } from './hooks/use-self-update-check.js';
+
+const pkg = createRequire(import.meta.url)('../../package.json') as {
+  version: string;
+};
 
 export const options = zod.object({
   yes: zod.boolean().default(false).describe('Accept defaults for every prompt (auto-keeps conflicts)'),
@@ -33,6 +40,10 @@ export const options = zod.object({
     .boolean()
     .default(false)
     .describe('Widen latest-release resolution to include prereleases'),
+  noUpdateCheck: zod
+    .boolean()
+    .default(false)
+    .describe('Disable the once-per-day npm registry check for newer shardmind versions'),
 });
 
 type Props = {
@@ -40,7 +51,7 @@ type Props = {
 };
 
 export default function Update({ options }: Props) {
-  const { yes, verbose, dryRun, release, includePrerelease } = options;
+  const { yes, verbose, dryRun, release, includePrerelease, noUpdateCheck } = options;
 
   const {
     phase,
@@ -57,12 +68,18 @@ export default function Update({ options }: Props) {
     includePrerelease,
   });
 
+  const { info: selfUpdateInfo } = useSelfUpdateCheck({
+    noUpdateCheck,
+    currentVersion: pkg.version,
+  });
+  const banner = <SelfUpdateBanner info={selfUpdateInfo} />;
+
   switch (phase.kind) {
     case 'booting':
     case 'loading': {
       const msg = phase.kind === 'loading' ? phase.message : 'Starting…';
       return (
-        <CommandFrame dryRun={dryRun}>
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Box gap={1}>
             <Spinner />
             <Text>{msg}</Text>
@@ -72,7 +89,7 @@ export default function Update({ options }: Props) {
     }
     case 'up-to-date':
       return (
-        <CommandFrame dryRun={dryRun}>
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Box flexDirection="column" gap={1}>
             <Header manifest={phase.manifest} />
             <StatusMessage variant="success">
@@ -83,7 +100,7 @@ export default function Update({ options }: Props) {
       );
     case 'prompt-new-values':
       return (
-        <CommandFrame dryRun={dryRun}>
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Header manifest={phase.ctx.newManifest} />
           <NewValuesPrompt
             schema={phase.ctx.newSchema}
@@ -95,7 +112,7 @@ export default function Update({ options }: Props) {
       );
     case 'prompt-new-modules':
       return (
-        <CommandFrame dryRun={dryRun}>
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Header manifest={phase.ctx.newManifest} />
           <NewModulesReview
             offered={phase.ctx.newOptionalModules}
@@ -105,7 +122,7 @@ export default function Update({ options }: Props) {
       );
     case 'prompt-removed-files':
       return (
-        <CommandFrame dryRun={dryRun}>
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Header manifest={phase.ctx.newManifest} />
           <RemovedFilesReview
             paths={phase.paths}
@@ -117,7 +134,7 @@ export default function Update({ options }: Props) {
       const pending = phase.plan.pendingConflicts[phase.currentIndex];
       if (!pending) return null;
       return (
-        <CommandFrame dryRun={dryRun}>
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <DiffView
             path={pending.path}
             index={phase.currentIndex + 1}
@@ -130,7 +147,7 @@ export default function Update({ options }: Props) {
     }
     case 'writing':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <CommandProgress
             current={phase.current}
             total={phase.total}
@@ -142,7 +159,7 @@ export default function Update({ options }: Props) {
       );
     case 'running-hook':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <HookProgress
             stage={phase.stage}
             output={phase.output}
@@ -152,7 +169,7 @@ export default function Update({ options }: Props) {
       );
     case 'summary':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <UpdateSummary
             summary={phase.summary}
             durationMs={phase.durationMs}
@@ -164,7 +181,7 @@ export default function Update({ options }: Props) {
       );
     case 'cancelled':
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <Box flexDirection="column">
             <Alert variant="info">Cancelled</Alert>
             <Text dimColor>{phase.reason}</Text>
@@ -176,7 +193,7 @@ export default function Update({ options }: Props) {
       const code = err instanceof ShardMindError ? err.code : null;
       const hint = err instanceof ShardMindError ? err.hint : null;
       return (
-        <CommandFrame dryRun={dryRun} showLegend={false}>
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <Box flexDirection="column" gap={1}>
             <StatusMessage variant="error">{err.message}</StatusMessage>
             {code && <Text dimColor>code: {code}</Text>}
