@@ -105,7 +105,7 @@ Three tickets address the v0.1.x reliability story head-on. **#111** + **#112** 
 
 ### 0.1.x — Flagship UX stabilization (blocked on [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1)
 
-UX gaps surfaced during real obsidian-mind v6 install + adopt runs. None block the engine; each materially improves first-run experience for the flagship and any shard that triggers the same code path. **Each of these touches the wizard or a diff prompt — the exact surface where #103 / #109 lived. None ships before [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1 covers the regression matrix in CI.**
+UX gaps surfaced during real obsidian-mind v6 install + adopt runs. None block the engine; each materially improves first-run experience for the flagship and any shard that triggers the same code path. **Each of these touches the wizard or a diff prompt — the exact surface where #103 / #109 lived. None ships before [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1 covers the regression matrix in CI, and no release containing them ships until the smoke gate ([`RELEASE-SMOKE.md`](RELEASE-SMOKE.md), [#112](https://github.com/breferrari/shardmind/issues/112)) has been run against `breferrari/obsidian-mind`.**
 
 - [ ] Wizard scroll indicator + boolean prompt consistency (Y/n typed input → selectable Yes/No) ([#100](https://github.com/breferrari/shardmind/issues/100))
 - [ ] `multiselect` value type for module-set questions ([#101](https://github.com/breferrari/shardmind/issues/101)) — pairs with #100 (shortens module list)
