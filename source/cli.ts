@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import Pastel from 'pastel';
 import { installStdinCancellation } from './core/cancellation.js';
 
@@ -10,10 +11,18 @@ import { installStdinCancellation } from './core/cancellation.js';
 // users keep the native Ctrl+C handling on both platforms.
 installStdinCancellation();
 
+// Read the version from package.json at runtime so `npm version <bump>` is
+// the single source of truth. Hardcoding here drifted silently between
+// 0.1.0 and 0.1.1 (caught only by the e2e --version test that pins runtime
+// output against `pkg.version`). dist/cli.js sits at `dist/`, so
+// `../package.json` resolves to the package root in both dev and published
+// layouts.
+const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
+
 const app = new Pastel({
   importMeta: import.meta,
   name: 'shardmind',
-  version: '0.1.0',
+  version: pkg.version,
   description: 'Package manager for Obsidian vault templates',
 });
 
