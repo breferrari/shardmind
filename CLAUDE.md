@@ -416,7 +416,7 @@ export default {
 
 ## Release Process
 
-**Binding gate:** `npm run release:*` does not run until the smoke checklist in [`RELEASE-SMOKE.md`](RELEASE-SMOKE.md) has been completed against `dist/cli.js` at the release SHA, and the result table has been pasted into the v\<version> release tag body. CI green is necessary, not sufficient — two consecutive 0.1.x patches ([#103](https://github.com/breferrari/shardmind/issues/103), [#109](https://github.com/breferrari/shardmind/issues/109)) shipped green and broke the flagship install on day one.
+**Binding gate:** Do not run `npm run release:*` until the smoke checklist in [`RELEASE-SMOKE.md`](RELEASE-SMOKE.md) has been completed against the packed-tarball CLI at the release SHA. After the `release.yml` workflow publishes the GitHub Release, append the saved smoke result table to the v\<version> release notes as a mandatory post-step. CI green is necessary, not sufficient — two consecutive 0.1.x patches ([#103](https://github.com/breferrari/shardmind/issues/103), [#109](https://github.com/breferrari/shardmind/issues/109)) shipped green and broke the flagship install on day one.
 
 ```bash
 # 1. Update CHANGELOG.md: move [Unreleased] items to a new version section

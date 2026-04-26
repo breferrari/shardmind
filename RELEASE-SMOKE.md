@@ -1,6 +1,6 @@
 # Release smoke — pre-release gate
 
-Run BEFORE `npm run release:patch` / `:minor` / `:major`. Paste the completed [Result table](#result-table) into the v\<version> release tag's body via `gh release edit v<version> --notes-file -` or the GitHub web UI (the `release.yml` workflow auto-publishes the release with a commit-list body; the smoke table is appended after).
+Run BEFORE `npm run release:patch` / `:minor` / `:major` and keep the completed [Result table](#result-table) locally. After `npm run release:*` pushes the version tag and `release.yml` creates the v\<version> GitHub Release with its initial commit-list body, append the saved smoke table to that release via `gh release edit v<version> --notes-file -` or the GitHub web UI.
 
 This gate validates the **shardmind engine** via a manual run against the production flagship shard, `breferrari/obsidian-mind`. It is not a per-shard gate — shards are tested via their own release pipelines.
 
@@ -20,7 +20,16 @@ npm ci
 npm run typecheck
 npm test
 npm run build
-test -f dist/cli.js  # required by the scenarios below
+
+# Pack the tarball that npm publish would upload, install it into an
+# isolated prefix, and export $SHARDMIND_CLI for every scenario below.
+# This catches packaging / `bin` wiring / `files` field regressions that
+# running dist/cli.js directly would miss.
+TARBALL="$PWD/$(npm pack 2>/dev/null | tail -n1)"
+SHARDMIND_PREFIX=$(mktemp -d)
+npm install -g --prefix "$SHARDMIND_PREFIX" --silent "$TARBALL"
+export SHARDMIND_CLI="$SHARDMIND_PREFIX/bin/shardmind"
+test -x "$SHARDMIND_CLI"
 ```
 
 Record the local test count (e.g. `932`) for the result table.
@@ -36,15 +45,18 @@ cd "$SCRATCH"
 git clone --depth 1 https://github.com/breferrari/obsidian-mind.git
 cd obsidian-mind
 
-# Seed 5 user-side modifications. Append a one-line marker; original
-# content is preserved above.
+# Seed 5 user-side modifications. Fail closed if a path was renamed
+# upstream — `>>` would silently create the file and skew the diff count.
 for f in Home.md "brain/North Star.md" "brain/Patterns.md" CLAUDE.md AGENTS.md; do
+  test -f "$f" || {
+    printf 'Expected existing file missing: %s\n' "$f" >&2
+    printf 'Swap to another file under brain/ or repo root and note the swap in the result row.\n' >&2
+    exit 1
+  }
   printf '\n\n<!-- release-smoke marker -->\n' >> "$f"
 done
 
-# Adopt with the just-built CLI (NOT a globally-installed shardmind — the
-# point is to verify dist/cli.js, the artifact that will be published).
-node /path/to/shardmind/dist/cli.js adopt github:breferrari/obsidian-mind
+"$SHARDMIND_CLI" adopt github:breferrari/obsidian-mind
 ```
 
 Walk through the wizard. Then, in the diff-review phase, observe:
@@ -59,7 +71,7 @@ Walk through the wizard. Then, in the diff-review phase, observe:
 ```bash
 INSTALL_DIR=$(mktemp -d)
 cd "$INSTALL_DIR"
-node /path/to/shardmind/dist/cli.js install github:breferrari/obsidian-mind
+"$SHARDMIND_CLI" install github:breferrari/obsidian-mind
 ```
 
 - **Wizard advances on every value prompt**, including the select with `default = first option` (the #103 regression check). Pressing Enter on the default-focused option must advance — not freeze.
@@ -67,13 +79,14 @@ node /path/to/shardmind/dist/cli.js install github:breferrari/obsidian-mind
 - **Computed-default preview** renders in the summary frame before the confirm screen (values computed from entered module selections).
 - **Confirm screen → Install** progresses through phases `installing` (with per-file labels rolling through the history) → `running-hook` → `summary` without a stuck label. Pre-wizard the loader shows `loading` with messages like `Resolving …` / `Downloading …` / `Parsing manifest and schema…`.
 - **Vault content matches**: `Home.md` exists with rendered values; `.shardmind/state.json` exists; `shard-values.yaml` records the entered values.
+- **`SHARDMIND_CLI` is the packed tarball**, not a global `shardmind` from a previous install — confirm with `realpath "$SHARDMIND_CLI"` resolving under `$SHARDMIND_PREFIX`.
 
 ## Cancellation smoke
 
 ```bash
 CANCEL_DIR=$(mktemp -d)
 cd "$CANCEL_DIR"
-node /path/to/shardmind/dist/cli.js install github:breferrari/obsidian-mind
+"$SHARDMIND_CLI" install github:breferrari/obsidian-mind
 # At the first wizard prompt, press Ctrl+C.
 ```
 
@@ -83,7 +96,7 @@ node /path/to/shardmind/dist/cli.js install github:breferrari/obsidian-mind
 
 ## Result table
 
-Paste this filled-in section into the v\<version> release tag body. Tick each row only after running its block above against `dist/cli.js` from the same SHA being tagged.
+Save the filled-in section locally. After `release.yml` publishes the v\<version> GitHub Release, append the saved section to that release's notes. Tick each row only after running its block above against `$SHARDMIND_CLI` from the same SHA being tagged.
 
 ```markdown
 ### Release smoke — flagship `breferrari/obsidian-mind`
