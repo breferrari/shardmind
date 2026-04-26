@@ -49,7 +49,7 @@ describe('ValueInput', () => {
     await typeText(stdin, 'Alice');
     await waitFor(lastFrame, (f) => f.includes('Alice'));
     stdin.write(ENTER);
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
 
     expect(onSubmit).toHaveBeenCalledWith('Alice');
   });
@@ -121,7 +121,7 @@ describe('ValueInput', () => {
     stdin.write(ARROW_DOWN);
     await tick(30);
     stdin.write(ENTER);
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
 
     expect(onSubmit).toHaveBeenCalledWith('research');
   });
@@ -281,7 +281,7 @@ describe('ValueInput', () => {
     );
 
     stdin.write('y');
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
     expect(onSubmit).toHaveBeenCalledWith(true);
   });
 
@@ -298,7 +298,7 @@ describe('ValueInput', () => {
     );
 
     stdin.write('n');
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
     expect(onSubmit).toHaveBeenCalledWith(false);
   });
 

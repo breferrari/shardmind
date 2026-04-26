@@ -109,11 +109,12 @@ function renderInput(
         : typeof def.default === 'string'
         ? def.default
         : undefined;
-      // @inkjs/ui's Select seeds previousValue===value when defaultValue
-      // is set; on Enter the `previousValue !== value` change-fire guard
-      // then fails for the focused (always first) option, freezing the
-      // wizard. Drop defaultValue and reorder so `initial` is index 0
-      // (where the cursor pre-positions). #103.
+      // @inkjs/ui's Select seeds `previousValue === value` from
+      // `defaultValue`; on Enter the `previousValue !== value` change-fire
+      // guard then rejects any focused option whose value equals the
+      // seeded default, freezing the wizard. Drop `defaultValue` so
+      // `previousValue` initializes to undefined; reorder so `initial`
+      // is index 0 (where the cursor pre-positions). #103.
       const options = initial && rawOptions.some((o) => o.value === initial)
         ? [
             ...rawOptions.filter((o) => o.value === initial),
