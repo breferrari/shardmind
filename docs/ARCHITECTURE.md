@@ -1482,6 +1482,29 @@ staying hermetic. No test reaches the public internet.
   parallel vitest workers don't race on the tsup invocation. CI runs
   `npm run build` explicitly (see `.github/workflows/ci.yml`); the
   guard exists so `npm test` works locally without a manual build step.
+- **Layer 2 — real-PTY TUI scenarios** (`tests/e2e/tui/`,
+  [#111](https://github.com/breferrari/shardmind/issues/111) Phase 2):
+  the subprocess wrapper above pipes stdio, so `stdin.isTTY === false`
+  in the child and Ink renders a single final frame in non-TTY mode.
+  Layer 2 closes that gap by allocating a pseudoterminal via
+  [`node-pty`](https://github.com/microsoft/node-pty) and rendering
+  the byte stream through [`@xterm/headless`](https://www.npmjs.com/package/@xterm/headless)
+  into an 80x24 (or larger) cell grid. This catches three bug classes
+  the pipe path can't: real OS SIGINT delivery + the production
+  `useSigintRollback` timing window, raw-mode keystroke handling
+  (`@inkjs/ui` Select / TextInput behave differently when
+  `stdin.isRaw === true`), and incremental ANSI rendering during the
+  `running-hook` phase. macOS + Linux only — Windows skipped because
+  ConPTY semantics diverge enough that those scenarios are their own
+  track (**#57**). Helpers: `tests/e2e/tui/helpers/pty-cli.ts` (typed
+  PTY wrapper with `write` / `waitForScreen` / `sigint` / `kill`),
+  `virtual-screen.ts` (xterm-headless feeder + serializer),
+  `build-fixture-shard.ts` (custom-shard tarball builder for hook
+  scenarios). The Layer 1 in-process flow tests
+  (`tests/component/flows/`) cover the bulk of the regression matrix;
+  Layer 2 carries only the 9 scenarios where the real-TTY path is the
+  thing under test (issue body §Strategy: Layer 2 scenarios 1, 9, 11,
+  14, 18, 20, 26, 27, 28).
 - **Cross-platform SIGINT — production vs CI**: Node's `child.kill('SIGINT')`
   force-terminates on Windows instead of delivering a catchable signal.
   `source/core/cancellation.ts` compensates in the **production** CLI: it
