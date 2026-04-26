@@ -524,8 +524,13 @@ function stripUndefined(env: NodeJS.ProcessEnv): { [key: string]: string } {
  * signals on Linux), which keeps the field always-stringy without
  * losing information. Returns null when the child exited normally
  * (no signal involved).
+ *
+ * Exported for harness tests that pin the mapping against
+ * `os.constants.signals` directly — the function is small but
+ * platform-sensitive, and a regression here misjudges scenario 18's
+ * SIGINT-vs-SIGKILL contract.
  */
-function signalNumberToName(num: number | undefined): string | null {
+export function signalNumberToName(num: number | undefined): string | null {
   if (num === undefined) return null;
   // os.constants.signals is a record `{ SIGINT: 2, SIGKILL: 9, ... }`.
   // The reverse lookup is small (~30 entries) and runs once per
