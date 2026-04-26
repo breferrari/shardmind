@@ -101,4 +101,7 @@ export type ErrorCode =
 
   // Update-check cache (status command + update command share this)
   | 'UPDATE_CHECK_FAILED'
-  | 'UPDATE_CHECK_CACHE_CORRUPT';
+  | 'UPDATE_CHECK_CACHE_CORRUPT'
+
+  // Self-update notifier (engine version vs. npm registry, #113)
+  | 'SELF_UPDATE_CHECK_FAILED';
