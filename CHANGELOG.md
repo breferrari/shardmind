@@ -27,7 +27,7 @@ Closes [#111](https://github.com/breferrari/shardmind/issues/111). The parent is
 
 - **Engine surface unchanged**. No production code touched. No new error code, component, or core module. Phase 3 is purely additive at the test + doc layer — same envelope as Phase 1 and Phase 2.
 
-- **Tests: 921 → 928 (+7)**: 5 added under `tests/e2e/tui/harness.test.ts` (Layer 2 lifecycle 2 + PtyHandle lifecycle 2 + signal mapping 3 — counted as 5 distinct `it` blocks), 1 added under the same file's new "fixture builders" describe (name override + mutate-throw cleanup counted as 2 sub-cases of the surface), 1 added under `tests/component/flows/harness.test.tsx`. Suite wall-clock delta < 5 s.
+- **Tests: 921 → 931 (+10)**: 7 added under `tests/e2e/tui/harness.test.ts` (2 virtual-screen lifecycle + 2 PtyHandle lifecycle + 3 signal mapping), 2 added under the same file's new "fixture builders" describe (name override + mutate-throw cleanup), 1 added under `tests/component/flows/harness.test.tsx`. Suite wall-clock delta < 5 s.
 
 - **Acceptance criteria** (#111 issue body): all five satisfied across Phases 1+2+3 — 28 scenarios green on macOS + Linux × Node 22 + 24 (Phase 1+2), regression scenarios for #103 and #109 live in both Layer 1 and Layer 2 (the "golden test" criterion is satisfied by these scenarios — checking out 0.1.0 and re-running them would flag both bugs), `npm test` wall-clock grows by ~35 s (well under the 90 s budget), `CLAUDE.md` §Testing convention rules landed in Phases 1+2, and `tests/e2e/cli.test.ts` stayed green throughout.
 
