@@ -103,17 +103,28 @@ function renderInput(
       );
     }
     case 'select': {
-      const options = (def.options ?? []).map((o) => ({ label: o.label, value: o.value }));
+      const rawOptions = (def.options ?? []).map((o) => ({ label: o.label, value: o.value }));
       const initial = typeof initialValue === 'string'
         ? initialValue
         : typeof def.default === 'string'
         ? def.default
         : undefined;
+      // @inkjs/ui's Select seeds `previousValue === value` from
+      // `defaultValue`; on Enter the `previousValue !== value` change-fire
+      // guard then rejects any focused option whose value equals the
+      // seeded default, freezing the wizard. Drop `defaultValue` so
+      // `previousValue` initializes to undefined; reorder so `initial`
+      // is index 0 (where the cursor pre-positions). #103.
+      const options = initial && rawOptions.some((o) => o.value === initial)
+        ? [
+            ...rawOptions.filter((o) => o.value === initial),
+            ...rawOptions.filter((o) => o.value !== initial),
+          ]
+        : rawOptions;
       return (
         <Select
           key={key}
           options={options}
-          defaultValue={initial}
           onChange={(v) => onSubmit(v)}
         />
       );

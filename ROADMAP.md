@@ -84,7 +84,7 @@ The engine shipped at 0.1.0 with the v6 contract covered end-to-end against fixt
 
 The select-Enter bug blocks any shard whose schema has a `select` value with `default = first option` — including obsidian-mind. Fix is mechanical (drop `defaultValue`, reorder options); regression test pins the failure mode.
 
-- [ ] Wizard select stuck on Enter when default = first option ([#103](https://github.com/breferrari/shardmind/issues/103))
+- [x] Wizard select stuck on Enter when default = first option ([#103](https://github.com/breferrari/shardmind/issues/103))
 
 ### 0.1.x — Flagship UX stabilization
 

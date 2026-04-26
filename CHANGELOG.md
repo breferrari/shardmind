@@ -8,6 +8,17 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-04-26
+
+### Fixed (wizard select stuck on Enter when default = first option)
+
+Closes [#103](https://github.com/breferrari/shardmind/issues/103). First entry on the v0.1.x stabilization track. Surfaced during a real `shardmind adopt` against `breferrari/obsidian-mind`, where the schema default for `vault_purpose` (`engineering`) matched the first option — pressing Enter on the focused option did nothing and the wizard froze. Blocks any shard whose schema has a `select` value with `default = first option`.
+
+- **`source/components/ValueInput.tsx`** — the `select` branch reorders options so the option matching `initial` (`initialValue ?? def.default`) sits at index 0, and drops the `defaultValue` prop. Upstream cause: `@inkjs/ui`'s `use-select-state.js` seeds `previousValue === value === defaultValue` while `focusedValue` initializes to the first option; on Enter the change-fire guard (`previousValue !== value`) then fails when `defaultValue` equals the first option, so `onChange` never fires. Dropping `defaultValue` makes `previousValue` start undefined; the reorder keeps the cursor visually pre-positioned on the default.
+- **Adversarial cases covered** — `tests/component/ValueInput.test.tsx` adds 6 cases: default = first option (the regression); default = middle option (reorder must surface non-first defaults at the cursor); single-option select with the bug pattern; no default + no initialValue; back-navigation prefill (`initialValue ≠ default`); `initialValue` not in options (graceful fallback to the first option). The existing `arrow + Enter` test stays. The diff also folds the repeated `await waitFor(() => onSubmit.mock.calls.length > 0 ? 'ok' : '', …)` idiom into a `waitForCall(fn)` helper in `tests/component/helpers.ts`.
+- **No `source/core/` change.** Component-layer fix; no engine surface, no new error code, no new module, no spec or architecture-doc edits.
+- **Tests: 862 → 868 (+6)**.
+
 ## [0.1.0] - 2026-04-26
 
 First public release. Ships the v6 engine: install (with `--defaults` and Invariant 1 byte-equivalence guarantee), update (with `--release`, `--include-prerelease`, and ref re-resolution), adopt (retrofit existing shard clones), status, and post-install / post-update hooks. The flagship obsidian-mind v6 conversion + research-wiki shard land in subsequent point releases.

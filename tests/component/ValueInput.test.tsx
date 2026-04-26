@@ -3,7 +3,7 @@ import { render, cleanup } from 'ink-testing-library';
 import React from 'react';
 import ValueInput from '../../source/components/ValueInput.js';
 import type { ValueDefinition } from '../../source/runtime/types.js';
-import { ENTER, ARROW_DOWN, tick, typeText, waitFor } from './helpers.js';
+import { ENTER, ARROW_DOWN, tick, typeText, waitFor, waitForCall } from './helpers.js';
 
 afterEach(() => {
   cleanup();
@@ -49,7 +49,7 @@ describe('ValueInput', () => {
     await typeText(stdin, 'Alice');
     await waitFor(lastFrame, (f) => f.includes('Alice'));
     stdin.write(ENTER);
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
 
     expect(onSubmit).toHaveBeenCalledWith('Alice');
   });
@@ -121,9 +121,151 @@ describe('ValueInput', () => {
     stdin.write(ARROW_DOWN);
     await tick(30);
     stdin.write(ENTER);
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
 
     expect(onSubmit).toHaveBeenCalledWith('research');
+  });
+
+  // #103 select-Enter regression + adversarial matrix.
+  // Upstream-bug context lives next to the fix in source/components/ValueInput.tsx.
+
+  it('select: default = first option + single Enter fires (#103 regression)', async () => {
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Purpose?',
+      default: 'engineering',
+      options: [
+        { value: 'engineering', label: 'Engineering' },
+        { value: 'independent', label: 'Independent' },
+        { value: 'freelance', label: 'Freelance' },
+      ],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="vault_purpose" def={def} initialValue="engineering" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+
+    expect(onSubmit).toHaveBeenCalledWith('engineering');
+  });
+
+  it('select: default = middle option + single Enter fires the default', async () => {
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Purpose?',
+      default: 'research',
+      options: [
+        { value: 'engineering', label: 'Engineering' },
+        { value: 'research', label: 'Research' },
+        { value: 'general', label: 'General' },
+      ],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="vault_purpose" def={def} initialValue="research" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+
+    expect(onSubmit).toHaveBeenCalledWith('research');
+  });
+
+  it('select: single-option default-matches Enter fires (#103 degenerate edge)', async () => {
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Mode?',
+      default: 'only',
+      options: [{ value: 'only', label: 'Only Choice' }],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="mode" def={def} initialValue="only" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+
+    expect(onSubmit).toHaveBeenCalledWith('only');
+  });
+
+  it('select: no default + no initialValue, Enter fires the first option', async () => {
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Purpose?',
+      options: [
+        { value: 'engineering', label: 'Engineering' },
+        { value: 'research', label: 'Research' },
+        { value: 'general', label: 'General' },
+      ],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="vault_purpose" def={def} initialValue={undefined} onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+
+    expect(onSubmit).toHaveBeenCalledWith('engineering');
+  });
+
+  it('select: back-nav initialValue ≠ default, Enter fires initialValue', async () => {
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Purpose?',
+      default: 'engineering',
+      options: [
+        { value: 'engineering', label: 'Engineering' },
+        { value: 'research', label: 'Research' },
+        { value: 'general', label: 'General' },
+      ],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="vault_purpose" def={def} initialValue="general" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+
+    expect(onSubmit).toHaveBeenCalledWith('general');
+  });
+
+  it('select: initialValue not in options falls back to first option (no freeze)', async () => {
+    const def: ValueDefinition = {
+      type: 'select',
+      required: true,
+      message: 'Purpose?',
+      default: 'engineering',
+      options: [
+        { value: 'engineering', label: 'Engineering' },
+        { value: 'research', label: 'Research' },
+        { value: 'general', label: 'General' },
+      ],
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="vault_purpose" def={def} initialValue="renamed-old-value" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+
+    expect(onSubmit).toHaveBeenCalledWith('engineering');
   });
 
   it('boolean: y confirms → onSubmit(true)', async () => {
@@ -139,7 +281,7 @@ describe('ValueInput', () => {
     );
 
     stdin.write('y');
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
     expect(onSubmit).toHaveBeenCalledWith(true);
   });
 
@@ -156,7 +298,7 @@ describe('ValueInput', () => {
     );
 
     stdin.write('n');
-    await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
+    await waitForCall(onSubmit);
     expect(onSubmit).toHaveBeenCalledWith(false);
   });
 
