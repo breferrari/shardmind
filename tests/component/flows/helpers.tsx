@@ -307,8 +307,6 @@ export interface BuildCustomTarballOpts {
   mutate?: (workDir: string) => Promise<void>;
   /** Output dir; tarball lands as `<outDir>/<prefix>.tar.gz`. */
   outDir: string;
-  /** Source fixture dir. Defaults to `examples/minimal-shard`. */
-  sourceDir?: string;
   /**
    * Tarball prefix. Must match GitHub's `<repo>-<sha>/` pattern shape so
    * `download.ts`'s `tar.x({ strip: 1 })` works. Defaults to
@@ -320,14 +318,13 @@ export interface BuildCustomTarballOpts {
 export async function buildCustomTarball(
   opts: BuildCustomTarballOpts,
 ): Promise<string> {
-  const sourceDir = opts.sourceDir ?? MINIMAL_SHARD;
   const prefix = opts.prefix ?? `minimal-shard-${opts.version}`;
   const workRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), `shardmind-custom-tar-${opts.version}-`),
   );
   try {
     const workDir = path.join(workRoot, prefix);
-    await copyDir(sourceDir, workDir);
+    await copyDir(MINIMAL_SHARD, workDir);
 
     if (opts.schema) {
       const schemaPath = path.join(workDir, '.shardmind', 'shard-schema.yaml');

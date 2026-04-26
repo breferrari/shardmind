@@ -79,6 +79,17 @@ describe('flow harness', () => {
     }
   }, 15_000);
 
+  it('stub.setVersion throws on unknown shard slug', () => {
+    const { stub } = getCtx();
+    // Mirrors setLatest / setRef's unknown-slug guards. Pinned so a
+    // typo'd slug in a future scenario surfaces as a clear test-time
+    // error instead of a silent 404 from the stub's tarball endpoint
+    // (which would manifest as "download failed" 30 seconds later).
+    expect(() =>
+      stub.setVersion('acme/does-not-exist', '0.1.0', '/dev/null'),
+    ).toThrow(/unknown shard/);
+  });
+
   it('builds a custom tarball with overridden schema + manifest', async () => {
     const vault = await makeVaultDir('harness-custom-tar');
     try {

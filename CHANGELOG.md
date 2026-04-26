@@ -28,7 +28,7 @@ Closes [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1 (Layer
 
 - **`ROADMAP.md`** restructures the #111 row under `### 0.1.x — Foundation` from a single checkbox to three sub-bullets (Phase 1 ✓, Phase 2, Phase 3). Phase 1 unblocks the Flagship UX stabilization tickets; Phase 2 (real-PTY) and Phase 3 (ongoing extensions) remain open work.
 
-- **Tests: 875 → 903 (+28)**: 2 registry unit (lazy env reads) + 3 harness smoke + 10 install scenarios + 5 update scenarios + 5 adopt scenarios + 2 status scenarios + 1 framework-level case observed during scenario shake-out. Suite wall-clock grows by ~30 s in isolation; vitest parallelizes across files so the full-suite delta is bounded.
+- **Tests: 875 → 904 (+29)**: 2 registry unit (lazy env reads) + 4 harness smoke (route / cwd / setVersion-throw / custom-tarball) + 10 install scenarios + 5 update scenarios + 5 adopt scenarios + 2 status scenarios + 1 framework-level case observed during scenario shake-out. Suite wall-clock grows by ~30 s in isolation; vitest parallelizes across files so the full-suite delta is bounded.
 
 - **Engine surface intact**: no production code change beyond `source/core/registry.ts`'s lazy reads (the seam Phase 1 needed). No new error code. No new component. No `docs/ARCHITECTURE.md` / `docs/IMPLEMENTATION.md` / `docs/SHARD-LAYOUT.md` edit.
 
