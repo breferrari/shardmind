@@ -283,11 +283,19 @@ export async function spawnCliPty(
         // newly-mounted component's `useInput` subscription is fully
         // registered. A keystroke written immediately after a match
         // can land between render-commit and effect-flush, where no
-        // input handler exists yet — the byte gets dropped silently.
-        // Mirrors the same settle pattern in
-        // `tests/component/helpers.ts::waitFor` (Layer 1) for the same
-        // reason. 30 ms is empirically sufficient on a busy machine.
-        await tick(30);
+        // input handler exists yet — the byte gets dropped silently
+        // (TextInput shows "lice" instead of "Alice", etc.).
+        // Layer 1's `tests/component/helpers.ts::waitFor` settles 30
+        // ms because in-process effects flush within a microtask.
+        // Layer 2 has to absorb the kernel PTY pipeline on top of
+        // that — master → slave → child stdin → Ink raw-mode reader
+        // — and the worst case under 4× full-suite + 8× isolated
+        // parallel pressure measured ~70 ms before the first
+        // keystroke would land. 100 ms gives headroom; the only
+        // cost is `~1 s` of cumulative delay across the L2 suite,
+        // which is dwarfed by the 5 s wall clock the suite spends
+        // in actual PTY work.
+        await tick(100);
         return last;
       }
       await tick(poll);
@@ -373,22 +381,57 @@ export async function spawnCliPty(
 }
 
 /**
- * Type a string one character at a time, with a short pause between
- * each keystroke so React commits each insert before the next byte
- * arrives. Mirrors `tests/component/helpers.ts::typeText` — same
- * rationale (see comment there) translated to PTY: @inkjs/ui's
- * TextInput onSubmit captures `state.value` in a useCallback closure;
- * batching multiple bytes into one render leaves the closure stale
- * relative to the rendered string.
+ * Type a string into a TextInput, verifying the rendered content
+ * matches and retrying on partial drops.
+ *
+ * The first byte after a TextInput mounts can be dropped under
+ * heavy parallel-CPU contention: Ink's render commit precedes its
+ * `useInput` subscription, so a byte arriving in the kernel PTY
+ * buffer between those phases is consumed before any handler exists.
+ * Symptom: "Alice" appears as "lice" — leading 'A' lost.
+ *
+ * Mitigation here is content-aware retry rather than longer settle:
+ *   1. Write the full string char-by-char (same per-char delay as
+ *      `tests/component/helpers.ts::typeText`).
+ *   2. Verify `text` appears in the rendered screen. The user
+ *      names this helper handles (e.g. "Alice", "Dana") never
+ *      collide with the wizard chrome, so a substring match is a
+ *      sufficient predicate.
+ *   3. On miss: clear any partial input via repeated BACKSPACE
+ *      (no-op once the input is empty), then loop. Three attempts
+ *      total before surrender — by then either the input pipeline
+ *      is genuinely broken (real bug) or this scenario's wall-clock
+ *      budget is the right place to surface it via the caller's
+ *      eventual `waitForScreen` timeout.
  */
 export async function typeIntoPty(
-  handle: { write: (s: string) => void },
+  handle: PtyHandle,
   text: string,
   perCharDelayMs = 25,
 ): Promise<void> {
-  for (const ch of text) {
-    handle.write(ch);
-    await tick(perCharDelayMs);
+  if (text.length === 0) return;
+  const VERIFY_BUDGET_MS = 400;
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    for (const ch of text) {
+      handle.write(ch);
+      await tick(perCharDelayMs);
+    }
+    const deadline = Date.now() + VERIFY_BUDGET_MS;
+    while (Date.now() < deadline) {
+      if (handle.screen.contains(text)) return;
+      await tick(30);
+    }
+    if (attempt === MAX_ATTEMPTS - 1) return;
+    // Clear any partial input. Send `text.length + 2` BACKSPACEs:
+    // worst case the input is full (length chars) + cursor at end;
+    // BACKSPACE on empty is a TextInput no-op so over-clearing is
+    // safe.
+    for (let i = 0; i < text.length + 2; i++) {
+      handle.write(BACKSPACE);
+      await tick(10);
+    }
+    await tick(50);
   }
 }
 
