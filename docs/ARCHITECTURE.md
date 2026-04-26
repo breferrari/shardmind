@@ -1446,10 +1446,15 @@ an end user would — no direct core imports, no vitest mocks — while
 staying hermetic. No test reaches the public internet.
 
 - **Production hook**: `source/core/registry.ts` reads its API base from
-  `SHARDMIND_GITHUB_API_BASE` (env, read once at module load). The same
-  env var is used by future work (#34 `validate`, #39 alternate
-  registries, enterprise GHE support). `SHARDMIND_REGISTRY_INDEX_URL`
-  has the same shape for the namespaced `owner/repo` index lookup.
+  `SHARDMIND_GITHUB_API_BASE` (env, read at call time so in-process
+  Layer 1 flow tests can mutate the env in `beforeAll` after the
+  static-import graph has loaded the module — see
+  `tests/component/flows/`, [#111](https://github.com/breferrari/shardmind/issues/111)
+  Phase 1). The same env var is used by future work (#34 `validate`,
+  #39 alternate registries, enterprise GHE support).
+  `SHARDMIND_REGISTRY_INDEX_URL` has the same shape — and the same
+  call-time-read rationale — for the namespaced `owner/repo` index
+  lookup.
 - **Stub**: `tests/e2e/helpers/github-stub.ts` spins up an HTTP server on
   `127.0.0.1:0` (OS-assigned port) that emulates the GitHub REST
   endpoints the engine consumes — `/releases?per_page=N` (filtered listing),

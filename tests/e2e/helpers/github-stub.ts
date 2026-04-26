@@ -86,6 +86,15 @@ export interface GitHubStub {
   /** Atomically change the "latest" for a shard. Takes effect on next request. */
   setLatest: (slug: string, version: string) => void;
   /**
+   * Atomically register (or replace) a version → tarball mapping. The
+   * `/tarball/v<version>` endpoint serves the new path on next request.
+   * Pair with `setLatest` for tag-install / update-bump scenarios where
+   * the test discovers fixture paths inside its own `beforeAll`. Mirrors
+   * the construction-time `versions` map but is callable at any point
+   * after the stub is up.
+   */
+  setVersion: (slug: string, version: string, tarballPath: string) => void;
+  /**
    * Atomically point a ref at a SHA (and the SHA at a fixture tarball).
    * Used by ref-install + branch-bump update scenarios. Both endpoints
    * (`/commits/<ref>` and `/tarball/<sha>`) start serving the new
@@ -243,6 +252,11 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
       const spec = shards.get(slug.toLowerCase());
       if (!spec) throw new Error(`setLatest: unknown shard ${slug}`);
       spec.latest = version;
+    },
+    setVersion: (slug, version, tarballPath) => {
+      const spec = shards.get(slug.toLowerCase());
+      if (!spec) throw new Error(`setVersion: unknown shard ${slug}`);
+      spec.versions = { ...spec.versions, [version]: tarballPath };
     },
     setRef: (slug, ref, sha, tarballPath) => {
       const spec = shards.get(slug.toLowerCase());
