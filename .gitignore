@@ -71,3 +71,4 @@ tmp/
 .local/
 .artifacts/
 /.smoke/
+.audit/
