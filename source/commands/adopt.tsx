@@ -1,5 +1,4 @@
 import { Box, Text } from 'ink';
-import { createRequire } from 'node:module';
 import zod from 'zod';
 
 import { ShardMindError, assertNever } from '../runtime/types.js';
@@ -11,14 +10,9 @@ import AdoptSummary from '../components/AdoptSummary.js';
 import CommandFrame from '../components/CommandFrame.js';
 import CommandProgress from '../components/CommandProgress.js';
 import HookProgress from '../components/HookProgress.js';
-import SelfUpdateBanner from '../components/SelfUpdateBanner.js';
 
 import { useAdoptMachine } from './hooks/use-adopt-machine.js';
-import { useSelfUpdateCheck } from './hooks/use-self-update-check.js';
-
-const pkg = createRequire(import.meta.url)('../../package.json') as {
-  version: string;
-};
+import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 
 export const args = zod.tuple([
   zod
@@ -69,11 +63,7 @@ export default function Adopt({ args, options }: Props) {
     vaultRoot: process.cwd(),
   });
 
-  const { info: selfUpdateInfo } = useSelfUpdateCheck({
-    noUpdateCheck,
-    currentVersion: pkg.version,
-  });
-  const banner = <SelfUpdateBanner info={selfUpdateInfo} />;
+  const banner = useSelfUpdateBanner({ noUpdateCheck });
 
   // Exhaustive switch: adding a new Phase variant without a case here is
   // a compile error, not a silent render-nothing bug.

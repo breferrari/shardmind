@@ -20,20 +20,14 @@
  */
 
 import { Box, Text } from 'ink';
-import { createRequire } from 'node:module';
 import zod from 'zod';
 
 import { Spinner, StatusMessage } from '../components/ui.js';
 import StatusView from '../components/StatusView.js';
 import VerboseView from '../components/VerboseView.js';
-import SelfUpdateBanner from '../components/SelfUpdateBanner.js';
 import { ShardMindError, assertNever } from '../runtime/types.js';
 import { useStatusReport } from './hooks/use-status-report.js';
-import { useSelfUpdateCheck } from './hooks/use-self-update-check.js';
-
-const pkg = createRequire(import.meta.url)('../../package.json') as {
-  version: string;
-};
+import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 
 export const options = zod.object({
   verbose: zod
@@ -53,10 +47,7 @@ type Props = {
 export default function Index({ options }: Props) {
   const { verbose, noUpdateCheck } = options;
   const { phase } = useStatusReport({ vaultRoot: process.cwd(), verbose });
-  const { info: selfUpdateInfo } = useSelfUpdateCheck({
-    noUpdateCheck,
-    currentVersion: pkg.version,
-  });
+  const banner = useSelfUpdateBanner({ noUpdateCheck });
 
   // Hoist phase rendering into a single expression so the self-update
   // banner can sit above every status variant without each switch arm
@@ -89,7 +80,7 @@ export default function Index({ options }: Props) {
 
   return (
     <Box flexDirection="column">
-      <SelfUpdateBanner info={selfUpdateInfo} />
+      {banner}
       {phaseContent}
     </Box>
   );

@@ -1,5 +1,4 @@
 import { Box, Text } from 'ink';
-import { createRequire } from 'node:module';
 import { Spinner, StatusMessage, Alert } from '../components/ui.js';
 import zod from 'zod';
 
@@ -12,17 +11,9 @@ import CommandProgress from '../components/CommandProgress.js';
 import HookProgress from '../components/HookProgress.js';
 import Summary from '../components/Summary.js';
 import CommandFrame from '../components/CommandFrame.js';
-import SelfUpdateBanner from '../components/SelfUpdateBanner.js';
 
 import { useInstallMachine } from './hooks/use-install-machine.js';
-import { useSelfUpdateCheck } from './hooks/use-self-update-check.js';
-
-// Read the CLI version once at bundle entry. tsup emits each command as
-// `dist/commands/<name>.js`, so `../../package.json` resolves to the
-// package root in both dev and published layouts. Same pattern as cli.ts.
-const pkg = createRequire(import.meta.url)('../../package.json') as {
-  version: string;
-};
+import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 
 export const args = zod.tuple([
   zod.string().describe('Shard reference, e.g. "breferrari/obsidian-mind" or "github:owner/repo"'),
@@ -66,11 +57,7 @@ export default function Install({ args, options }: Props) {
     vaultRoot: process.cwd(),
   });
 
-  const { info: selfUpdateInfo } = useSelfUpdateCheck({
-    noUpdateCheck,
-    currentVersion: pkg.version,
-  });
-  const banner = <SelfUpdateBanner info={selfUpdateInfo} />;
+  const banner = useSelfUpdateBanner({ noUpdateCheck });
 
   // Exhaustive switch: adding a new Phase variant without a case here
   // is a compile error, not a silent render-nothing bug.

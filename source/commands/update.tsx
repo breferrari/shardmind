@@ -1,5 +1,4 @@
 import { Box, Text } from 'ink';
-import { createRequire } from 'node:module';
 import zod from 'zod';
 
 import { Spinner, StatusMessage, Alert } from '../components/ui.js';
@@ -14,14 +13,9 @@ import HookProgress from '../components/HookProgress.js';
 import UpdateSummary from '../components/UpdateSummary.js';
 import CommandFrame from '../components/CommandFrame.js';
 import Header from '../components/Header.js';
-import SelfUpdateBanner from '../components/SelfUpdateBanner.js';
 
 import { useUpdateMachine } from './hooks/use-update-machine.js';
-import { useSelfUpdateCheck } from './hooks/use-self-update-check.js';
-
-const pkg = createRequire(import.meta.url)('../../package.json') as {
-  version: string;
-};
+import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 
 export const options = zod.object({
   yes: zod.boolean().default(false).describe('Accept defaults for every prompt (auto-keeps conflicts)'),
@@ -68,11 +62,7 @@ export default function Update({ options }: Props) {
     includePrerelease,
   });
 
-  const { info: selfUpdateInfo } = useSelfUpdateCheck({
-    noUpdateCheck,
-    currentVersion: pkg.version,
-  });
-  const banner = <SelfUpdateBanner info={selfUpdateInfo} />;
+  const banner = useSelfUpdateBanner({ noUpdateCheck });
 
   switch (phase.kind) {
     case 'booting':
