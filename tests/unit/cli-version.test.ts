@@ -92,21 +92,32 @@ describe('resolvePkgVersion', () => {
 
   // ───── Negative / pathological cases ─────────────────────────────
 
-  it('returns the fallback when no package.json exists anywhere on the walk', async () => {
-    // No package.json written anywhere. The walk hits the filesystem
-    // root before depth runs out (or vice versa) and returns the
-    // sentinel rather than blowing up.
-    const file = path.join(root, 'dist', 'cli.js');
+  it('returns the fallback when every walked ancestor has a foreign package.json', async () => {
+    // Plant a foreign-named package.json at every level the walk could
+    // possibly visit (file's directory + every parent up through the
+    // depth cap), then assert the resolver returns the fallback. This
+    // pins the `name === 'shardmind'` guard deterministically: a
+    // regression that returned the FIRST package.json regardless of
+    // name would fail here, because every candidate is foreign-named.
+    const nestedParts = Array.from(
+      { length: PKG_RESOLVE_MAX_DEPTH + 1 },
+      (_, i) => `level-${i}`,
+    );
+    const file = path.join(root, ...nestedParts, 'cli.js');
     await writeFile(file);
-    // The fallback fires when no shardmind package.json is found
-    // within the depth cap. Above `root` lies the developer's actual
-    // dev tree (which may contain ancestor package.json files for
-    // unrelated projects), so depending on the test host this returns
-    // either the fallback (no ancestor matches) or an unrelated
-    // version. Either way it must NOT pretend to be a shardmind
-    // version derived from this fixture: the fixture has none.
-    const result = resolvePkgVersion(pathToFileURL(file).toString());
-    expect(result === PKG_VERSION_FALLBACK || /^\d+\.\d+\.\d+/.test(result)).toBe(true);
+
+    let currentDir = path.dirname(file);
+    for (let depth = 0; depth <= PKG_RESOLVE_MAX_DEPTH; depth += 1) {
+      await writePkg(currentDir, {
+        name: `foreign-${depth}`,
+        version: `${depth}.0.0`,
+      });
+      currentDir = path.dirname(currentDir);
+    }
+
+    expect(resolvePkgVersion(pathToFileURL(file).toString())).toBe(
+      PKG_VERSION_FALLBACK,
+    );
   });
 
   it('walks past a foreign package.json with the wrong name', async () => {

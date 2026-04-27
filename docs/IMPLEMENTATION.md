@@ -1264,7 +1264,7 @@ The directory is created on first successful fetch. Writes are atomic (`writeFil
 - Atomic writes prevent half-written JSON from being read concurrently.
 - Corrupt JSON / EISDIR self-heal so a crashed half-write can't wedge the cache forever.
 - Non-finite or future-dated `checked_at` collapses to "stale, refetch" rather than producing impossible age.
-- Every failure mode degrades to `null`; the courtesy notifier cannot crash a real command. Verified by 29 unit tests + 8 Layer 1 flow tests.
+- Every failure mode degrades to `null`; the courtesy notifier cannot crash a real command. Verified by 30 unit tests + 9 Layer 1 flow tests.
 
 **Override knobs** (call-time env reads, mirrors §4.15's posture):
 - `SHARDMIND_SELF_UPDATE_REGISTRY_URL` — point at a stub server in tests.

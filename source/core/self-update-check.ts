@@ -322,18 +322,23 @@ function isValidCacheShape(value: unknown): value is SelfUpdateCache {
 }
 
 /**
- * Fetch `registry.npmjs.org/shardmind/latest`, parse `.version`, return
- * a normalized semver string. Throws on any failure (timeout, HTTP
- * error, malformed JSON, missing `.version` field) so the public entry
- * point's `try/catch` collapses everything to `null`.
+ * Fetch `registry.npmjs.org/shardmind/latest`, parse `.version`, and
+ * return a normalized semver string.
+ *
+ * Returns `null` when the response payload is unusable for version
+ * extraction — non-object/malformed JSON or a missing/invalid `.version`
+ * field. Throws on transport-level failures (timeout, abort, non-success
+ * HTTP status) so the public entry point's `try/catch` can still
+ * collapse those to `null`. Splitting the contract this way keeps
+ * `null` reserved for "the server answered, the answer is just unusable"
+ * and `throw` reserved for "we never got a usable answer at all" —
+ * useful when verbose logging eventually wires the typed
+ * `SELF_UPDATE_CHECK_FAILED` code through.
  *
  * Timeout enforced via `AbortController` — same primitive as
- * update-check.ts. The translated `SELF_UPDATE_CHECK_FAILED` is never
- * surfaced to the user (caller swallows), but the typed code preserves
- * the distinction for verbose logging if that ever lands.
- *
- * If a caller-provided `signal` is passed and aborts, the same
- * AbortController is short-circuited so the fetch cancels promptly.
+ * update-check.ts. If a caller-provided `signal` is passed and aborts,
+ * the same AbortController is short-circuited so the fetch cancels
+ * promptly.
  */
 async function fetchLatestWithTimeout(
   timeoutMs: number,

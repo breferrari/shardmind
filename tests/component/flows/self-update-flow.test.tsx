@@ -17,7 +17,7 @@
  * stays untouched.
  *
  * Spec citation: ROADMAP §0.1.x Foundation #113;
- * docs/IMPLEMENTATION.md §4.16 (Self-update check).
+ * docs/IMPLEMENTATION.md §4.19 (Self-update check).
  */
 
 import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';

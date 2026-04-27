@@ -1,9 +1,10 @@
 import { Box, Text } from 'ink';
 
 /**
- * One-line "newer shardmind on npm" banner. Renders nothing when
- * `info` is `null` (suppressed via flag / env / non-TTY / cache miss /
- * fetch failure / current === latest) so callers can render it
+ * Two-line "newer shardmind on npm" banner — one line for the version
+ * announcement, one for the actionable install command. Renders nothing
+ * when `info` is `null` (suppressed via flag / env / non-TTY / cache
+ * miss / fetch failure / current === latest) so callers can render it
  * unconditionally above their main UI without conditional wrapping.
  *
  * The data is delivered via the `useSelfUpdateCheck` hook, which fires
