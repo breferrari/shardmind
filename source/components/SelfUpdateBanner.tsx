@@ -11,7 +11,7 @@ import { Box, Text } from 'ink';
  * carries the banner. Subsequent frames pick it up once the (cached or
  * live) result resolves.
  *
- * See ROADMAP §0.1.x Foundation #113 + docs/IMPLEMENTATION.md §4.16.
+ * See ROADMAP §0.1.x Foundation #113 + docs/IMPLEMENTATION.md §4.19.
  */
 interface SelfUpdateBannerProps {
   info: { current: string; latest: string } | null;

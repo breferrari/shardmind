@@ -41,7 +41,7 @@
  *     as a live entry, mirroring the posture in drift detection.
  *
  * Spec: ROADMAP §0.1.x Foundation #113. Mirrors docs/IMPLEMENTATION.md
- * §4.15 (update-check); see §4.16 for this module.
+ * §4.15 (update-check); see §4.19 for this module.
  */
 
 import fsp from 'node:fs/promises';
