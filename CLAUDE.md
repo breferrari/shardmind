@@ -130,6 +130,7 @@ shardmind/
 │   │       ├── use-update-machine.ts
 │   │       ├── use-adopt-machine.ts
 │   │       ├── use-status-report.ts   # Async loader for status command
+│   │       ├── use-self-update-check.ts # Async npm-registry check + suppression rules (#113)
 │   │       └── shared.ts              # summarizeHook, useSigintRollback
 │   ├── components/
 │   │   ├── CommandFrame.tsx           # Dry-run banner + keyboard legend
@@ -148,6 +149,7 @@ shardmind/
 │   │   ├── RemovedFilesReview.tsx     # Update: per-file keep/delete decision
 │   │   ├── HookProgress.tsx           # Live output tail while a post-install/-update hook runs
 │   │   ├── HookSummarySection.tsx     # Four-branch hook outcome render, shared by Summary + UpdateSummary
+│   │   ├── SelfUpdateBanner.tsx       # One-line "newer shardmind on npm" notice, rendered above each command (#113)
 │   │   ├── Summary.tsx                # Final install report
 │   │   ├── UpdateSummary.tsx          # Final update report
 │   │   ├── ValueInput.tsx             # Typed input widget (string/number/select…)
@@ -177,6 +179,7 @@ shardmind/
 │   │   ├── values-io.ts               # Shared YAML load for shard-values.yaml
 │   │   ├── values-defaults.ts         # `valuesAreDefaults(values, schema)` — Invariant 2 helper
 │   │   ├── update-check.ts            # 24h cached latest-version lookup (status + update)
+│   │   ├── self-update-check.ts       # 24h cached npm-registry check for newer engine versions (#113)
 │   │   ├── status.ts                  # Pure StatusReport builder for the status command
 │   │   ├── cancellation.ts            # Cross-platform SIGINT bridge (Windows stdin-ETX)
 │   │   ├── hook.ts                    # Post-install / post-update hook lookup + subprocess execution
@@ -333,6 +336,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `values-defaults.ts` | §4.16 (HookContext extensions) | `valuesAreDefaults(values, schema)` — deep-equal pure fn for Invariant 2 |
 | `status.ts` | §4.14 | Pure StatusReport builder for the `shardmind` (status) command |
 | `update-check.ts` | §4.15 | 24h cached GitHub latest-version lookup shared by status + update |
+| `self-update-check.ts` | §4.19 | 24h cached npm-registry check for newer shardmind engine versions; powers `<SelfUpdateBanner>` |
 | `cancellation.ts` | ARCHITECTURE §19.7 | Cross-platform SIGINT bridge (Windows stdin-ETX → process.emit SIGINT) |
 | `state-migrator.ts` | §4.7 (v0.2 hook) | Forward-migration framework for `.shardmind/state.json`; scaffolding in v0.1 |
 | `hook.ts` | §4.16 | Resolve + execute post-install / post-update hook scripts via bundled `tsx` subprocess (non-fatal) |
