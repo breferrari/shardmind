@@ -132,6 +132,7 @@ shardmind/
 │   │       ├── use-status-report.ts   # Async loader for status command
 │   │       ├── use-self-update-check.ts # Async npm-registry check + suppression rules (#113)
 │   │       ├── use-self-update-banner.tsx # Composed hook: pkg.version + check + <SelfUpdateBanner /> (#113)
+│   │       ├── cli-version.ts         # Bundle-aware shardmind pkg.version resolver (#113)
 │   │       └── shared.ts              # summarizeHook, useSigintRollback
 │   ├── components/
 │   │   ├── CommandFrame.tsx           # Dry-run banner + keyboard legend
