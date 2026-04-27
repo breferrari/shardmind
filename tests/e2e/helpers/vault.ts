@@ -68,7 +68,16 @@ export async function createEmptyVault(prefix = 'vault'): Promise<Vault> {
     listFiles: () => listRecursive(root),
     cleanup: async () => {
       activeVaults.delete(root);
-      await fs.rm(root, { recursive: true, force: true });
+      // `maxRetries` + `retryDelay` absorb Windows ENOTEMPTY: an install
+      // subprocess that's just exited may still hold file handles open
+      // for a few hundred ms while the OS reclaims them, so a recursive
+      // rmdir on the vault races the descriptor close and fails with
+      // ENOTEMPTY. Per Node's `fs.rm` docs, `maxRetries` is honored only
+      // when `force: true`, with linear backoff over the listed errors
+      // (EBUSY/EMFILE/ENFILE/ENOTEMPTY/EPERM). 5 × 100ms is well under any
+      // realistic test timeout but generous enough for typical Windows
+      // antivirus + handle-close jitter.
+      await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     },
   };
 }
@@ -117,7 +126,12 @@ export async function cleanupAllVaults(): Promise<void> {
   const roots = [...activeVaults];
   activeVaults.clear();
   for (const root of roots) {
-    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    }).catch(() => {});
   }
 }
 
