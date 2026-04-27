@@ -409,9 +409,45 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
     }
   }, 60_000);
 
-  // ───── 8. Banner suppressed when npm stub returns 5xx (offline-ish) ─────
+  // ───── 8. Lifecycle: unmount mid-fetch — no banner, no crash ─────
 
-  it('8. banner suppressed when npm registry is offline (5xx response)', async () => {
+  it('8. unmount before npm stub responds — no banner ever rendered, cleanup runs', async () => {
+    enableBanner();
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    let vault: Vault | null = null;
+    try {
+      vault = await createInstalledVault({
+        stub,
+        shardRef: SHARD_REF,
+        values: DEFAULT_VALUES,
+        prefix: 's113-8b-unmount',
+      });
+      const r = mountStatus({ vaultRoot: vault.root });
+      // Unmount before the hook's setTimeout(0) had a chance to fire
+      // the npm fetch. The cleanup function on the useEffect must run
+      // (clearTimeout + dispose=true) so any in-flight or pending fetch
+      // result is dropped on the floor — no setState on a torn-down tree.
+      r.unmount();
+      // Settle window: even after the npm stub had time to respond, the
+      // React tree is gone, the frame is empty (ink-testing-library
+      // clears to a single newline on unmount), and no framework-level
+      // errors were thrown by the cleanup path. Crucially, the banner
+      // text never appears — the disposed flag suppressed the setInfo
+      // call that would otherwise have followed the resolved fetch.
+      await tick(150);
+      const frame = r.lastFrame() ?? '';
+      expect(frame).not.toContain(`shardmind ${NEWER_VERSION}`);
+      expect(frame).not.toContain('npm install -g shardmind@latest');
+    } finally {
+      if (vault) await vault.cleanup();
+    }
+  }, 60_000);
+
+  // ───── 9. Banner suppressed when npm stub returns 5xx (offline-ish) ─────
+
+  it('9. banner suppressed when npm registry is offline (5xx response)', async () => {
     enableBanner();
     npmStub.setStatus(503);
     const { stub, fixtures } = getCtx();

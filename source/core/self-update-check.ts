@@ -346,11 +346,24 @@ async function fetchLatestWithTimeout(
     controller.abort();
   }, timeoutMs);
   // Wire caller cancellation into our controller so a user-supplied
-  // signal aborts the fetch in addition to our own timer.
+  // signal aborts the fetch in addition to our own timer. The
+  // `listenerAttached` flag tracks whether `addEventListener` was
+  // actually called so the `finally` cleanup doesn't fire a stray
+  // `removeEventListener` for a listener that never existed (the
+  // already-aborted-caller branch skips the `add`). `removeEventListener`
+  // for a non-registered listener is a no-op in Node and the DOM, but
+  // pairing add/remove keeps the side-effect ledger honest and avoids
+  // surprises if this code ever moves to a runtime with stricter
+  // listener bookkeeping.
   const onCallerAbort = () => controller.abort();
+  let listenerAttached = false;
   if (callerSignal) {
-    if (callerSignal.aborted) controller.abort();
-    else callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+    if (callerSignal.aborted) {
+      controller.abort();
+    } else {
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+      listenerAttached = true;
+    }
   }
 
   try {
@@ -368,8 +381,18 @@ async function fetchLatestWithTimeout(
     const data: unknown = await response.json();
     if (!data || typeof data !== 'object') return null;
     const version = (data as Record<string, unknown>)['version'];
-    if (typeof version !== 'string' || !semver.valid(version)) return null;
-    return version;
+    if (typeof version !== 'string') return null;
+    // `semver.valid()` returns the *normalized* form on success (strips
+    // a leading `v`, equates `1.0.0` ≡ `=1.0.0`) and `null` on failure.
+    // Use the normalized return value rather than the raw input — npm
+    // technically responds with raw `version` strings today, but storing
+    // an un-normalized form would make the cache file's `latest_version`
+    // brittle to upstream formatting changes (a future "v1.2.3" or
+    // " 1.2.3" would round-trip into the cache verbatim and trip future
+    // semver consumers). Normalize at ingestion is the safer invariant.
+    const normalized = semver.valid(version);
+    if (!normalized) return null;
+    return normalized;
   } catch (err) {
     if (timedOut) {
       throw new ShardMindError(
@@ -381,7 +404,9 @@ async function fetchLatestWithTimeout(
     throw err;
   } finally {
     clearTimeout(timer);
-    if (callerSignal) callerSignal.removeEventListener('abort', onCallerAbort);
+    if (listenerAttached && callerSignal) {
+      callerSignal.removeEventListener('abort', onCallerAbort);
+    }
   }
 }
 

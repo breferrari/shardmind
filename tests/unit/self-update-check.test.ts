@@ -327,6 +327,32 @@ describe('self-update-check', () => {
       expect(result).toBeNull();
     });
 
+    it('normalizes a leading-v version from the npm response before caching', async () => {
+      // npm's published versions are bare semver, but a typo / stub /
+      // proxied response could return "v1.0.0". semver.valid("v1.0.0")
+      // returns the normalized "1.0.0"; we store the normalized form
+      // so the cache file's `latest_version` stays canonical regardless
+      // of upstream formatting drift.
+      globalThis.fetch = vi.fn(
+        async () =>
+          new Response(JSON.stringify({ version: 'v1.2.3' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      );
+
+      const result = await checkSelfUpdate({
+        currentVersion: '0.1.2',
+        cacheDir,
+        now: Date.now(),
+      });
+      expect(result).toEqual({ outdated: true, latest: '1.2.3' });
+      const raw = await readRawCache(cacheDir);
+      // Cache stores the normalized form, not the raw "v1.2.3".
+      expect(raw).toContain('"latest_version": "1.2.3"');
+      expect(raw).not.toContain('"v1.2.3"');
+    });
+
     it('returns null on malformed JSON body', async () => {
       globalThis.fetch = vi.fn(
         async () =>
