@@ -1225,6 +1225,56 @@ buildFileState(c, hash, ownership) = {
 
 **Dependencies**: `core/state` (initShardDir, cacheTemplates, cacheManifest, writeState), `core/install-planner` (hashValues), `core/fs-utils` (mapConcurrent, pathExists), `runtime/errno`, `runtime/vault-paths`.
 
+### 4.19 `self-update-check.ts`
+
+**Purpose**: 24-hour cached "is there a newer shardmind on npm?" lookup. Sibling of §4.15 (`update-check.ts`) — same hardening posture, different subject. §4.15 answers "newer SHARD on GitHub?" and writes a vault-local cache; §4.19 answers "newer ENGINE on npm?" and writes a user-level cache because the engine is global, not per-vault. Powers the cross-cutting `<SelfUpdateBanner>` rendered above every top-level command's UI.
+
+**Inputs**:
+```typescript
+checkSelfUpdate(opts: {
+  currentVersion: string;
+  cacheDir?: string;
+  ttlMs?: number;
+  fetchTimeoutMs?: number;
+  signal?: AbortSignal;
+  now?: number;
+}): Promise<{ outdated: boolean; latest: string } | null>;
+
+getSelfUpdateCacheDir(): string;
+```
+
+**Storage** (defaults, overridable via `SHARDMIND_SELF_UPDATE_CACHE_DIR`):
+- POSIX with `XDG_CACHE_HOME` set: `$XDG_CACHE_HOME/shardmind/self-update.json`
+- POSIX without XDG: `~/.cache/shardmind/self-update.json`
+- Windows: `%LOCALAPPDATA%\shardmind\self-update.json`
+
+The directory is created on first successful fetch. Writes are atomic (`writeFile(tmp) → rename(tmp, final)`); rename is retried once after a 50ms delay to absorb transient Windows EPERM (mirrors §4.15).
+
+**Algorithm**:
+1. If `currentVersion` is not a valid semver → return `null` (no fetch).
+2. Read cache. If file is corrupt JSON, wrong shape, EISDIR, or wrong `schema_version` → delete it, treat as absent.
+3. If a cache entry exists, `checked_at` is within `TTL_MS = 24h`, and not future-dated → compare against `currentVersion` via `semver.lt` and return `{outdated, latest}`. No network.
+4. Otherwise `GET https://registry.npmjs.org/shardmind/latest` (or `SHARDMIND_SELF_UPDATE_REGISTRY_URL` if set) with a 3-second `AbortController` budget. Caller-supplied `signal` is wired through to the same controller, so caller cancellation aborts the fetch promptly.
+5. Success (HTTP 200, body parses, `.version` is a valid semver) → write cache atomically, compare, return `{outdated, latest}`.
+6. Failure (offline / DNS / 5xx / 404 / malformed body / missing `.version` / write-fail / clock skew) → return `null`. Silent. The banner is a courtesy — never blocks, never crashes a command.
+
+**Pre-release suppression**: `semver.lt('0.2.0-beta.1', '0.1.2')` returns false because the prerelease's M.m.p (`0.2.0`) is greater than the latest stable (`0.1.2`). Dev-branch ahead-of-published (`0.2.0` local vs `0.1.2` published) is suppressed for the same reason. Both yield `outdated: false`, banner suppressed.
+
+**Safety properties**:
+- Atomic writes prevent half-written JSON from being read concurrently.
+- Corrupt JSON / EISDIR self-heal so a crashed half-write can't wedge the cache forever.
+- Non-finite or future-dated `checked_at` collapses to "stale, refetch" rather than producing impossible age.
+- Every failure mode degrades to `null`; the courtesy notifier cannot crash a real command. Verified by 30 unit tests + 9 Layer 1 flow tests.
+
+**Override knobs** (call-time env reads, mirrors §4.15's posture):
+- `SHARDMIND_SELF_UPDATE_REGISTRY_URL` — point at a stub server in tests.
+- `SHARDMIND_SELF_UPDATE_CACHE_DIR` — redirect cache writes in tests.
+- `SHARDMIND_NO_UPDATE_CHECK`, `CI`, `--no-update-check` flag, non-TTY stdout — checked by the CONSUMER hook (`source/commands/hooks/use-self-update-check.ts`), not this module. The module is the engine; the suppression UX is the hook.
+
+**Internal error code**: `SELF_UPDATE_CHECK_FAILED` is fired from `fetchLatestWithTimeout` on timeout / HTTP error and swallowed by the public entrypoint, so it never crosses the boundary. The typed registry rule (§7) binds new codes to declaration regardless.
+
+**Dependencies**: `runtime/types` (ShardMindError), `runtime/errno` (errnoCode), `semver`. No GitHub registry imports — this module deliberately stays separate from §4.15 so the npm vs GitHub split is structural, not just a convention.
+
 ---
 
 ## 5. Runtime Module: `shardmind/runtime`

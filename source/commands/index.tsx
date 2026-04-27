@@ -27,12 +27,17 @@ import StatusView from '../components/StatusView.js';
 import VerboseView from '../components/VerboseView.js';
 import { ShardMindError, assertNever } from '../runtime/types.js';
 import { useStatusReport } from './hooks/use-status-report.js';
+import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 
 export const options = zod.object({
   verbose: zod
     .boolean()
     .default(false)
     .describe('Show full diagnostics (values, modules, files, frontmatter, environment)'),
+  noUpdateCheck: zod
+    .boolean()
+    .default(false)
+    .describe('Disable the once-per-day npm registry check for newer shardmind versions'),
 });
 
 type Props = {
@@ -40,31 +45,45 @@ type Props = {
 };
 
 export default function Index({ options }: Props) {
-  const { verbose } = options;
+  const { verbose, noUpdateCheck } = options;
   const { phase } = useStatusReport({ vaultRoot: process.cwd(), verbose });
+  const banner = useSelfUpdateBanner({ noUpdateCheck });
 
-  switch (phase.kind) {
-    case 'booting':
-    case 'loading':
-      return (
-        <Box gap={1}>
-          <Spinner />
-          <Text>Reading vault…</Text>
-        </Box>
-      );
-    case 'not-in-vault':
-      return <NotInVault />;
-    case 'error':
-      return <ErrorBox error={phase.error} />;
-    case 'ready':
-      return verbose ? (
-        <VerboseView report={phase.report} />
-      ) : (
-        <StatusView report={phase.report} />
-      );
-    default:
-      return assertNever(phase);
-  }
+  // Hoist phase rendering into a single expression so the self-update
+  // banner can sit above every status variant without each switch arm
+  // wrapping itself. The status command doesn't use CommandFrame, so
+  // this is the natural seam for the cross-cutting banner.
+  const phaseContent = (() => {
+    switch (phase.kind) {
+      case 'booting':
+      case 'loading':
+        return (
+          <Box gap={1}>
+            <Spinner />
+            <Text>Reading vault…</Text>
+          </Box>
+        );
+      case 'not-in-vault':
+        return <NotInVault />;
+      case 'error':
+        return <ErrorBox error={phase.error} />;
+      case 'ready':
+        return verbose ? (
+          <VerboseView report={phase.report} />
+        ) : (
+          <StatusView report={phase.report} />
+        );
+      default:
+        return assertNever(phase);
+    }
+  })();
+
+  return (
+    <Box flexDirection="column">
+      {banner}
+      {phaseContent}
+    </Box>
+  );
 }
 
 /**

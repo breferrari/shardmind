@@ -663,6 +663,8 @@ No `list` (vault-local, one shard per vault, nothing to list). No `doctor` (bake
 
 The root command. Shows vault health at a glance. Runs hash comparisons and file existence checks. No network call by default (update check cached for 24 hours).
 
+Every top-level command (`status`, `install`, `update`, `adopt`) additionally hits `registry.npmjs.org/shardmind/latest` once per 24h via [`core/self-update-check.ts`](IMPLEMENTATION.md#419-self-update-checkts) and shows a one-line banner above its UI when a newer engine version is published. Silent on offline / non-TTY / `CI=1` / `--no-update-check` / `SHARDMIND_NO_UPDATE_CHECK`. The check fires after first paint via `setTimeout(0)` so it never delays a render.
+
 **Installed, healthy:**
 
 ```

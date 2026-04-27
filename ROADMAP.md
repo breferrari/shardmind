@@ -106,7 +106,7 @@ Two tickets stop bad releases from shipping. Both are top priority and ship befo
 
 Demoted from "Foundation BLOCKING" on 2026-04-27 (see [#113 comment](https://github.com/breferrari/shardmind/issues/113#issuecomment-4323200504)): with [#112](https://github.com/breferrari/shardmind/issues/112) preventing broken releases from shipping, the self-update notifier is defense-in-depth, not a prerequisite. High priority but not a hard blocker on the flagship-UX track.
 
-- [ ] **Self-update notifier** — every command checks the npm registry once per 24h (cached) and prints a one-line banner when a newer `shardmind` is available. Silent on fetch failure; opt-out via `--no-update-check`, `SHARDMIND_NO_UPDATE_CHECK`, or `CI` env var. Ships in the same release window as the first flagship-UX item, but does not block its start ([#113](https://github.com/breferrari/shardmind/issues/113)).
+- [x] **Self-update notifier** — every command checks the npm registry once per 24h (cached) and prints a one-line banner when a newer `shardmind` is available. Silent on fetch failure; opt-out via `--no-update-check`, `SHARDMIND_NO_UPDATE_CHECK`, or `CI` env var. Ships in the same release window as the first flagship-UX item, but does not block its start ([#113](https://github.com/breferrari/shardmind/issues/113)).
 - [ ] **Release cadence policy** — pin hotfix vs UX vs foundation cadence rules in `RELEASE-SMOKE.md` so smoke-run wall-clock time bounds don't drive ad-hoc batching ([#122](https://github.com/breferrari/shardmind/issues/122)).
 
 ### 0.1.x — Hook lifecycle (breaking change)

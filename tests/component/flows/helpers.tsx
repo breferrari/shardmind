@@ -143,11 +143,21 @@ export interface SetupSuiteOpts {
 export function setupFlowSuite(opts: SetupSuiteOpts): () => FlowSuiteContext {
   let ctx: FlowSuiteContext | null = null;
   const originalApiBase = process.env['SHARDMIND_GITHUB_API_BASE'];
+  // The self-update notifier (#113) fires `checkSelfUpdate` from each
+  // command's mount under `process.stdout.isTTY` ⇒ true (the dev runs
+  // `npm test` in a real terminal). Without this opt-out, every flow
+  // mount would race a live `registry.npmjs.org` GET — flaky, slow, and
+  // a network hit from tests is just wrong. Set the suppression env var
+  // for the suite's lifetime; the dedicated self-update flow file
+  // deletes it per-test to exercise the rendering path against a local
+  // stub.
+  const originalNoSelfUpdate = process.env['SHARDMIND_NO_UPDATE_CHECK'];
 
   beforeAll(async () => {
     const fixtures = await buildTarballFixtures();
     const stub = await createGitHubStub({ shards: opts.shards });
     process.env['SHARDMIND_GITHUB_API_BASE'] = stub.url;
+    process.env['SHARDMIND_NO_UPDATE_CHECK'] = '1';
     ctx = { stub, fixtures };
   }, 90_000);
 
@@ -157,6 +167,11 @@ export function setupFlowSuite(opts: SetupSuiteOpts): () => FlowSuiteContext {
       process.env['SHARDMIND_GITHUB_API_BASE'] = originalApiBase;
     } else {
       delete process.env['SHARDMIND_GITHUB_API_BASE'];
+    }
+    if (originalNoSelfUpdate !== undefined) {
+      process.env['SHARDMIND_NO_UPDATE_CHECK'] = originalNoSelfUpdate;
+    } else {
+      delete process.env['SHARDMIND_NO_UPDATE_CHECK'];
     }
     await cleanupAllVaults();
   });
@@ -186,6 +201,7 @@ export interface InstallOptions {
   defaults?: boolean;
   verbose?: boolean;
   dryRun?: boolean;
+  noUpdateCheck?: boolean;
 }
 
 export function mountInstall(opts: {
@@ -202,6 +218,7 @@ export function mountInstall(opts: {
         defaults: false,
         verbose: false,
         dryRun: false,
+        noUpdateCheck: false,
         ...opts.options,
       }}
     />,
@@ -214,6 +231,7 @@ export interface UpdateOptions {
   dryRun?: boolean;
   release?: string;
   includePrerelease?: boolean;
+  noUpdateCheck?: boolean;
 }
 
 export function mountUpdate(opts: {
@@ -228,6 +246,7 @@ export function mountUpdate(opts: {
         verbose: false,
         dryRun: false,
         includePrerelease: false,
+        noUpdateCheck: false,
         ...opts.options,
       }}
     />,
@@ -239,6 +258,7 @@ export interface AdoptOptions {
   yes?: boolean;
   verbose?: boolean;
   dryRun?: boolean;
+  noUpdateCheck?: boolean;
 }
 
 export function mountAdopt(opts: {
@@ -254,6 +274,7 @@ export function mountAdopt(opts: {
         yes: false,
         verbose: false,
         dryRun: false,
+        noUpdateCheck: false,
         ...opts.options,
       }}
     />,
@@ -262,6 +283,7 @@ export function mountAdopt(opts: {
 
 export interface StatusOptions {
   verbose?: boolean;
+  noUpdateCheck?: boolean;
 }
 
 export function mountStatus(opts: {
@@ -273,6 +295,7 @@ export function mountStatus(opts: {
     <Index
       options={{
         verbose: false,
+        noUpdateCheck: false,
         ...opts.options,
       }}
     />,
