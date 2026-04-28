@@ -1343,7 +1343,7 @@ Renders when `--verbose` flag is set. Full diagnostics with sections for values,
 ### 6.3 `InstallWizard.tsx`
 
 Two phases:
-1. **Values phase**: renders one Ink input per schema value, grouped by `groups[]`. Uses `TextInput` for strings, `Select` for selects, `ConfirmInput` for booleans.
+1. **Values phase**: renders one Ink input per schema value, grouped by `groups[]`. Uses `TextInput` for strings, `Select` for selects, and a two-option `Select` (`Yes` / `No`) for booleans (uniform input model with `select` — see [`docs/AUTHORING.md`](AUTHORING.md#values---wizard-prompts) and #100).
 2. **Module review phase**: `MultiSelect`-style list of removable modules, all checked by default. User unchecks to exclude.
 
 After both phases → confirmation screen → proceed.

@@ -124,7 +124,7 @@ Demoted from "Foundation BLOCKING" on 2026-04-27 (see [#113 comment](https://git
 
 UX gaps surfaced during real obsidian-mind v6 install + adopt runs. None block the engine; each materially improves first-run experience for the flagship and any shard that triggers the same code path. **Each of these touches the wizard or a diff prompt — the exact surface where #103 / #109 lived. No release containing them ships until the smoke gate ([`RELEASE-SMOKE.md`](RELEASE-SMOKE.md), [#112](https://github.com/breferrari/shardmind/issues/112)) has been run against `breferrari/obsidian-mind`.** [#102](https://github.com/breferrari/shardmind/issues/102) was previously listed here; now its own section above (Hook lifecycle).
 
-- [ ] Wizard scroll indicator + boolean prompt consistency (Y/n typed input → selectable Yes/No) ([#100](https://github.com/breferrari/shardmind/issues/100)) — smallest item, recommended starting point.
+- [x] Wizard scroll indicator + boolean prompt consistency (Y/n typed input → selectable Yes/No) ([#100](https://github.com/breferrari/shardmind/issues/100)) — smallest item, recommended starting point.
 - [ ] `multiselect` value type for module-set questions ([#101](https://github.com/breferrari/shardmind/issues/101)) — pairs with #100 (shortens module list)
 - [ ] Adopt: replace step-by-step install wizard with confirm-or-override values flow ([#104](https://github.com/breferrari/shardmind/issues/104))
 - [ ] Adopt batch operations (keep all mine / use all theirs / auto-merge non-conflicting) ([#120](https://github.com/breferrari/shardmind/issues/120)) — pairs with #104.

@@ -173,7 +173,7 @@ Each entry becomes one prompt. Supported `type`s:
 |---|---|---|
 | `string` | TextInput | any string; `required` blocks empty |
 | `number` | TextInput | finite number; honors `min` / `max` |
-| `boolean` | ConfirmInput (y/n) | bool |
+| `boolean` | Select (Yes / No) | bool |
 | `select` | Select | must be one of `options[].value` |
 | `multiselect` | comma-separated text (v0.1) | array of `options[].value` |
 | `list` | comma-separated text | array of strings |
