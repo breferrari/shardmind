@@ -181,6 +181,27 @@ describe('ScrollableMultiSelect — selection', () => {
     expect(frame).toContain('◆ opt-2');
   });
 
+  it('visibleOptionCount=0 (degenerate caller input): clamps to 1 and renders one row', async () => {
+    const { lastFrame } = await mount(
+      <ScrollableMultiSelect options={opts(3)} visibleOptionCount={0} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('opt-0');
+    expect(frame).not.toContain('opt-1');
+    expect(frame).not.toContain('opt-2');
+    expect(frame).toContain('↓ 2 more below');
+  });
+
+  it('visibleOptionCount=-1 (degenerate caller input): clamps to 1, math is sane', async () => {
+    const { lastFrame } = await mount(
+      <ScrollableMultiSelect options={opts(5)} visibleOptionCount={-1} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('opt-0');
+    expect(frame).not.toContain('opt-1');
+    expect(frame).toContain('↓ 4 more below');
+  });
+
   it('isDisabled: blocks all input (no state change, no callbacks)', async () => {
     const onChange = vi.fn();
     const onSubmit = vi.fn();
@@ -204,8 +225,49 @@ describe('ScrollableMultiSelect — selection', () => {
   });
 });
 
+describe('ScrollableMultiSelect — rerender (production shape)', () => {
+  it('parent rerender with new options keeps render consistent and Enter still submits', async () => {
+    // Production shape: parent (ModuleReview / NewModulesReview) recomputes
+    // its `options` from a `useMemo` over upstream module defs. A back-nav
+    // path that re-enters the parent with a different module set must not
+    // leave the multiselect in a desynced state.
+    const onSubmit = vi.fn();
+    const r = render(
+      <ScrollableMultiSelect
+        options={opts(7)}
+        defaultValue={['v0', 'v3']}
+        onSubmit={onSubmit}
+      />,
+    );
+    await tick(30);
+    expect(r.lastFrame() ?? '').toContain('↓ 2 more below');
+
+    // Parent advances state — same component instance, fewer options.
+    r.rerender(
+      <ScrollableMultiSelect
+        options={opts(3)}
+        defaultValue={['v0', 'v3']}
+        onSubmit={onSubmit}
+      />,
+    );
+    await tick(30);
+    const frame = r.lastFrame() ?? '';
+    expect(frame).not.toMatch(/more above|more below/);
+    expect(frame).toContain('opt-0');
+    expect(frame).toContain('opt-2');
+
+    r.stdin.write(ENTER);
+    await waitForCall(onSubmit);
+    // Selection state survives the rerender; foreign defaultValue entries
+    // (v3 not in the new 3-option set) ride through unchanged — same
+    // semantics as @inkjs/ui's MultiSelect. Call sites filter at their
+    // own boundary (ModuleReview, NewModulesReview).
+    expect(onSubmit).toHaveBeenCalledWith(['v0', 'v3']);
+  });
+});
+
 describe('ScrollableMultiSelect — clampScrollOffset (property tests)', () => {
-  it('result is in [0, max(0, total - visible)]', () => {
+  it('result is in [0, max(0, total - visible)] (visible ≥ 1)', () => {
     fc.assert(
       fc.property(
         fc.integer({ min: -10, max: 50 }),
@@ -216,6 +278,21 @@ describe('ScrollableMultiSelect — clampScrollOffset (property tests)', () => {
           const result = clampScrollOffset(offsetIn, focusedIn, total, visible);
           expect(result).toBeGreaterThanOrEqual(0);
           expect(result).toBeLessThanOrEqual(Math.max(0, total - visible));
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
+
+  it('visible ≤ 0: result is always 0 (degenerate-input safety)', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: -10, max: 50 }),
+        fc.integer({ min: -10, max: 50 }),
+        fc.integer({ min: -5, max: 50 }),
+        fc.integer({ min: -5, max: 0 }),
+        (offsetIn, focusedIn, total, visible) => {
+          expect(clampScrollOffset(offsetIn, focusedIn, total, visible)).toBe(0);
         },
       ),
       { numRuns: 200 },

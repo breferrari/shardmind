@@ -31,6 +31,10 @@ export default function ScrollableMultiSelect({
   onSubmit,
   isDisabled = false,
 }: ScrollableMultiSelectProps) {
+  // Defensive clamp so a misconfigured caller (terminal-rows math gone
+  // wrong, accidentally `0`, etc.) can't render an invisible viewport
+  // that still mutates state on keystrokes.
+  const visibleCount = Math.max(1, visibleOptionCount);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [selected, setSelected] = useState<string[]>(() => [...new Set(defaultValue ?? [])]);
@@ -45,8 +49,8 @@ export default function ScrollableMultiSelect({
         const next = Math.min(focusedIndex + 1, options.length - 1);
         if (next === focusedIndex) return;
         setFocusedIndex(next);
-        if (next >= scrollOffset + visibleOptionCount) {
-          setScrollOffset(next - visibleOptionCount + 1);
+        if (next >= scrollOffset + visibleCount) {
+          setScrollOffset(next - visibleCount + 1);
         }
         return;
       }
@@ -86,10 +90,10 @@ export default function ScrollableMultiSelect({
     scrollOffset,
     clampedFocus,
     options.length,
-    visibleOptionCount,
+    visibleCount,
   );
   const visibleStart = clampedOffset;
-  const visibleEnd = Math.min(options.length, clampedOffset + visibleOptionCount);
+  const visibleEnd = Math.min(options.length, clampedOffset + visibleCount);
   const visible = options.slice(visibleStart, visibleEnd);
   const selectedSet = new Set(selected);
   const aboveCount = visibleStart;
