@@ -8,6 +8,22 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (release cadence policy — #119)
+
+Closes [#119](https://github.com/breferrari/shardmind/issues/119). Three releases shipped in 12 hours on launch day under hotfix pressure (`0.1.0 → 0.1.1 → 0.1.2`). With #112's smoke gate now requiring a real-flagship run before each `npm publish`, cadence is bounded by smoke-run wall-clock time. This policy prevents the next batch of v0.1.x work from either over-fragmenting (5 patches in a week, each requiring smoke) or under-batching (one patch per quarter, all changes intermingled).
+
+- **[`RELEASE-SMOKE.md §Release cadence`](RELEASE-SMOKE.md#release-cadence)** (new section) placed after `## When the gate may relax` so the runnable smoke recipe stays first (release-cutter scans top-down for what to RUN; cadence answers "which release this is", a planning question that comes before). Three categories: **hotfix** = any user-blocking bug breaking install/update/adopt against a real shard, single-issue patch, same-day after smoke, branches off the previous released tag (not `main` HEAD) so unreleased UX work doesn't tag along under a hotfix label. **UX** = improvements without user-blocking bugs, 2–4 issues bundled, weekly at most, bundling boundary tied to shared surface (wizard / diff prompts / summary frame). **Foundation** = release / observability / lifecycle infrastructure, own patch each, smoke-tested (cadence is orthogonal to the gate). Hybrid releases dominated by hotfix; UX items in `[Unreleased]` park until the hotfix tag ships, then re-bundle on top of `main`. The "weekly" UX rate is a recommendation; the wall-clock cost of a smoke run is the real bound.
+
+- **[`CLAUDE.md §Release Process`](CLAUDE.md#release-process)** points at `RELEASE-SMOKE.md §Release cadence` from a new **Cadence:** paragraph adjacent to the existing **Binding gate:** paragraph, so a maintainer reading the binding-gate rule (WHEN to smoke) lands on the cadence rule (WHICH release this is) alongside it.
+
+- **`CHANGELOG.md` historical sections retroactively classified** (closes acceptance criterion 2). One-line classification annotation per version: `[0.1.0]` = foundation (engine first-ship; not subject to v0.1.x patch cadence). `[0.1.1]` and `[0.1.2]` = hotfix (one user-blocking bug each). Each annotation cites the policy location so the classification is auditable against the rule that produced it.
+
+- **`ROADMAP.md` row checked + cross-references corrected**. The cadence-policy row's second sentence now describes the shipped policy (three categories, host doc + cross-reference + retroactive classification + first-patch-under-policy callout) rather than restating the goal. Adjacent finding fixed in this PR: ROADMAP.md had three issue numbers swapped across seven cross-references (`#119` ↔ `#122` ↔ `#121`), surfaced while planning. All seven now resolve to the right issue per `gh issue view`; verified post-edit with `grep -n '#119\|#121\|#122' ROADMAP.md`. Numbers were silently rotting the roadmap's navigation invariant.
+
+- **Engine surface unchanged.** No production code touched. No new error code, component, or core module. Source-of-Truth table NOT extended (per #112's precedent — `RELEASE-SMOKE.md` is a process artifact, not a spec). No tests added — process artifact, validated by execution against the next release.
+
+- **Acceptance criteria** (#119 issue body): all satisfied. Policy section added to `RELEASE-SMOKE.md` (criterion 1; chose RELEASE-SMOKE.md over CLAUDE.md per the issue's "or", with one-line cross-reference from CLAUDE.md so a reader of either lands at the policy). Existing 0.1.0/0.1.1/0.1.2 retroactively classified in CHANGELOG.md (criterion 2). v0.1.3 — the release that ships this PR — is the first post-policy release; tags under the policy by definition (criterion 3).
+
 ### Changed (wizard scroll indicator + boolean prompt consistency — #100)
 
 Closes [#100](https://github.com/breferrari/shardmind/issues/100). Two related TUI UX gaps surfaced installing `breferrari/obsidian-mind` v6.0: the optional-modules multi-select silently truncated past the default 5-row viewport with no scroll cue (the reporter initially read it as a missing schema entry), and boolean prompts used a `[Y/n]` typed-input widget while `select` prompts used arrow-key navigation — two visually-similar binary-ish prompts, two different input models. Both surfaces ship together because they share the wizard / value-prompt code path and the test infrastructure (`driveMinimalWizard` migrates through both layers).
@@ -34,7 +50,7 @@ Closes [#100](https://github.com/breferrari/shardmind/issues/100). Two related T
 
 ### Added (self-update notifier — #113)
 
-Closes [#113](https://github.com/breferrari/shardmind/issues/113). The 0.1.0 → 0.1.1 → 0.1.2 cycle in 48h proved the v0.1.x track will keep cutting hotfix releases. A user installed on day-one had zero in-product signal that two critical UX hotfixes had published since — they had to read npm or the CHANGELOG to find out. This PR closes that loop: every top-level command now checks npm once per 24h (cached) and prints a one-line banner above its UI when a newer `shardmind` is available. Silent on offline / non-TTY / `CI` / `--no-update-check` / `SHARDMIND_NO_UPDATE_CHECK`. Pairs with [#112](https://github.com/breferrari/shardmind/issues/112) (smoke gate, just landed): #112 prevents bad releases shipping; this notifier helps users on prior bad releases discover the fix.
+Closes [#113](https://github.com/breferrari/shardmind/issues/113). The 0.1.0 → 0.1.1 → 0.1.2 cycle in 12 hours proved the v0.1.x track will keep cutting hotfix releases. A user installed on day-one had zero in-product signal that two critical UX hotfixes had published since — they had to read npm or the CHANGELOG to find out. This PR closes that loop: every top-level command now checks npm once per 24h (cached) and prints a one-line banner above its UI when a newer `shardmind` is available. Silent on offline / non-TTY / `CI` / `--no-update-check` / `SHARDMIND_NO_UPDATE_CHECK`. Pairs with [#112](https://github.com/breferrari/shardmind/issues/112) (smoke gate, just landed): #112 prevents bad releases shipping; this notifier helps users on prior bad releases discover the fix.
 
 - **`source/core/self-update-check.ts`** (new, ~280 LOC) — sibling of [`source/core/update-check.ts`](source/core/update-check.ts) at the engine layer. Mirrors the same hardening posture (atomic write+rename, EISDIR self-heal, schema_version invalidation, future-dated `checked_at` treated as stale, Windows-EPERM rename retry) but writes a *user-level* cache (`XDG_CACHE_HOME/shardmind`, `LOCALAPPDATA\shardmind`, or `~/.cache/shardmind`) because the engine is global, not per-vault. `checkSelfUpdate({currentVersion, ...}): {outdated, latest} | null` — `null` collapses every failure mode (offline, 5xx, 404, malformed JSON, write-fail, invalid currentVersion, AbortController timeout) so the courtesy notifier never crashes a real command. Pre-release current vs. stable latest naturally suppresses (`semver.lt('0.2.0-beta.1', '0.1.2')` is false). Override knobs `SHARDMIND_SELF_UPDATE_REGISTRY_URL` and `SHARDMIND_SELF_UPDATE_CACHE_DIR` are call-time env reads, mirroring `registry.ts`'s `SHARDMIND_GITHUB_API_BASE` testability pattern.
 
@@ -167,6 +183,8 @@ Closes [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1 (Layer
 
 ## [0.1.2] - 2026-04-26
 
+Retroactively classified as a **hotfix release** per the cadence policy added in v0.1.3 ([`RELEASE-SMOKE.md §Release cadence`](RELEASE-SMOKE.md#release-cadence)). Single user-blocking bug (iterated diff freeze).
+
 ### Fixed (iterated diff prompts freeze after the first decision)
 
 Closes [#109](https://github.com/breferrari/shardmind/issues/109). Hit during a real `shardmind adopt github:breferrari/obsidian-mind` run on the flagship right after #103's 0.1.1 fix unblocked the install wizard: 35 differing files, "Keep mine" worked on file 1, every prompt thereafter was frozen.
@@ -181,6 +199,8 @@ Closes [#109](https://github.com/breferrari/shardmind/issues/109). Hit during a 
 
 ## [0.1.1] - 2026-04-26
 
+Retroactively classified as a **hotfix release** per the cadence policy added in v0.1.3 ([`RELEASE-SMOKE.md §Release cadence`](RELEASE-SMOKE.md#release-cadence)). Single user-blocking bug (wizard select-Enter freeze).
+
 ### Fixed (wizard select stuck on Enter when default = first option)
 
 Closes [#103](https://github.com/breferrari/shardmind/issues/103). First entry on the v0.1.x stabilization track. Surfaced during a real `shardmind adopt` against `breferrari/obsidian-mind`, where the schema default for `vault_purpose` (`engineering`) matched the first option — pressing Enter on the focused option did nothing and the wizard froze. Blocks any shard whose schema has a `select` value with `default = first option`.
@@ -193,6 +213,8 @@ Closes [#103](https://github.com/breferrari/shardmind/issues/103). First entry o
 ## [0.1.0] - 2026-04-26
 
 First public release. Ships the v6 engine: install (with `--defaults` and Invariant 1 byte-equivalence guarantee), update (with `--release`, `--include-prerelease`, and ref re-resolution), adopt (retrofit existing shard clones), status, and post-install / post-update hooks. The flagship obsidian-mind v6 conversion + research-wiki shard land in subsequent point releases.
+
+Retroactively classified as a **foundation release** per the cadence policy added in v0.1.3 ([`RELEASE-SMOKE.md §Release cadence`](RELEASE-SMOKE.md#release-cadence)). Engine first-ship; not subject to v0.1.x patch cadence.
 
 ### Added (v6 layout: contract acceptance suite — full install / update / adopt scenario matrix)
 

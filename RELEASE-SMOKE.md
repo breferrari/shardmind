@@ -122,3 +122,19 @@ Track via [#112](https://github.com/breferrari/shardmind/issues/112) and any fol
 3. **Cancellation Layer 2 nightly.** The Ctrl+C scenarios are already covered under PTY in #111 Phase 2 (scenario 18); the gap is that cancellation against the live flagship hasn't been exercised under a real PTY, only against fixture shards.
 
 Until at least (1) lands, this gate runs before every `npm run release:*`.
+
+## Release cadence
+
+Three releases shipped in 12 hours on launch day under hotfix pressure (`0.1.0 → 0.1.1 → 0.1.2`). With this gate now requiring a real-flagship run before each `npm publish`, cadence is bounded by smoke-run wall-clock time. This section pins the policy that v0.1.x batches release under, so the choice between fragmenting (5 patches in a week, each requiring smoke) and batching (one patch per quarter, all changes intermingled) is rule-driven instead of ad-hoc.
+
+Scope: this policy applies to **v0.1.x patches only**. Minors / majors are renegotiated per-track when 0.1.x stabilizes.
+
+Three release categories:
+
+- **Hotfix** — any user-blocking bug that breaks `install` / `update` / `adopt` against a real shard ([#103](https://github.com/breferrari/shardmind/issues/103) and [#109](https://github.com/breferrari/shardmind/issues/109) are the canonical examples). Single-issue patch. Ship same-day after smoke. **Branches off the previous released tag**, not `main` HEAD, so unreleased UX work in `[Unreleased]` doesn't tag along under a hotfix label. Cherry-pick the fix onto the patch branch; merge back to `main` after the tag is cut.
+- **UX** — improvements without user-blocking bugs (current open backlog: [#101](https://github.com/breferrari/shardmind/issues/101), [#104](https://github.com/breferrari/shardmind/issues/104), [#105](https://github.com/breferrari/shardmind/issues/105), [#120](https://github.com/breferrari/shardmind/issues/120)). Bundle 2–4 related issues per patch. Ship weekly at most. Bundling boundary: items that share the same surface (wizard, diff prompts, summary frame) bundle naturally; items touching different surfaces bundle only if the smoke + Copilot-review overhead would otherwise dominate the per-issue cost.
+- **Foundation** — release / observability / lifecycle infrastructure (current examples: [#102](https://github.com/breferrari/shardmind/issues/102) hook lifecycle, [#119](https://github.com/breferrari/shardmind/issues/119) this policy, [#121](https://github.com/breferrari/shardmind/issues/121) engine-version-compat). Own patch each, smoke-tested. Foundation releases without user-blocking bugs still smoke; cadence is orthogonal to the gate.
+
+Hybrid releases: a release containing a hotfix dominates. UX items already in `[Unreleased]` park until the hotfix tag ships, then re-bundle on top of `main`. This prevents UX items shipping under a hotfix tag with insufficient review surface.
+
+The "weekly at most" UX rate is a recommendation, not a hard cap — the wall-clock cost of a smoke run is the real bound. If two UX bundles would each cost their own smoke, bundle further.
