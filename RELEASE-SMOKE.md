@@ -125,7 +125,7 @@ Until at least (1) lands, this gate runs before every `npm run release:*`.
 
 ## Release cadence
 
-Three releases shipped in 12 hours on launch day under hotfix pressure (`0.1.0 → 0.1.1 → 0.1.2`). With this gate now requiring a real-flagship run before each `npm publish`, cadence is bounded by smoke-run wall-clock time. Without a documented policy, the next batch of v0.1.x work risks either over-fragmenting (5 patches in a week, each requiring smoke) or under-batching (one patch per quarter, all changes intermingled).
+Three releases shipped in 12 hours on launch day under hotfix pressure (`0.1.0 → 0.1.1 → 0.1.2`). With this gate now requiring a real-flagship run before each `npm publish`, cadence is bounded by smoke-run wall-clock time. This section pins the policy that v0.1.x batches release under, so the choice between fragmenting (5 patches in a week, each requiring smoke) and batching (one patch per quarter, all changes intermingled) is rule-driven instead of ad-hoc.
 
 Scope: this policy applies to **v0.1.x patches only**. Minors / majors are renegotiated per-track when 0.1.x stabilizes.
 
