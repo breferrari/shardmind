@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 export interface ScrollableMultiSelectOption {
@@ -38,7 +38,7 @@ export default function ScrollableMultiSelect({
   useInput(
     (input, key) => {
       if (options.length === 0) {
-        if (key.return) onSubmit?.([...selected]);
+        if (key.return) onSubmit?.(selected);
         return;
       }
       if (key.downArrow) {
@@ -71,12 +71,14 @@ export default function ScrollableMultiSelect({
         return;
       }
       if (key.return) {
-        onSubmit?.([...selected]);
+        onSubmit?.(selected);
       }
     },
     { isActive: !isDisabled },
   );
 
+  // Re-clamp at render so an external `options` shrink between renders
+  // can't desync stored state from what the user sees.
   const clampedFocus = options.length === 0
     ? 0
     : Math.min(Math.max(0, focusedIndex), options.length - 1);
@@ -88,11 +90,8 @@ export default function ScrollableMultiSelect({
   );
   const visibleStart = clampedOffset;
   const visibleEnd = Math.min(options.length, clampedOffset + visibleOptionCount);
-
-  const visible = useMemo(
-    () => options.slice(visibleStart, visibleEnd),
-    [options, visibleStart, visibleEnd],
-  );
+  const visible = options.slice(visibleStart, visibleEnd);
+  const selectedSet = new Set(selected);
   const aboveCount = visibleStart;
   const belowCount = Math.max(0, options.length - visibleEnd);
 
@@ -102,7 +101,7 @@ export default function ScrollableMultiSelect({
       {visible.map((opt, i) => {
         const optIndex = i + visibleStart;
         const isFocused = optIndex === clampedFocus && !isDisabled;
-        const isSelected = selected.includes(opt.value);
+        const isSelected = selectedSet.has(opt.value);
         const cursor = isFocused ? '❯ ' : '  ';
         const checkbox = isSelected ? '◆ ' : '◇ ';
         return (
