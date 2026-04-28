@@ -7,7 +7,6 @@
 export {
   Alert,
   Badge,
-  ConfirmInput,
   MultiSelect,
   ProgressBar,
   Select,

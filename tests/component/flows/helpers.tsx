@@ -389,11 +389,15 @@ export async function buildCustomTarball(
  * `<Install>` and `<Adopt>` both render via `<InstallWizard>`):
  *
  *   header → user_name (typed) → org_name (default) →
- *   vault_purpose (default) → qmd_enabled ('n') → modules
+ *   vault_purpose (default) → qmd_enabled (default false → ENTER) → modules
  *
  * Returns once the modules step is rendered. The caller continues
  * with whatever post-modules step its scenario needs (Confirm for
  * install, plan + diff for adopt).
+ *
+ * `qmd_enabled` ships its boolean prompt as a Yes/No `Select` (#100);
+ * the schema default is `false`, so "No" is focused at index 0 and a
+ * single ENTER fires `false` — no `'n'` typed input.
  *
  * `headerTimeoutMs` defaults to 30 s because the wizard-header frame
  * is gated on the full resolve → download → parseManifest →
@@ -418,7 +422,7 @@ export async function driveMinimalWizard(
   await waitFor(r.lastFrame, (f) => f.includes('How will you use this vault'));
   r.stdin.write(ENTER);
   await waitFor(r.lastFrame, (f) => f.includes('QMD'));
-  r.stdin.write('n');
+  r.stdin.write(ENTER);
   await waitFor(r.lastFrame, (f) => f.includes('Choose modules to install'));
 }
 

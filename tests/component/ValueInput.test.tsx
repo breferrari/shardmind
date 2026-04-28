@@ -268,7 +268,13 @@ describe('ValueInput', () => {
     expect(onSubmit).toHaveBeenCalledWith('engineering');
   });
 
-  it('boolean: y confirms → onSubmit(true)', async () => {
+  // Boolean values render as a two-option Select (Yes / No) — same input
+  // model as `type: select`, replacing the @inkjs/ui ConfirmInput Y/n
+  // typed-text widget. Closes #100. The #103-fix shape applies: the
+  // initial option goes to index 0 so a single Enter on the default
+  // value fires.
+
+  it('boolean: default false → Enter fires onSubmit(false)', async () => {
     const def: ValueDefinition = {
       type: 'boolean',
       message: 'Enable QMD?',
@@ -276,16 +282,19 @@ describe('ValueInput', () => {
       group: 'setup',
     };
     const onSubmit = vi.fn();
-    const { stdin } = await mount(
+    const { stdin, lastFrame } = await mount(
       <ValueInput id="qmd_enabled" def={def} initialValue={false} onSubmit={onSubmit} />,
     );
 
-    stdin.write('y');
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Yes');
+    expect(frame).toContain('No');
+    stdin.write(ENTER);
     await waitForCall(onSubmit);
-    expect(onSubmit).toHaveBeenCalledWith(true);
+    expect(onSubmit).toHaveBeenCalledWith(false);
   });
 
-  it('boolean: n cancels → onSubmit(false)', async () => {
+  it('boolean: default true → Enter fires onSubmit(true)', async () => {
     const def: ValueDefinition = {
       type: 'boolean',
       message: 'Enable QMD?',
@@ -297,9 +306,78 @@ describe('ValueInput', () => {
       <ValueInput id="qmd_enabled" def={def} initialValue={true} onSubmit={onSubmit} />,
     );
 
-    stdin.write('n');
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+    expect(onSubmit).toHaveBeenCalledWith(true);
+  });
+
+  it('boolean: no default + no initialValue → Enter fires onSubmit(false)', async () => {
+    const def: ValueDefinition = {
+      type: 'boolean',
+      message: 'Enable QMD?',
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="qmd_enabled" def={def} initialValue={undefined} onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
     await waitForCall(onSubmit);
     expect(onSubmit).toHaveBeenCalledWith(false);
+  });
+
+  it('boolean: ARROW_DOWN + ENTER flips the resolved choice (true → false)', async () => {
+    const def: ValueDefinition = {
+      type: 'boolean',
+      message: 'Enable QMD?',
+      default: true,
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="qmd_enabled" def={def} initialValue={true} onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ARROW_DOWN);
+    await tick(30);
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+    expect(onSubmit).toHaveBeenCalledWith(false);
+  });
+
+  it('boolean: back-nav initialValue overrides default (initial=true, default=false)', async () => {
+    const def: ValueDefinition = {
+      type: 'boolean',
+      message: 'Enable QMD?',
+      default: false,
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="qmd_enabled" def={def} initialValue={true} onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+    expect(onSubmit).toHaveBeenCalledWith(true);
+  });
+
+  it('boolean: non-boolean initialValue falls back to default (no freeze)', async () => {
+    const def: ValueDefinition = {
+      type: 'boolean',
+      message: 'Enable QMD?',
+      default: true,
+      group: 'setup',
+    };
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="qmd_enabled" def={def} initialValue="maybe" onSubmit={onSubmit} />,
+    );
+
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+    expect(onSubmit).toHaveBeenCalledWith(true);
   });
 
   it('renders message, hint, and required marker', async () => {
