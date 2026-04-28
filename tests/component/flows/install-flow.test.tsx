@@ -261,9 +261,9 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     }
   }, 45_000);
 
-  // ───── Scenario 5: boolean → 'n' / default-display correct ─────
+  // ───── Scenario 5: boolean (Yes/No select, #100) / default-display correct ─────
 
-  it('5. boolean prompt — \'n\' advances and Confirm renders boolean as "false"', async () => {
+  it('5. boolean prompt — Enter on default (false) advances and Confirm renders boolean as "false"', async () => {
     const { stub, fixtures } = getCtx();
     stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
     const vault = await makeVaultDir('s5-boolean');

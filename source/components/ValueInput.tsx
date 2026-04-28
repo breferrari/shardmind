@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import { Box, Text } from 'ink';
-import { TextInput, Select, ConfirmInput, StatusMessage } from './ui.js';
+import { TextInput, Select, StatusMessage } from './ui.js';
 import type { ValueDefinition } from '../runtime/types.js';
 import { assertNever } from '../runtime/types.js';
 
@@ -93,12 +93,17 @@ function renderInput(
     case 'boolean': {
       const fallback = typeof def.default === 'boolean' ? def.default : false;
       const initial = typeof initialValue === 'boolean' ? initialValue : fallback;
+      // Reorder so the cursor pre-positions on the resolved initial choice.
+      // Same #103 shape as `case 'select'` below — see the comment there for
+      // why `defaultValue` is dropped and the initial option goes to index 0.
+      const yes = { label: 'Yes', value: 'yes' };
+      const no = { label: 'No', value: 'no' };
+      const options = initial ? [yes, no] : [no, yes];
       return (
-        <ConfirmInput
+        <Select
           key={key}
-          defaultChoice={initial ? 'confirm' : 'cancel'}
-          onConfirm={() => onSubmit(true)}
-          onCancel={() => onSubmit(false)}
+          options={options}
+          onChange={(v) => onSubmit(v === 'yes')}
         />
       );
     }

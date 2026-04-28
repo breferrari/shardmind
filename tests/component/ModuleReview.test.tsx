@@ -100,6 +100,32 @@ describe('ModuleReview', () => {
     expect(selections.research).toBe('included');
   });
 
+  it('renders ↓ N more below when removable modules overflow the viewport (#100)', async () => {
+    const overflowing: Record<string, ModuleDefinition> = {};
+    const counts: Record<string, number> = {};
+    for (let i = 0; i < 7; i++) {
+      const id = `mod${i}`;
+      overflowing[id] = mod(`Module ${i}`, true);
+      counts[id] = 1;
+    }
+    const { lastFrame } = await mount(
+      <ModuleReview
+        modules={overflowing}
+        moduleFileCounts={counts}
+        alwaysIncludedFileCount={0}
+        initialSelections={Object.fromEntries(
+          Object.keys(overflowing).map((id) => [id, 'included']),
+        )}
+        onSubmit={() => {}}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Module 0');
+    expect(frame).toContain('Module 4');
+    expect(frame).not.toContain('Module 6');
+    expect(frame).toContain('↓ 2 more below');
+  });
+
   it('renders "no optional modules" when all are non-removable', async () => {
     const onlyLocked = {
       core: mod('Core', false),

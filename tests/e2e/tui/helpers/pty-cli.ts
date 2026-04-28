@@ -520,7 +520,10 @@ export async function driveMinimalWizard(
   await handle.waitForScreen((s) => s.includes('How will you use this vault'));
   handle.write(ENTER);
   await handle.waitForScreen((s) => s.includes('QMD'));
-  handle.write('n');
+  // qmd_enabled boolean now renders as a Yes/No Select (#100). Schema
+  // default is false → "No" is focused at index 0 → single ENTER fires
+  // false. No 'n' typed-input keystroke.
+  handle.write(ENTER);
   await handle.waitForScreen(
     (s) => s.includes('Choose modules to install'),
     { timeoutMs: 15_000 },

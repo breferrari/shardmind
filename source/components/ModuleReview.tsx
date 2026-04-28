@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { MultiSelect } from './ui.js';
+import ScrollableMultiSelect from './ScrollableMultiSelect.js';
 import type { ModuleDefinition, ModuleSelections } from '../runtime/types.js';
 
 interface ModuleReviewProps {
@@ -86,9 +86,10 @@ export default function ModuleReview({
       {removable.length > 0 ? (
         <Box flexDirection="column">
           <Text dimColor>Optional (space to toggle, enter to confirm):</Text>
-          <MultiSelect
+          <ScrollableMultiSelect
             options={options}
             defaultValue={initiallyIncluded}
+            visibleOptionCount={5}
             onChange={(selected) => setCurrentIncluded(selected)}
             onSubmit={(selected) => {
               const next: ModuleSelections = {};

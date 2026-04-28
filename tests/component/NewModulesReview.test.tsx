@@ -81,6 +81,22 @@ describe('NewModulesReview', () => {
     expect(onSubmit.mock.calls[0]![0]).toMatchObject({ extras: 'excluded' });
   });
 
+  it('renders ↓ N more below when offered modules overflow the viewport (#100)', async () => {
+    const offered = Array.from({ length: 7 }, (_, i) => ({
+      id: `mod${i}`,
+      def: { label: `Module ${i}`, paths: [`mod${i}/`], removable: true } as ModuleDefinition,
+    }));
+    const { lastFrame } = render(
+      <NewModulesReview offered={offered} onSubmit={() => {}} />,
+    );
+    await tick(30);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Module 0');
+    expect(frame).toContain('Module 4');
+    expect(frame).not.toContain('Module 6');
+    expect(frame).toContain('↓ 2 more below');
+  });
+
   it('renders a "no new modules" continuation when offered is empty', async () => {
     const onSubmit = vi.fn();
     const { stdin, lastFrame } = render(

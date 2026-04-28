@@ -943,6 +943,8 @@ The update-check cache (`.shardmind/update-check.json`, 24h TTL) is stable-only.
 
 **When a trigger fires, vendor the 2–3 components that bit us into `source/components/vendor/*` and route `ui.ts` through the vendored copies. Don't fork the whole package unless the count grows past ~5 components.**
 
+`source/components/ScrollableMultiSelect.tsx` (#100) is the first component built outside the `@inkjs/ui` surface. It does not count as a swap trigger: only the scroll-cue rendering is custom; the keyboard model (↑↓ / space / Enter) mirrors the library's. The component lives next to `ui.ts` rather than under `vendor/` because it is a new widget, not a vendored fix.
+
 **Revisit cadence.** Re-evaluate at v0.2 scope freeze. Do not pre-emptively migrate.
 
 ---

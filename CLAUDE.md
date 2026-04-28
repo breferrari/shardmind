@@ -141,6 +141,7 @@ shardmind/
 │   │   ├── VerboseView.tsx            # Detailed diagnostics (shardmind --verbose)
 │   │   ├── InstallWizard.tsx          # Values prompts + module review
 │   │   ├── ModuleReview.tsx           # Multiselect for modules
+│   │   ├── ScrollableMultiSelect.tsx  # Custom multi-select with ↑/↓ N more scroll hints (#100)
 │   │   ├── CollisionReview.tsx        # Install: backup / overwrite / cancel
 │   │   ├── ExistingInstallGate.tsx    # Install: existing-install disambiguation
 │   │   ├── DiffView.tsx               # Three-way diff + conflict resolution
