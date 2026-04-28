@@ -167,6 +167,8 @@ Closes [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1 (Layer
 
 ## [0.1.2] - 2026-04-26
 
+Retroactively classified as a **hotfix release** per the cadence policy added in v0.1.3 ([`RELEASE-SMOKE.md §Release cadence`](RELEASE-SMOKE.md#release-cadence)). Single user-blocking bug (iterated diff freeze).
+
 ### Fixed (iterated diff prompts freeze after the first decision)
 
 Closes [#109](https://github.com/breferrari/shardmind/issues/109). Hit during a real `shardmind adopt github:breferrari/obsidian-mind` run on the flagship right after #103's 0.1.1 fix unblocked the install wizard: 35 differing files, "Keep mine" worked on file 1, every prompt thereafter was frozen.
@@ -181,6 +183,8 @@ Closes [#109](https://github.com/breferrari/shardmind/issues/109). Hit during a 
 
 ## [0.1.1] - 2026-04-26
 
+Retroactively classified as a **hotfix release** per the cadence policy added in v0.1.3 ([`RELEASE-SMOKE.md §Release cadence`](RELEASE-SMOKE.md#release-cadence)). Single user-blocking bug (wizard select-Enter freeze).
+
 ### Fixed (wizard select stuck on Enter when default = first option)
 
 Closes [#103](https://github.com/breferrari/shardmind/issues/103). First entry on the v0.1.x stabilization track. Surfaced during a real `shardmind adopt` against `breferrari/obsidian-mind`, where the schema default for `vault_purpose` (`engineering`) matched the first option — pressing Enter on the focused option did nothing and the wizard froze. Blocks any shard whose schema has a `select` value with `default = first option`.
@@ -193,6 +197,8 @@ Closes [#103](https://github.com/breferrari/shardmind/issues/103). First entry o
 ## [0.1.0] - 2026-04-26
 
 First public release. Ships the v6 engine: install (with `--defaults` and Invariant 1 byte-equivalence guarantee), update (with `--release`, `--include-prerelease`, and ref re-resolution), adopt (retrofit existing shard clones), status, and post-install / post-update hooks. The flagship obsidian-mind v6 conversion + research-wiki shard land in subsequent point releases.
+
+Retroactively classified as a **foundation release** per the cadence policy added in v0.1.3 ([`RELEASE-SMOKE.md §Release cadence`](RELEASE-SMOKE.md#release-cadence)). Engine first-ship; not subject to v0.1.x patch cadence.
 
 ### Added (v6 layout: contract acceptance suite — full install / update / adopt scenario matrix)
 
