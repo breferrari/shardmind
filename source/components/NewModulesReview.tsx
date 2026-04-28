@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Box, Text } from 'ink';
-import { MultiSelect, Select } from './ui.js';
+import { Select } from './ui.js';
+import ScrollableMultiSelect from './ScrollableMultiSelect.js';
 import type { ModuleDefinition } from '../runtime/types.js';
 
 interface NewModulesReviewProps {
@@ -32,9 +33,10 @@ export default function NewModulesReview({ offered, onSubmit }: NewModulesReview
     <Box flexDirection="column" gap={1}>
       <Text bold>New modules offered</Text>
       <Text dimColor>Space to toggle, Enter to confirm. All included by default.</Text>
-      <MultiSelect
+      <ScrollableMultiSelect
         options={offered.map((m) => ({ label: `${m.def.label ?? m.id}`, value: m.id }))}
         defaultValue={selected}
+        visibleOptionCount={5}
         onChange={(next) => setSelected(next)}
         onSubmit={(next) => {
           const choices: Record<string, 'included' | 'excluded'> = {};
