@@ -226,6 +226,32 @@ describe('ScrollableMultiSelect — selection', () => {
 });
 
 describe('ScrollableMultiSelect — rerender (production shape)', () => {
+  it('parent rerender shrinks options below stale focusedIndex: SPACE toggles the clamped row', async () => {
+    // Regression for the Copilot review on PR #124: focusedIndex was
+    // captured pre-rerender (4); options shrank to 2; render clamped
+    // focus to opt-1; without the handler-side clamp, SPACE read
+    // options[4] (undefined) and silently no-opped even though the
+    // marker pointed at opt-1.
+    const onChange = vi.fn();
+    const r = render(
+      <ScrollableMultiSelect options={opts(5)} onChange={onChange} />,
+    );
+    await tick(30);
+    // Drive focus to opt-4 (last) before the rerender.
+    for (let i = 0; i < 4; i++) {
+      r.stdin.write(ARROW_DOWN);
+      await tick(20);
+    }
+    r.rerender(<ScrollableMultiSelect options={opts(2)} onChange={onChange} />);
+    await tick(30);
+    // Frame's focus marker is on the new last row (opt-1).
+    expect(r.lastFrame() ?? '').toMatch(/❯ +◇ opt-1/);
+
+    r.stdin.write(SPACE);
+    await waitFor(r.lastFrame, (f) => f.includes('◆ opt-1'));
+    expect(onChange).toHaveBeenLastCalledWith(['v1']);
+  });
+
   it('parent rerender with new options keeps render consistent and Enter still submits', async () => {
     // Production shape: parent (ModuleReview / NewModulesReview) recomputes
     // its `options` from a `useMemo` over upstream module defs. A back-nav
