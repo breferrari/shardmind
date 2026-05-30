@@ -1,7 +1,9 @@
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
+import fc from 'fast-check';
+import { stringify as stringifyYaml } from 'yaml';
 import { parseSchema, buildValuesValidator, isComputedDefault } from '../../source/core/schema.js';
 
 const FIXTURES = path.resolve('tests/fixtures/schema');
@@ -128,6 +130,179 @@ describe('parseSchema', () => {
     expect(err.message).toContain('nonexistent');
   });
 
+  it('synthesizes a multiselect default from per-option `default: true` and strips the booleans', async () => {
+    const schema = await parseSchema(path.join(FIXTURES, 'valid-multiselect-per-option-default.yaml'));
+    const agents = schema.values['agents']!;
+    expect(agents.type).toBe('multiselect');
+    expect(agents.default).toEqual(['claude']);
+    expect(agents.min).toBe(1);
+    // Per-option `default` is authoring sugar — it must not survive into the
+    // normalized (and therefore cached) schema, so re-parse never sees both
+    // a per-option and a top-level default.
+    for (const opt of agents.options ?? []) {
+      expect('default' in opt).toBe(false);
+    }
+  });
+
+  it('defaults a multiselect with no per-option and no top-level default to []', async () => {
+    const schema = await parseSchema(path.join(FIXTURES, 'valid-multiselect-per-option-default.yaml'));
+    expect(schema.values['themes']!.default).toEqual([]);
+  });
+
+  it('is idempotent: re-parsing a normalized (top-level-array) multiselect keeps its default', async () => {
+    // valid-all-types.yaml's `plugins` uses the canonical top-level `default: []`.
+    // Round-tripping it (the shape cacheManifest writes) must not error or drift.
+    const schema = await parseSchema(path.join(FIXTURES, 'valid-all-types.yaml'));
+    expect(schema.values['plugins']!.default).toEqual([]);
+  });
+
+  it('rejects a multiselect that declares both per-option and top-level defaults', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-multiselect-both-defaults.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('agents');
+    expect(err.message).toContain('default');
+  });
+
+  it('rejects per-option `default` on a non-multiselect (select) option', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-per-option-default-on-select.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('color');
+    expect(err.hint).toContain('multiselect');
+  });
+
+  // A multiselect `min` that the default can't satisfy is a latent footgun:
+  // zod's `.default()` short-circuits `.min()`, so a `--defaults` install would
+  // silently write a schema-invalid value (breaking Invariant 1). Reject at
+  // parse instead.
+  it('rejects a multiselect whose default selects fewer than `min`', async () => {
+    const yaml = [
+      'schema_version: 1',
+      'values:',
+      '  agents:',
+      '    type: multiselect',
+      '    message: "Agents"',
+      '    min: 1',
+      '    options:',
+      '      - { value: claude, label: "Claude" }',
+      '      - { value: codex, label: "Codex" }',
+      '    group: setup',
+      'groups: [{ id: setup, label: "Setup" }]',
+      'modules: {}',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n');
+    const fs = await import('node:fs/promises');
+    const tmp = tmpYaml('schema-ms-min');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const err = await parseSchema(tmp).catch(e => e);
+      expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+      expect(err.message).toContain('agents');
+      expect(err.message).toContain('min');
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
+  it('rejects a multiselect whose default selects more than `max`', async () => {
+    const yaml = [
+      'schema_version: 1',
+      'values:',
+      '  agents:',
+      '    type: multiselect',
+      '    message: "Agents"',
+      '    max: 1',
+      '    options:',
+      '      - { value: claude, label: "Claude", default: true }',
+      '      - { value: codex, label: "Codex", default: true }',
+      '    group: setup',
+      'groups: [{ id: setup, label: "Setup" }]',
+      'modules: {}',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n');
+    const fs = await import('node:fs/promises');
+    const tmp = tmpYaml('schema-ms-max');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const err = await parseSchema(tmp).catch(e => e);
+      expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+      expect(err.message).toContain('agents');
+      expect(err.message).toContain('max');
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
+  it('rejects a multiselect `min`/`max` that is fractional or negative', async () => {
+    const fs = await import('node:fs/promises');
+    for (const [field, value] of [['min', '1.5'], ['max', '-1']] as const) {
+      const yaml = [
+        'schema_version: 1',
+        'values:',
+        '  agents:',
+        '    type: multiselect',
+        '    message: "Agents"',
+        `    ${field}: ${value}`,
+        '    options:',
+        '      - { value: claude, label: "Claude", default: true }',
+        '      - { value: codex, label: "Codex" }',
+        '    group: setup',
+        'groups: [{ id: setup, label: "Setup" }]',
+        'modules: {}',
+        'signals: []',
+        'frontmatter: {}',
+        'migrations: []',
+        '',
+      ].join('\n');
+      const tmp = tmpYaml('schema-ms-intbound');
+      await fs.writeFile(tmp, yaml);
+      try {
+        const err = await parseSchema(tmp).catch(e => e);
+        expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+        expect(err.message).toContain(field);
+      } finally {
+        await fs.unlink(tmp);
+      }
+    }
+  });
+
+  it('rejects a multiselect whose `min` exceeds the option count', async () => {
+    const yaml = [
+      'schema_version: 1',
+      'values:',
+      '  agents:',
+      '    type: multiselect',
+      '    message: "Agents"',
+      '    min: 3',
+      '    options:',
+      '      - { value: claude, label: "Claude", default: true }',
+      '      - { value: codex, label: "Codex", default: true }',
+      '    group: setup',
+      'groups: [{ id: setup, label: "Setup" }]',
+      'modules: {}',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n');
+    const fs = await import('node:fs/promises');
+    const tmp = tmpYaml('schema-ms-minopts');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const err = await parseSchema(tmp).catch(e => e);
+      expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+      expect(err.message).toContain('agents');
+      expect(err.message).toContain('option');
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
   it('rejects values missing the required `default` field', async () => {
     const err = await parseSchema(path.join(FIXTURES, 'invalid-missing-default.yaml')).catch(e => e);
     expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
@@ -242,6 +417,21 @@ describe('buildValuesValidator', () => {
     expect(() => validator.parse({ user_name: 'A', vault_purpose: 'engineering', max_notes: 101 })).toThrow();
   });
 
+  it('enforces min/max array length on multiselect type', async () => {
+    const schema = await parseSchema(path.join(FIXTURES, 'valid-multiselect-per-option-default.yaml'));
+    const validator = buildValuesValidator(schema);
+
+    // `agents` has min: 1 — an empty selection must be rejected.
+    expect(() => validator.parse({ agents: [] })).toThrow();
+    // A single valid selection passes.
+    expect(validator.parse({ agents: ['codex'] }).agents).toEqual(['codex']);
+    // Omitting `agents` falls back to the synthesized default ['claude'] (length 1, ok).
+    expect(validator.parse({}).agents).toEqual(['claude']);
+    // `themes` has max: 1 — selecting two must be rejected.
+    expect(() => validator.parse({ agents: ['claude'], themes: ['dark', 'light'] })).toThrow();
+    expect(validator.parse({ agents: ['claude'], themes: ['dark'] }).themes).toEqual(['dark']);
+  });
+
   it('rejects invalid select values', async () => {
     const schema = await parseSchema(path.join(FIXTURES, 'valid-all-types.yaml'));
     const validator = buildValuesValidator(schema);
@@ -282,6 +472,74 @@ describe('buildValuesValidator', () => {
     // Passing without is_engineering should work (it's optional) but not pre-fill
     const result = validator.parse({ vault_purpose: 'engineering' });
     expect(result.is_engineering).toBeUndefined();
+  });
+});
+
+describe('parseSchema — multiselect per-option normalization (property tests)', () => {
+  // Mirrors PR #124's fast-check precedent on this surface. File-based parse →
+  // moderate numRuns. Invariants: the synthesized default is exactly the
+  // `default: true` option values in source order, it's a subset of the option
+  // values (never invents/drops a value), the per-option booleans never survive
+  // into the parsed schema, and the whole thing is idempotent under
+  // serialize→re-parse (the shape cacheManifest writes + update re-reads).
+  const POOL = ['claude', 'codex', 'gemini', 'aider', 'cursor', 'cody'];
+  const tmp = tmpYaml('schema-prop');
+
+  afterAll(async () => {
+    const fs = await import('node:fs/promises');
+    await fs.unlink(tmp).catch(() => {});
+  });
+
+  function schemaYaml(values: string[], flags: boolean[]): string {
+    const opts = values
+      .map((v, i) => `      - { value: ${v}, label: "${v}", default: ${flags[i]} }`)
+      .join('\n');
+    return [
+      'schema_version: 1',
+      'values:',
+      '  agents:',
+      '    type: multiselect',
+      '    message: "Agents"',
+      '    options:',
+      opts,
+      '    group: setup',
+      'groups: [{ id: setup, label: "Setup" }]',
+      'modules: {}',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n');
+  }
+
+  it('synthesized default ⊆ options, booleans stripped, idempotent under re-parse', async () => {
+    const fs = await import('node:fs/promises');
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(fc.constantFrom(...POOL), { minLength: 1, maxLength: POOL.length }),
+        fc.array(fc.boolean(), { minLength: POOL.length, maxLength: POOL.length }),
+        async (values, flags) => {
+          await fs.writeFile(tmp, schemaYaml(values, flags));
+          const schema = await parseSchema(tmp);
+          const agents = schema.values['agents']!;
+          const expected = values.filter((_, i) => flags[i]);
+
+          // default is exactly the true-flagged values, in source order.
+          expect(agents.default).toEqual(expected);
+          // subset invariant — never invents or drops a value.
+          for (const d of agents.default as string[]) expect(values).toContain(d);
+          // per-option booleans stripped from the parsed schema.
+          for (const o of agents.options ?? []) expect('default' in o).toBe(false);
+
+          // Idempotence: serialize (cacheManifest shape) → re-parse → same default,
+          // no both-sources re-trigger.
+          await fs.writeFile(tmp, stringifyYaml(schema));
+          const reparsed = await parseSchema(tmp);
+          expect(reparsed.values['agents']!.default).toEqual(expected);
+        },
+      ),
+      { numRuns: 50 },
+    );
   });
 });
 

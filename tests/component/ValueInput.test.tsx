@@ -3,7 +3,7 @@ import { render, cleanup } from 'ink-testing-library';
 import React from 'react';
 import ValueInput from '../../source/components/ValueInput.js';
 import type { ValueDefinition } from '../../source/runtime/types.js';
-import { ENTER, ARROW_DOWN, tick, typeText, waitFor, waitForCall } from './helpers.js';
+import { ENTER, ARROW_DOWN, SPACE, tick, typeText, waitFor, waitForCall } from './helpers.js';
 
 afterEach(() => {
   cleanup();
@@ -378,6 +378,164 @@ describe('ValueInput', () => {
     stdin.write(ENTER);
     await waitForCall(onSubmit);
     expect(onSubmit).toHaveBeenCalledWith(true);
+  });
+
+  // Multiselect values render via ScrollableMultiSelect (the scroll-aware
+  // widget from #100, also used by ModuleReview): ↑↓ navigate, space toggles,
+  // Enter submits the selected-value array. min/max/required validate on submit.
+
+  const agentsDef = (extra: Partial<ValueDefinition> = {}): ValueDefinition => ({
+    type: 'multiselect',
+    message: 'Which agents?',
+    options: [
+      { value: 'claude', label: 'Claude Code' },
+      { value: 'codex', label: 'Codex CLI' },
+      { value: 'gemini', label: 'Gemini CLI' },
+    ],
+    group: 'setup',
+    ...extra,
+  });
+
+  it('multiselect: renders all options and seeds the default selection', async () => {
+    const def = agentsDef({ default: ['claude'] });
+    const { lastFrame } = await mount(
+      <ValueInput id="agents" def={def} initialValue={['claude']} onSubmit={() => {}} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Claude Code');
+    expect(frame).toContain('Codex CLI');
+    expect(frame).toContain('Gemini CLI');
+    // ◆ = selected, ◇ = unselected (ScrollableMultiSelect markers).
+    expect(frame).toContain('◆ Claude Code');
+    expect(frame).toContain('◇ Codex CLI');
+  });
+
+  it('multiselect: Enter submits the seeded default unchanged', async () => {
+    const def = agentsDef({ default: ['claude'] });
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="agents" def={def} initialValue={['claude']} onSubmit={onSubmit} />,
+    );
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+    expect(onSubmit).toHaveBeenCalledWith(['claude']);
+  });
+
+  it('multiselect: space toggles the focused option and Enter submits the array', async () => {
+    const def = agentsDef();
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(
+      <ValueInput id="agents" def={def} initialValue={undefined} onSubmit={onSubmit} />,
+    );
+    stdin.write(SPACE); // toggle focused index 0 → claude
+    await tick(30);
+    stdin.write(ARROW_DOWN);
+    await tick(30);
+    stdin.write(SPACE); // toggle index 1 → codex
+    await tick(30);
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+    expect(onSubmit).toHaveBeenCalledWith(['claude', 'codex']);
+  });
+
+  it('multiselect: min not met shows validation error, no submit', async () => {
+    const def = agentsDef({ min: 1 });
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = await mount(
+      <ValueInput id="agents" def={def} initialValue={[]} onSubmit={onSubmit} />,
+    );
+    stdin.write(ENTER); // submit empty selection
+    await waitFor(lastFrame, (f) => f.includes('Select at least 1 option'));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('multiselect: max exceeded shows validation error, no submit', async () => {
+    const def = agentsDef({ max: 1 });
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = await mount(
+      <ValueInput id="agents" def={def} initialValue={[]} onSubmit={onSubmit} />,
+    );
+    stdin.write(SPACE);
+    await tick(30);
+    stdin.write(ARROW_DOWN);
+    await tick(30);
+    stdin.write(SPACE); // two selected, max is 1
+    await tick(30);
+    stdin.write(ENTER);
+    await waitFor(lastFrame, (f) => f.includes('Select at most 1 option'));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('multiselect: required + empty selection shows error', async () => {
+    const def = agentsDef({ required: true });
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = await mount(
+      <ValueInput id="agents" def={def} initialValue={[]} onSubmit={onSubmit} />,
+    );
+    stdin.write(ENTER);
+    await waitFor(lastFrame, (f) => f.includes('At least one entry required'));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('multiselect: a seed value not in options is dropped (no unselectable row, no spurious error)', async () => {
+    // Stale cached/back-nav selection for an option the shard removed upstream.
+    const def = agentsDef();
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = await mount(
+      <ValueInput id="agents" def={def} initialValue={['claude', 'removed-agent']} onSubmit={onSubmit} />,
+    );
+    // claude renders selected; the stale value has no row to render.
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('◆ Claude Code');
+    expect(frame).not.toContain('removed-agent');
+    // Enter submits only the surviving, in-options selection — no "Unknown
+    // option" error on a value the user never chose.
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+    expect(onSubmit).toHaveBeenCalledWith(['claude']);
+  });
+
+  // Iterated-component regression (CLAUDE.md §Testing / docs/COMPONENTS.md
+  // Pattern B): InstallWizard renders ValueInput in a loop, advancing the step
+  // index without a remount-forcing key on ValueInput itself. Assert the
+  // SECOND multiselect's interaction still fires after a rerender — the exact
+  // gap #109 fell through for the iterated diff prompts.
+  it('multiselect: second value still toggles + submits after rerender (iterated)', async () => {
+    const onSubmit = vi.fn();
+    const first: ValueDefinition = {
+      type: 'multiselect',
+      message: 'First?',
+      options: [
+        { value: 'a', label: 'Alpha' },
+        { value: 'b', label: 'Beta' },
+      ],
+      group: 'setup',
+    };
+    const { stdin, rerender } = await mount(
+      <ValueInput id="first" def={first} initialValue={undefined} onSubmit={onSubmit} />,
+    );
+    stdin.write(SPACE); // select Alpha
+    await tick(30);
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+    expect(onSubmit).toHaveBeenLastCalledWith(['a']);
+
+    const second: ValueDefinition = {
+      type: 'multiselect',
+      message: 'Second?',
+      options: [
+        { value: 'x', label: 'Xray' },
+        { value: 'y', label: 'Yankee' },
+      ],
+      group: 'setup',
+    };
+    rerender(<ValueInput id="second" def={second} initialValue={undefined} onSubmit={onSubmit} />);
+    await tick(30);
+    stdin.write(SPACE); // select Xray on the second prompt
+    await tick(30);
+    stdin.write(ENTER);
+    await waitForCall(onSubmit, 2);
+    expect(onSubmit).toHaveBeenLastCalledWith(['x']);
   });
 
   it('renders message, hint, and required marker', async () => {

@@ -166,16 +166,20 @@
             "properties": {
               "value": { "type": "string" },
               "label": { "type": "string" },
-              "description": { "type": "string" }
+              "description": { "type": "string" },
+              "default": {
+                "description": "multiselect only: seed this option in the default selection. Normalized into the value's top-level `default` array at parse time. Mutually exclusive with a top-level `default`.",
+                "type": "boolean"
+              }
             }
           }
         },
         "min": {
-          "description": "Minimum (inclusive) for number type.",
+          "description": "Minimum (inclusive) for number type, or minimum selected count for multiselect.",
           "type": "number"
         },
         "max": {
-          "description": "Maximum (inclusive) for number type.",
+          "description": "Maximum (inclusive) for number type, or maximum selected count for multiselect.",
           "type": "number"
         },
         "group": {

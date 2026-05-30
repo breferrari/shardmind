@@ -1,0 +1,23 @@
+schema_version: 1
+
+# Per-option `default: true` is only meaningful for `type: multiselect`.
+# A `select` declares its default via the value's top-level `default` (a single
+# option value), so a per-option `default` on a select option is rejected to
+# avoid a silently-ignored field.
+values:
+  color:
+    type: select
+    message: "Pick a color"
+    options:
+      - { value: red, label: "Red", default: true }
+      - { value: blue, label: "Blue" }
+    default: red
+    group: setup
+
+groups:
+  - { id: setup, label: "Setup" }
+
+modules: {}
+signals: []
+frontmatter: {}
+migrations: []

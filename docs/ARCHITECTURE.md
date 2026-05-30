@@ -1267,9 +1267,11 @@ export interface ValueDefinition {
   required?: boolean;
   message: string;
   default?: unknown;
-  options?: Array<{ value: string; label: string; description?: string }>;
-  min?: number;
-  max?: number;
+  // `default` on an option is multiselect-only authoring sugar — parseSchema
+  // normalizes it into the value's top-level `default` array and strips it.
+  options?: Array<{ value: string; label: string; description?: string; default?: boolean }>;
+  min?: number; // number range, or multiselect min selected count
+  max?: number; // number range, or multiselect max selected count
   group: string;
   hint?: string;
   placeholder?: string;

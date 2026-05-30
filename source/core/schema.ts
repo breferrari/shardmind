@@ -21,6 +21,12 @@ const OptionSchema = z.object({
   value: z.string(),
   label: z.string(),
   description: z.string().optional(),
+  // Per-option default flag. Authoring sugar for `type: multiselect` only:
+  // options marked `default: true` seed the value's default selection.
+  // `parseSchema` normalizes these into the value's canonical top-level
+  // `default` array and strips the booleans, so this never reaches the
+  // cached schema. Rejected on non-multiselect values.
+  default: z.boolean().optional(),
 });
 
 const ValueDefinitionSchema = z.object({
@@ -257,6 +263,114 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
     }
   }
 
+  const rawValues = (parsed as { values?: Record<string, unknown> }).values ?? {};
+  const hasOwnDefault = (key: string): boolean => {
+    const raw = rawValues[key];
+    return !!raw && typeof raw === 'object' && !Array.isArray(raw) && 'default' in raw;
+  };
+
+  // Multiselect default normalization. The author-facing API marks default
+  // selections per-option (`options: [{ value, default: true }]`); the engine
+  // normalizes that into the value's canonical top-level `default` array and
+  // strips the per-option booleans. Doing it here means every downstream
+  // consumer (zod validator, valuesAreDefaults, install-planner, the cached
+  // schema the runtime + update re-parse read) only ever sees the array form,
+  // and re-parsing the normalized output never re-triggers the both-sources
+  // guard below.
+  for (const [key, val] of Object.entries(data.values)) {
+    // Single pass over the options: which ones declare a `default` flag at all
+    // (`perOption`) and which are `default: true` (the synthesized selection).
+    const defaultedValues: string[] = [];
+    let perOption = false;
+    for (const opt of val.options ?? []) {
+      if (opt.default !== undefined) {
+        perOption = true;
+        if (opt.default === true) defaultedValues.push(opt.value);
+      }
+    }
+
+    // Per-option `default` is multiselect-only; on any other type it would be
+    // silently ignored, so reject it loudly.
+    if (perOption && val.type !== 'multiselect') {
+      throw new ShardMindError(
+        `shard-schema.yaml validation failed: values.${key} uses per-option \`default\` on \`type: ${val.type}\``,
+        'SCHEMA_VALIDATION_FAILED',
+        'Per-option `default: true` is only valid for `type: multiselect`. For select, declare the value\'s top-level `default` (a single `options[].value`).',
+      );
+    }
+
+    if (val.type !== 'multiselect') continue;
+
+    if (perOption && hasOwnDefault(key)) {
+      throw new ShardMindError(
+        `shard-schema.yaml validation failed: values.${key} declares both a per-option \`default\` and a top-level \`default\``,
+        'SCHEMA_VALIDATION_FAILED',
+        'A multiselect declares its default EITHER via per-option `default: true` OR a top-level `default` array, never both.',
+      );
+    }
+
+    if (perOption) {
+      val.default = defaultedValues;
+      for (const opt of val.options ?? []) delete opt.default;
+    } else if (!hasOwnDefault(key)) {
+      // No per-option flags and no top-level default → empty selection.
+      val.default = [];
+    }
+    // top-level default present → leave as-is (literal array or computed
+    // `{{ … }}`; membership already checked in ValueDefinitionSchema.check()).
+
+    // `min`/`max` are selected-count bounds here, so unlike the `number` type
+    // they must be non-negative integers — a fractional bound yields nonsense
+    // like "Select at least 1.5 options".
+    for (const bound of ['min', 'max'] as const) {
+      const n = val[bound];
+      if (n !== undefined && (!Number.isInteger(n) || n < 0)) {
+        throw new ShardMindError(
+          `shard-schema.yaml validation failed: values.${key} ${bound} must be a non-negative integer (got ${n})`,
+          'SCHEMA_VALIDATION_FAILED',
+          'A multiselect `min`/`max` bound the selected count, so they must be whole, non-negative numbers.',
+        );
+      }
+    }
+
+    // `min` cannot exceed the number of options — no selection could ever
+    // satisfy it. Caught here (not in .check()) so the message can name the
+    // count.
+    const optionCount = (val.options ?? []).length;
+    if (val.min !== undefined && val.min > optionCount) {
+      throw new ShardMindError(
+        `shard-schema.yaml validation failed: values.${key} has min ${val.min} but only ${optionCount} option${optionCount === 1 ? '' : 's'}`,
+        'SCHEMA_VALIDATION_FAILED',
+        'A multiselect `min` cannot exceed the number of options — no selection could satisfy it.',
+      );
+    }
+
+    // The default selection must itself satisfy min/max. zod's `.default()`
+    // short-circuits validation (a `--defaults` install returns the default
+    // WITHOUT re-checking `.min()`), so an out-of-range default would write a
+    // schema-invalid value silently — and break Invariant 1 (a `--defaults`
+    // install must produce a valid vault). Reject at parse instead. Computed
+    // `{{ … }}` defaults resolve at install time against the user's answers,
+    // so their length is unknowable here — skip them.
+    if (Array.isArray(val.default)) {
+      const len = val.default.length;
+      if (val.min !== undefined && len < val.min) {
+        throw new ShardMindError(
+          `shard-schema.yaml validation failed: values.${key} default selects ${len} but min is ${val.min}`,
+          'SCHEMA_VALIDATION_FAILED',
+          'A multiselect with `min` must declare a default that selects at least that many options (via per-option `default: true` or a top-level `default` array).',
+        );
+      }
+      if (val.max !== undefined && len > val.max) {
+        throw new ShardMindError(
+          `shard-schema.yaml validation failed: values.${key} default selects ${len} but max is ${val.max}`,
+          'SCHEMA_VALIDATION_FAILED',
+          'A multiselect default cannot select more options than `max`.',
+        );
+      }
+    }
+  }
+
   // Every value MUST declare a `default` field. The check reads the raw
   // YAML because zod's `default: z.unknown().optional()` strips the key
   // when missing, so post-parse `'default' in val` can't distinguish
@@ -265,11 +379,11 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
   // non-emptiness. (Type-match for the literal happens in the
   // `ValueDefinitionSchema.check()` rule above; `null` is rejected
   // there because it doesn't match any of the six value types.)
-  const rawValues = (parsed as { values?: Record<string, unknown> }).values ?? {};
+  // Multiselect is exempt: its default is derived above (per-option or []).
   const missingDefault: string[] = [];
   for (const key of Object.keys(data.values)) {
-    const raw = rawValues[key];
-    if (raw && typeof raw === 'object' && !Array.isArray(raw) && !('default' in raw)) {
+    if (data.values[key]!.type === 'multiselect') continue;
+    if (!hasOwnDefault(key)) {
       missingDefault.push(key);
     }
   }
@@ -277,7 +391,7 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
     throw new ShardMindError(
       `shard-schema.yaml: values missing required \`default\` field: ${missingDefault.join(', ')}`,
       'SCHEMA_VALIDATION_FAILED',
-      'Every value must declare a `default` whose type matches the value\'s `type`: "" for string, false for boolean, 0 for number, [] for list/multiselect, one of `options[].value` for select.',
+      'Every value must declare a `default` whose type matches the value\'s `type`: "" for string, false for boolean, 0 for number, [] for list, one of `options[].value` for select. (Multiselect uses per-option `default: true`.)',
     );
   }
 
@@ -332,7 +446,10 @@ export function buildValuesValidator(schema: ShardSchema): z.ZodObject<any> {
       }
       case 'multiselect': {
         const values = val.options!.map(o => o.value) as [string, ...string[]];
-        field = z.array(z.enum(values));
+        let arr = z.array(z.enum(values));
+        if (val.min !== undefined) arr = arr.min(val.min);
+        if (val.max !== undefined) arr = arr.max(val.max);
+        field = arr;
         break;
       }
       case 'list':

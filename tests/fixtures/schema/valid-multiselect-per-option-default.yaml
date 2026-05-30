@@ -1,0 +1,29 @@
+schema_version: 1
+
+values:
+  agents:
+    type: multiselect
+    message: "Which agents do you use?"
+    options:
+      - { value: claude, label: "Claude Code", default: true, description: "Full hook + skill + command support" }
+      - { value: codex, label: "Codex CLI", default: false, description: "AGENTS.md + .codex/ hooks" }
+      - { value: gemini, label: "Gemini CLI" }
+    min: 1
+    group: setup
+
+  themes:
+    type: multiselect
+    message: "Optional themes"
+    max: 1
+    options:
+      - { value: dark, label: "Dark" }
+      - { value: light, label: "Light" }
+    group: setup
+
+groups:
+  - { id: setup, label: "Setup" }
+
+modules: {}
+signals: []
+frontmatter: {}
+migrations: []

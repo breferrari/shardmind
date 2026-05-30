@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import { Box, Text } from 'ink';
 import { TextInput, Select, StatusMessage } from './ui.js';
+import ScrollableMultiSelect from './ScrollableMultiSelect.js';
 import type { ValueDefinition } from '../runtime/types.js';
 import { assertNever } from '../runtime/types.js';
 
@@ -135,16 +136,31 @@ function renderInput(
       );
     }
     case 'multiselect': {
-      // Textual comma-separated fallback. Swapping in @inkjs/ui's
-      // MultiSelect widget is v0.2 UX polish; no v0.1 shard uses
-      // multiselect values, so this path is rarely exercised.
-      const initial = Array.isArray(initialValue) ? (initialValue as string[]).join(', ') : '';
+      // Reuse the scroll-aware multi-select from the module-review step (#100).
+      // `defaultValue` seeds the checked set: prefer a back-nav initialValue,
+      // else the schema's (normalized) default array. ↑↓ navigate, space
+      // toggles, Enter submits the selected array. min/max + required are
+      // enforced in buildValidator on submit.
+      const options = (def.options ?? []).map((o) => ({ label: o.label, value: o.value }));
+      // Drop any seed value not in the current options (e.g. a back-nav or
+      // cached selection for an option the shard removed upstream) — same
+      // defensive posture as the `select` case, which falls back rather than
+      // seeding an unselectable value. Otherwise the widget can't render the
+      // stale row but still submits it, surfacing a confusing "Unknown option"
+      // error on a value the user never actively chose.
+      const allowed = new Set(options.map((o) => o.value));
+      const seed = Array.isArray(initialValue)
+        ? (initialValue as string[])
+        : Array.isArray(def.default)
+        ? (def.default as string[])
+        : [];
+      const initial = seed.filter((v) => allowed.has(v));
       return (
-        <TextInput
+        <ScrollableMultiSelect
           key={key}
+          options={options}
           defaultValue={initial}
-          placeholder="comma,separated,values"
-          onSubmit={(v) => onSubmit(v.split(',').map((s) => s.trim()).filter(Boolean))}
+          onSubmit={(selected) => onSubmit(selected)}
         />
       );
     }
@@ -210,6 +226,12 @@ function buildValidator(def: ValueDefinition): (raw: unknown) => ValidationOutco
         }
         if (def.required && raw.length === 0) {
           return { ok: false, message: 'At least one entry required' };
+        }
+        if (def.min !== undefined && raw.length < def.min) {
+          return { ok: false, message: `Select at least ${def.min} option${def.min === 1 ? '' : 's'}` };
+        }
+        if (def.max !== undefined && raw.length > def.max) {
+          return { ok: false, message: `Select at most ${def.max} option${def.max === 1 ? '' : 's'}` };
         }
         const allowed = new Set((def.options ?? []).map((o) => o.value));
         const invalid = raw.filter((v) => typeof v !== 'string' || !allowed.has(v));

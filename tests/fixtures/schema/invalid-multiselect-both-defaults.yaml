@@ -1,0 +1,22 @@
+schema_version: 1
+
+# A multiselect must declare its default EITHER via per-option `default: true`
+# OR a top-level `default`, never both. This fixture supplies both, which is
+# ambiguous and must be rejected at parse time.
+values:
+  agents:
+    type: multiselect
+    message: "Which agents?"
+    default: ["claude"]
+    options:
+      - { value: claude, label: "Claude Code", default: true }
+      - { value: codex, label: "Codex CLI" }
+    group: setup
+
+groups:
+  - { id: setup, label: "Setup" }
+
+modules: {}
+signals: []
+frontmatter: {}
+migrations: []

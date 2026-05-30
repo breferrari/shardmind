@@ -97,7 +97,10 @@ function buildValuesValidator(schema: ShardSchema): z.ZodObject<any> {
       }
       case 'multiselect': {
         const values = val.options!.map(o => o.value) as [string, ...string[]];
-        field = z.array(z.enum(values));
+        let arr = z.array(z.enum(values));
+        if (val.min !== undefined) arr = arr.min(val.min);
+        if (val.max !== undefined) arr = arr.max(val.max);
+        field = arr;
         break;
       }
       case 'list':

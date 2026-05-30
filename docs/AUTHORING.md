@@ -175,10 +175,35 @@ Each entry becomes one prompt. Supported `type`s:
 | `number` | TextInput | finite number; honors `min` / `max` |
 | `boolean` | Select (Yes / No) | bool |
 | `select` | Select | must be one of `options[].value` |
-| `multiselect` | comma-separated text (v0.1) | array of `options[].value` |
+| `multiselect` | scrollable multi-select (↑↓ navigate, space toggles, Enter submits) | array of `options[].value`; honors `min` / `max` (array length) |
 | `list` | comma-separated text | array of strings |
 
 `message` is the prompt text. `hint` is gray helper text. `placeholder` is shown in empty inputs.
+
+#### `multiselect` — pick a set
+
+Ask one checkbox question instead of N booleans (e.g. "Which agents do you use?"). Each option may carry `default: true` to seed the initial selection; `min` / `max` bound how many the user may choose.
+
+```yaml
+agents:
+  type: multiselect
+  message: "Which agents do you use?"
+  options:
+    - { value: claude, label: "Claude Code", default: true,  description: "Full hook + skill + command support" }
+    - { value: codex,  label: "Codex CLI",   default: false, description: "AGENTS.md + .codex/ hooks" }
+    - { value: gemini, label: "Gemini CLI" }
+  min: 1
+  group: setup
+```
+
+Default rules:
+- Declare the default selection EITHER per-option (`default: true`) OR with a top-level `default` array — **never both** (`SCHEMA_VALIDATION_FAILED`). The engine normalizes per-option flags into the canonical top-level array internally.
+- Per-option `default` is multiselect-only; on any other `type` it throws `SCHEMA_VALIDATION_FAILED`.
+- A multiselect with no per-option flags and no top-level `default` defaults to an empty selection (`[]`) — multiselect is exempt from the "every value declares a `default`" rule.
+- A top-level `default` may be a literal array or a computed `{{ … }}` expression (see Computed defaults below).
+- `min` / `max` bound the selected count, and **the default must satisfy them** — a `min: 1` multiselect must default to at least one selection (a `--defaults` install must produce a valid vault, so an out-of-range default is rejected at parse). `min` cannot exceed the number of options. (Computed defaults resolve at install time, so their length isn't checked at parse.)
+
+Templates read the result with Nunjucks membership: `{% if 'codex' in values.agents %}…{% endif %}`. (Gating *which modules install* on a multiselect value is a separate feature — [#80](https://github.com/breferrari/shardmind/issues/80), v0.2.)
 
 **Reserved names** (cannot be used as value keys — they shadow the render context):
 `shard`, `install_date`, `year`, `included_modules`, `values`. Using any of these throws `SCHEMA_RESERVED_NAME` at install.
