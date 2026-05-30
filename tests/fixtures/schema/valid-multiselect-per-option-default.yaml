@@ -14,6 +14,7 @@ values:
   themes:
     type: multiselect
     message: "Optional themes"
+    max: 1
     options:
       - { value: dark, label: "Dark" }
       - { value: light, label: "Light" }

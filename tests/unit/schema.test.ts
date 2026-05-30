@@ -206,6 +206,71 @@ describe('parseSchema', () => {
     }
   });
 
+  it('rejects a multiselect whose default selects more than `max`', async () => {
+    const yaml = [
+      'schema_version: 1',
+      'values:',
+      '  agents:',
+      '    type: multiselect',
+      '    message: "Agents"',
+      '    max: 1',
+      '    options:',
+      '      - { value: claude, label: "Claude", default: true }',
+      '      - { value: codex, label: "Codex", default: true }',
+      '    group: setup',
+      'groups: [{ id: setup, label: "Setup" }]',
+      'modules: {}',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n');
+    const fs = await import('node:fs/promises');
+    const tmp = tmpYaml('schema-ms-max');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const err = await parseSchema(tmp).catch(e => e);
+      expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+      expect(err.message).toContain('agents');
+      expect(err.message).toContain('max');
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
+  it('rejects a multiselect `min`/`max` that is fractional or negative', async () => {
+    const fs = await import('node:fs/promises');
+    for (const [field, value] of [['min', '1.5'], ['max', '-1']] as const) {
+      const yaml = [
+        'schema_version: 1',
+        'values:',
+        '  agents:',
+        '    type: multiselect',
+        '    message: "Agents"',
+        `    ${field}: ${value}`,
+        '    options:',
+        '      - { value: claude, label: "Claude", default: true }',
+        '      - { value: codex, label: "Codex" }',
+        '    group: setup',
+        'groups: [{ id: setup, label: "Setup" }]',
+        'modules: {}',
+        'signals: []',
+        'frontmatter: {}',
+        'migrations: []',
+        '',
+      ].join('\n');
+      const tmp = tmpYaml('schema-ms-intbound');
+      await fs.writeFile(tmp, yaml);
+      try {
+        const err = await parseSchema(tmp).catch(e => e);
+        expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+        expect(err.message).toContain(field);
+      } finally {
+        await fs.unlink(tmp);
+      }
+    }
+  });
+
   it('rejects a multiselect whose `min` exceeds the option count', async () => {
     const yaml = [
       'schema_version: 1',
@@ -362,6 +427,9 @@ describe('buildValuesValidator', () => {
     expect(validator.parse({ agents: ['codex'] }).agents).toEqual(['codex']);
     // Omitting `agents` falls back to the synthesized default ['claude'] (length 1, ok).
     expect(validator.parse({}).agents).toEqual(['claude']);
+    // `themes` has max: 1 — selecting two must be rejected.
+    expect(() => validator.parse({ agents: ['claude'], themes: ['dark', 'light'] })).toThrow();
+    expect(validator.parse({ agents: ['claude'], themes: ['dark'] }).themes).toEqual(['dark']);
   });
 
   it('rejects invalid select values', async () => {

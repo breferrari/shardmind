@@ -319,6 +319,20 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
     // top-level default present → leave as-is (literal array or computed
     // `{{ … }}`; membership already checked in ValueDefinitionSchema.check()).
 
+    // `min`/`max` are selected-count bounds here, so unlike the `number` type
+    // they must be non-negative integers — a fractional bound yields nonsense
+    // like "Select at least 1.5 options".
+    for (const bound of ['min', 'max'] as const) {
+      const n = val[bound];
+      if (n !== undefined && (!Number.isInteger(n) || n < 0)) {
+        throw new ShardMindError(
+          `shard-schema.yaml validation failed: values.${key} ${bound} must be a non-negative integer (got ${n})`,
+          'SCHEMA_VALIDATION_FAILED',
+          'A multiselect `min`/`max` bound the selected count, so they must be whole, non-negative numbers.',
+        );
+      }
+    }
+
     // `min` cannot exceed the number of options — no selection could ever
     // satisfy it. Caught here (not in .check()) so the message can name the
     // count.
