@@ -40,7 +40,7 @@ Closes [#121](https://github.com/breferrari/shardmind/issues/121). The guard tha
 
 - **Unresolvable engine version skips the check.** A new `resolveEngineVersion` helper (`source/commands/hooks/cli-version.ts`) maps the `PKG_VERSION_FALLBACK` sentinel to `undefined`; an engine that can't locate its own `package.json` (a bundle-layout quirk) must not hard-block a real install.
 
-- **Tests**: `tests/unit/manifest.test.ts` (range parse + reject; `assertEngineCompatible` matrix — satisfied / lower-bound / too-old / absent / unknown-version skip / prerelease) and a Layer 1 flow test (`install-flow.test.ts` scenario 12 — `>=99.0.0` refuses + no `state.json`). **Docs**: `docs/AUTHORING.md` (field reference + §6 note), `docs/ERRORS.md` (`SHARDMIND_VERSION_MISMATCH`), `schemas/shard.schema.json` (`requires.shardmind`).
+- **Tests**: `tests/unit/manifest.test.ts` (range parse + reject incl. empty/whitespace → `MANIFEST_VALIDATION_FAILED` and deliberate `*`/`x` match-all; `assertEngineCompatible` matrix — satisfied / lower-bound / too-old / absent / unknown-version skip / prerelease-ahead / match-all) and Layer 1 flow tests refusing `>=99.0.0` before any write across all three commands: install (scenario 12, no `state.json`), update (scenario 18, `state.json` byte-unchanged), adopt (scenario 24, no `.shardmind/`). **Docs**: `docs/AUTHORING.md` (field reference + §6 note), `docs/ERRORS.md` (`SHARDMIND_VERSION_MISMATCH`), `schemas/shard.schema.json` (`requires.shardmind`).
 
 ### Added (multiselect value type — #101)
 
