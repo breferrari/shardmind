@@ -601,10 +601,14 @@ interface PersonalizeContext extends HookContextBase { slot: 'personalize'; }
 interface PostUpdateContext  extends HookContextBase {
   slot: 'post-update'; previousVersion?: string; newFiles: string[]; removedFiles: string[];
 }
-type HookContext = BootstrapContext | PersonalizeContext | PostUpdateContext;
+type SlottedHookContext = BootstrapContext | PersonalizeContext | PostUpdateContext;
 
-// Hook file exports a default async function over its slot's context:
+// New hooks type against their slot's context:
 export default async function(ctx: BootstrapContext): Promise<void>;
+// (PersonalizeContext / PostUpdateContext for the other slots.)
+// The legacy flat `HookContext` (vaultRoot/values/modules/shard +
+// valuesAreDefaults/newFiles/removedFiles) is retained for deprecated
+// `post-install` hooks until ≥0.3.0.
 ```
 
 | Slot | Runs on | May write | Order |

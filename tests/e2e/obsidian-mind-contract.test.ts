@@ -40,7 +40,11 @@ import * as tar from 'tar';
 import { stringify as stringifyYaml, parse as parseYaml } from 'yaml';
 
 import { sha256 } from '../../source/core/fs-utils.js';
-import type { HookContext } from '../../source/runtime/types.js';
+import type {
+  BootstrapContext,
+  PersonalizeContext,
+  PostUpdateContext,
+} from '../../source/runtime/types.js';
 import { ensureBuilt } from './helpers/build-once.js';
 import {
   buildObsidianMindTarballs,
@@ -64,8 +68,8 @@ const SHARD_SLUG = 'acme/obs-mind-like';
 const SHARD_REF = `github:${SHARD_SLUG}`;
 
 // Custom values that diverge from every literal default in the schema.
-// Used by scenarios that need valuesAreDefaults=false in the hook ctx
-// so the post-install hook's managed-file branch fires.
+// Used by scenarios that need non-default values so the engine runs the
+// personalize hook (its managed-file edit).
 const CUSTOM_VALUES = {
   user_name: 'Alice',
   org_name: 'Acme Labs',
@@ -142,14 +146,11 @@ async function writeValuesFile(
   return valuesPath;
 }
 
-/**
- * Test-side mirror of the engine's HookContext. Aliasing the runtime
- * type (rather than redefining its shape) means a new HookContext
- * field shows up here automatically — silently dropping a field at
- * the assertion layer is a class of regression we deliberately can't
- * have.
- */
-type HookCtxSnapshot = HookContext;
+// Per-slot ctx dumps the fixture writes (#102): bootstrap → .hook-ctx-bootstrap,
+// personalize → .hook-ctx-personalize, post-update → .hook-ctx-update. Aliasing
+// the runtime slot types (not redefining them) means a new field shows up here
+// automatically — silently dropping one at the assertion layer is a regression
+// class we deliberately can't have.
 
 // ---------------------------------------------------------------------------
 // Install scenarios — see issue #92 §Install + docs/SHARD-LAYOUT.md
@@ -163,11 +164,12 @@ describe('install (obsidian-mind-like)', () => {
     await vault?.cleanup();
   });
 
-  it('--defaults installs every file, seeds state.json, and reports valuesAreDefaults=true', async () => {
-    // Scenario 1 — docs/SHARD-LAYOUT.md §Installation invariants:
-    // `shardmind install --defaults` produces the full vault tree;
-    // valuesAreDefaults is true; the post-install hook's managed-file
-    // branch is gated off by Invariant 2.
+  it('--defaults installs every file, seeds state.json, and skips personalize (Invariant 2)', async () => {
+    // Scenario 1 — docs/SHARD-LAYOUT.md §Installation invariants + §Hook
+    // lifecycle: `shardmind install --defaults` produces the full vault tree;
+    // bootstrap always runs; the engine SKIPS personalize entirely because
+    // values are defaults (engine-enforced Invariant 2), so no managed file
+    // is touched.
     vault = await createEmptyVault('obs-mind-defaults');
     const result = await spawnCli(['install', SHARD_REF, '--defaults'], {
       cwd: vault.root,
@@ -196,23 +198,29 @@ describe('install (obsidian-mind-like)', () => {
       expect(await vault.exists(rel)).toBe(true);
     }
 
-    const ctx = await readHookContext<HookCtxSnapshot>(vault, 'install');
-    expect(ctx.valuesAreDefaults).toBe(true);
-    expect(ctx.newFiles).toEqual([]);
-    expect(ctx.removedFiles).toEqual([]);
+    // bootstrap ran (always) — its unmanaged marker + ctx dump are present.
+    expect(await vault.exists('.bootstrap-marker.txt')).toBe(true);
+    const bootstrap = await readHookContext<BootstrapContext>(vault, 'bootstrap');
+    expect(bootstrap.slot).toBe('bootstrap');
 
-    // Invariant 2: hook did NOT modify the managed brain/North Star.md
-    // when valuesAreDefaults is true.
+    // Invariant 2: personalize was NOT invoked — no ctx dump, North Star
+    // unmodified.
+    expect(await vault.exists('.hook-ctx-personalize.json')).toBe(false);
     const northStar = await vault.readFile('brain/North Star.md');
     expect(northStar).not.toContain('North Star —');
+
+    // Invariant 4: the bootstrap fingerprint is persisted to state.json.
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      bootstrap_fingerprint?: string;
+    };
+    expect(state.bootstrap_fingerprint).toBe('v6');
   }, 60_000);
 
-  it('--yes + custom --values renders into dotfolder .njk outputs and personalizes the managed file via the hook', async () => {
-    // Scenario 2 — docs/SHARD-LAYOUT.md §Personalization model
-    // (Nunjucks rendering + post-install hook): values flow into
-    // dotfolder templates; the hook personalizes North Star.md when
-    // valuesAreDefaults is false; post-hook re-hash captures the
-    // edited bytes (§Hooks, state, and re-hash semantics).
+  it('--yes + custom --values renders dotfolder .njk and personalizes the managed file', async () => {
+    // Scenario 2 — docs/SHARD-LAYOUT.md §Personalization model: values flow
+    // into dotfolder templates; with non-default values the engine runs
+    // personalize, which edits North Star.md; the post-hook re-hash captures
+    // the edited bytes (§Hook lifecycle).
     vault = await createEmptyVault('obs-mind-custom');
     const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
     const result = await spawnCli(
@@ -230,8 +238,7 @@ describe('install (obsidian-mind-like)', () => {
       qmd: true,
     });
 
-    // Hook personalized brain/North Star.md (managed-file mutation
-    // gated on !valuesAreDefaults).
+    // personalize ran (non-default values) and edited the managed file.
     const northStar = await vault.readFile('brain/North Star.md');
     expect(northStar).toContain('North Star — Alice');
 
@@ -244,12 +251,11 @@ describe('install (obsidian-mind-like)', () => {
     };
     expect(state.files['brain/North Star.md']?.rendered_hash).toBe(expectedHash);
 
-    const ctx = await readHookContext<HookCtxSnapshot>(vault, 'install');
-    expect(ctx.valuesAreDefaults).toBe(false);
-    expect(ctx.values).toMatchObject({
-      user_name: 'Alice',
-      qmd_enabled: true,
-    });
+    // personalize received the custom values (no valuesAreDefaults field — the
+    // engine already enforced the gate by choosing to run it).
+    const ctx = await readHookContext<PersonalizeContext>(vault, 'personalize');
+    expect(ctx.slot).toBe('personalize');
+    expect(ctx.values).toMatchObject({ user_name: 'Alice', qmd_enabled: true });
   }, 60_000);
 
   it('install into a non-empty directory backs up pre-existing user content under --yes', async () => {
@@ -355,7 +361,7 @@ describe('update (obsidian-mind-like)', () => {
     const findings = await vault.readFile('research/Findings.md');
     expect(findings).toContain('touched by post-update'); // Invariant 3 marker.
 
-    const ctx = JSON.parse(await vault.readFile('.hook-ctx-update.json')) as HookCtxSnapshot;
+    const ctx = await readHookContext<PostUpdateContext>(vault, 'update');
     expect(ctx.newFiles).toContain('research/Findings.md');
     expect(ctx.removedFiles).toEqual([]);
     expect(ctx.previousVersion).toBe('6.0.0');
@@ -540,7 +546,7 @@ describe('update (obsidian-mind-like)', () => {
     const settingsAfter = JSON.parse(await vault.readFile('.claude/settings.json'));
     expect(settingsAfter).toMatchObject({ qmd: true });
 
-    const ctx = JSON.parse(await vault.readFile('.hook-ctx-update.json')) as HookCtxSnapshot;
+    const ctx = await readHookContext<PostUpdateContext>(vault, 'update');
     // No new files — value-only change.
     expect(ctx.newFiles).toEqual([]);
   }, 90_000);
@@ -1083,15 +1089,13 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     await vault?.cleanup();
   });
 
-  it('post-install hook that edits a managed file then throws → install completes; state.hash reflects post-hook bytes', async () => {
-    // Scenario 26 — docs/SHARD-LAYOUT.md §Hooks, state, and re-hash
-    // semantics ("Engine re-hashes all managed files after hook
-    // exits — success OR failure"): a hook that partially edits a
-    // managed file and then throws still leaves the install in a
-    // consistent state. The Helm-style non-fatal contract is in the
-    // same section ("Hook timeout stays at the existing
-    // DEFAULT_HOOK_TIMEOUT_MS (non-fatal on timeout)"). Drive the
-    // failure via the fixture's SHARDMIND_HOOK_EDIT_BEFORE_THROW env.
+  it('personalize hook that edits a managed file then throws → install completes; state.hash reflects post-hook bytes', async () => {
+    // Scenario 26 — docs/SHARD-LAYOUT.md §Hook lifecycle ("Engine re-hashes
+    // all managed files after the hook phase exits — success OR failure"): a
+    // personalize hook that partially edits a managed file and then throws
+    // still leaves the install in a consistent state (Helm-style non-fatal
+    // contract). Custom values ensure personalize runs; drive the failure via
+    // the fixture's SHARDMIND_HOOK_EDIT_BEFORE_THROW env.
     vault = await createEmptyVault('obs-mind-hook-throw');
     const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
     const result = await spawnCli(
@@ -1189,16 +1193,17 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     expect(await vault.exists('CLAUDE.md')).toBe(true);
   }, 60_000);
 
-  it('valuesAreDefaults handles mixed-default types ("" / 0 / false / select / non-empty string) correctly across both branches', async () => {
+  it('engine-enforced Invariant 2 gates personalize across mixed-default types ("" / 0 / false / select / string)', async () => {
     // Scenario 30 — docs/SHARD-LAYOUT.md §Values, schema, and modules
-    // ("Every value has a default") + §Invariant 2 — Hooks respect
-    // default-values: the deep-
-    // equal computation must treat literal `""`, `0`, `false`,
-    // a string default, and a select default identically. Drives
-    // both the positive (every value at default) and negative (any
-    // value diverges) branches against the same fixture.
+    // ("Every value has a default") + §Invariant 2 (engine-enforced): the
+    // deep-equal computation must treat literal `""`, `0`, `false`, a string
+    // default, and a select default identically when deciding whether to run
+    // personalize. Observable via personalize's ctx dump — present iff the
+    // engine considered values non-default. Positive (all defaults → skipped)
+    // and negative (any one flip → runs) branches against the same fixture.
     //
-    // Positive branch: every value matches its literal default.
+    // Positive branch: every value matches its literal default ⇒ personalize
+    // is engine-skipped, so no .hook-ctx-personalize.json is written.
     vault = await createEmptyVault('obs-mind-defaults-positive');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const positive = await spawnCli(
@@ -1206,15 +1211,12 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
       { cwd: vault.root, env: envWithStub() },
     );
     expect(positive.exitCode).toBe(0);
-    const positiveCtx = await readHookContext<HookCtxSnapshot>(vault, 'install');
-    expect(positiveCtx.valuesAreDefaults).toBe(true);
+    expect(await vault.exists('.hook-ctx-personalize.json')).toBe(false);
     await vault.cleanup();
 
-    // Negative branches — flip exactly one value at a time. Each
-    // flip must surface valuesAreDefaults=false. The five flips are
-    // independent (each gets its own vault) so they run in parallel
-    // — install is subprocess-bound (~2s each), and serial cost was
-    // ~10s for the whole scenario.
+    // Negative branches — flip exactly one value at a time. Each flip must make
+    // the engine run personalize (its ctx dump appears). The five flips are
+    // independent (each gets its own vault) so they run in parallel.
     const flips: Array<[string, Record<string, unknown>]> = [
       ['user_name (string default "")', { ...DEFAULT_VALUES, user_name: 'Alice' }],
       ['qmd_enabled (boolean default false)', { ...DEFAULT_VALUES, qmd_enabled: true }],
@@ -1232,11 +1234,10 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
             { cwd: v.root, env: envWithStub() },
           );
           expect(result.exitCode, `flip ${label} install failed`).toBe(0);
-          const ctx = await readHookContext<HookCtxSnapshot>(v, 'install');
           expect(
-            ctx.valuesAreDefaults,
-            `valuesAreDefaults should be false when ${label} diverges`,
-          ).toBe(false);
+            await v.exists('.hook-ctx-personalize.json'),
+            `personalize should run when ${label} diverges`,
+          ).toBe(true);
         } finally {
           await v.cleanup();
         }
@@ -1269,15 +1270,16 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
       // The case-folding-sensitive arrays (mismatches + missing) must
       // be empty: a case-insensitive FS that produced spurious
       // divergence would surface here. `extrasInInstall` legitimately
-      // contains the post-install hook's unmanaged markers
-      // (.hook-ctx-install.json + .post-install-marker.txt) — those
-      // are unmanaged files the hook writes per its contract, not
-      // a case-folding bug.
+      // contains the bootstrap hook's unmanaged markers
+      // (.bootstrap-marker.txt + .hook-ctx-bootstrap.json) — those are
+      // unmanaged files bootstrap writes per its contract, not a
+      // case-folding bug. (Defaults install ⇒ personalize is skipped, so
+      // no .hook-ctx-personalize.json.) Sorted POSIX order.
       expect(report.staticByteMismatches).toEqual([]);
       expect(report.missingFromInstall).toEqual([]);
       expect(report.extrasInInstall).toEqual([
-        '.hook-ctx-install.json',
-        '.post-install-marker.txt',
+        '.bootstrap-marker.txt',
+        '.hook-ctx-bootstrap.json',
       ]);
     },
     60_000,

@@ -23,19 +23,22 @@ const FIXTURE_DIR = fileURLToPath(
 );
 
 describe('obsidian-mind-like fixture', () => {
-  it('shard.yaml parses through the engine and declares both hooks', async () => {
+  it('shard.yaml parses through the engine and declares the three hook slots', async () => {
     const manifest = await parseManifest(
       path.join(FIXTURE_DIR, '.shardmind', 'shard.yaml'),
     );
     expect(manifest.name).toBe('obs-mind-like');
     expect(manifest.namespace).toBe('acme');
     expect(manifest.version).toBe('6.0.0');
-    expect(manifest.hooks['post-install']).toBe(
-      '.shardmind/hooks/post-install.ts',
-    );
-    expect(manifest.hooks['post-update']).toBe(
-      '.shardmind/hooks/post-update.ts',
-    );
+    // bootstrap normalizes to { script, fingerprint } (#102).
+    expect(manifest.hooks.bootstrap).toEqual({
+      script: '.shardmind/hooks/bootstrap.ts',
+      fingerprint: 'v6',
+    });
+    expect(manifest.hooks.personalize).toBe('.shardmind/hooks/personalize.ts');
+    expect(manifest.hooks['post-update']).toBe('.shardmind/hooks/post-update.ts');
+    // No legacy post-install slot — the fixture is migrated.
+    expect(manifest.hooks['post-install']).toBeUndefined();
     // timeout_ms must round-trip — the hook-failure scenarios bump it
     // down to a tiny value to force a timeout, and a misparse would
     // silently fall back to the 30s default.
@@ -64,16 +67,15 @@ describe('obsidian-mind-like fixture', () => {
   });
 
   it('hook scripts exist on disk at the manifest-declared paths', () => {
+    for (const hook of ['bootstrap.ts', 'personalize.ts', 'post-update.ts']) {
+      expect(
+        existsSync(path.join(FIXTURE_DIR, '.shardmind', 'hooks', hook)),
+      ).toBe(true);
+    }
+    // The legacy combined hook is gone (migrated to bootstrap + personalize).
     expect(
-      existsSync(
-        path.join(FIXTURE_DIR, '.shardmind', 'hooks', 'post-install.ts'),
-      ),
-    ).toBe(true);
-    expect(
-      existsSync(
-        path.join(FIXTURE_DIR, '.shardmind', 'hooks', 'post-update.ts'),
-      ),
-    ).toBe(true);
+      existsSync(path.join(FIXTURE_DIR, '.shardmind', 'hooks', 'post-install.ts')),
+    ).toBe(false);
   });
 
   it('vault content lives at native paths (flat v6 layout, no `templates/` wrapper)', () => {

@@ -147,20 +147,18 @@ export async function stripShardmindMetadata(vault: Vault): Promise<void> {
 }
 
 /**
- * Read and parse a hook ctx dump emitted by a fixture's
- * `post-install.ts` / `post-update.ts`. The fixture writes the full
- * `HookContext` JSON to `.hook-ctx-{install,update}.json` so scenarios
- * can assert what the engine handed the hook (valuesAreDefaults,
- * newFiles, removedFiles, previousVersion, …).
+ * Read and parse a hook ctx dump emitted by a fixture's hook (#102: the
+ * obsidian-mind-like fixture writes
+ * `.hook-ctx-{bootstrap,personalize,update}.json`). Scenarios assert what the
+ * engine handed each slot (values, newFiles, removedFiles, previousVersion, …).
  *
- * `T` defaults to the engine's `HookContext` so a typo'd field name
- * trips the type checker. Tests that assert subset-shape (e.g. just
- * `valuesAreDefaults`) can pass a tighter T or use the canonical type
- * directly.
+ * `T` defaults to the engine's `HookContext` (the legacy combined shape).
+ * Slotted scenarios pass a tighter T (BootstrapContext / PersonalizeContext /
+ * PostUpdateContext) so a typo'd field name trips the type checker.
  */
 export async function readHookContext<T = HookContext>(
   vault: Vault,
-  phase: 'install' | 'update',
+  phase: 'bootstrap' | 'personalize' | 'update',
 ): Promise<T> {
   return JSON.parse(await vault.readFile(`.hook-ctx-${phase}.json`)) as T;
 }

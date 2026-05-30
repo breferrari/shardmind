@@ -1,7 +1,7 @@
 /**
  * Layer 2 hook lifecycle scenarios — #111 Phase 2 scenarios 26, 27, 28.
  *
- * Three flavors of post-install hook behavior:
+ * Three flavors of bootstrap hook behavior:
  *   - 26. Hook prints to stdout → live tail visible during the
  *         `running-hook` phase.
  *   - 27. Hook throws → Summary shows non-fatal warning + captured
@@ -10,7 +10,7 @@
  *         hook) → Summary shows "timed out after 1.0s".
  *
  * Each scenario builds its own custom-tarball derived from
- * `examples/minimal-shard` with a hand-rolled `hooks/post-install.ts`
+ * `examples/minimal-shard` with a hand-rolled `hooks/bootstrap.ts`
  * via the shared `buildHookFixtureShard` helper. Install is driven
  * via `--yes --values <file>` so the only event we drive is whatever
  * the scenario actually exercises in the hook phase.
@@ -186,7 +186,7 @@ describe.skipIf(skipOnWindows)(
             await handle.waitForScreen(
               (s) =>
                 s.includes(LIVE_TAIL_MARKER) &&
-                !s.includes('Post-install hook completed'),
+                !s.includes('Bootstrap hook completed'),
               {
                 timeoutMs: 30_000,
                 description: 'live tail marker mid-hook (pre-summary)',
@@ -197,7 +197,7 @@ describe.skipIf(skipOnWindows)(
             // stdout block names both marker lines.
             await handle.waitForScreen(
               (s) =>
-                s.includes('Post-install hook completed') &&
+                s.includes('Bootstrap hook completed') &&
                 s.includes(`${LIVE_TAIL_MARKER}_DONE`),
               {
                 timeoutMs: 30_000,
@@ -247,14 +247,14 @@ describe.skipIf(skipOnWindows)(
             // The Summary must say:
             //   - "Installed l2hooks/throw@0.1.0" — install itself
             //     succeeded (Helm semantics: hook is non-fatal).
-            //   - "Post-install hook exited with code <N>" — the
+            //   - "Bootstrap hook exited with code <N>" — the
             //     warning headline from HookSummarySection.
             //   - the thrown message (or its stderr trail) somewhere
             //     in the captured stderr block.
             await handle.waitForScreen(
               (s) =>
                 /Installed l2hooks\/throw@0\.1\.0/.test(s) &&
-                /Post-install hook exited with code/.test(s),
+                /Bootstrap hook exited with code/.test(s),
               {
                 timeoutMs: 30_000,
                 description: 'install summary + hook warning',
