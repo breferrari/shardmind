@@ -49,6 +49,7 @@ import {
   cacheTemplates,
   cacheManifest,
   writeState,
+  STATE_SCHEMA_VERSION,
 } from './state.js';
 import type { AdoptClassification, AdoptPlan } from './adopt-planner.js';
 
@@ -306,7 +307,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
 
     const installedAt = now.toISOString();
     const state: ShardState = {
-      schema_version: 1,
+      schema_version: STATE_SCHEMA_VERSION,
       shard: `${manifest.namespace}/${manifest.name}`,
       source: resolved.source,
       version: manifest.version,

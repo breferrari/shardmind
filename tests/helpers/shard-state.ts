@@ -10,7 +10,7 @@ const PLACEHOLDER_HASH = 'x'.repeat(64);
 
 export function makeShardState(overrides: Partial<ShardState> = {}): ShardState {
   return {
-    schema_version: 1,
+    schema_version: 2,
     shard: 'test/shard',
     source: 'github:test/shard',
     version: '0.1.0',

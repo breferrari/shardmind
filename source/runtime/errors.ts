@@ -21,6 +21,7 @@ export type ErrorCode =
   | 'MANIFEST_READ_FAILED'
   | 'MANIFEST_INVALID_YAML'
   | 'MANIFEST_VALIDATION_FAILED'
+  | 'HOOK_SLOT_CONFLICT'
 
   // Shard schema (shard-schema.yaml)
   | 'SCHEMA_NOT_FOUND'

@@ -21,10 +21,15 @@ import path from 'node:path';
 import {
   runPostInstallHook,
   runPostUpdateHook,
+  runHook,
   executeHook,
   tailAtUtf8Boundary,
 } from '../../source/core/hook.js';
-import type { HookContext, ShardManifest } from '../../source/runtime/types.js';
+import type {
+  BootstrapContext,
+  HookContext,
+  ShardManifest,
+} from '../../source/runtime/types.js';
 
 function makeManifest(hooks: ShardManifest['hooks']): ShardManifest {
   return {
@@ -596,5 +601,87 @@ describe('executeHook — subprocess runtime', () => {
       }
       await fsp.rm(scopedTmp, { recursive: true, force: true });
     }
+  }, 30_000);
+
+  it('derives SHARDMIND_HOOK_PHASE from ctx.slot, not previousVersion', async () => {
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          console.log(JSON.stringify({ phase: process.env.SHARDMIND_HOOK_PHASE }));
+        }
+      `,
+    );
+    // A bootstrap re-run on update carries previousVersion, but the phase must
+    // be its slot ('bootstrap'), NOT the legacy previousVersion-derived
+    // 'post-update'. This is the regression the slot discriminator fixes.
+    const ctx: BootstrapContext = {
+      slot: 'bootstrap',
+      vaultRoot: vaultDir,
+      values: {},
+      modules: {},
+      shard: { name: 'test-shard', version: '2.0.0' },
+      previousVersion: '1.0.0',
+    };
+    const result = await executeHook(hookPath, ctx);
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}`);
+    expect(JSON.parse(result.stdout.trim())).toStrictEqual({ phase: 'bootstrap' });
+  }, 30_000);
+});
+
+describe('runHook — slot-agnostic runner', () => {
+  let scratchDir: string;
+  let vaultDir: string;
+
+  beforeEach(async () => {
+    scratchDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'run-hook-'));
+    vaultDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'run-hook-vault-'));
+  });
+  afterEach(async () => {
+    const rmOpts = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
+    await fsp.rm(scratchDir, rmOpts);
+    await fsp.rm(vaultDir, rmOpts);
+  });
+
+  const ctx = (): BootstrapContext => ({
+    slot: 'bootstrap',
+    vaultRoot: vaultDir,
+    values: {},
+    modules: {},
+    shard: { name: 'test-shard', version: '1.0.0' },
+  });
+
+  it('returns absent when the relative path is undefined', async () => {
+    const result = await runHook(scratchDir, undefined, ctx());
+    expect(result.kind).toBe('absent');
+  });
+
+  it('returns deferred (no execution) when ctx is omitted', async () => {
+    await fsp.writeFile(path.join(scratchDir, 'b.ts'), 'export default async () => {};');
+    const result = await runHook(scratchDir, 'b.ts', undefined);
+    expect(result.kind).toBe('deferred');
+  });
+
+  it('rejects a traversing relative path as absent', async () => {
+    const result = await runHook(scratchDir, '../../etc/passwd', ctx());
+    expect(result.kind).toBe('absent');
+  });
+
+  it('executes the resolved hook with the given ctx', async () => {
+    await fsp.writeFile(
+      path.join(scratchDir, 'b.ts'),
+      `
+        import { writeFile } from 'node:fs/promises';
+        import { join } from 'node:path';
+        export default async function (ctx) {
+          await writeFile(join(ctx.vaultRoot, 'bootstrapped.txt'), ctx.slot);
+        }
+      `,
+      'utf-8',
+    );
+    const result = await runHook(scratchDir, 'b.ts', ctx());
+    expect(result.kind).toBe('ran');
+    const body = await fsp.readFile(path.join(vaultDir, 'bootstrapped.txt'), 'utf-8');
+    expect(body).toBe('bootstrap');
   }, 30_000);
 });

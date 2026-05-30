@@ -217,3 +217,118 @@ describe('hooks.timeout_ms validation', () => {
     expect(parsed.hooks.timeout_ms).toBeUndefined();
   });
 });
+
+describe('hooks lifecycle slots (#102)', () => {
+  const base = {
+    apiVersion: 'v1' as const,
+    name: 'test',
+    namespace: 'ns',
+    version: '1.0.0',
+  };
+
+  it('normalizes the bare-string bootstrap form into { script }', () => {
+    const parsed = ShardManifestSchema.parse({
+      ...base,
+      hooks: { bootstrap: '.shardmind/hooks/bootstrap.ts' },
+    });
+    expect(parsed.hooks.bootstrap).toEqual({ script: '.shardmind/hooks/bootstrap.ts' });
+  });
+
+  it('accepts the object bootstrap form with a fingerprint', () => {
+    const parsed = ShardManifestSchema.parse({
+      ...base,
+      hooks: { bootstrap: { script: 'b.ts', fingerprint: 'qmd-v1' } },
+    });
+    expect(parsed.hooks.bootstrap).toEqual({ script: 'b.ts', fingerprint: 'qmd-v1' });
+  });
+
+  it('accepts the object bootstrap form without a fingerprint', () => {
+    const parsed = ShardManifestSchema.parse({
+      ...base,
+      hooks: { bootstrap: { script: 'b.ts' } },
+    });
+    expect(parsed.hooks.bootstrap).toEqual({ script: 'b.ts' });
+    expect(parsed.hooks.bootstrap?.fingerprint).toBeUndefined();
+  });
+
+  it('parses all three new slots together', () => {
+    const parsed = ShardManifestSchema.parse({
+      ...base,
+      hooks: {
+        bootstrap: 'b.ts',
+        personalize: 'p.ts',
+        'post-update': 'u.ts',
+      },
+    });
+    expect(parsed.hooks.bootstrap).toEqual({ script: 'b.ts' });
+    expect(parsed.hooks.personalize).toBe('p.ts');
+    expect(parsed.hooks['post-update']).toBe('u.ts');
+  });
+
+  it('rejects a bootstrap object missing its script', () => {
+    expect(() =>
+      ShardManifestSchema.parse({ ...base, hooks: { bootstrap: { fingerprint: 'x' } } }),
+    ).toThrow();
+  });
+
+  it('throws HOOK_SLOT_CONFLICT when post-install coexists with bootstrap', async () => {
+    const yaml = [
+      'apiVersion: v1',
+      'name: test',
+      'namespace: ns',
+      'version: 1.0.0',
+      'hooks:',
+      '  post-install: hooks/post-install.ts',
+      '  bootstrap: .shardmind/hooks/bootstrap.ts',
+    ].join('\n');
+    const tmp = tmpYaml('manifest-test');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const err = await parseManifest(tmp).catch((e) => e);
+      expect(err.code).toBe('HOOK_SLOT_CONFLICT');
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
+  it('throws HOOK_SLOT_CONFLICT when post-install coexists with personalize', async () => {
+    const yaml = [
+      'apiVersion: v1',
+      'name: test',
+      'namespace: ns',
+      'version: 1.0.0',
+      'hooks:',
+      '  post-install: hooks/post-install.ts',
+      '  personalize: hooks/personalize.ts',
+    ].join('\n');
+    const tmp = tmpYaml('manifest-test');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const err = await parseManifest(tmp).catch((e) => e);
+      expect(err.code).toBe('HOOK_SLOT_CONFLICT');
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
+  it('still accepts a lone legacy post-install (deprecated but valid)', async () => {
+    const yaml = [
+      'apiVersion: v1',
+      'name: test',
+      'namespace: ns',
+      'version: 1.0.0',
+      'hooks:',
+      '  post-install: hooks/post-install.ts',
+      '  post-update: hooks/post-update.ts',
+    ].join('\n');
+    const tmp = tmpYaml('manifest-test');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const manifest = await parseManifest(tmp);
+      expect(manifest.hooks['post-install']).toBe('hooks/post-install.ts');
+      expect(manifest.hooks.bootstrap).toBeUndefined();
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+});

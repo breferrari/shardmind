@@ -18,7 +18,7 @@ import { sha256 } from '../../source/core/fs-utils.js';
 
 function makeState(overrides: Partial<ShardState> = {}): ShardState {
   return {
-    schema_version: 1,
+    schema_version: 2,
     shard: 'breferrari/obsidian-mind',
     source: 'github:breferrari/obsidian-mind',
     version: '3.5.0',
@@ -78,17 +78,35 @@ describe('core/state', () => {
       });
     });
 
-    it('throws STATE_UNSUPPORTED_VERSION when schema_version differs from supported', async () => {
+    it('throws STATE_UNSUPPORTED_VERSION when no migration chain reaches the supported version', async () => {
       await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
       await fsp.writeFile(
         path.join(vault, '.shardmind', 'state.json'),
-        JSON.stringify(makeState({ schema_version: 2 })),
+        JSON.stringify(makeState({ schema_version: 99 })),
         'utf-8',
       );
 
       await expect(readState(vault)).rejects.toMatchObject({
         code: 'STATE_UNSUPPORTED_VERSION',
       });
+    });
+
+    it('forward-migrates a v1 state.json to the current schema (#102)', async () => {
+      await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
+      // A pre-#102 state.json: schema_version 1, no bootstrap_fingerprint.
+      const v1 = { ...makeState(), schema_version: 1 };
+      await fsp.writeFile(
+        path.join(vault, '.shardmind', 'state.json'),
+        JSON.stringify(v1),
+        'utf-8',
+      );
+
+      const state = await readState(vault);
+      expect(state).not.toBeNull();
+      expect(state!.schema_version).toBe(2);
+      expect(state!.bootstrap_fingerprint).toBeUndefined();
+      // Content survives the migration.
+      expect(state!.shard).toBe('breferrari/obsidian-mind');
     });
   });
 

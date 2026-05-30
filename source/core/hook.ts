@@ -33,7 +33,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { HookContext, ShardManifest } from '../runtime/types.js';
+import type { AnyHookContext, HookContext, ShardManifest } from '../runtime/types.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
 import { pathExists } from './fs-utils.js';
 
@@ -221,6 +221,29 @@ export async function runPostUpdateHook(
 }
 
 /**
+ * Slot-agnostic hook runner. Locates `hookRelPath` inside `tempDir` (same
+ * traversal sandbox as the wrappers above) and, when `ctx` is provided,
+ * executes it. Which slot fires when is decided by the orchestrator
+ * (`source/core/hook-orchestrator.ts`); this function only resolves + runs
+ * one hook. Without `ctx`, returns the `deferred` lookup shape (dry-run).
+ *
+ * Unlike the post-install / post-update wrappers, `runHook` does not read a
+ * timeout from a manifest — the caller passes `opts.timeoutMs` (the
+ * orchestrator computes it once from `hooks.timeout_ms`); absent, `executeHook`
+ * falls back to `DEFAULT_HOOK_TIMEOUT_MS`.
+ */
+export async function runHook(
+  tempDir: string,
+  hookRelPath: string | undefined,
+  ctx?: AnyHookContext,
+  opts?: HookExecOpts,
+): Promise<HookResult> {
+  const lookup = await lookupHook(tempDir, hookRelPath);
+  if (lookup.kind !== 'deferred' || ctx === undefined) return lookup;
+  return executeHook(lookup.hookPath, ctx, opts ?? {});
+}
+
+/**
  * Resolve `hookRelPath` inside `tempDir` and verify it stays within.
  * Rejects absolute paths and any path that normalizes to a location
  * outside the shard's extracted directory (e.g. `../../etc/shadow`).
@@ -259,7 +282,7 @@ async function lookupHook(tempDir: string, hookRelPath: string | undefined): Pro
  */
 export async function executeHook(
   hookPath: string,
-  ctx: HookContext,
+  ctx: AnyHookContext,
   opts: HookExecOpts = {},
 ): Promise<HookResult> {
   const { timeoutMs = DEFAULT_HOOK_TIMEOUT_MS, onStdout, onStderr, signal } = opts;
@@ -360,7 +383,15 @@ export async function executeHook(
   process.once('SIGINT', sigintCleanup);
 
   try {
-    const phase: HookStage = ctx.previousVersion === undefined ? 'post-install' : 'post-update';
+    // The slot drives `SHARDMIND_HOOK_PHASE`. Slotted contexts carry it
+    // directly; the legacy flat `HookContext` (deprecated post-install path)
+    // has no `slot`, so we fall back to the previousVersion heuristic.
+    const phase: string =
+      'slot' in ctx
+        ? ctx.slot
+        : ctx.previousVersion === undefined
+          ? 'post-install'
+          : 'post-update';
 
     // `node --import file:///.../tsx/dist/loader.mjs runner.js hookPath ctxPath`
     // The `--import` specifier is resolved via file:// URL so Windows

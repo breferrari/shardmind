@@ -28,6 +28,7 @@ import {
   cacheManifest,
   writeState,
   initShardDir,
+  STATE_SCHEMA_VERSION,
 } from './state.js';
 import {
   SHARDMIND_DIR,
@@ -218,7 +219,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     onProgress?.({ kind: 'done', total: progressTotal });
 
     const nextState: ShardState = {
-      schema_version: 1,
+      schema_version: STATE_SCHEMA_VERSION,
       shard: `${newManifest.namespace}/${newManifest.name}`,
       source: resolved.source,
       version: newManifest.version,
@@ -236,6 +237,11 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       // dropping undefined values.
       ref: resolved.ref?.name,
       resolvedSha: resolved.ref?.commit,
+      // Carry the prior bootstrap fingerprint forward. The hook orchestrator
+      // overwrites it only when `bootstrap` actually re-runs (fingerprint
+      // changed); a no-rerun update must not silently drop it. JSON.stringify
+      // omits the key when undefined (shard never declared a fingerprint).
+      bootstrap_fingerprint: currentState.bootstrap_fingerprint,
     };
 
     if (!dryRun) {
