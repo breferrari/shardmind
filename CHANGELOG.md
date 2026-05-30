@@ -8,6 +8,20 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (multiselect value type — #101)
+
+Closes [#101](https://github.com/breferrari/shardmind/issues/101). Promotes `multiselect` from a partially-wired type (engine validation existed; the wizard rendered a comma-separated text fallback flagged in-code as v0.2 polish) to a first-class value type. Lets a shard author ask one checkbox question ("Which agents do you use?") instead of N booleans. Scope is the value type + widget; gating *which modules install* on a multiselect value remains [#80](https://github.com/breferrari/shardmind/issues/80) (v0.2).
+
+- **Author API — per-option `default: true`.** `OptionSchema` gains an optional `default: boolean`. `source/core/schema.ts::parseSchema` normalizes per-option flags into the value's canonical top-level `default` array and **strips the booleans**, so every downstream consumer (zod validator, `valuesAreDefaults`, install-planner, and the cached `.shardmind/shard-schema.yaml` the runtime + update re-parse read) only ever sees the array form. Normalization is idempotent — re-parsing the cached output never re-triggers the both-sources guard. A multiselect with no per-option flags and no top-level `default` defaults to `[]` (exempt from the "every value declares a `default`" rule). Two new `SCHEMA_VALIDATION_FAILED` cases: declaring both a per-option and a top-level default (ambiguous), and a per-option `default` on a non-multiselect value (silently-ignored field).
+
+- **`min` / `max` enforced as array-length bounds** in both `buildValuesValidator` (core) and its runtime duplicate (`source/runtime/values.ts`), plus the wizard's inline validator ("Select at least/at most N option(s)").
+
+- **`source/components/ValueInput.tsx`** renders `multiselect` via the existing `ScrollableMultiSelect` (the scroll-aware widget #100 added, also used by `ModuleReview`): ↑↓ navigate, space toggles, Enter submits the selected-value array; the checked set seeds from a back-nav `initialValue` or the schema's normalized default array. `InstallWizard` / `NewValuesPrompt` inherit it unchanged.
+
+- **Tests**: schema unit tests (per-option synthesis + strip, both-sources error, per-option-on-select error, neither→`[]`, idempotent re-parse, min/max validator); runtime test proving a per-option default reaches `validateValues` through the cache chain; ValueInput component tests (render, default seeding, toggle+submit, min/max + required messages) including the mandatory `rerender()` iterated case; install-flow Layer 1 scenario 11 driving the multiselect wizard end-to-end; `valuesAreDefaults` Invariant 2 coverage. Three new schema fixtures.
+
+- **Docs**: `docs/AUTHORING.md` (multiselect section + widget-table row), `docs/ERRORS.md` (two new `SCHEMA_VALIDATION_FAILED` causes), `docs/ARCHITECTURE.md` (`ValueDefinition` option shape), `schemas/shard-schema.schema.json` (per-option `default` + min/max descriptions).
+
 ### Added (release cadence policy — #119)
 
 Closes [#119](https://github.com/breferrari/shardmind/issues/119). Three releases shipped in 12 hours on launch day under hotfix pressure (`0.1.0 → 0.1.1 → 0.1.2`). With #112's smoke gate now requiring a real-flagship run before each `npm publish`, cadence is bounded by smoke-run wall-clock time. This policy prevents the next batch of v0.1.x work from either over-fragmenting (5 patches in a week, each requiring smoke) or under-batching (one patch per quarter, all changes intermingled).
