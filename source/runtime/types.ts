@@ -51,7 +51,10 @@ export interface ValueDefinition {
   required?: boolean;
   message: string;
   default?: unknown;
-  options?: Array<{ value: string; label: string; description?: string }>;
+  // `default` is per-option authoring sugar for `type: multiselect` only;
+  // `parseSchema` normalizes it into the value's top-level `default` array and
+  // strips it, so a normalized/cached schema's options never carry it.
+  options?: Array<{ value: string; label: string; description?: string; default?: boolean }>;
   min?: number;
   max?: number;
   group: string;

@@ -21,6 +21,12 @@ const OptionSchema = z.object({
   value: z.string(),
   label: z.string(),
   description: z.string().optional(),
+  // Per-option default flag. Authoring sugar for `type: multiselect` only:
+  // options marked `default: true` seed the value's default selection.
+  // `parseSchema` normalizes these into the value's canonical top-level
+  // `default` array and strips the booleans, so this never reaches the
+  // cached schema. Rejected on non-multiselect values.
+  default: z.boolean().optional(),
 });
 
 const ValueDefinitionSchema = z.object({
@@ -257,6 +263,54 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
     }
   }
 
+  const rawValues = (parsed as { values?: Record<string, unknown> }).values ?? {};
+  const hasOwnDefault = (key: string): boolean => {
+    const raw = rawValues[key];
+    return !!raw && typeof raw === 'object' && !Array.isArray(raw) && 'default' in raw;
+  };
+
+  // Multiselect default normalization. The author-facing API marks default
+  // selections per-option (`options: [{ value, default: true }]`); the engine
+  // normalizes that into the value's canonical top-level `default` array and
+  // strips the per-option booleans. Doing it here means every downstream
+  // consumer (zod validator, valuesAreDefaults, install-planner, the cached
+  // schema the runtime + update re-parse read) only ever sees the array form,
+  // and re-parsing the normalized output never re-triggers the both-sources
+  // guard below.
+  for (const [key, val] of Object.entries(data.values)) {
+    const perOption = (val.options ?? []).some(o => o.default !== undefined);
+
+    // Per-option `default` is multiselect-only; on any other type it would be
+    // silently ignored, so reject it loudly.
+    if (perOption && val.type !== 'multiselect') {
+      throw new ShardMindError(
+        `shard-schema.yaml validation failed: values.${key} uses per-option \`default\` on \`type: ${val.type}\``,
+        'SCHEMA_VALIDATION_FAILED',
+        'Per-option `default: true` is only valid for `type: multiselect`. For select, declare the value\'s top-level `default` (a single `options[].value`).',
+      );
+    }
+
+    if (val.type !== 'multiselect') continue;
+
+    if (perOption && hasOwnDefault(key)) {
+      throw new ShardMindError(
+        `shard-schema.yaml validation failed: values.${key} declares both a per-option \`default\` and a top-level \`default\``,
+        'SCHEMA_VALIDATION_FAILED',
+        'A multiselect declares its default EITHER via per-option `default: true` OR a top-level `default` array, never both.',
+      );
+    }
+
+    if (perOption) {
+      val.default = (val.options ?? []).filter(o => o.default === true).map(o => o.value);
+      for (const opt of val.options ?? []) delete opt.default;
+    } else if (!hasOwnDefault(key)) {
+      // No per-option flags and no top-level default → empty selection.
+      val.default = [];
+    }
+    // top-level default present → leave as-is (literal array or computed
+    // `{{ … }}`; membership already checked in ValueDefinitionSchema.check()).
+  }
+
   // Every value MUST declare a `default` field. The check reads the raw
   // YAML because zod's `default: z.unknown().optional()` strips the key
   // when missing, so post-parse `'default' in val` can't distinguish
@@ -265,11 +319,11 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
   // non-emptiness. (Type-match for the literal happens in the
   // `ValueDefinitionSchema.check()` rule above; `null` is rejected
   // there because it doesn't match any of the six value types.)
-  const rawValues = (parsed as { values?: Record<string, unknown> }).values ?? {};
+  // Multiselect is exempt: its default is derived above (per-option or []).
   const missingDefault: string[] = [];
   for (const key of Object.keys(data.values)) {
-    const raw = rawValues[key];
-    if (raw && typeof raw === 'object' && !Array.isArray(raw) && !('default' in raw)) {
+    if (data.values[key]!.type === 'multiselect') continue;
+    if (!hasOwnDefault(key)) {
       missingDefault.push(key);
     }
   }
@@ -277,7 +331,7 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
     throw new ShardMindError(
       `shard-schema.yaml: values missing required \`default\` field: ${missingDefault.join(', ')}`,
       'SCHEMA_VALIDATION_FAILED',
-      'Every value must declare a `default` whose type matches the value\'s `type`: "" for string, false for boolean, 0 for number, [] for list/multiselect, one of `options[].value` for select.',
+      'Every value must declare a `default` whose type matches the value\'s `type`: "" for string, false for boolean, 0 for number, [] for list, one of `options[].value` for select. (Multiselect uses per-option `default: true`.)',
     );
   }
 
@@ -332,7 +386,10 @@ export function buildValuesValidator(schema: ShardSchema): z.ZodObject<any> {
       }
       case 'multiselect': {
         const values = val.options!.map(o => o.value) as [string, ...string[]];
-        field = z.array(z.enum(values));
+        let arr = z.array(z.enum(values));
+        if (val.min !== undefined) arr = arr.min(val.min);
+        if (val.max !== undefined) arr = arr.max(val.max);
+        field = arr;
         break;
       }
       case 'list':

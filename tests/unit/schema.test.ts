@@ -128,6 +128,46 @@ describe('parseSchema', () => {
     expect(err.message).toContain('nonexistent');
   });
 
+  it('synthesizes a multiselect default from per-option `default: true` and strips the booleans', async () => {
+    const schema = await parseSchema(path.join(FIXTURES, 'valid-multiselect-per-option-default.yaml'));
+    const agents = schema.values['agents']!;
+    expect(agents.type).toBe('multiselect');
+    expect(agents.default).toEqual(['claude']);
+    expect(agents.min).toBe(1);
+    // Per-option `default` is authoring sugar — it must not survive into the
+    // normalized (and therefore cached) schema, so re-parse never sees both
+    // a per-option and a top-level default.
+    for (const opt of agents.options ?? []) {
+      expect('default' in opt).toBe(false);
+    }
+  });
+
+  it('defaults a multiselect with no per-option and no top-level default to []', async () => {
+    const schema = await parseSchema(path.join(FIXTURES, 'valid-multiselect-per-option-default.yaml'));
+    expect(schema.values['themes']!.default).toEqual([]);
+  });
+
+  it('is idempotent: re-parsing a normalized (top-level-array) multiselect keeps its default', async () => {
+    // valid-all-types.yaml's `plugins` uses the canonical top-level `default: []`.
+    // Round-tripping it (the shape cacheManifest writes) must not error or drift.
+    const schema = await parseSchema(path.join(FIXTURES, 'valid-all-types.yaml'));
+    expect(schema.values['plugins']!.default).toEqual([]);
+  });
+
+  it('rejects a multiselect that declares both per-option and top-level defaults', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-multiselect-both-defaults.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('agents');
+    expect(err.message).toContain('default');
+  });
+
+  it('rejects per-option `default` on a non-multiselect (select) option', async () => {
+    const err = await parseSchema(path.join(FIXTURES, 'invalid-per-option-default-on-select.yaml')).catch(e => e);
+    expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+    expect(err.message).toContain('color');
+    expect(err.hint).toContain('multiselect');
+  });
+
   it('rejects values missing the required `default` field', async () => {
     const err = await parseSchema(path.join(FIXTURES, 'invalid-missing-default.yaml')).catch(e => e);
     expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
@@ -240,6 +280,18 @@ describe('buildValuesValidator', () => {
 
     expect(() => validator.parse({ user_name: 'A', vault_purpose: 'engineering', max_notes: 0 })).toThrow();
     expect(() => validator.parse({ user_name: 'A', vault_purpose: 'engineering', max_notes: 101 })).toThrow();
+  });
+
+  it('enforces min/max array length on multiselect type', async () => {
+    const schema = await parseSchema(path.join(FIXTURES, 'valid-multiselect-per-option-default.yaml'));
+    const validator = buildValuesValidator(schema);
+
+    // `agents` has min: 1 — an empty selection must be rejected.
+    expect(() => validator.parse({ agents: [] })).toThrow();
+    // A single valid selection passes.
+    expect(validator.parse({ agents: ['codex'] }).agents).toEqual(['codex']);
+    // Omitting `agents` falls back to the synthesized default ['claude'] (length 1, ok).
+    expect(validator.parse({}).agents).toEqual(['claude']);
   });
 
   it('rejects invalid select values', async () => {
