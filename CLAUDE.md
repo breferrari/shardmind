@@ -185,7 +185,9 @@ shardmind/
 │   │   ├── self-update-check.ts       # 24h cached npm-registry check for newer engine versions (#113)
 │   │   ├── status.ts                  # Pure StatusReport builder for the status command
 │   │   ├── cancellation.ts            # Cross-platform SIGINT bridge (Windows stdin-ETX)
-│   │   ├── hook.ts                    # Post-install / post-update hook lookup + subprocess execution
+│   │   ├── hook.ts                    # Slot-agnostic hook lookup + subprocess execution (runHook, executeHook)
+│   │   ├── hook-orchestrator.ts       # Hook lifecycle: slot selection/order, boundary checks, re-hash, fingerprint (#102)
+│   │   ├── hook-boundary.ts           # Pure detect-and-warn write-boundary detector — managed-write / unmanaged-create (#102)
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   └── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
@@ -341,8 +343,10 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `update-check.ts` | §4.15 | 24h cached GitHub latest-version lookup shared by status + update |
 | `self-update-check.ts` | §4.19 | 24h cached npm-registry check for newer shardmind engine versions; powers `<SelfUpdateBanner>` |
 | `cancellation.ts` | ARCHITECTURE §19.7 | Cross-platform SIGINT bridge (Windows stdin-ETX → process.emit SIGINT) |
-| `state-migrator.ts` | §4.7 (v0.2 hook) | Forward-migration framework for `.shardmind/state.json`; scaffolding in v0.1 |
-| `hook.ts` | §4.16 | Resolve + execute post-install / post-update hook scripts via bundled `tsx` subprocess (non-fatal) |
+| `state-migrator.ts` | §4.7 | Forward-migration framework for `.shardmind/state.json`; first rule (v1→v2, `bootstrap_fingerprint`) landed with #102 |
+| `hook.ts` | §4.16 | Slot-agnostic hook lookup + execute via bundled `tsx` subprocess (non-fatal) |
+| `hook-orchestrator.ts` | §4.16a | Hook lifecycle: slot selection/order, per-slot ctx, write-boundary checks, re-hash, fingerprint persist |
+| `hook-boundary.ts` | §4.16b | Pure detect-and-warn write-boundary detector (managed-write / unmanaged-create) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.

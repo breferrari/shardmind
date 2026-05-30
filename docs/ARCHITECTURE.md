@@ -98,8 +98,9 @@ my-shard/                             ← git repo root; also opens cleanly as a
 │   ├── shard.yaml                    ← manifest (name, version, values refs, modules, agents, hooks)
 │   ├── shard-schema.yaml             ← values schema → zod at runtime; every value MUST have a default
 │   └── hooks/                        ← source-side only; engine reads from tarball, NOT copied to install
-│       ├── post-install.ts           ← optional, non-fatal
-│       └── post-update.ts            ← optional, non-fatal
+│       ├── bootstrap.ts              ← optional, non-fatal; unmanaged-path setup
+│       ├── personalize.ts            ← optional, non-fatal; managed-file edits
+│       └── post-update.ts            ← optional, non-fatal; additive managed edits on update
 │
 ├── .shardmindignore                  ← repo root; gitignore-spec globs (negation deferred to v0.2)
 │
@@ -793,7 +794,7 @@ After 4 value prompts, a module review step:
 
 Defaults: all included. User deselects what doesn't fit. Most press Enter.
 
-After confirm: render → write → state.json → post-install hook → summary.
+After confirm: render → write → state.json → hooks (orchestrator: bootstrap → personalize) → summary.
 
 ### 10.5 `shardmind update` — Upgrade Flow
 
@@ -877,7 +878,7 @@ Phase ordering (logical; UI may interleave loading messages — see IMPLEMENTATI
    - **shard-only** — user doesn't have the path → install fresh, managed.
    - Implicit **user-only** — paths in vault but not in shard → never enumerated, left untouched.
 4. **Apply** (`source/core/adopt-executor.ts::runAdopt`) — snapshot any `differs+use_shard` user file before overwriting, write shard-only fresh installs, write engine metadata (`state.json`, cached manifest+schema, templates cache, vault-root `shard-values.yaml`). Snapshot-then-restore rollback on any failure between snapshot and final state-write.
-5. **Hook** — fire the post-install hook with `valuesAreDefaults` + `newFiles=summary.installedFresh` + `removedFiles=[]`. Non-fatal (Helm semantics, §9.3).
+5. **Hooks** — run the install-side slots via the orchestrator: `bootstrap` (unmanaged setup), then `personalize` (managed edits) unless `valuesAreDefaults` (engine-skipped, Invariant 2). `newFiles=summary.installedFresh`. Non-fatal (Helm semantics, §9.3).
 6. **Re-hash** — recompute managed-file hashes per `state.ts::rehashManagedFiles` so any hook edits to managed paths land in the recorded state.
 
 Flags:

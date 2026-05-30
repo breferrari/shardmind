@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import type { HookStage, HookSummary } from '../core/hook.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
+import { assertNever } from '../runtime/types.js';
 
 /**
  * Shared hook-outcome renderer used by `Summary.tsx` (install),
@@ -112,8 +113,12 @@ function violationMessage(
   violation: NonNullable<HookSummary['violation']>,
 ): string {
   const paths = violation.paths.join(', ');
-  if (violation.kind === 'managed-write') {
-    return `${HOOK_NAME[stage]} wrote managed file(s): ${paths}. Bootstrap may only write unmanaged paths — move managed-file edits to the personalize hook.`;
+  switch (violation.kind) {
+    case 'managed-write':
+      return `${HOOK_NAME[stage]} modified or removed managed file(s): ${paths}. Bootstrap may only write unmanaged paths — move managed-file edits to the personalize hook.`;
+    case 'unmanaged-create':
+      return `${HOOK_NAME[stage]} created unmanaged file(s): ${paths}. Personalize may only edit managed files — move artifact creation to the bootstrap hook.`;
+    default:
+      return assertNever(violation.kind);
   }
-  return `${HOOK_NAME[stage]} created unmanaged file(s): ${paths}. Personalize may only edit managed files — move artifact creation to the bootstrap hook.`;
 }

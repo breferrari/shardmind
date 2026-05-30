@@ -91,15 +91,15 @@ async function walkPaths(
 }
 
 /**
- * `bootstrap` boundary check. `rehashChanged` is `rehashManagedFiles().changed`
- * computed immediately after `bootstrap` ran — every entry is a managed (non-
- * 'user') file whose on-disk bytes diverged from the engine-written bytes.
- * Since only `bootstrap` has run at that point, any changed managed file is a
- * boundary crossing.
+ * `bootstrap` boundary check. `touched` is the union of `rehashManagedFiles()`'s
+ * `changed` (managed files whose bytes diverged) and `missing` (managed files
+ * deleted), computed immediately after `bootstrap` ran. Since only `bootstrap`
+ * has run at that point, any managed file it modified OR removed is a boundary
+ * crossing — bootstrap may write unmanaged paths only.
  */
-export function detectManagedWrites(rehashChanged: readonly string[]): HookViolation | null {
-  if (rehashChanged.length === 0) return null;
-  return { slot: 'bootstrap', kind: 'managed-write', paths: [...rehashChanged].sort() };
+export function detectManagedWrites(touched: readonly string[]): HookViolation | null {
+  if (touched.length === 0) return null;
+  return { slot: 'bootstrap', kind: 'managed-write', paths: [...touched].sort() };
 }
 
 /**

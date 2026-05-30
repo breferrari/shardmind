@@ -15,7 +15,7 @@ const SCHEMA: ShardSchema = {
   values: {
     user_name: { type: 'string', message: 'Name?', default: 'default', group: 'g' },
   },
-  groups: [{ id: 'g', title: 'G' }],
+  groups: [{ id: 'g', label: 'G' }],
   modules: {},
   signals: [],
   frontmatter: {},
@@ -204,6 +204,28 @@ describe('runHooks — write-boundary detection', () => {
     const v = result.outcomes.find((o) => o.slot === 'personalize')?.summary?.violation;
     expect(v).toEqual({ kind: 'unmanaged-create', paths: ['.cache/stray.json'] });
   }, 30_000);
+
+  it('flags bootstrap DELETING a managed file (A1 — destructive write)', async () => {
+    const stateFiles = { 'Home.md': await managed('Home.md', 'home\n') };
+    await hook('bootstrap.ts', `
+      import { rm } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx) {
+        await rm(join(ctx.vaultRoot, 'Home.md'));
+      }
+    `);
+    const result = await runHooks(
+      installPlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } }),
+        state: makeShardState({ files: stateFiles }),
+      }),
+      NOOP_UI,
+    );
+    // A deleted managed file lands in rehash.missing, not changed — it must
+    // still surface as a managed-write boundary crossing.
+    const v = result.outcomes.find((o) => o.slot === 'bootstrap')?.summary?.violation;
+    expect(v).toEqual({ kind: 'managed-write', paths: ['Home.md'] });
+  }, 30_000);
 });
 
 describe('runHooks — update bootstrap fingerprint (Invariant 4)', () => {
@@ -268,6 +290,61 @@ describe('runHooks — update bootstrap fingerprint (Invariant 4)', () => {
     );
     await expect(fsp.access(path.join(vault, 'bootstrapped.txt'))).rejects.toBeTruthy();
   }, 30_000);
+
+  it('does NOT persist the fingerprint when bootstrap exits non-zero (A1)', async () => {
+    // A bootstrap that ran but failed must re-run on the next update — recording
+    // its fingerprint would strand a never-built artifact.
+    await hook('bootstrap.ts', `export default async function () { process.exit(3); }`);
+    const result = await runHooks(
+      updatePlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v2' } }),
+        state: makeShardState({ bootstrap_fingerprint: 'v1' }),
+      }),
+      NOOP_UI,
+    );
+    expect(result.finalState.bootstrap_fingerprint).toBe('v1'); // unchanged
+  }, 30_000);
+
+  it('does NOT persist the fingerprint when bootstrap throws', async () => {
+    await hook('bootstrap.ts', `export default async function () { throw new Error('boom'); }`);
+    const result = await runHooks(
+      updatePlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v2' } }),
+        state: makeShardState({ bootstrap_fingerprint: 'v1' }),
+      }),
+      NOOP_UI,
+    );
+    expect(result.finalState.bootstrap_fingerprint).toBe('v1');
+  }, 30_000);
+
+  it('threads previousVersion into the bootstrap and post-update contexts', async () => {
+    const dumpCtx = (name: string) => `
+      import { writeFile } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx) {
+        await writeFile(join(ctx.vaultRoot, '${name}'), JSON.stringify(ctx));
+      }
+    `;
+    await hook('bootstrap.ts', dumpCtx('boot-ctx.json'));
+    await hook('post-update.ts', dumpCtx('pu-ctx.json'));
+    await runHooks(
+      updatePlan({
+        manifest: manifest({
+          bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v2' },
+          'post-update': '.shardmind/hooks/post-update.ts',
+        }),
+        state: makeShardState({ bootstrap_fingerprint: 'v1' }),
+        previousVersion: '0.9.0',
+      }),
+      NOOP_UI,
+    );
+    const boot = JSON.parse(await fsp.readFile(path.join(vault, 'boot-ctx.json'), 'utf-8'));
+    const pu = JSON.parse(await fsp.readFile(path.join(vault, 'pu-ctx.json'), 'utf-8'));
+    expect(boot.previousVersion).toBe('0.9.0');
+    expect(boot.slot).toBe('bootstrap');
+    expect(pu.previousVersion).toBe('0.9.0');
+    expect(pu.slot).toBe('post-update');
+  }, 30_000);
 });
 
 describe('runHooks — legacy + resilience', () => {
@@ -312,7 +389,7 @@ describe('runHooks — legacy + resilience', () => {
     expect(bootstrap?.summary?.exitCode).toBe(1); // failed → exitCode 1
   }, 30_000);
 
-  it('dry run reports declared slots as deferred without executing', async () => {
+  it('dry run reports a would-run slot as deferred without executing', async () => {
     await hook('bootstrap.ts', `
       import { writeFile } from 'node:fs/promises';
       import { join } from 'node:path';
@@ -328,5 +405,89 @@ describe('runHooks — legacy + resilience', () => {
     await expect(fsp.access(path.join(vault, 'ran.txt'))).rejects.toBeTruthy();
     expect(result.outcomes.find((o) => o.slot === 'bootstrap')?.summary).toEqual({ deferred: true });
     expect(result.stateChanged).toBe(false);
+  }, 30_000);
+
+  it('dry run reports a defaults-skipped personalize as skipped, NOT deferred', async () => {
+    // The preview must mirror Invariant 2: on a defaults install, personalize
+    // would be engine-skipped, so dry-run must say "skipped (values are
+    // defaults)" rather than implying the hook would fire.
+    await hook('personalize.ts', `export default async function () {}`);
+    const result = await runHooks(
+      installPlan({
+        manifest: manifest({ personalize: '.shardmind/hooks/personalize.ts' }),
+        values: { user_name: 'default' }, // defaults ⇒ would skip
+        dryRun: true,
+      }),
+      NOOP_UI,
+    );
+    expect(result.outcomes.find((o) => o.slot === 'personalize')?.summary).toEqual({
+      skipped: 'values-are-defaults',
+    });
+  }, 30_000);
+
+  it('a lone legacy post-install that writes a managed file is NOT boundary-flagged', async () => {
+    // Legacy hooks predate the write boundaries; the engine must not retrofit
+    // a violation onto them (SHARD-LAYOUT.md §Legacy).
+    const stateFiles = { 'Home.md': await managed('Home.md', 'home\n') };
+    await hook('post-install.ts', `
+      import { writeFile } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx) { await writeFile(join(ctx.vaultRoot, 'Home.md'), 'EDITED\\n'); }
+    `);
+    const result = await runHooks(
+      installPlan({
+        manifest: manifest({ 'post-install': '.shardmind/hooks/post-install.ts' }),
+        state: makeShardState({ files: stateFiles }),
+        values: { user_name: 'Alice' },
+      }),
+      NOOP_UI,
+    );
+    const outcome = result.outcomes.find((o) => o.slot === 'post-install');
+    expect(outcome?.summary?.violation).toBeUndefined();
+    expect(outcome?.summary?.deprecated).toBe(true);
+  }, 30_000);
+
+  it('stops launching slots once the run is aborted during bootstrap (A5)', async () => {
+    // bootstrap signals it started, then sleeps; the test aborts mid-sleep.
+    // The loop's signal check must then skip personalize entirely.
+    await hook('bootstrap.ts', `
+      import { writeFile } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx) {
+        await writeFile(join(ctx.vaultRoot, 'boot-started.txt'), '1');
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    `);
+    await hook('personalize.ts', `
+      import { writeFile } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx) { await writeFile(join(ctx.vaultRoot, 'p.txt'), 'ok'); }
+    `);
+    const controller = new AbortController();
+    const runPromise = runHooks(
+      installPlan({
+        manifest: manifest({
+          bootstrap: { script: '.shardmind/hooks/bootstrap.ts' },
+          personalize: '.shardmind/hooks/personalize.ts',
+        }),
+        values: { user_name: 'Alice' },
+      }),
+      { ...NOOP_UI, signal: controller.signal },
+    );
+    // Wait until bootstrap has actually started, then abort.
+    const deadline = Date.now() + 10_000;
+    while (true) {
+      try {
+        await fsp.access(path.join(vault, 'boot-started.txt'));
+        break;
+      } catch {
+        if (Date.now() > deadline) throw new Error('bootstrap never started');
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    }
+    controller.abort();
+    await runPromise;
+    // personalize must NOT have run — the loop broke on the aborted signal.
+    await expect(fsp.access(path.join(vault, 'p.txt'))).rejects.toBeTruthy();
   }, 30_000);
 });

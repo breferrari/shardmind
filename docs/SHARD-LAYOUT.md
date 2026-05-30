@@ -224,7 +224,7 @@ Phases (logical order; UI may interleave loading messages):
    - Shard has the path but the user's vault doesn't → shard-only, installed fresh and recorded as managed.
 4. For every `differs` decision, apply: write shard bytes for "use shard's", leave user bytes for "my modification". `keep mine` paths still become `state.files` entries hashed at the user's bytes — adopt is the entry point into management.
 5. Write `.shardmind/state.json` + cached `.shardmind/shard.yaml` + cached `.shardmind/shard-schema.yaml` + vault-root `shard-values.yaml`; cache the shard source under `.shardmind/templates/` so future `update` runs have a merge base.
-6. Run post-install hook with `valuesAreDefaults` reflecting the user's values, `newFiles` = paths classified shard-only and freshly installed, `removedFiles` = [].
+6. Run the install-side hook slots via the orchestrator: `bootstrap` (always), then `personalize` (managed edits) unless the engine skips it because values are defaults (Invariant 2). `newFiles` = paths classified shard-only and freshly installed, `removedFiles` = [].
 7. Re-hash managed files per the usual post-hook semantics.
 
 Future `shardmind update` calls work normally — merge base is the adopt-time cache.
@@ -319,7 +319,7 @@ Paths reference current code. Detail to land in `ARCHITECTURE.md §3` + `IMPLEME
     - `source/core/values-defaults.ts` (new) — pure `valuesAreDefaults(values, schema)` for Invariant 2; deep-equal user values against the would-be-default map (literal defaults + computed defaults resolved against the literal-default map).
     - `source/core/update-executor.ts` — surface `addedFiles: string[]` (paths from `UpdateAction.kind === 'add'`) and the existing `deletedFiles: string[]` on `UpdateSummary` so the update machine can wire `newFiles` / `removedFiles` without re-deriving from the plan.
     - `source/core/state.ts::rehashManagedFiles(vaultRoot, state)` (new) — parallel re-read + sha256 of every managed file; per-file ENOENT / EACCES tolerated.
-    - `source/commands/hooks/{use-install-machine,use-update-machine}.ts` — build the full ctx and call `postHookRehash` (helper in `source/commands/hooks/shared.ts`) after the hook subprocess returns, on success or failure. Re-hash + `writeState` are skipped when nothing changed (common case — most hooks edit only unmanaged files).
+    - **Superseded by the #102 hook lifecycle split.** Re-hash + `writeState` now live in `source/core/hook-orchestrator.ts` (`runHooks`), which the three command machines call after building a `HookRunPlan`; the standalone `postHookRehash` helper was removed. Re-hash + `writeState` are still skipped when nothing changed. See §Hook lifecycle and IMPLEMENTATION.md §4.16a.
 
 ### Registry + update
 

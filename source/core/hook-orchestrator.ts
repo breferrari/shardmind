@@ -117,10 +117,17 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   const runnableCount = jobs.filter((j) => j.willRun && j.relPath !== undefined).length;
 
   if (plan.dryRun) {
-    // Report a deferred/absent outcome per declared slot without executing.
+    // Faithful preview: honor the same gating the live run would. A slot the
+    // engine would skip (personalize under Invariant 2, a bootstrap whose
+    // fingerprint is unchanged) must NOT be reported as a hook that "would
+    // fire" — that's exactly what the live loop below decides via willRun.
     const outcomes: HookOutcome[] = [];
     for (const job of jobs) {
       if (job.relPath === undefined) continue;
+      if (!job.willRun) {
+        if (job.skippedReason) outcomes.push({ slot: job.slot, summary: { skipped: job.skippedReason } });
+        continue;
+      }
       const result = await runHook(plan.tempDir, job.relPath);
       outcomes.push({ slot: job.slot, summary: summarizeHook(result) });
     }
@@ -137,6 +144,12 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
 
   for (const job of jobs) {
     if (job.relPath === undefined) continue;
+
+    // Cancellation: once the user has Ctrl+C'd (the machine aborts the shared
+    // signal), stop launching further slots — spawning a child against an
+    // already-aborted signal would surface as a spurious "spawn failed" rather
+    // than a clean cancel. The final re-hash below still runs.
+    if (ui.signal?.aborted) break;
 
     if (!job.willRun) {
       // personalize under Invariant 2 surfaces a "skipped" note so the user
@@ -177,12 +190,14 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
 
     if (job.boundary === 'managed-write') {
       // Re-hash now (only bootstrap has run) so changed managed files are
-      // attributable to it. Reuses the post-hook re-hash machinery.
+      // attributable to it. Reuses the post-hook re-hash machinery. A managed
+      // file bootstrap *deleted* lands in `missing`, not `changed` — fold both
+      // in so a destructive write is flagged too.
       const rehash = await rehashSafe(plan.vaultRoot, state);
       if (rehash) {
         state = rehash.state;
         if (rehash.changed.length > 0) stateChanged = true;
-        violation = detectManagedWrites(rehash.changed);
+        violation = detectManagedWrites([...rehash.changed, ...rehash.missing]);
       }
     } else if (job.boundary === 'unmanaged-create' && unmanagedBefore && ignore) {
       const after = await snapshotUnmanaged(plan.vaultRoot, ignore);
@@ -191,9 +206,11 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
 
     outcomes.push({ slot: job.slot, summary: summarize(result, { violation, deprecated: job.deprecated }) });
 
-    // Persist the bootstrap fingerprint once bootstrap has actually run, so the
-    // next update compares against it (Invariant 4).
-    if (job.slot === 'bootstrap' && result.kind === 'ran') {
+    // Persist the bootstrap fingerprint only after a SUCCESSFUL bootstrap
+    // (exit 0), so the next update compares against it (Invariant 4). A
+    // bootstrap that failed (non-zero exit or threw) must re-run on the next
+    // update — recording its fingerprint would strand a never-built artifact.
+    if (job.slot === 'bootstrap' && result.kind === 'ran' && result.exitCode === 0) {
       const fp = hooks.bootstrap?.fingerprint;
       if (state.bootstrap_fingerprint !== fp) {
         state = { ...state, bootstrap_fingerprint: fp };
@@ -320,7 +337,7 @@ function summarize(
   // between lookup and run → `absent`) and there's no violation/deprecation
   // note to surface on its own.
   if (!summary && !extra.violation && !extra.deprecated) return null;
-  const merged: HookSummary = summary ?? {};
+  const merged: HookSummary = summary ? { ...summary } : {};
   if (extra.violation) {
     merged.violation = { kind: extra.violation.kind, paths: extra.violation.paths };
   }
@@ -352,10 +369,10 @@ async function loadIgnoreSafe(vaultRoot: string): Promise<IgnoreFilter> {
 async function rehashSafe(
   vaultRoot: string,
   state: ShardState,
-): Promise<{ state: ShardState; changed: string[] } | null> {
+): Promise<{ state: ShardState; changed: string[]; missing: string[] } | null> {
   try {
     const r = await rehashManagedFiles(vaultRoot, state);
-    return { state: r.state, changed: r.changed };
+    return { state: r.state, changed: r.changed, missing: r.missing };
   } catch {
     return null;
   }

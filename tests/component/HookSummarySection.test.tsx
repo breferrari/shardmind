@@ -67,7 +67,7 @@ describe('HookSummarySection', () => {
     const frame = out([
       { slot: 'bootstrap', summary: { exitCode: 0, violation: { kind: 'managed-write', paths: ['Home.md', 'brain/North Star.md'] } } },
     ]).lastFrame() ?? '';
-    expect(frame).toContain('Bootstrap hook wrote managed file(s): Home.md, brain/North Star.md');
+    expect(frame).toContain('Bootstrap hook modified or removed managed file(s): Home.md, brain/North Star.md');
     expect(frame).toContain('move managed-file edits to the personalize hook');
   });
 
