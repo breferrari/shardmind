@@ -42,7 +42,7 @@ import {
   type HookViolation,
 } from './hook-boundary.js';
 import { rehashManagedFiles, writeState } from './state.js';
-import { loadShardmindignore, parseShardmindignore } from './shardmindignore.js';
+import { loadShardmindignore, parseShardmindignore, type IgnoreFilter } from './shardmindignore.js';
 import { valuesAreDefaults } from './values-defaults.js';
 
 export interface HookRunPlan {
@@ -131,6 +131,9 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   let state = plan.state;
   let stateChanged = false;
   let runIndex = 0;
+  // Lazily loaded once and reused across a slot's before/after snapshots so
+  // the vault `.shardmindignore` is parsed at most once per run.
+  let ignore: IgnoreFilter | undefined;
 
   for (const job of jobs) {
     if (job.relPath === undefined) continue;
@@ -159,7 +162,8 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
     // the hook runs (so bootstrap's own artifacts are already in the baseline).
     let unmanagedBefore: Set<string> | undefined;
     if (job.boundary === 'unmanaged-create') {
-      unmanagedBefore = await snapshotUnmanagedSafe(plan.vaultRoot);
+      ignore ??= await loadIgnoreSafe(plan.vaultRoot);
+      unmanagedBefore = await snapshotUnmanaged(plan.vaultRoot, ignore);
     }
 
     const result = await runHook(plan.tempDir, job.relPath, job.makeCtx(), {
@@ -180,8 +184,8 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
         if (rehash.changed.length > 0) stateChanged = true;
         violation = detectManagedWrites(rehash.changed);
       }
-    } else if (job.boundary === 'unmanaged-create' && unmanagedBefore) {
-      const after = await snapshotUnmanagedSafe(plan.vaultRoot);
+    } else if (job.boundary === 'unmanaged-create' && unmanagedBefore && ignore) {
+      const after = await snapshotUnmanaged(plan.vaultRoot, ignore);
       violation = detectUnmanagedCreates(after, unmanagedBefore, state);
     }
 
@@ -312,11 +316,10 @@ function summarize(
   extra: { violation: HookViolation | null; deprecated?: boolean },
 ): HookSummary | null {
   const summary = summarizeHook(result);
-  if (summary === null) {
-    // A hook that was declared but absent on disk: still surface a violation /
-    // deprecation note if one applies (it won't for absent, but keep shape).
-    if (!extra.violation && !extra.deprecated) return null;
-  }
+  // Nothing to render: the hook produced no summary (e.g. the script vanished
+  // between lookup and run → `absent`) and there's no violation/deprecation
+  // note to surface on its own.
+  if (!summary && !extra.violation && !extra.deprecated) return null;
   const merged: HookSummary = summary ?? {};
   if (extra.violation) {
     merged.violation = { kind: extra.violation.kind, paths: extra.violation.paths };
@@ -336,16 +339,14 @@ function valuesAreDefaultsSafe(values: Record<string, unknown>, schema: ShardSch
   }
 }
 
-async function snapshotUnmanagedSafe(vaultRoot: string): Promise<Set<string>> {
-  let ignore;
+async function loadIgnoreSafe(vaultRoot: string): Promise<IgnoreFilter> {
   try {
-    ignore = await loadShardmindignore(vaultRoot);
+    return await loadShardmindignore(vaultRoot);
   } catch {
     // A vault `.shardmindignore` with unsupported negation (or an I/O error)
     // must not break a courtesy boundary check — fall back to no filtering.
-    ignore = parseShardmindignore('');
+    return parseShardmindignore('');
   }
-  return snapshotUnmanaged(vaultRoot, ignore);
 }
 
 async function rehashSafe(
