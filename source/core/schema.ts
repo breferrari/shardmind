@@ -278,7 +278,16 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
   // and re-parsing the normalized output never re-triggers the both-sources
   // guard below.
   for (const [key, val] of Object.entries(data.values)) {
-    const perOption = (val.options ?? []).some(o => o.default !== undefined);
+    // Single pass over the options: which ones declare a `default` flag at all
+    // (`perOption`) and which are `default: true` (the synthesized selection).
+    const defaultedValues: string[] = [];
+    let perOption = false;
+    for (const opt of val.options ?? []) {
+      if (opt.default !== undefined) {
+        perOption = true;
+        if (opt.default === true) defaultedValues.push(opt.value);
+      }
+    }
 
     // Per-option `default` is multiselect-only; on any other type it would be
     // silently ignored, so reject it loudly.
@@ -301,7 +310,7 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
     }
 
     if (perOption) {
-      val.default = (val.options ?? []).filter(o => o.default === true).map(o => o.value);
+      val.default = defaultedValues;
       for (const opt of val.options ?? []) delete opt.default;
     } else if (!hasOwnDefault(key)) {
       // No per-option flags and no top-level default → empty selection.
