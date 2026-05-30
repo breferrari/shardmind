@@ -197,6 +197,10 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
       if (rehash) {
         state = rehash.state;
         if (rehash.changed.length > 0) stateChanged = true;
+        // `changed` (modified) + `missing` (deleted) only. `rehash.failed`
+        // (EACCES/EIO) is deliberately NOT folded in: a transient I/O error is
+        // not necessarily a hook write, and flagging it would be a false
+        // positive on the non-fatal warning.
         violation = detectManagedWrites([...rehash.changed, ...rehash.missing]);
       }
     } else if (job.boundary === 'unmanaged-create' && unmanagedBefore && ignore) {
