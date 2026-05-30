@@ -21,9 +21,14 @@ export const ShardManifestSchema = z.object({
     // Semver range the running engine must satisfy (#121). Validated as a
     // range at parse time (same posture as `version`'s semver.valid refine) so
     // a typo surfaces as MANIFEST_VALIDATION_FAILED, not a runtime mismatch.
+    // The non-empty guard is load-bearing: `semver.validRange('')` and any
+    // whitespace-only string both normalize to `*` (match-all), so without it
+    // a declared-but-empty `shardmind: ""` would parse clean and then silently
+    // disable the check — worse than a typo, because it reads as a constraint.
+    // Deliberate match-all (`*`, `x`) stays valid.
     shardmind: z
       .string()
-      .refine(v => semver.validRange(v) !== null, 'Must be a valid semver range')
+      .refine(v => v.trim().length > 0 && semver.validRange(v) !== null, 'Must be a valid, non-empty semver range')
       .optional(),
   }).optional(),
   dependencies: z.array(z.object({
@@ -136,8 +141,11 @@ export async function parseManifest(filePath: string): Promise<ShardManifest> {
  *  - `engineVersion` is `undefined` / not valid semver — an unresolvable engine
  *    version is a bundle-layout quirk, not a reason to hard-block a real install.
  *
- * `includePrerelease` so a 0.x / prerelease engine (e.g. `0.2.0-beta.1`)
- * compares sanely against a stable `>=0.2.0`-style range.
+ * `includePrerelease` so a prerelease engine *ahead* of the floor (e.g.
+ * `0.3.0-beta.1` against `>=0.2.0`) isn't wrongly blocked — default
+ * `satisfies` rejects any prerelease against a stable range. A prerelease of
+ * the required version itself (`0.2.0-beta.1`) still fails: it sorts before
+ * the `0.2.0` release, so the engine is genuinely too old.
  */
 export function assertEngineCompatible(
   manifest: ShardManifest,

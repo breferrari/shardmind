@@ -264,6 +264,34 @@ describe('requires.shardmind parsing (#121)', () => {
       await fs.unlink(tmp);
     }
   });
+
+  // semver.validRange('') and whitespace-only strings normalize to '*'
+  // (match-all). Left unguarded, a declared-but-empty range would parse
+  // clean and silently disable the check. Reject at parse time instead.
+  it.each(['""', '" "', '"   "'])('rejects an empty/whitespace range %s at parse time', async (val) => {
+    const yaml = [
+      'apiVersion: v1',
+      'name: test',
+      'namespace: ns',
+      'version: 1.0.0',
+      'requires:',
+      `  shardmind: ${val}`,
+    ].join('\n');
+    const tmp = tmpYaml('manifest-test');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const err = await parseManifest(tmp).catch((e) => e);
+      expect(err.code).toBe('MANIFEST_VALIDATION_FAILED');
+      expect(err.message).toContain('shardmind');
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
+  it('accepts a deliberate match-all wildcard (* and x)', () => {
+    expect(ShardManifestSchema.parse({ ...base, requires: { shardmind: '*' } }).requires?.shardmind).toBe('*');
+    expect(ShardManifestSchema.parse({ ...base, requires: { shardmind: 'x' } }).requires?.shardmind).toBe('x');
+  });
 });
 
 describe('assertEngineCompatible (#121)', () => {
@@ -303,6 +331,10 @@ describe('assertEngineCompatible (#121)', () => {
 
   it('is a no-op when the manifest declares no requires.shardmind', () => {
     expect(() => assertEngineCompatible(make(), '0.0.1')).not.toThrow();
+  });
+
+  it('treats a deliberate match-all (*) range as satisfied by any engine', () => {
+    expect(() => assertEngineCompatible(make('*'), '0.0.1')).not.toThrow();
   });
 
   it('skips the check when the engine version is unknown (undefined)', () => {
