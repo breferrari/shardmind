@@ -8,6 +8,8 @@ import { loadValues, validateValues } from '../../source/runtime/values.js';
 import { loadSchema } from '../../source/runtime/schema.js';
 import { validateFrontmatter } from '../../source/runtime/frontmatter.js';
 import { assertNever, type ShardSchema } from '../../source/runtime/types.js';
+import { parseSchema } from '../../source/core/schema.js';
+import { stringify as stringifyYaml } from 'yaml';
 
 let mockVault: string;
 const originalCwd = process.cwd;
@@ -240,6 +242,58 @@ describe('validateValues', () => {
       { user_name: 'Alice', vault_purpose: 'invalid' },
       schema,
     );
+    expect(result.valid).toBe(false);
+  });
+});
+
+describe('validateValues — multiselect (runtime validator)', () => {
+  // Proves the per-option default reaches the runtime validator through the
+  // same chain production uses: core parseSchema normalizes per-option
+  // `default: true` → top-level array, cacheManifest serializes that object
+  // verbatim, loadSchema reads it back, and the runtime validator (this
+  // module's duplicate of buildValuesValidator) default-fills + enforces
+  // min/max. Here we stand in for cacheManifest with stringifyYaml(schema).
+  let schema: ShardSchema;
+
+  beforeEach(async () => {
+    const parsed = await parseSchema(
+      path.resolve('tests/fixtures/schema/valid-multiselect-per-option-default.yaml'),
+    );
+    mockVault = path.join(os.tmpdir(), `shardmind-vault-${crypto.randomUUID()}`);
+    await fs.mkdir(path.join(mockVault, '.shardmind'), { recursive: true });
+    await fs.writeFile(
+      path.join(mockVault, '.shardmind', 'shard-schema.yaml'),
+      stringifyYaml(parsed),
+      'utf-8',
+    );
+    process.cwd = () => mockVault;
+    schema = await loadSchema();
+  });
+
+  afterEach(async () => {
+    process.cwd = originalCwd;
+    await fs.rm(mockVault, { recursive: true, force: true });
+  });
+
+  it('default-fills the synthesized per-option default selection', () => {
+    const result = validateValues({}, schema);
+    expect(result.valid).toBe(true);
+    // `agents` has `default: true` only on claude → synthesized default.
+    expect((schema.values['agents']!.default as string[])).toEqual(['claude']);
+  });
+
+  it('rejects a selection below `min`', () => {
+    const result = validateValues({ agents: [] }, schema);
+    expect(result.valid).toBe(false);
+  });
+
+  it('accepts a valid non-default selection', () => {
+    const result = validateValues({ agents: ['codex', 'gemini'] }, schema);
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects an unknown option value', () => {
+    const result = validateValues({ agents: ['claude', 'bogus'] }, schema);
     expect(result.valid).toBe(false);
   });
 });
