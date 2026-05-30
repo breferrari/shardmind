@@ -24,7 +24,8 @@ import { ShardMindError } from '../../runtime/types.js';
 
 import { resolve as resolveRef } from '../../core/registry.js';
 import { downloadShard } from '../../core/download.js';
-import { parseManifest } from '../../core/manifest.js';
+import { parseManifest, assertEngineCompatible } from '../../core/manifest.js';
+import { resolveEngineVersion } from './cli-version.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
 import { readState } from '../../core/state.js';
 import {
@@ -206,6 +207,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
         setPhase({ kind: 'loading', message: 'Parsing manifest and schema…' });
         const manifest = await parseManifest(temp.manifest);
+        // Refuse before any vault write if this engine can't satisfy the
+        // shard's declared requires.shardmind range (#121).
+        assertEngineCompatible(manifest, resolveEngineVersion());
         const schema = await parseSchema(temp.schema);
 
         const prefill = valuesFile ? await loadValuesFile(valuesFile, schema) : {};
