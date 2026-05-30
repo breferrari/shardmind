@@ -18,17 +18,25 @@ import type { HookStage } from '../core/hook.js';
 
 const TAIL_LINES = 12;
 
+const STAGE_LABEL: Record<HookStage, string> = {
+  bootstrap: 'bootstrap',
+  personalize: 'personalize',
+  'post-update': 'post-update',
+  'post-install': 'post-install',
+};
+
 interface HookProgressProps {
   stage: HookStage;
   output: string;
   shardLabel: string;
+  /** 1-based position when more than one slot runs ("(1 of 2)"). */
+  index?: number;
+  total?: number;
 }
 
-export default function HookProgress({ stage, output, shardLabel }: HookProgressProps) {
-  const heading =
-    stage === 'post-install'
-      ? `Running post-install hook for ${shardLabel}…`
-      : `Running post-update hook for ${shardLabel}…`;
+export default function HookProgress({ stage, output, shardLabel, index, total }: HookProgressProps) {
+  const progress = total && total > 1 && index ? ` (${index} of ${total})` : '';
+  const heading = `Running ${STAGE_LABEL[stage]} hook${progress} for ${shardLabel}…`;
 
   // Split on either LF or CRLF so Windows-authored hooks tail cleanly.
   // `filter(Boolean)` drops the trailing empty string the final newline

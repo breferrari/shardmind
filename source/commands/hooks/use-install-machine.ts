@@ -27,7 +27,6 @@ import { downloadShard } from '../../core/download.js';
 import { parseManifest } from '../../core/manifest.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
 import { readState } from '../../core/state.js';
-import { valuesAreDefaults } from '../../core/values-defaults.js';
 import {
   planOutputs,
   detectCollisions,
@@ -43,14 +42,12 @@ import {
   rollbackInstall,
   type BackupRecord,
 } from '../../core/install-executor.js';
-import { runPostInstallHook, type RunningHookPhase } from '../../core/hook.js';
+import { type RunningHookPhase } from '../../core/hook.js';
+import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
 import {
   appendHookOutput,
-  postHookRehash,
-  summarizeHook,
   useSigintRollback,
-  type HookSummary,
 } from './shared.js';
 
 import type { WizardResult } from '../../components/InstallWizard.js';
@@ -76,18 +73,13 @@ export type Phase =
   | { kind: 'wizard'; ctx: PreparedContext }
   | { kind: 'collision'; collisions: Collision[]; result: WizardResult; ctx: PreparedContext }
   | { kind: 'installing'; total: number; current: number; label: string; history: string[]; ctx: PreparedContext; result: WizardResult; backups: BackupRecord[] }
-  | (RunningHookPhase & {
-      // Subprocess-backed post-install hook is streaming output. We are
-      // already past the point-of-no-return (state.json written); a Ctrl+C
-      // in this phase kills the child but does NOT roll the install back.
-      // See docs/ARCHITECTURE.md §9.3 for the Helm-style contract.
-      //
-      // The variant's shape is defined in `source/core/hook.ts` as
-      // `RunningHookPhase` and shared between install and update so
-      // `appendHookOutput` in shared.ts can narrow generically.
-      stage: 'post-install';
-    })
-  | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; fileCount: number; durationMs: number; backups: BackupRecord[]; hook: HookSummary | null; dryRun: boolean }
+  | RunningHookPhase // a lifecycle hook (bootstrap / personalize / legacy
+      // post-install) is streaming output. We are already past the
+      // point-of-no-return (state.json written); a Ctrl+C here kills the child
+      // but does NOT roll the install back. See docs/ARCHITECTURE.md §9.3 for
+      // the Helm-style contract. Shape shared with update via core/hook.ts so
+      // `appendHookOutput` narrows generically.
+  | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; fileCount: number; durationMs: number; backups: BackupRecord[]; hooks: HookOutcome[]; dryRun: boolean }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
 
@@ -362,50 +354,39 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         // remaining work (hook subprocess) is non-fatal per spec §9.3.
         installingRef.current = false;
 
-        let hookSummary: HookSummary | null = null;
-        if (!ctx.manifest.hooks?.['post-install']) {
-          // No hook declared — nothing to render.
-          hookSummary = null;
-        } else if (dryRun) {
-          // Dry run: call runPostInstallHook WITHOUT a ctx so the hook
-          // module surfaces `deferred` (its "lookup only" shape). The
-          // summary renders this as a dim "skipped (dry run)" note per
-          // the contract in docs/ARCHITECTURE.md §9.3. A dry run must
-          // still tell the user the hook WOULD have fired — going
-          // silent here contradicts the rest of the dry-run UX.
-          hookSummary = summarizeHook(await runPostInstallHook(ctx.tempDir, ctx.manifest));
-        } else {
-          // Live-output phase while the hook runs. A fresh AbortController
-          // per run; cleared in a finally so repeat installs (test harness)
-          // get a clean slate.
-          hookAbortRef.current = new AbortController();
-          setPhase({
-            kind: 'running-hook',
-            stage: 'post-install',
-            output: '',
-            shardLabel: `${ctx.manifest.namespace}/${ctx.manifest.name}`,
-          });
-          try {
-            const hookCtx = {
+        // The hook orchestrator owns slot selection (bootstrap → personalize,
+        // legacy post-install once), per-slot context, write-boundary checks,
+        // the post-hook re-hash, and fingerprint persistence. A fresh
+        // AbortController per run is cleared in a finally so repeat installs
+        // (test harness) start clean. In dry-run the orchestrator reports
+        // deferred outcomes without spawning anything (and without setPhase).
+        hookAbortRef.current = new AbortController();
+        let hookOutcomes: HookOutcome[];
+        try {
+          const hookRun = await runHooks(
+            {
+              command: 'install',
+              tempDir: ctx.tempDir,
+              manifest: ctx.manifest,
+              schema: ctx.schema,
               vaultRoot,
+              state: runResult.state,
               values: result.values,
               modules: result.selections,
-              shard: { name: ctx.manifest.name, version: ctx.manifest.version },
-              valuesAreDefaults: valuesAreDefaults(result.values, ctx.schema),
               newFiles: [],
               removedFiles: [],
-            };
-            const hookResult = await runPostInstallHook(ctx.tempDir, ctx.manifest, hookCtx, {
-              signal: hookAbortRef.current.signal,
+              dryRun: Boolean(dryRun),
+            },
+            {
+              setPhase: (p) => setPhase(p),
               onStdout: (chunk) => appendHookOutput(setPhase, chunk),
               onStderr: (chunk) => appendHookOutput(setPhase, chunk),
-            });
-            hookSummary = summarizeHook(hookResult);
-          } finally {
-            hookAbortRef.current = null;
-          }
-
-          await postHookRehash(vaultRoot, runResult.state);
+              signal: hookAbortRef.current.signal,
+            },
+          );
+          hookOutcomes = hookRun.outcomes;
+        } finally {
+          hookAbortRef.current = null;
         }
 
         finish({
@@ -415,7 +396,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           fileCount: runResult.fileCount,
           durationMs: Date.now() - start,
           backups,
-          hook: hookSummary,
+          hooks: hookOutcomes,
           dryRun: Boolean(dryRun),
         });
       } catch (err) {

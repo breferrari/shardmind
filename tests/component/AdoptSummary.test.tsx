@@ -33,7 +33,7 @@ const baseProps = {
   manifest,
   vaultRoot: '/home/alice/vault',
   durationMs: 1234,
-  hookOutput: null,
+  hooks: [],
 };
 
 describe('AdoptSummary', () => {
@@ -102,21 +102,21 @@ describe('AdoptSummary', () => {
     expect(lastFrame() ?? '').toContain('no files adopted');
   });
 
-  it('forwards hook output to HookSummarySection (post-install stage)', () => {
+  it('forwards bootstrap + personalize outcomes to HookSummarySection', () => {
     const { lastFrame } = render(
       <AdoptSummary
         {...baseProps}
         summary={makeSummary()}
-        hookOutput={{
-          stdout: 'hook ran ok',
-          stderr: '',
-          exitCode: 0,
-        }}
+        hooks={[
+          { slot: 'bootstrap', summary: { stdout: 'hook ran ok', stderr: '', exitCode: 0 } },
+          { slot: 'personalize', summary: { stdout: 'personalized', stderr: '', exitCode: 0 } },
+        ]}
       />,
     );
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('Post-install hook completed.');
+    expect(frame).toContain('Bootstrap hook completed.');
     expect(frame).toContain('hook ran ok');
+    expect(frame).toContain('Personalize hook completed.');
   });
 
   it('renders "skipped" note for a deferred hook (dry run hook)', () => {
@@ -124,9 +124,9 @@ describe('AdoptSummary', () => {
       <AdoptSummary
         {...baseProps}
         summary={makeSummary()}
-        hookOutput={{ deferred: true }}
+        hooks={[{ slot: 'bootstrap', summary: { deferred: true } }]}
       />,
     );
-    expect(lastFrame() ?? '').toContain('Post-install hook skipped (dry run).');
+    expect(lastFrame() ?? '').toContain('Bootstrap hook skipped (dry run).');
   });
 });

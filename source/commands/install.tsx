@@ -120,6 +120,8 @@ export default function Install({ args, options }: Props) {
             stage={phase.stage}
             output={phase.output}
             shardLabel={phase.shardLabel}
+            index={phase.index}
+            total={phase.total}
           />
         </CommandFrame>
       );
@@ -132,7 +134,7 @@ export default function Install({ args, options }: Props) {
             fileCount={phase.fileCount}
             durationMs={phase.durationMs}
             backups={phase.backups}
-            hookOutput={phase.hook}
+            hooks={phase.hooks}
             dryRun={phase.dryRun}
           />
         </CommandFrame>

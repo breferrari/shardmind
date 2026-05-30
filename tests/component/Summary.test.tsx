@@ -24,7 +24,7 @@ const baseProps = {
   fileCount: 23,
   durationMs: 1234,
   backups: [] as BackupRecord[],
-  hookOutput: null,
+  hooks: [],
 };
 
 describe('Summary', () => {
@@ -57,51 +57,43 @@ describe('Summary', () => {
     expect(frame).toContain('…and 3 more');
   });
 
-  it('renders "skipped" note when hook is deferred (dry run)', () => {
+  it('renders a "skipped" note when a hook is deferred (dry run)', () => {
     const { lastFrame } = render(
-      <Summary {...baseProps} hookOutput={{ deferred: true }} />,
+      <Summary {...baseProps} hooks={[{ slot: 'bootstrap', summary: { deferred: true } }]} />,
     );
     const frame = lastFrame() ?? '';
-    // Dry-run's only path into the hook section: hook declared but
-    // suppressed. Shown as a dim "skipped" note, not a warning.
-    expect(frame).toContain('Post-install hook skipped (dry run).');
+    expect(frame).toContain('Bootstrap hook skipped (dry run).');
   });
 
-  it('renders "completed" + stdout/stderr when hook ran cleanly', () => {
+  it('renders bootstrap + personalize outcomes when both ran cleanly', () => {
     const { lastFrame } = render(
       <Summary
         {...baseProps}
-        hookOutput={{
-          stdout: 'Initialized empty git repository.',
-          stderr: 'warning: minor',
-          exitCode: 0,
-        }}
+        hooks={[
+          { slot: 'bootstrap', summary: { stdout: 'Initialized empty git repository.', stderr: 'warning: minor', exitCode: 0 } },
+          { slot: 'personalize', summary: { stdout: 'wrote North Star', stderr: '', exitCode: 0 } },
+        ]}
       />,
     );
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('Post-install hook completed.');
-    expect(frame).toContain('Hook stdout:');
+    expect(frame).toContain('Bootstrap hook completed.');
     expect(frame).toContain('Initialized empty git repository.');
-    expect(frame).toContain('Hook stderr:');
-    expect(frame).toContain('warning: minor');
+    expect(frame).toContain('Personalize hook completed.');
+    expect(frame).toContain('wrote North Star');
   });
 
-  it('renders yellow warning when hook exited non-zero', () => {
+  it('renders a yellow warning when a hook exited non-zero', () => {
     const { lastFrame } = render(
       <Summary
         {...baseProps}
-        hookOutput={{
-          stdout: 'started',
-          stderr: 'hook timed out after 30.0s',
-          exitCode: 1,
-        }}
+        hooks={[{ slot: 'bootstrap', summary: { stdout: 'started', stderr: 'hook timed out after 30.0s', exitCode: 1 } }]}
       />,
     );
     const frame = lastFrame() ?? '';
-    // Warning copy is explicit about install still succeeding — Helm
+    // Warning copy is explicit about the operation still succeeding — Helm
     // semantics, hook failure does not roll back the install.
-    expect(frame).toContain('Post-install hook exited with code 1');
-    expect(frame).toContain("Install succeeded; the hook's work may be incomplete.");
+    expect(frame).toContain('Bootstrap hook exited with code 1');
+    expect(frame).toContain("The operation succeeded; the hook's work may be incomplete.");
     expect(frame).toContain('timed out after 30.0s');
   });
 

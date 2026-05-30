@@ -149,6 +149,8 @@ export default function Adopt({ args, options }: Props) {
             stage={phase.stage}
             output={phase.output}
             shardLabel={phase.shardLabel}
+            index={phase.index}
+            total={phase.total}
           />
         </CommandFrame>
       );
@@ -160,7 +162,7 @@ export default function Adopt({ args, options }: Props) {
             vaultRoot={phase.vaultRoot}
             summary={phase.summary}
             durationMs={phase.durationMs}
-            hookOutput={phase.hook}
+            hooks={phase.hooks}
             dryRun={phase.dryRun}
           />
         </CommandFrame>
