@@ -1017,7 +1017,7 @@ type UpdateCheckResult = (
 
 ### 4.16 `hook.ts` (execution)
 
-**Purpose**: Locate and execute a shard's post-install / post-update TypeScript hook in a subprocess, capture its output, and surface the outcome to the command UI without ever throwing. The execution half of this file is the pair to `lookupHook`'s sandbox (§4.16's lookup is inherited from the prior ARCHITECTURE §9.3 contract — path traversal rejects happen before any `spawn`). See ARCHITECTURE.md §9.3 for the full hook contract.
+**Purpose**: Locate and execute a single shard hook (any slot) in a subprocess, capture its output, and surface the outcome to the caller without ever throwing. Slot-agnostic: the entry point is `runHook(tempDir, hookRelPath, ctx?, opts?)` (it replaced the prior `runPostInstallHook` / `runPostUpdateHook` wrappers — *which slot fires when* is now decided by the orchestrator, §4.16a). The execution half of this file is the pair to `lookupHook`'s sandbox (path traversal rejects happen before any `spawn`). See ARCHITECTURE.md §9.3 for the full hook contract.
 
 **Inputs**:
 ```typescript
@@ -1045,7 +1045,7 @@ type HookResult =
 1. **Resolve tsx loader**: `createRequire(import.meta.url).resolve('tsx')`. If it throws (node_modules pruned) → return `failed` with reinstall hint.
 2. **Resolve hook-runner**: first try `require.resolve('shardmind/internal/hook-runner')` against the package's own `exports` map. Fall back to the source path `../internal/hook-runner.ts` (dev / vitest with no dist). If neither exists → return `failed`.
 3. **Write ctx tempfile**: `os.tmpdir() / shardmind-hook-<rand>.json`, mode 0o600. JSON-serialize the ctx. Register a `process.once('SIGINT', unlinkSync)` fallback in case a parent interrupt lands between write and unlink.
-4. **Spawn**: `process.execPath` with argv `['--import', pathToFileURL(tsxLoaderPath).href, hookRunnerPath, hookPath, ctxPath]`. Options: `cwd: ctx.vaultRoot`, `stdio: ['ignore', 'pipe', 'pipe']`, `env: { ...process.env, SHARDMIND_HOOK: '1', SHARDMIND_HOOK_PHASE: phase }`, and the caller-supplied `signal`. The phase is derived from `ctx.previousVersion === undefined ? 'post-install' : 'post-update'`.
+4. **Spawn**: `process.execPath` with argv `['--import', pathToFileURL(tsxLoaderPath).href, hookRunnerPath, hookPath, ctxPath]`. Options: `cwd: ctx.vaultRoot`, `stdio: ['ignore', 'pipe', 'pipe']`, `env: { ...process.env, SHARDMIND_HOOK: '1', SHARDMIND_HOOK_PHASE: phase }`, and the caller-supplied `signal`. The phase is `ctx.slot` (`'bootstrap'` | `'personalize'` | `'post-update'`, or `'post-install'` for a legacy ctx) — no longer inferred from `previousVersion`, since `bootstrap` can carry a `previousVersion` on an update re-bootstrap.
 5. **Stream capture**: attach `utf-8`-decoded data listeners on stdout and stderr. Each chunk appends into a per-stream buffer capped at 256 KB — overflow truncates and records a dropped-byte count used in the final marker. Chunks are forwarded live via `onStdout` / `onStderr` callbacks so the command TUI can render a tail-only "running-hook" phase.
 6. **Timeout + abort**: `setTimeout(timeoutMs)` and the caller's `AbortSignal` both land in a `terminate(reason)` closure that sets `timedOut` / `cancelled` and issues `child.kill('SIGTERM')`. A 2-second grace setTimeout follows with `child.kill('SIGKILL')` if the child hasn't exited.
 7. **Await exit**: `Promise<{ code, signalName, spawnErr? }>` races `child.on('error')` vs `child.on('close')`. Clear the timeout; remove the abort listener.
@@ -1075,16 +1075,6 @@ type HookResult =
 
 **Subprocess entry**: `source/internal/hook-runner.ts` — compiled to `dist/internal/hook-runner.js` via a dedicated tsup entry block. Reads argv[2] (hook path) + argv[3] (ctx tempfile), dynamic-imports the hook via `pathToFileURL`, awaits `mod.default(ctx)`, exits 0 / 1. Any throw reaches the stderr stream with a stack trace. Zero Ink / React / Pastel imports — this is the cold-start path.
 
-#### v6 ctx fields + post-hook re-hash
-
-Two engine-side concerns sit *around* `executeHook` but aren't part of the spawn itself; they're owned by the command machines (`source/commands/hooks/use-{install,update}-machine.ts`).
-
-**Building the ctx (v6 fields)**:
-
-- `valuesAreDefaults` — computed by `source/core/values-defaults.ts::valuesAreDefaults(values, schema)`. Pure function: deep-equal the user values map against the schema's would-be-default map (literal defaults plus computed defaults resolved against the literal-default map first). Strict structural equality — array order is significant. Computed-default coercion failures are swallowed and the result is `false` (hook ctx construction is non-fatal).
-- `newFiles` — install: `[]` per spec line 130; update: `result.summary.addedFiles`, populated by `source/core/update-executor.ts` only on `UpdateAction.kind === 'add'`. `overwrite`, `auto_merge`, `restore_missing`, and conflict resolutions are excluded — those paths were already in `state.files`.
-- `removedFiles` — install: `[]`; update: `result.summary.deletedFiles`.
-
 **Post-hook re-hash** (`source/core/state.ts::rehashManagedFiles`):
 
 ```typescript
@@ -1094,9 +1084,57 @@ rehashManagedFiles(
 ): Promise<{ state: ShardState; changed: string[]; missing: string[]; failed: Array<{ path: string; reason: string }> }>
 ```
 
-Called by both machines after the hook subprocess returns — success OR failure. Reads each managed file under `mapConcurrent(REHASH_CONCURRENCY = 16)`, recomputes sha256, and returns a new `ShardState` with updated `rendered_hash` for changed entries. Per-file ENOENT and other I/O errors are tolerated (entry stays at the prior hash, surfaces on `missing` / `failed`); the function never throws. The machine writes the resulting state via `writeState` only when at least one path changed / went missing / failed — a fully-clean re-hash skips the redundant write. The whole call is wrapped in a defensive try/catch so a `writeState` failure can't propagate past the install/update boundary.
+Called by the orchestrator (§4.16a) once after the hook phase returns — success OR failure. Reads each managed file under `mapConcurrent(REHASH_CONCURRENCY = 16)`, recomputes sha256, and returns a new `ShardState` with updated `rendered_hash` for changed entries. Per-file ENOENT and other I/O errors are tolerated (entry stays at the prior hash, surfaces on `missing` / `failed`); the function never throws. The orchestrator writes the resulting state via `writeState` only when at least one path changed / went missing / failed (or the bootstrap fingerprint advanced) — a fully-clean re-hash skips the redundant write. The whole call is wrapped in a defensive try/catch so a `writeState` failure can't propagate past the install/update boundary.
 
-This is what makes Invariant 2's claim observable: a hook that legitimately edited a managed file produces zero spurious drift on the next `shardmind` status run, because state.json's hash already reflects the post-hook bytes.
+This is what makes Invariant 2's claim observable: a hook that legitimately edited a managed file produces zero spurious drift on the next `shardmind` status run, because state.json's hash already reflects the post-hook bytes. The `changed[]` it returns is also the input to bootstrap's boundary check (§4.16b).
+
+---
+
+### 4.16a `hook-orchestrator.ts`
+
+**Purpose**: Decide which hook slots fire, in what order, with what per-slot context; run each via `runHook`; apply the write-boundary checks (§4.16b); run the single end-of-phase re-hash; persist `bootstrap_fingerprint`. Pure of Ink/React — takes UI callbacks (`onPhase`/`onStdout`/`onStderr`/`signal`) so the three command machines (`use-{install,update,adopt}-machine.ts`) keep only React-state plumbing. Replaces the ~45-line hook block previously inlined (and triplicated) across the machines.
+
+**Inputs / outputs** (shapes; see source for exact types):
+
+```typescript
+runHooks(plan: HookRunPlan, ui: HookRunUiHooks): Promise<HookRunResult>
+
+interface HookRunResult {
+  outcomes: HookOutcome[];   // one per slot considered (incl. skipped / violation / deprecated)
+  finalState: ShardState;    // after re-hash + fingerprint write; machine persists it
+  stateChanged: boolean;
+}
+interface HookOutcome { slot: HookStage; summary: HookSummary | null; }
+```
+
+**Slot selection + order**:
+
+- **install / adopt**: `bootstrap` → `personalize`. `personalize` is invoked **only if `!valuesAreDefaults`** (engine-enforced Invariant 2); otherwise it records a `skipped` outcome and never spawns.
+- **update**: `bootstrap` (only if `fingerprintChanged(state.bootstrap_fingerprint, manifest.hooks.bootstrap?.fingerprint)`) → `post-update`.
+- **legacy**: if the manifest declares `post-install` (and neither new slot — enforced at parse, §4.3), run it once on install/adopt with the legacy flat ctx (incl. `valuesAreDefaults`, `newFiles: []`, `removedFiles: []`), no boundary check, plus a `deprecated` outcome.
+
+**Per-slot ctx**: built from the plan — `bootstrap`/`personalize`/`post-update` get only their slot's fields (ARCHITECTURE §9.3). `valuesAreDefaults` is computed once via `values-defaults.ts::valuesAreDefaults(values, schema)` (deep-equal, array-order-significant, computed-default failures → `false`) and consumed by the orchestrator to gate `personalize` — it is **not** placed on `PersonalizeContext`. `post-update`'s `newFiles` = `result.summary.addedFiles` (`UpdateAction.kind === 'add'` only; `overwrite`/`auto_merge`/`restore_missing`/conflict resolutions excluded), `removedFiles` = `result.summary.deletedFiles`.
+
+**Fingerprint persistence**: when `bootstrap` runs (and didn't fail to spawn), the orchestrator sets `finalState.bootstrap_fingerprint = manifest.hooks.bootstrap?.fingerprint` (raw string or `undefined`) so the next update compares against it.
+
+**Non-fatal throughout**: a slot that throws/times out records a `failed` outcome and does not abort later independent slots; the re-hash still runs.
+
+### 4.16b `hook-boundary.ts`
+
+**Purpose**: Pure detection of write-boundary violations (detect-and-warn). No Ink; reuses `fs-utils` (`sha256`, `mapConcurrent`), `tier1.ts::isTier1Excluded`, and `shardmindignore.ts::loadShardmindignore`.
+
+```typescript
+snapshotManaged(state: ShardState): ManagedSnapshot               // hashes straight from state.files (no disk I/O)
+snapshotUnmanaged(vaultRoot, ignore): Promise<UnmanagedSnapshot>  // path-only walk, ignore + Tier-1 filtered, symlink-reject
+detectManagedWrites(rehashChanged: string[], state): HookViolation | null      // bootstrap: managed file whose hash moved
+detectUnmanagedCreates(after, before, state): HookViolation | null             // personalize: path in after \ before, not managed
+
+interface HookViolation { slot: HookStage; kind: 'managed-write' | 'unmanaged-create'; paths: string[]; }
+```
+
+- **bootstrap → managed-write**: the bounded managed set's pre-hook hashes come free from `state.files`; the post-hook hashes come free from the re-hash `changed[]`. A changed managed path that bootstrap wasn't entitled to touch is the violation. No extra disk read.
+- **personalize → unmanaged-create**: the only case needing a vault walk. Path-only (no content hashing), ignore-filtered + Tier-1-filtered so bootstrap's own `.qmd/` artifacts and `.obsidian/workspace.json` churn don't register. Runs install/adopt only — never on the recurring update path — so the twice-walk happens at most once per vault per shard.
+- Violations are returned, not thrown; the orchestrator maps them onto `HookOutcome.summary.violation` and the UI renders a non-fatal warning (`HOOK_BOOTSTRAP_MANAGED_WRITE` / `HOOK_PERSONALIZE_UNMANAGED_CREATE`). The detector returns the offending paths (and, for managed-write, the pre-hook bytes are recoverable from the merge-base cache) so a future detect-and-revert mode is a localized follow-on.
 
 ---
 
