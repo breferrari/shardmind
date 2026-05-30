@@ -19,6 +19,7 @@ import {
   mountAdopt,
   makeVaultDir,
   cleanupVault,
+  buildCustomTarball,
   driveMinimalWizard,
   driveDiffIteration,
   SHARD_SLUG,
@@ -29,10 +30,16 @@ import {
 import { tick, waitFor, ENTER, ARROW_DOWN } from '../helpers.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
 
+const SLUG_VERSION_MISMATCH = 'acme/adopt-future-engine';
+
 describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)', () => {
   const getCtx = setupFlowSuite({
     shards: {
       [SHARD_SLUG]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
+      [SLUG_VERSION_MISMATCH]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
@@ -227,6 +234,49 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
       await cleanupVault(vault);
     }
   }, 60_000);
+
+  // ───── Scenario 24: requires.shardmind unsatisfiable → refuse before any write (#121) ─────
+
+  it('24. requires.shardmind not satisfied → SHARDMIND_VERSION_MISMATCH, no .shardmind written (#121)', async () => {
+    const { stub } = getCtx();
+    const vault = await makeVaultDir('s24-adopt-version-mismatch');
+    try {
+      // A pre-existing user file the adopt would otherwise classify. The
+      // refusal must fire before the planner touches it.
+      await writeRel(vault, 'Home.md', '# user-only Home\n');
+      const tarPath = await buildCustomTarball({
+        version: '0.1.0',
+        prefix: 'adopt-future-engine-0.1.0',
+        manifestOverrides: {
+          hooks: {},
+          name: 'adopt-future-engine',
+          namespace: 'flowtest',
+          requires: { shardmind: '>=99.0.0' },
+        },
+        outDir: vault,
+      });
+      stub.setRef(SLUG_VERSION_MISMATCH, 'v0.1.0', STUB_SHA, tarPath);
+
+      const r = mountAdopt({
+        shardRef: `github:${SLUG_VERSION_MISMATCH}#v0.1.0`,
+        vaultRoot: vault,
+      });
+      await waitFor(
+        r.lastFrame,
+        (f) => /requires shardmind >=99\.0\.0/.test(f),
+        30_000,
+      );
+      expect(r.lastFrame() ?? '').toMatch(/SHARDMIND_VERSION_MISMATCH/);
+      // No engine state written — the vault was never adopted.
+      const stateExists = await fs
+        .stat(path.join(vault, '.shardmind', 'state.json'))
+        .then((s) => s.isFile())
+        .catch(() => false);
+      expect(stateExists).toBe(false);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
 });
 
 async function writeRel(vault: string, rel: string, content: string): Promise<void> {
