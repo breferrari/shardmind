@@ -335,7 +335,7 @@ hooks:
 |------|---------|-----------|-------------|
 | `bootstrap` | first install + adopt; on update iff `fingerprint` changed | **unmanaged** paths only (`.qmd/`, `.git/`, caches) | always runs it; warns if it writes a managed file |
 | `personalize` | first install + adopt **only** | **managed** files only | **does not call it at all** when the user accepted every default; warns if it creates an unmanaged file |
-| `post-update` | updates | **managed** files in `ctx.newFiles` only | warns if it writes outside `newFiles` |
+| `post-update` | updates | **managed** files in `ctx.newFiles` only | additive-only by convention (Invariant 3); not write-boundary-checked |
 
 Each is a default async export taking a slot-specific context:
 

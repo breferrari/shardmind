@@ -123,7 +123,7 @@ A `--defaults` install must stay byte-equivalent to clone, so **no hook may edit
 
 ### Invariant 3 — Post-update hooks are additive-only by default
 
-The `post-update` hook receives `ctx.newFiles: string[]` — managed files added in this update. By default, hook writes are restricted to those paths. Writing to any other managed file risks clobbering user edits or the three-way-merge resolution that just ran. Boundary crossings are detected and surfaced as a non-fatal warning (see [§Hook lifecycle](#hook-lifecycle-state-and-re-hash-semantics)).
+The `post-update` hook receives `ctx.newFiles: string[]` — managed files added in this update. By default, hook writes are restricted to those paths. Writing to any other managed file risks clobbering user edits or the three-way-merge resolution that just ran. This remains a convention (engine-provided `newFiles`, as today) rather than a write-boundary check — unlike `bootstrap` and `personalize`, which are detected (see [§Hook lifecycle](#hook-lifecycle-state-and-re-hash-semantics)).
 
 ### Invariant 4 — Bootstrap re-runs only on fingerprint change
 

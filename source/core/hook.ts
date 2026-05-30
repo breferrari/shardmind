@@ -34,6 +34,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AnyHookContext, HookContext, ShardManifest } from '../runtime/types.js';
+import { assertNever } from '../runtime/types.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
 import { pathExists } from './fs-utils.js';
 
@@ -116,23 +117,30 @@ const KILL_GRACE_MS = 2_000;
 
 /**
  * Which lifecycle slot fired the hook. Exported so the command machines,
- * the HookProgress component, and the hook-runner wrapper can all share
- * one source of truth for the two allowed phase strings (and so a future
- * third phase becomes a compile-time update rather than a search-and-fix).
+ * the HookProgress component, the orchestrator, and the hook-runner can all
+ * share one source of truth for the allowed phase strings. `post-install` is
+ * the deprecated legacy slot (#102); the three new slots are bootstrap /
+ * personalize / post-update.
  */
-export type HookStage = 'post-install' | 'post-update';
+export type HookStage = 'bootstrap' | 'personalize' | 'post-update' | 'post-install';
 
 /**
  * The shape of a command-machine `Phase` variant while a hook subprocess
  * is running. Each machine's full Phase union intersects this — sharing
  * the variant here lets `appendHookOutput` in shared.ts typecheck
  * generically without either machine leaking its internal phases.
+ *
+ * `index` / `total` are optional 1-based progress markers ("Running
+ * bootstrap (1 of 2)…") set by the orchestrator when more than one slot
+ * fires in a run; absent for single-slot runs.
  */
 export interface RunningHookPhase {
   kind: 'running-hook';
   stage: HookStage;
   output: string;
   shardLabel: string;
+  index?: number;
+  total?: number;
 }
 
 export type HookResult =
@@ -160,9 +168,57 @@ export type HookResult =
  */
 export interface HookSummary {
   deferred?: boolean;
+  /**
+   * Set when the engine intentionally did NOT run a declared hook:
+   * `'values-are-defaults'` for a `personalize` skipped under Invariant 2.
+   * The UI renders a dim "skipped" note rather than nothing, so the user
+   * knows the hook existed but the engine chose not to fire it.
+   */
+  skipped?: 'values-are-defaults';
+  /**
+   * Set on the outcome of a deprecated legacy `post-install` run so the UI
+   * can surface the migration warning (HOOK_POST_INSTALL_DEPRECATED).
+   */
+  deprecated?: boolean;
+  /**
+   * A detected write-boundary crossing (detect-and-warn). The bytes were
+   * left in place; the UI renders a non-fatal warning naming the paths.
+   * See `source/core/hook-boundary.ts`.
+   */
+  violation?: { kind: 'managed-write' | 'unmanaged-create'; paths: string[] };
   stdout?: string;
   stderr?: string;
   exitCode?: number;
+}
+
+/**
+ * Collapse a `HookResult` into the `HookSummary` shape the install / update
+ * summary views render. Lives in core (not commands/shared) so the
+ * orchestrator can use it without crossing the module boundary; re-exported
+ * from `commands/hooks/shared.ts` for existing callers.
+ *
+ * - `absent` → null (nothing happened; render nothing).
+ * - `deferred` → `{ deferred: true }` (hook exists but suppressed, e.g. dry run).
+ * - `ran` → `{ stdout, stderr, exitCode }`.
+ * - `failed` → `{ stdout, stderr: "hook <reason>\n<captured>", exitCode: 1 }` —
+ *   the UI treats `failed` identically to a non-zero `ran`.
+ */
+export function summarizeHook(result: HookResult): HookSummary | null {
+  switch (result.kind) {
+    case 'absent':
+      return null;
+    case 'deferred':
+      return { deferred: true };
+    case 'ran':
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+    case 'failed': {
+      const prefix = `hook ${result.message}`;
+      const stderr = result.stderr ? `${prefix}\n${result.stderr}` : prefix;
+      return { stdout: result.stdout, stderr, exitCode: 1 };
+    }
+    default:
+      return assertNever(result);
+  }
 }
 
 /**
