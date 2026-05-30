@@ -53,6 +53,14 @@ describe('valuesAreDefaults', () => {
       );
       expect(valuesAreDefaults(allDefaults, schema)).toBe(true);
     });
+
+    it('treats a multiselect left at its synthesized per-option default as defaults (Invariant 2)', async () => {
+      const schema = await load('valid-multiselect-per-option-default.yaml');
+      // agents → ['claude'] (only claude has default: true); themes → [].
+      expect(valuesAreDefaults({ agents: ['claude'], themes: [] }, schema)).toBe(true);
+      // A different selection is not the default.
+      expect(valuesAreDefaults({ agents: ['claude', 'codex'], themes: [] }, schema)).toBe(false);
+    });
   });
 
   describe('strict deep-equal', () => {

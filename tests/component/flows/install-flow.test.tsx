@@ -32,13 +32,14 @@ import {
   SHARD_REF,
   STUB_SHA,
 } from './helpers.js';
-import { tick, waitFor, ENTER, ESC, ARROW_DOWN, typeText } from '../helpers.js';
+import { tick, waitFor, ENTER, ESC, ARROW_DOWN, SPACE, typeText } from '../helpers.js';
 
 // Custom-tarball slugs for scenarios that need a shape minimal-shard
 // can't supply. Each gets its own slug so the stub maps cleanly.
 const SLUG_MIDDLE_DEFAULT = 'acme/select-middle';
 const SLUG_NUMBER_TYPE = 'acme/number-range';
 const SLUG_COMPUTED = 'acme/computed-default';
+const SLUG_MULTISELECT = 'acme/multiselect';
 
 describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10)', () => {
   const getCtx = setupFlowSuite({
@@ -56,6 +57,10 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         latest: '0.1.0',
       },
       [SLUG_COMPUTED]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
+      [SLUG_MULTISELECT]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
@@ -456,4 +461,73 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await cleanupVault(vault);
     }
   }, 30_000);
+
+  // ───── Scenario 11: multiselect value — per-option default, toggle, submit (#101) ─────
+
+  it('11. multiselect value → seeded default + space toggles + Enter → array persisted', async () => {
+    const { stub } = getCtx();
+    const vault = await makeVaultDir('s11-multiselect');
+    try {
+      const tarPath = await buildCustomTarball({
+        version: '0.1.0',
+        prefix: 'multiselect-0.1.0',
+        manifestOverrides: { hooks: {}, name: 'multiselect', namespace: 'flowtest' },
+        schema: {
+          schema_version: 1,
+          values: {
+            // Per-option `default: true` (#101). The engine normalizes this to
+            // the canonical top-level default array ['claude'] at parse time,
+            // which seeds the widget's pre-checked set.
+            agents: {
+              type: 'multiselect',
+              message: 'Which agents do you use?',
+              options: [
+                { value: 'claude', label: 'Claude Code', default: true },
+                { value: 'codex', label: 'Codex CLI' },
+                { value: 'gemini', label: 'Gemini CLI' },
+              ],
+              min: 1,
+              group: 'g',
+            },
+          },
+          groups: [{ id: 'g', label: 'G' }],
+          modules: {
+            core: { label: 'Core', paths: ['core/'], removable: false },
+            extras: { label: 'Extras', paths: ['extras/'], removable: true },
+          },
+          signals: [],
+          frontmatter: {},
+          migrations: [],
+        },
+        outDir: vault,
+      });
+      stub.setRef(SLUG_MULTISELECT, 'v0.1.0', STUB_SHA, tarPath);
+
+      const r = mountInstall({
+        shardRef: `github:${SLUG_MULTISELECT}#v0.1.0`,
+        vaultRoot: vault,
+      });
+      await waitFor(r.lastFrame, (f) => /1 question to answer/.test(f), 30_000);
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Which agents do you use?'));
+      // claude seeds pre-checked from the synthesized default; ◆ = selected.
+      await waitFor(r.lastFrame, (f) => f.includes('◆ Claude Code'));
+      // Move to codex and toggle it on → ['claude', 'codex'].
+      r.stdin.write(ARROW_DOWN);
+      await tick(40);
+      r.stdin.write(SPACE);
+      await tick(40);
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Choose modules to install'));
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => /Installed flowtest\/multiselect@0\.1\.0/.test(f), 15_000);
+      const valuesYaml = await fs.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8');
+      const parsed = parseYaml(valuesYaml) as Record<string, unknown>;
+      expect(parsed['agents']).toEqual(['claude', 'codex']);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
 });
