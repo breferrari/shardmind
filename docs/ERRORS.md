@@ -135,6 +135,14 @@ Thrown by `source/core/manifest.ts`.
 
 **Remedy:** Remove `hooks.post-install` once you've split it into `bootstrap` (unmanaged setup) + `personalize` (managed edits). See [`docs/AUTHORING.md §6`](AUTHORING.md) for the worked migration.
 
+### `SHARDMIND_VERSION_MISMATCH`
+
+**Meaning:** The shard declares `requires.shardmind` (a semver range the engine must satisfy) and the ShardMind engine you're running is too old. Install, update, and adopt all check this immediately after parsing `shard.yaml`, before any vault write — so a refused command leaves the vault untouched.
+
+**Typical cause:** Installing a shard built against a newer engine feature (e.g. the post-#102 hook lifecycle) with an older globally-installed `shardmind`.
+
+**Remedy:** Upgrade the engine — `npm i -g shardmind@latest` — then retry. (Shard authors: the range lives at `requires.shardmind`; absent means no check. See [`docs/AUTHORING.md §3`](AUTHORING.md).)
+
 ---
 
 ## Schema (`shard-schema.yaml` parsing)

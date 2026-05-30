@@ -30,6 +30,18 @@ Part of [#102](https://github.com/breferrari/shardmind/issues/102) (the engine +
 
 - **Docs**: `docs/SHARD-LAYOUT.md` (Invariant 2 now engine-enforced, new Invariant 4 for bootstrap fingerprint, rewritten §Hook lifecycle, layout tree), `docs/AUTHORING.md §6` (three-slot reference + per-slot ctx + worked migration), `docs/ARCHITECTURE.md §9.3`, `docs/IMPLEMENTATION.md §4.16` + new §4.16a/§4.16b, `docs/ERRORS.md` (new `HOOK_SLOT_CONFLICT` + non-fatal hook-warning section), `CLAUDE.md` (two new core modules + module table).
 
+### Added (engine version-compatibility check — #121)
+
+Closes [#121](https://github.com/breferrari/shardmind/issues/121). The guard that ships alongside the #102 hook lifecycle: a shard can declare `requires.shardmind` (a semver range the running engine must satisfy), and install/update/adopt refuse with a clear upgrade hint when an older engine can't satisfy it — instead of silently ignoring new-engine features.
+
+- **`requires.shardmind`** — optional semver range on `shard.yaml`, validated as a range at parse time (a typo surfaces as `MANIFEST_VALIDATION_FAILED`). Absent → no check, so every pre-#121 shard keeps installing on any engine.
+
+- **Enforced before any vault write.** `assertEngineCompatible` (pure, in `source/core/manifest.ts`) runs in all three command machines immediately after `parseManifest`. On a mismatch it throws the new `SHARDMIND_VERSION_MISMATCH` error code (message names the range + running version; hint is `npm i -g shardmind@latest`). A refused command leaves the vault untouched. Comparison uses `includePrerelease` so a prerelease engine ahead of the floor isn't wrongly blocked.
+
+- **Unresolvable engine version skips the check.** A new `resolveEngineVersion` helper (`source/commands/hooks/cli-version.ts`) maps the `PKG_VERSION_FALLBACK` sentinel to `undefined`; an engine that can't locate its own `package.json` (a bundle-layout quirk) must not hard-block a real install.
+
+- **Tests**: `tests/unit/manifest.test.ts` (range parse + reject; `assertEngineCompatible` matrix — satisfied / lower-bound / too-old / absent / unknown-version skip / prerelease) and a Layer 1 flow test (`install-flow.test.ts` scenario 12 — `>=99.0.0` refuses + no `state.json`). **Docs**: `docs/AUTHORING.md` (field reference + §6 note), `docs/ERRORS.md` (`SHARDMIND_VERSION_MISMATCH`), `schemas/shard.schema.json` (`requires.shardmind`).
+
 ### Added (multiselect value type — #101)
 
 Closes [#101](https://github.com/breferrari/shardmind/issues/101). Promotes `multiselect` from a partially-wired type (engine validation existed; the wizard rendered a comma-separated text fallback flagged in-code as v0.2 polish) to a first-class value type. Lets a shard author ask one checkbox question ("Which agents do you use?") instead of N booleans. Scope is the value type + widget; gating *which modules install* on a multiselect value remains [#80](https://github.com/breferrari/shardmind/issues/80) (v0.2).
