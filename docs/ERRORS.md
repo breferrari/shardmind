@@ -164,6 +164,7 @@ Thrown by `source/core/schema.ts`.
 - A `select` `default` is not one of `options[].value` (or `multiselect` default contains values outside the option set)
 - A `multiselect` declares both a per-option `default: true` and a top-level `default` (ambiguous — pick one)
 - A per-option `default` appears on a non-`multiselect` value (per-option `default` is multiselect-only; a `select` declares its default via the value's top-level `default`)
+- A `multiselect` default selects fewer than `min` or more than `max`, or `min` exceeds the option count (a `--defaults` install must produce a valid vault, so an unsatisfiable constraint or out-of-range default is rejected at parse)
 
 **Remedy:** Consult [`docs/AUTHORING.md`](AUTHORING.md) §4 or [`schemas/shard-schema.schema.json`](../schemas/shard-schema.schema.json).
 

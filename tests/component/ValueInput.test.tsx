@@ -477,6 +477,24 @@ describe('ValueInput', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it('multiselect: a seed value not in options is dropped (no unselectable row, no spurious error)', async () => {
+    // Stale cached/back-nav selection for an option the shard removed upstream.
+    const def = agentsDef();
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = await mount(
+      <ValueInput id="agents" def={def} initialValue={['claude', 'removed-agent']} onSubmit={onSubmit} />,
+    );
+    // claude renders selected; the stale value has no row to render.
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('◆ Claude Code');
+    expect(frame).not.toContain('removed-agent');
+    // Enter submits only the surviving, in-options selection — no "Unknown
+    // option" error on a value the user never chose.
+    stdin.write(ENTER);
+    await waitForCall(onSubmit);
+    expect(onSubmit).toHaveBeenCalledWith(['claude']);
+  });
+
   // Iterated-component regression (CLAUDE.md §Testing / docs/COMPONENTS.md
   // Pattern B): InstallWizard renders ValueInput in a loop, advancing the step
   // index without a remount-forcing key on ValueInput itself. Assert the

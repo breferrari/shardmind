@@ -142,11 +142,19 @@ function renderInput(
       // toggles, Enter submits the selected array. min/max + required are
       // enforced in buildValidator on submit.
       const options = (def.options ?? []).map((o) => ({ label: o.label, value: o.value }));
-      const initial = Array.isArray(initialValue)
+      // Drop any seed value not in the current options (e.g. a back-nav or
+      // cached selection for an option the shard removed upstream) — same
+      // defensive posture as the `select` case, which falls back rather than
+      // seeding an unselectable value. Otherwise the widget can't render the
+      // stale row but still submits it, surfacing a confusing "Unknown option"
+      // error on a value the user never actively chose.
+      const allowed = new Set(options.map((o) => o.value));
+      const seed = Array.isArray(initialValue)
         ? (initialValue as string[])
         : Array.isArray(def.default)
         ? (def.default as string[])
         : [];
+      const initial = seed.filter((v) => allowed.has(v));
       return (
         <ScrollableMultiSelect
           key={key}

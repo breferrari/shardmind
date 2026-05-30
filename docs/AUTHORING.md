@@ -201,6 +201,7 @@ Default rules:
 - Per-option `default` is multiselect-only; on any other `type` it throws `SCHEMA_VALIDATION_FAILED`.
 - A multiselect with no per-option flags and no top-level `default` defaults to an empty selection (`[]`) — multiselect is exempt from the "every value declares a `default`" rule.
 - A top-level `default` may be a literal array or a computed `{{ … }}` expression (see Computed defaults below).
+- `min` / `max` bound the selected count, and **the default must satisfy them** — a `min: 1` multiselect must default to at least one selection (a `--defaults` install must produce a valid vault, so an out-of-range default is rejected at parse). `min` cannot exceed the number of options. (Computed defaults resolve at install time, so their length isn't checked at parse.)
 
 Templates read the result with Nunjucks membership: `{% if 'codex' in values.agents %}…{% endif %}`. (Gating *which modules install* on a multiselect value is a separate feature — [#80](https://github.com/breferrari/shardmind/issues/80), v0.2.)
 

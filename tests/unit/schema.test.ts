@@ -1,7 +1,9 @@
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
+import fc from 'fast-check';
+import { stringify as stringifyYaml } from 'yaml';
 import { parseSchema, buildValuesValidator, isComputedDefault } from '../../source/core/schema.js';
 
 const FIXTURES = path.resolve('tests/fixtures/schema');
@@ -166,6 +168,74 @@ describe('parseSchema', () => {
     expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
     expect(err.message).toContain('color');
     expect(err.hint).toContain('multiselect');
+  });
+
+  // A multiselect `min` that the default can't satisfy is a latent footgun:
+  // zod's `.default()` short-circuits `.min()`, so a `--defaults` install would
+  // silently write a schema-invalid value (breaking Invariant 1). Reject at
+  // parse instead.
+  it('rejects a multiselect whose default selects fewer than `min`', async () => {
+    const yaml = [
+      'schema_version: 1',
+      'values:',
+      '  agents:',
+      '    type: multiselect',
+      '    message: "Agents"',
+      '    min: 1',
+      '    options:',
+      '      - { value: claude, label: "Claude" }',
+      '      - { value: codex, label: "Codex" }',
+      '    group: setup',
+      'groups: [{ id: setup, label: "Setup" }]',
+      'modules: {}',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n');
+    const fs = await import('node:fs/promises');
+    const tmp = tmpYaml('schema-ms-min');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const err = await parseSchema(tmp).catch(e => e);
+      expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+      expect(err.message).toContain('agents');
+      expect(err.message).toContain('min');
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+
+  it('rejects a multiselect whose `min` exceeds the option count', async () => {
+    const yaml = [
+      'schema_version: 1',
+      'values:',
+      '  agents:',
+      '    type: multiselect',
+      '    message: "Agents"',
+      '    min: 3',
+      '    options:',
+      '      - { value: claude, label: "Claude", default: true }',
+      '      - { value: codex, label: "Codex", default: true }',
+      '    group: setup',
+      'groups: [{ id: setup, label: "Setup" }]',
+      'modules: {}',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n');
+    const fs = await import('node:fs/promises');
+    const tmp = tmpYaml('schema-ms-minopts');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const err = await parseSchema(tmp).catch(e => e);
+      expect(err.code).toBe('SCHEMA_VALIDATION_FAILED');
+      expect(err.message).toContain('agents');
+      expect(err.message).toContain('option');
+    } finally {
+      await fs.unlink(tmp);
+    }
   });
 
   it('rejects values missing the required `default` field', async () => {
@@ -334,6 +404,74 @@ describe('buildValuesValidator', () => {
     // Passing without is_engineering should work (it's optional) but not pre-fill
     const result = validator.parse({ vault_purpose: 'engineering' });
     expect(result.is_engineering).toBeUndefined();
+  });
+});
+
+describe('parseSchema — multiselect per-option normalization (property tests)', () => {
+  // Mirrors PR #124's fast-check precedent on this surface. File-based parse →
+  // moderate numRuns. Invariants: the synthesized default is exactly the
+  // `default: true` option values in source order, it's a subset of the option
+  // values (never invents/drops a value), the per-option booleans never survive
+  // into the parsed schema, and the whole thing is idempotent under
+  // serialize→re-parse (the shape cacheManifest writes + update re-reads).
+  const POOL = ['claude', 'codex', 'gemini', 'aider', 'cursor', 'cody'];
+  const tmp = tmpYaml('schema-prop');
+
+  afterAll(async () => {
+    const fs = await import('node:fs/promises');
+    await fs.unlink(tmp).catch(() => {});
+  });
+
+  function schemaYaml(values: string[], flags: boolean[]): string {
+    const opts = values
+      .map((v, i) => `      - { value: ${v}, label: "${v}", default: ${flags[i]} }`)
+      .join('\n');
+    return [
+      'schema_version: 1',
+      'values:',
+      '  agents:',
+      '    type: multiselect',
+      '    message: "Agents"',
+      '    options:',
+      opts,
+      '    group: setup',
+      'groups: [{ id: setup, label: "Setup" }]',
+      'modules: {}',
+      'signals: []',
+      'frontmatter: {}',
+      'migrations: []',
+      '',
+    ].join('\n');
+  }
+
+  it('synthesized default ⊆ options, booleans stripped, idempotent under re-parse', async () => {
+    const fs = await import('node:fs/promises');
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(fc.constantFrom(...POOL), { minLength: 1, maxLength: POOL.length }),
+        fc.array(fc.boolean(), { minLength: POOL.length, maxLength: POOL.length }),
+        async (values, flags) => {
+          await fs.writeFile(tmp, schemaYaml(values, flags));
+          const schema = await parseSchema(tmp);
+          const agents = schema.values['agents']!;
+          const expected = values.filter((_, i) => flags[i]);
+
+          // default is exactly the true-flagged values, in source order.
+          expect(agents.default).toEqual(expected);
+          // subset invariant — never invents or drops a value.
+          for (const d of agents.default as string[]) expect(values).toContain(d);
+          // per-option booleans stripped from the parsed schema.
+          for (const o of agents.options ?? []) expect('default' in o).toBe(false);
+
+          // Idempotence: serialize (cacheManifest shape) → re-parse → same default,
+          // no both-sources re-trigger.
+          await fs.writeFile(tmp, stringifyYaml(schema));
+          const reparsed = await parseSchema(tmp);
+          expect(reparsed.values['agents']!.default).toEqual(expected);
+        },
+      ),
+      { numRuns: 50 },
+    );
   });
 });
 

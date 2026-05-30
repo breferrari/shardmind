@@ -318,6 +318,43 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
     }
     // top-level default present → leave as-is (literal array or computed
     // `{{ … }}`; membership already checked in ValueDefinitionSchema.check()).
+
+    // `min` cannot exceed the number of options — no selection could ever
+    // satisfy it. Caught here (not in .check()) so the message can name the
+    // count.
+    const optionCount = (val.options ?? []).length;
+    if (val.min !== undefined && val.min > optionCount) {
+      throw new ShardMindError(
+        `shard-schema.yaml validation failed: values.${key} has min ${val.min} but only ${optionCount} option${optionCount === 1 ? '' : 's'}`,
+        'SCHEMA_VALIDATION_FAILED',
+        'A multiselect `min` cannot exceed the number of options — no selection could satisfy it.',
+      );
+    }
+
+    // The default selection must itself satisfy min/max. zod's `.default()`
+    // short-circuits validation (a `--defaults` install returns the default
+    // WITHOUT re-checking `.min()`), so an out-of-range default would write a
+    // schema-invalid value silently — and break Invariant 1 (a `--defaults`
+    // install must produce a valid vault). Reject at parse instead. Computed
+    // `{{ … }}` defaults resolve at install time against the user's answers,
+    // so their length is unknowable here — skip them.
+    if (Array.isArray(val.default)) {
+      const len = val.default.length;
+      if (val.min !== undefined && len < val.min) {
+        throw new ShardMindError(
+          `shard-schema.yaml validation failed: values.${key} default selects ${len} but min is ${val.min}`,
+          'SCHEMA_VALIDATION_FAILED',
+          'A multiselect with `min` must declare a default that selects at least that many options (via per-option `default: true` or a top-level `default` array).',
+        );
+      }
+      if (val.max !== undefined && len > val.max) {
+        throw new ShardMindError(
+          `shard-schema.yaml validation failed: values.${key} default selects ${len} but max is ${val.max}`,
+          'SCHEMA_VALIDATION_FAILED',
+          'A multiselect default cannot select more options than `max`.',
+        );
+      }
+    }
   }
 
   // Every value MUST declare a `default` field. The check reads the raw
