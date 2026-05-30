@@ -13,12 +13,12 @@ import { appendFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 interface HookCtx {
+  slot: 'post-update';
   vaultRoot: string;
   values: Record<string, unknown>;
   modules: Record<string, 'included' | 'excluded'>;
   shard: { name: string; version: string };
   previousVersion?: string;
-  valuesAreDefaults: boolean;
   newFiles: string[];
   removedFiles: string[];
 }

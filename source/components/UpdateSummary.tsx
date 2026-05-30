@@ -2,7 +2,7 @@ import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import HookSummarySection from './HookSummarySection.js';
 import type { UpdateSummary as Summary } from '../core/update-executor.js';
-import type { HookSummary } from '../core/hook.js';
+import type { HookOutcome } from '../core/hook-orchestrator.js';
 
 /**
  * Final update report.
@@ -21,7 +21,7 @@ interface UpdateSummaryProps {
   summary: Summary;
   durationMs: number;
   migrationWarnings: string[];
-  hookOutput: HookSummary | null;
+  hooks: HookOutcome[];
   dryRun?: boolean;
 }
 
@@ -29,7 +29,7 @@ export default function UpdateSummary({
   summary,
   durationMs,
   migrationWarnings,
-  hookOutput,
+  hooks,
   dryRun,
 }: UpdateSummaryProps) {
   const seconds = (durationMs / 1000).toFixed(1);
@@ -80,7 +80,7 @@ export default function UpdateSummary({
         </Box>
       )}
 
-      <HookSummarySection stage="post-update" hookOutput={hookOutput} />
+      <HookSummarySection outcomes={hooks} />
     </Box>
   );
 }

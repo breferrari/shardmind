@@ -113,12 +113,12 @@ Demoted from "Foundation BLOCKING" on 2026-04-27 (see [#113 comment](https://git
 
 [#102](https://github.com/breferrari/shardmind/issues/102) was previously listed as a peer to #100 (wizard scroll) and #101 (multiselect) in the flagship-UX list. It is not a peer — it deprecates the `post-install` hook (which obsidian-mind v6.0 ships with), changes Invariants 2 + 3 from comment-checked to engine-checked, requires a `docs/SHARD-LAYOUT.md` spec update, and forces every shard author to migrate. Reclassified as a single-issue release block on 2026-04-27.
 
-- [ ] **Hook lifecycle split — bootstrap / personalize / post-update** ([#102](https://github.com/breferrari/shardmind/issues/102)). Acceptance:
+- [ ] **Hook lifecycle split — bootstrap / personalize / post-update** ([#102](https://github.com/breferrari/shardmind/issues/102)). Engine + fixture + docs landed in PR (the three-slot orchestrator, detect-and-warn boundaries, engine-enforced Invariant 2, bootstrap fingerprint, legacy deprecation); issue stays open pending the release-window items below. Acceptance:
   - [ ] [#121](https://github.com/breferrari/shardmind/issues/121) (engine version-compatibility check) lands first or in the same release.
-  - [ ] `docs/SHARD-LAYOUT.md` updated with the new lifecycle.
-  - [ ] `docs/AUTHORING.md` documents the migration path with a worked example.
+  - [x] `docs/SHARD-LAYOUT.md` updated with the new lifecycle.
+  - [x] `docs/AUTHORING.md` documents the migration path with a worked example.
   - [ ] obsidian-mind hook migration ships in the same release window (cross-repo coupling — see Cross-repo dependencies below).
-  - [ ] Deprecation period for `post-install` documented in CHANGELOG; honored for at least one minor version.
+  - [x] Deprecation period for `post-install` documented in CHANGELOG; honored for at least one minor version.
 
 ### 0.1.x — Flagship UX stabilization (Foundation green, ready to start)
 

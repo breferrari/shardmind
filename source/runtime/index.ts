@@ -19,6 +19,12 @@ export type {
   ValidationResult,
   FrontmatterValidationResult,
   HookContext,
+  HookSlot,
+  HookContextBase,
+  BootstrapContext,
+  PersonalizeContext,
+  PostUpdateContext,
+  SlottedHookContext,
   ErrorCode,
 } from './types.js';
 

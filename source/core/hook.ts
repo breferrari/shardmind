@@ -33,7 +33,8 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { HookContext, ShardManifest } from '../runtime/types.js';
+import type { AnyHookContext, HookContext, ShardManifest } from '../runtime/types.js';
+import { assertNever } from '../runtime/types.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
 import { pathExists } from './fs-utils.js';
 
@@ -116,23 +117,30 @@ const KILL_GRACE_MS = 2_000;
 
 /**
  * Which lifecycle slot fired the hook. Exported so the command machines,
- * the HookProgress component, and the hook-runner wrapper can all share
- * one source of truth for the two allowed phase strings (and so a future
- * third phase becomes a compile-time update rather than a search-and-fix).
+ * the HookProgress component, the orchestrator, and the hook-runner can all
+ * share one source of truth for the allowed phase strings. `post-install` is
+ * the deprecated legacy slot (#102); the three new slots are bootstrap /
+ * personalize / post-update.
  */
-export type HookStage = 'post-install' | 'post-update';
+export type HookStage = 'bootstrap' | 'personalize' | 'post-update' | 'post-install';
 
 /**
  * The shape of a command-machine `Phase` variant while a hook subprocess
  * is running. Each machine's full Phase union intersects this — sharing
  * the variant here lets `appendHookOutput` in shared.ts typecheck
  * generically without either machine leaking its internal phases.
+ *
+ * `index` / `total` are optional 1-based progress markers ("Running
+ * bootstrap (1 of 2)…") set by the orchestrator when more than one slot
+ * fires in a run; absent for single-slot runs.
  */
 export interface RunningHookPhase {
   kind: 'running-hook';
   stage: HookStage;
   output: string;
   shardLabel: string;
+  index?: number;
+  total?: number;
 }
 
 export type HookResult =
@@ -160,9 +168,57 @@ export type HookResult =
  */
 export interface HookSummary {
   deferred?: boolean;
+  /**
+   * Set when the engine intentionally did NOT run a declared hook:
+   * `'values-are-defaults'` for a `personalize` skipped under Invariant 2.
+   * The UI renders a dim "skipped" note rather than nothing, so the user
+   * knows the hook existed but the engine chose not to fire it.
+   */
+  skipped?: 'values-are-defaults';
+  /**
+   * Set on the outcome of a deprecated legacy `post-install` run so the UI
+   * can surface the migration warning (HOOK_POST_INSTALL_DEPRECATED).
+   */
+  deprecated?: boolean;
+  /**
+   * A detected write-boundary crossing (detect-and-warn). The bytes were
+   * left in place; the UI renders a non-fatal warning naming the paths.
+   * See `source/core/hook-boundary.ts`.
+   */
+  violation?: { kind: 'managed-write' | 'unmanaged-create'; paths: string[] };
   stdout?: string;
   stderr?: string;
   exitCode?: number;
+}
+
+/**
+ * Collapse a `HookResult` into the `HookSummary` shape the install / update
+ * summary views render. Lives in core (not commands/shared) so the
+ * orchestrator can use it without crossing the module boundary; re-exported
+ * from `commands/hooks/shared.ts` for existing callers.
+ *
+ * - `absent` → null (nothing happened; render nothing).
+ * - `deferred` → `{ deferred: true }` (hook exists but suppressed, e.g. dry run).
+ * - `ran` → `{ stdout, stderr, exitCode }`.
+ * - `failed` → `{ stdout, stderr: "hook <reason>\n<captured>", exitCode: 1 }` —
+ *   the UI treats `failed` identically to a non-zero `ran`.
+ */
+export function summarizeHook(result: HookResult): HookSummary | null {
+  switch (result.kind) {
+    case 'absent':
+      return null;
+    case 'deferred':
+      return { deferred: true };
+    case 'ran':
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+    case 'failed': {
+      const prefix = `hook ${result.message}`;
+      const stderr = result.stderr ? `${prefix}\n${result.stderr}` : prefix;
+      return { stdout: result.stdout, stderr, exitCode: 1 };
+    }
+    default:
+      return assertNever(result);
+  }
 }
 
 /**
@@ -221,6 +277,29 @@ export async function runPostUpdateHook(
 }
 
 /**
+ * Slot-agnostic hook runner. Locates `hookRelPath` inside `tempDir` (same
+ * traversal sandbox as the wrappers above) and, when `ctx` is provided,
+ * executes it. Which slot fires when is decided by the orchestrator
+ * (`source/core/hook-orchestrator.ts`); this function only resolves + runs
+ * one hook. Without `ctx`, returns the `deferred` lookup shape (dry-run).
+ *
+ * Unlike the post-install / post-update wrappers, `runHook` does not read a
+ * timeout from a manifest — the caller passes `opts.timeoutMs` (the
+ * orchestrator computes it once from `hooks.timeout_ms`); absent, `executeHook`
+ * falls back to `DEFAULT_HOOK_TIMEOUT_MS`.
+ */
+export async function runHook(
+  tempDir: string,
+  hookRelPath: string | undefined,
+  ctx?: AnyHookContext,
+  opts?: HookExecOpts,
+): Promise<HookResult> {
+  const lookup = await lookupHook(tempDir, hookRelPath);
+  if (lookup.kind !== 'deferred' || ctx === undefined) return lookup;
+  return executeHook(lookup.hookPath, ctx, opts ?? {});
+}
+
+/**
  * Resolve `hookRelPath` inside `tempDir` and verify it stays within.
  * Rejects absolute paths and any path that normalizes to a location
  * outside the shard's extracted directory (e.g. `../../etc/shadow`).
@@ -259,7 +338,7 @@ async function lookupHook(tempDir: string, hookRelPath: string | undefined): Pro
  */
 export async function executeHook(
   hookPath: string,
-  ctx: HookContext,
+  ctx: AnyHookContext,
   opts: HookExecOpts = {},
 ): Promise<HookResult> {
   const { timeoutMs = DEFAULT_HOOK_TIMEOUT_MS, onStdout, onStderr, signal } = opts;
@@ -360,7 +439,15 @@ export async function executeHook(
   process.once('SIGINT', sigintCleanup);
 
   try {
-    const phase: HookStage = ctx.previousVersion === undefined ? 'post-install' : 'post-update';
+    // The slot drives `SHARDMIND_HOOK_PHASE`. Slotted contexts carry it
+    // directly; the legacy flat `HookContext` (deprecated post-install path)
+    // has no `slot`, so we fall back to the previousVersion heuristic.
+    const phase: string =
+      'slot' in ctx
+        ? ctx.slot
+        : ctx.previousVersion === undefined
+          ? 'post-install'
+          : 'post-update';
 
     // `node --import file:///.../tsx/dist/loader.mjs runner.js hookPath ctxPath`
     // The `--import` specifier is resolved via file:// URL so Windows

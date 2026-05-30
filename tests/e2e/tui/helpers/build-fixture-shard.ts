@@ -4,8 +4,10 @@
  * Two named exports share a private `cloneAndPack` core:
  *
  *   - `buildHookFixtureShard` — clones minimal-shard, writes
- *     `hooks/post-install.ts` with a caller-supplied body, and tars
- *     it. Used by the three hook-lifecycle scenarios (#26-28).
+ *     `hooks/bootstrap.ts` with a caller-supplied body (replacing the
+ *     base manifest's legacy hooks), and tars it. `bootstrap` is the
+ *     always-runs-on-install slot, so it's the natural home for the
+ *     three hook-lifecycle scenarios (#26-28: live tail / throw / timeout).
  *   - `buildMutatedShard` — clones minimal-shard and runs a `mutate`
  *     callback on the working tree before tarballing. Used by
  *     scenario 14 (multi-file conflict drift on update).
@@ -65,7 +67,7 @@ interface BaseShardOpts {
 }
 
 export interface HookShardOptions extends BaseShardOpts {
-  /** Body of `hooks/post-install.ts`. Caller is responsible for valid TS. */
+  /** Body of `hooks/bootstrap.ts`. Caller is responsible for valid TS. */
   hookSource: string;
   /**
    * Optional manifest hook timeout override (ms). When present,
@@ -94,21 +96,17 @@ export interface MutatedShardOptions extends BaseShardOpts {
 }
 
 /**
- * Build a minimal-shard-derived tarball with a custom post-install
- * hook script. Returns the absolute path to the resulting tarball.
+ * Build a minimal-shard-derived tarball with a custom `bootstrap` hook
+ * script. Returns the absolute path to the resulting tarball.
  */
 export async function buildHookFixtureShard(
   opts: HookShardOptions,
 ): Promise<string> {
   return cloneAndPack(opts, async (workDir) => {
-    // Re-read the manifest after `cloneAndPack`'s base write — that
-    // pass set `version` / `name` / `namespace`; we now layer the
-    // hook declaration on top. Two writes is intentional: the base
-    // identity is the same for every fixture, the hook section is
-    // unique to this builder.
+    // REPLACE the hooks block (minimal-shard ships a legacy `post-install`;
+    // declaring it alongside `bootstrap` would be a HOOK_SLOT_CONFLICT).
     const manifest = await readManifest(workDir);
-    manifest.hooks = manifest.hooks ?? {};
-    manifest.hooks['post-install'] = 'hooks/post-install.ts';
+    manifest.hooks = { bootstrap: 'hooks/bootstrap.ts' };
     if (opts.hookTimeoutMs !== undefined) {
       manifest.hooks['timeout_ms'] = opts.hookTimeoutMs;
     }
@@ -117,7 +115,7 @@ export async function buildHookFixtureShard(
     const hooksDir = path.join(workDir, 'hooks');
     await fs.mkdir(hooksDir, { recursive: true });
     await fs.writeFile(
-      path.join(hooksDir, 'post-install.ts'),
+      path.join(hooksDir, 'bootstrap.ts'),
       opts.hookSource,
       'utf-8',
     );

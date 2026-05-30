@@ -27,8 +27,9 @@ your-shard/                    ← also opens cleanly as an Obsidian vault
 │   ├── shard.yaml             ← manifest — who you are
 │   ├── shard-schema.yaml      ← schema — questions, modules, signals
 │   └── hooks/                 ← optional lifecycle scripts (source-side only)
-│       ├── post-install.ts
-│       └── post-update.ts
+│       ├── bootstrap.ts       ← unmanaged-path setup (git init, indexes)
+│       ├── personalize.ts     ← managed-file edits (skipped on a defaults install)
+│       └── post-update.ts     ← additive managed-file edits on update
 │
 ├── .shardmindignore           ← repo-only excludes (CONTRIBUTING.md, *.gif, …)
 │
@@ -37,7 +38,7 @@ your-shard/                    ← also opens cleanly as an Obsidian vault
 ├── GEMINI.md                  ← (optional) Gemini CLI
 ├── Home.md                    ← Obsidian landing note (static or `Home.md.njk` to render)
 ├── brain/
-│   └── North Star.md          ← static; personalize via post-install hook
+│   └── North Star.md          ← static; personalize via the personalize hook
 ├── .claude/
 │   ├── commands/reflect.md    ← `mod.commands: ["reflect"]` gates this by name
 │   ├── agents/                ← `mod.agents` similarly
@@ -80,8 +81,11 @@ requires:
   node: ">=22.0.0"
 
 hooks:
-  post-install: hooks/post-install.ts
-  post-update: hooks/post-update.ts
+  bootstrap:
+    script: .shardmind/hooks/bootstrap.ts
+    fingerprint: "qmd-v1"
+  personalize: .shardmind/hooks/personalize.ts
+  post-update: .shardmind/hooks/post-update.ts
 ```
 
 ### Field reference
@@ -99,8 +103,11 @@ hooks:
 | `requires.obsidian` | no | Semver range. Advisory only in v0.1. |
 | `requires.node` | no | Semver range. Applied when hooks run. |
 | `dependencies` | no | Array of `{ name, namespace, version }`. Vendored in v0.1 (pre-install manually); auto-fetched in v0.2+. |
-| `hooks.post-install` | no | Path relative to shard root. Runs after first install. |
-| `hooks.post-update` | no | Path relative to shard root. Runs after update. |
+| `hooks.bootstrap` | no | Path string, or `{ script, fingerprint? }`. Unmanaged-path setup. Runs on install/adopt + on update when `fingerprint` changes. See §6. |
+| `hooks.personalize` | no | Path relative to shard root. Managed-file edits. Runs on install/adopt only; skipped when values are defaults. See §6. |
+| `hooks.post-update` | no | Path relative to shard root. Additive managed-file edits on update (`ctx.newFiles`). See §6. |
+| `hooks.post-install` | no | **Deprecated** — legacy combined hook. Mutually exclusive with the slots above (`HOOK_SLOT_CONFLICT`). Honored until ≥0.3.0; migrate to `bootstrap` + `personalize`. |
+| `hooks.timeout_ms` | no | Per-slot timeout in ms. Default 30000; range 1000–600000. |
 
 ## 4. `shard-schema.yaml` — the schema
 
@@ -268,7 +275,7 @@ Any file ending in `.njk` anywhere in the shard root is rendered with [Nunjucks]
 - `.njk` suffix → template, rendered; suffix is stripped. `Home.md.njk` → `Home.md`, `.claude/settings.json.njk` → `.claude/settings.json`.
 - No `.njk` → copy verbatim to the same relative path.
 - Author convention: keep `.njk` to dotfolder configs (`.claude/settings.json.njk`, `.mcp.json.njk`) so the clone-UX cost stays zero. Iterator templates (`<dir>/_each.<ext>.njk`) and any explicitly-tagged vault-visible `.njk` also render — the engine doesn't restrict by location.
-- **Why the dotfolder convention matters for Invariant 1.** Renderable templates render to bytes that legitimately differ from the source (`install_date`, value substitution); the [Invariant 1](SHARD-LAYOUT.md#invariant-1--install---defaults-is-clone-equivalent) helper enforces presence-at-mapped-path for `.njk` and byte-equivalence for static files. The smaller a shard's render-delta surface, the closer `install --defaults` is to a true `git clone`. Vault-visible content authored as static `.md` + post-install hook personalization keeps the surface small.
+- **Why the dotfolder convention matters for Invariant 1.** Renderable templates render to bytes that legitimately differ from the source (`install_date`, value substitution); the [Invariant 1](SHARD-LAYOUT.md#invariant-1--install---defaults-is-clone-equivalent) helper enforces presence-at-mapped-path for `.njk` and byte-equivalence for static files. The smaller a shard's render-delta surface, the closer `install --defaults` is to a true `git clone`. Vault-visible content authored as static `.md` + `personalize`-hook personalization keeps the surface small.
 
 ### Frontmatter-aware rendering
 
@@ -312,44 +319,90 @@ A template whose output path contains `_each` renders once per entry of a list-t
 
 ## 6. Hooks
 
-`hooks/post-install.ts` (and `post-update.ts`) are TypeScript files with a default async export:
+Hooks are TypeScript files with a default async export, declared under `hooks:` in `shard.yaml`. There are three named slots, each with a distinct lifecycle and an engine-enforced write boundary:
+
+```yaml
+hooks:
+  bootstrap:
+    script: .shardmind/hooks/bootstrap.ts
+    fingerprint: "qmd-v1"      # optional — see "Re-running bootstrap" below
+  personalize: .shardmind/hooks/personalize.ts
+  post-update: .shardmind/hooks/post-update.ts
+  timeout_ms: 30000            # optional, applies to every slot
+```
+
+| Slot | Runs on | May write | The engine… |
+|------|---------|-----------|-------------|
+| `bootstrap` | first install + adopt; on update iff `fingerprint` changed | **unmanaged** paths only (`.qmd/`, `.git/`, caches) | always runs it; warns if it writes a managed file |
+| `personalize` | first install + adopt **only** | **managed** files only | **does not call it at all** when the user accepted every default; warns if it creates an unmanaged file |
+| `post-update` | updates | **managed** files in `ctx.newFiles` only | additive-only by convention (Invariant 3); not write-boundary-checked |
+
+Each is a default async export taking a slot-specific context:
 
 ```ts
-import type { HookContext } from 'shardmind/runtime';
+import type { BootstrapContext } from 'shardmind/runtime';
 
-export default async function(ctx: HookContext): Promise<void> {
-  console.log(`Welcome, ${ctx.values.user_name}. Installed ${ctx.shard.name}@${ctx.shard.version}.`);
-  // ctx.vaultRoot         — absolute path to the installed vault
-  // ctx.values            — the answered values
-  // ctx.modules           — { moduleId: 'included' | 'excluded' }
-  // ctx.shard             — { name, version }
-  // ctx.previousVersion   — only set on post-update
-  // ctx.valuesAreDefaults — true iff every user value equals the schema default
-  // ctx.newFiles          — managed paths newly added by this run
-  // ctx.removedFiles      — managed paths removed by this run
+export default async function (ctx: BootstrapContext): Promise<void> {
+  // ctx.slot            — 'bootstrap'
+  // ctx.vaultRoot       — absolute path to the installed vault
+  // ctx.values          — the answered values
+  // ctx.modules         — { moduleId: 'included' | 'excluded' }
+  // ctx.shard           — { name, version }
+  // ctx.previousVersion — set only on an update re-bootstrap
+  await runQmdBootstrap(ctx.vaultRoot);   // touches .qmd/ — unmanaged. Fine.
 }
 ```
 
-### v6 invariants the hook ctx encodes
+### What changed from `post-install` (and why)
 
-The three v6 ctx fields (`valuesAreDefaults`, `newFiles`, `removedFiles`) are how shards encode the additive-principle invariants documented in `docs/SHARD-LAYOUT.md`. Use them as gates, not as suggestions:
+The old single `post-install` hook bundled three jobs with different lifecycles — unmanaged setup, managed-file personalization, and one-time conversions — and you had to hand-gate the personalization on `ctx.valuesAreDefaults` to keep Invariant 1. That gate is now the engine's job. The slots make each job's contract explicit and machine-checked:
 
-- **`valuesAreDefaults: true`** — every user value equals the schema default. **Hooks that modify managed files (tracked in `state.json`) must no-op in this branch.** Otherwise an `install --defaults` produces a vault that diverges from `git clone` byte-for-byte, breaking Invariant 1. Hooks that create *unmanaged* files (QMD indexes, MCP caches, `.git`) may run unconditionally — they don't enter `state.files`.
+- **You no longer write `if (!ctx.valuesAreDefaults) …`.** The engine simply doesn't invoke `personalize` on a defaults install. `PersonalizeContext` has no `valuesAreDefaults` field — if your `personalize` hook runs, values are non-default by construction.
+- **The write boundary is checked.** If `bootstrap` edits a managed file or `personalize` creates an unmanaged one, the engine surfaces a non-fatal warning naming the paths (it does not undo the write). This catches a mis-placed responsibility during your dev loop instead of silently breaking Invariant 1 in the field.
 
-  Example pattern:
-  ```ts
-  if (!ctx.valuesAreDefaults) {
-    await fs.writeFile(join(ctx.vaultRoot, 'brain', 'North Star.md'), personalize(ctx.values));
+### Per-slot context
+
+- **`BootstrapContext`** → `{ slot: 'bootstrap', vaultRoot, values, modules, shard, previousVersion? }`. No `valuesAreDefaults`, no file lists.
+- **`PersonalizeContext`** → `{ slot: 'personalize', vaultRoot, values, modules, shard }`. Write only managed files (e.g. `brain/North Star.md`). Runs only with non-default values.
+- **`PostUpdateContext`** → `{ slot: 'post-update', vaultRoot, values, modules, shard, previousVersion, newFiles, removedFiles }`.
+  - **`newFiles: string[]`** — managed paths added this update (`UpdateAction.kind === 'add'`; excludes `overwrite`, `auto_merge`, `restore_missing`, conflict resolutions). Restrict writes to these — clobbering an existing managed file risks overwriting the three-way-merge resolution that just ran.
+  - **`removedFiles: string[]`** — managed paths deleted this update. The vault file is already gone; use this to clean up external state (QMD refs, MCP registrations) that pointed at it.
+
+### Re-running bootstrap on update
+
+`bootstrap` is for unmanaged artifacts that don't change often. By default it runs once (install/adopt) and never re-runs on update. If a new version changes an artifact's schema — say the QMD index format — add or bump `hooks.bootstrap.fingerprint`. The engine records the fingerprint in `state.json` at each successful bootstrap and re-runs `bootstrap` on update whenever the manifest's fingerprint differs from the recorded one. The string is opaque to the engine (compared with `!==`); use anything stable per artifact version (`"qmd-v1"`, `"index-2026.01"`).
+
+### Worked migration: splitting an old `post-install.ts`
+
+Old combined hook:
+
+```ts
+// hooks/post-install.ts  (deprecated)
+export default async function (ctx: HookContext): Promise<void> {
+  await ensureGitRepo(ctx.vaultRoot);              // unmanaged — .git/
+  await bootstrapQmd(ctx.vaultRoot, ctx.values);   // unmanaged — .qmd/
+  if (!ctx.valuesAreDefaults) {                    // hand-gated managed edit
+    await personalizeNorthStar(ctx.vaultRoot, ctx.values);
   }
-  // QMD bootstrap runs unconditionally — it touches .qmd/, not managed paths.
-  await runQmdBootstrap(ctx.vaultRoot);
-  ```
+}
+```
 
-  The deep-equal is strict: array order is significant. `multiselect` with schema default `[a, b]` vs user-selected `[b, a]` answers `false`. The wizard preserves option order on `--defaults` runs and on no-op multiselect submissions, so the strict rule fires only when the user genuinely re-ordered.
+splits into:
 
-- **`newFiles: string[]`** — managed paths newly added by this run. Empty on clean install (every path is new — uninformative); empty on a no-op update; populated on update with paths from `UpdateAction.kind === 'add'` (excluding `overwrite`, `auto_merge`, `restore_missing`, and conflict resolutions, since those paths were already managed). Restrict your post-update hook's writes to these paths by default — clobbering an existing managed file risks overwriting the three-way-merge resolution that just ran.
+```ts
+// hooks/bootstrap.ts
+export default async function (ctx: BootstrapContext): Promise<void> {
+  await ensureGitRepo(ctx.vaultRoot);
+  await bootstrapQmd(ctx.vaultRoot, ctx.values);
+}
 
-- **`removedFiles: string[]`** — managed paths removed by this update (`UpdateAction.kind === 'delete'`). Empty on install. Use to maintain external state — QMD collection refs, MCP registrations — that referenced now-removed paths. The vault file is already gone by the time your hook runs.
+// hooks/personalize.ts  — no value gate; engine skips this hook on a defaults install
+export default async function (ctx: PersonalizeContext): Promise<void> {
+  await personalizeNorthStar(ctx.vaultRoot, ctx.values);
+}
+```
+
+and the manifest moves from `hooks.post-install: hooks/post-install.ts` to the three-slot form above. Declaring `post-install` alongside `bootstrap`/`personalize` is rejected at parse time (`HOOK_SLOT_CONFLICT`) — finish the migration in one step. The legacy slot is honored until at least 0.3.0; migrate before then.
 
 ### Capabilities
 
@@ -366,11 +419,11 @@ Hooks **cannot**:
 
 ### Post-hook re-hash
 
-After every `post-install` / `post-update` invocation — success OR failure — the engine re-hashes every managed file in `state.json` and writes the updated state. **This means a hook that legitimately edits a managed file does not produce spurious "drift" on the next `shardmind` status run.**
+After the hook phase exits — success OR failure — the engine re-hashes every managed file in `state.json` and writes the updated state. **This means a hook that legitimately edits a managed file (a `personalize` or `post-update` write) does not produce spurious "drift" on the next `shardmind` status run.**
 
 A consequence to know: `state.json` reflects whatever bytes are on disk *after* the hook exits. If a hook crashes mid-write, the partial bytes get hashed and adopted as the new managed hash — drift detection won't flag them as drift, because state-matches-disk by construction. If you need atomicity (the file is either fully-written or untouched), use `fs.rename` from a temp file inside your hook; don't rely on the engine to detect partial writes.
 
-Hook-managed-file edits are still subject to the Invariant 2 rule above — the re-hash is what makes legitimate edits observable, not a license to ignore the gate.
+The re-hash is also where the engine detects a `bootstrap` that wrote a managed file (a boundary violation): the file's hash changed but `bootstrap` had no business touching it. That surfaces as a `HOOK_BOOTSTRAP_MANAGED_WRITE` warning — the edit stays on disk, but you've put it in the wrong slot.
 
 ### Runtime environment
 
@@ -380,8 +433,8 @@ The child process receives:
 - `cwd` = `ctx.vaultRoot` (so `git init` / `qmd setup` act on the installed vault).
 - The parent's environment, plus:
   - `SHARDMIND_HOOK=1` — tag for "running under shardmind" detection.
-  - `SHARDMIND_HOOK_PHASE=post-install` | `post-update` — the lifecycle stage.
-- `ctx` (the `HookContext` above) as the single argument to your default export.
+  - `SHARDMIND_HOOK_PHASE=bootstrap` | `personalize` | `post-update` (or `post-install` for a legacy hook) — the slot currently running.
+- `ctx` (the slot-specific context above) as the single argument to your default export.
 
 ### Timeouts
 
@@ -389,8 +442,8 @@ The default hook timeout is **30 seconds**. Override per-shard by adding `hooks.
 
 ```yaml
 hooks:
-  post-install: hooks/post-install.ts
-  timeout_ms: 60000    # 60 seconds; valid range: 1_000..600_000
+  bootstrap: .shardmind/hooks/bootstrap.ts
+  timeout_ms: 60000    # 60 seconds; valid range: 1_000..600_000; applies to every slot
 ```
 
 A hook that exceeds its budget is sent `SIGTERM` (Windows: `TerminateProcess`), given a 2-second grace period to flush buffered output, then hard-killed with `SIGKILL`. The install / update itself still completes — a timed-out hook is a warning, not a rollback trigger.

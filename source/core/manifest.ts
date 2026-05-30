@@ -25,8 +25,22 @@ export const ShardManifestSchema = z.object({
     version: z.string(),
   })).default([]),
   hooks: z.object({
-    'post-install': z.string().optional(),
+    // `bootstrap` accepts the bare-string form (`bootstrap: path`) or the
+    // object form (`bootstrap: { script, fingerprint? }`). The string arm is
+    // normalized into the object shape so every downstream consumer sees one
+    // shape (`{ script, fingerprint? }`). See SHARD-LAYOUT.md §Hook lifecycle.
+    bootstrap: z
+      .union([
+        z.string().transform((script) => ({ script })),
+        z.object({ script: z.string(), fingerprint: z.string().optional() }),
+      ])
+      .optional(),
+    personalize: z.string().optional(),
     'post-update': z.string().optional(),
+    // Deprecated combined hook. Mutually exclusive with bootstrap/personalize;
+    // the conflict is rejected post-parse as HOOK_SLOT_CONFLICT (a superRefine
+    // would surface only as the generic MANIFEST_VALIDATION_FAILED).
+    'post-install': z.string().optional(),
     // Per-shard hook execution timeout in milliseconds. Default 30_000 when
     // absent. Clamped to 1_000..600_000 — below one second is almost always a
     // bug (even a trivial `git init` hits ~50ms with warm caches but 200ms
@@ -84,6 +98,19 @@ export async function parseManifest(filePath: string): Promise<ShardManifest> {
       `shard.yaml validation failed: ${details}`,
       'MANIFEST_VALIDATION_FAILED',
       'Check shard.yaml against the shard manifest spec.',
+    );
+  }
+
+  // The deprecated `post-install` slot cannot coexist with the new
+  // `bootstrap` / `personalize` slots — a half-migrated manifest is a
+  // mistake, not a merge. Reject post-parse so the hint is precise (a zod
+  // superRefine would collapse into the generic MANIFEST_VALIDATION_FAILED).
+  const hooks = result.data.hooks;
+  if (hooks['post-install'] && (hooks.bootstrap || hooks.personalize)) {
+    throw new ShardMindError(
+      'shard.yaml declares the deprecated hooks.post-install alongside hooks.bootstrap/personalize.',
+      'HOOK_SLOT_CONFLICT',
+      'Remove hooks.post-install once you have split it into bootstrap + personalize. See docs/AUTHORING.md §6.',
     );
   }
 

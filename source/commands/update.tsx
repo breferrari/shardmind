@@ -154,6 +154,8 @@ export default function Update({ options }: Props) {
             stage={phase.stage}
             output={phase.output}
             shardLabel={phase.shardLabel}
+            index={phase.index}
+            total={phase.total}
           />
         </CommandFrame>
       );
@@ -164,7 +166,7 @@ export default function Update({ options }: Props) {
             summary={phase.summary}
             durationMs={phase.durationMs}
             migrationWarnings={phase.migrationWarnings}
-            hookOutput={phase.hook}
+            hooks={phase.hooks}
             dryRun={phase.dryRun}
           />
         </CommandFrame>

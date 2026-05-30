@@ -4,7 +4,7 @@ import { StatusMessage } from './ui.js';
 import HookSummarySection from './HookSummarySection.js';
 import type { ShardManifest } from '../runtime/types.js';
 import type { BackupRecord } from '../core/install-executor.js';
-import type { HookSummary } from '../core/hook.js';
+import type { HookOutcome } from '../core/hook-orchestrator.js';
 
 /**
  * Final install report.
@@ -26,7 +26,7 @@ interface SummaryProps {
   fileCount: number;
   durationMs: number;
   backups: BackupRecord[];
-  hookOutput: HookSummary | null;
+  hooks: HookOutcome[];
   dryRun?: boolean;
 }
 
@@ -36,7 +36,7 @@ export default function Summary({
   fileCount,
   durationMs,
   backups,
-  hookOutput,
+  hooks,
   dryRun,
 }: SummaryProps) {
   const seconds = (durationMs / 1000).toFixed(1);
@@ -62,7 +62,7 @@ export default function Summary({
         </Box>
       )}
 
-      <HookSummarySection stage="post-install" hookOutput={hookOutput} />
+      <HookSummarySection outcomes={hooks} />
 
       {!dryRun && (
         <Box flexDirection="column">

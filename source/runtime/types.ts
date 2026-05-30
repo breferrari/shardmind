@@ -19,12 +19,30 @@ export interface ShardManifest {
   };
   dependencies: ShardDependency[];
   hooks: {
-    'post-install'?: string;
+    /**
+     * Unmanaged-path setup (git init, search indexes). Runs on
+     * install/adopt and re-runs on update when `fingerprint` changes
+     * (Invariant 4). `parseManifest` normalizes the author's bare-string
+     * form (`bootstrap: path`) into this object shape, so every consumer
+     * sees `{ script, fingerprint? }`.
+     */
+    bootstrap?: { script: string; fingerprint?: string };
+    /**
+     * Managed-file edits. Runs on install/adopt only; the engine skips
+     * it entirely when the user accepted all defaults (Invariant 2).
+     */
+    personalize?: string;
     'post-update'?: string;
     /**
+     * Deprecated combined hook (pre-split). Mutually exclusive with
+     * `bootstrap` / `personalize` — `parseManifest` throws
+     * `HOOK_SLOT_CONFLICT` if both are present. Honored ≥1 minor release.
+     */
+    'post-install'?: string;
+    /**
      * Per-shard override for the hook execution timeout (milliseconds).
-     * Defaults to 30_000 when absent. Valid range: 1_000..600_000.
-     * See docs/ARCHITECTURE.md §9.3 for the hook contract.
+     * Applies to every slot. Defaults to 30_000 when absent. Valid range:
+     * 1_000..600_000. See docs/ARCHITECTURE.md §9.3 for the hook contract.
      */
     timeout_ms?: number;
   };
@@ -136,6 +154,16 @@ export interface ShardState {
    * alongside `ref`.
    */
   resolvedSha?: string;
+  /**
+   * The `hooks.bootstrap.fingerprint` value (raw string) recorded at the
+   * last successful `bootstrap` run. Drives the Invariant 4 re-run
+   * decision: on update, `bootstrap` re-runs iff the target manifest's
+   * fingerprint differs from this (compared with `!==`, not hashed).
+   * Absent if the shard never declared a fingerprint or never bootstrapped.
+   * Forward-compatible: pre-2 state.json has no field; `state-migrator.ts`
+   * supplies it on the v1 → v2 migration.
+   */
+  bootstrap_fingerprint?: string;
 }
 
 export interface FileState {
@@ -309,6 +337,69 @@ export interface HookContext {
    */
   removedFiles: string[];
 }
+
+/**
+ * The three lifecycle hook slots (post the #102 split). The discriminator
+ * shared by every slotted hook context and by the orchestrator's outcomes.
+ */
+export type HookSlot = 'bootstrap' | 'personalize' | 'post-update';
+
+/** Fields every slotted hook receives, regardless of slot. */
+export interface HookContextBase {
+  slot: HookSlot;
+  vaultRoot: string;
+  values: Record<string, unknown>;
+  modules: ModuleSelections;
+  shard: { name: string; version: string };
+}
+
+/**
+ * `bootstrap` context — unmanaged-path setup. No `valuesAreDefaults` (it
+ * always runs) and no file lists. `previousVersion` is set only on an
+ * update re-bootstrap (fingerprint changed).
+ */
+export interface BootstrapContext extends HookContextBase {
+  slot: 'bootstrap';
+  previousVersion?: string;
+}
+
+/**
+ * `personalize` context — managed-file edits on install/adopt. Carries no
+ * `valuesAreDefaults`: the engine already enforced Invariant 2 by deciding
+ * whether to invoke this hook at all, so if it runs, values are non-default.
+ */
+export interface PersonalizeContext extends HookContextBase {
+  slot: 'personalize';
+}
+
+/**
+ * `post-update` context — additive managed-file edits on update. Same
+ * `newFiles` / `removedFiles` / `previousVersion` semantics the flat
+ * `HookContext` documented for the post-update path.
+ */
+export interface PostUpdateContext extends HookContextBase {
+  slot: 'post-update';
+  previousVersion?: string;
+  newFiles: string[];
+  removedFiles: string[];
+}
+
+/**
+ * Slotted hook context (post-#102). New hooks type their default export
+ * against the slot they implement. The legacy combined `HookContext`
+ * above is retained for deprecated `post-install` hooks until ≥0.3.0.
+ */
+export type SlottedHookContext =
+  | BootstrapContext
+  | PersonalizeContext
+  | PostUpdateContext;
+
+/**
+ * Any shape `executeHook` / `runHook` accept: a slotted context or the
+ * legacy flat `HookContext`. The spawn path only reads `vaultRoot` and the
+ * slot/previousVersion needed to derive `SHARDMIND_HOOK_PHASE`.
+ */
+export type AnyHookContext = SlottedHookContext | HookContext;
 
 // ---------------------------------------------------------------------------
 // Status command (`shardmind` root + `shardmind --verbose`).

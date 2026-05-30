@@ -98,8 +98,9 @@ my-shard/                             ← git repo root; also opens cleanly as a
 │   ├── shard.yaml                    ← manifest (name, version, values refs, modules, agents, hooks)
 │   ├── shard-schema.yaml             ← values schema → zod at runtime; every value MUST have a default
 │   └── hooks/                        ← source-side only; engine reads from tarball, NOT copied to install
-│       ├── post-install.ts           ← optional, non-fatal
-│       └── post-update.ts            ← optional, non-fatal
+│       ├── bootstrap.ts              ← optional, non-fatal; unmanaged-path setup
+│       ├── personalize.ts            ← optional, non-fatal; managed-file edits
+│       └── post-update.ts            ← optional, non-fatal; additive managed edits on update
 │
 ├── .shardmindignore                  ← repo root; gitignore-spec globs (negation deferred to v0.2)
 │
@@ -206,8 +207,11 @@ dependencies:
     version: "^1.0.0"
 
 hooks:
-  post-install: hooks/post-install.ts
-  post-update: hooks/post-update.ts
+  bootstrap:
+    script: .shardmind/hooks/bootstrap.ts
+    fingerprint: "qmd-v1"
+  personalize: .shardmind/hooks/personalize.ts
+  post-update: .shardmind/hooks/post-update.ts
 
 # v0.1: dependencies are vendored by the shard author.
 # ShardMind validates version compatibility but does not fetch.
@@ -581,41 +585,58 @@ Hooks are always **managed** (replaced on update). Users customize behavior thro
 
 ### 9.3 Hook Contract
 
-Post-install and post-update hooks receive a typed context and run as best-effort (non-fatal):
+Hooks run as best-effort (non-fatal) and are split into three named slots, each receiving a **slot-specific** typed context. The orchestration (which slots fire, in what order, with what context) lives in `source/core/hook-orchestrator.ts`; the spawn/capture in `source/core/hook.ts`; the write-boundary detection in `source/core/hook-boundary.ts`. Canonical contract: `docs/SHARD-LAYOUT.md §Hook lifecycle, state, and re-hash semantics`.
 
 ```typescript
-interface HookContext {
+type HookSlot = 'bootstrap' | 'personalize' | 'post-update';
+
+interface HookContextBase {
+  slot: HookSlot;
   vaultRoot: string;
   values: Record<string, unknown>;
   modules: Record<string, 'included' | 'excluded'>;
   shard: { name: string; version: string };
-  previousVersion?: string;      // Only for post-update
-  valuesAreDefaults: boolean;    // v6 — Invariant 2 (see SHARD-LAYOUT.md)
-  newFiles: string[];            // v6 — managed paths newly added by this run
-  removedFiles: string[];        // v6 — managed paths removed by this run
 }
+interface BootstrapContext   extends HookContextBase { slot: 'bootstrap';   previousVersion?: string; }
+interface PersonalizeContext extends HookContextBase { slot: 'personalize'; }
+interface PostUpdateContext  extends HookContextBase {
+  slot: 'post-update'; previousVersion?: string; newFiles: string[]; removedFiles: string[];
+}
+type SlottedHookContext = BootstrapContext | PersonalizeContext | PostUpdateContext;
 
-// Hook file exports a default async function:
-export default async function(ctx: HookContext): Promise<void>;
+// New hooks type against their slot's context:
+export default async function(ctx: BootstrapContext): Promise<void>;
+// (PersonalizeContext / PostUpdateContext for the other slots.)
+// The legacy flat `HookContext` (vaultRoot/values/modules/shard +
+// valuesAreDefaults/newFiles/removedFiles) is retained for deprecated
+// `post-install` hooks until ≥0.3.0.
 ```
+
+| Slot | Runs on | May write | Order |
+|------|---------|-----------|-------|
+| `bootstrap` | install + adopt; on update iff `hooks.bootstrap.fingerprint` changed | unmanaged paths only | first on install/adopt + update |
+| `personalize` | install + adopt only | managed files only | after `bootstrap`; **engine skips it when `valuesAreDefaults`** (Invariant 2) |
+| `post-update` | updates | managed files in `ctx.newFiles` only (Invariant 3) | after `bootstrap` on update |
 
 **Hooks CAN**: read/write files in vaultRoot, run shell commands (`git init`, `qmd setup`), log to stdout and stderr (both shown in TUI as separate labeled blocks).
 
 **Hooks CANNOT**: modify `.shardmind/` (ShardMind owns it), modify `shard-values.yaml` (user owns it), return values that affect install/update flow.
 
-**v6 invariants the new ctx fields encode** (canonical contract: `docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics`):
+**Engine-enforced Invariant 2**: the gate moved out of hook code into the engine. The engine computes `valuesAreDefaults` (deep-equal each user value against its schema default; computed defaults resolved against the literal-default map first; array order significant) and, when true, does not invoke `personalize`. So `PersonalizeContext` carries no `valuesAreDefaults` field — if it runs, values are non-default.
 
-- `valuesAreDefaults: true` — every user value equals its schema default (deep-equal; computed defaults resolved against the literal-default map first). Hooks that modify *managed* files must no-op in this branch (Invariant 2). Hooks that create *unmanaged* files (QMD indexes, MCP caches) may run unconditionally — they don't affect byte-equivalence.
-- `newFiles: string[]` — empty on clean install (every file is new — uninformative); empty on no-op update; populated for an update with `UpdateAction.kind === 'add'` paths. By default a post-update hook restricts its writes to these paths (Invariant 3).
-- `removedFiles: string[]` — empty on install; populated for an update with `UpdateAction.kind === 'delete'` paths. Hooks use this to maintain external state that referenced now-removed managed paths.
+**Write-boundary detection (detect-and-warn)**: a hook is an unsandboxed subprocess, so the engine detects rather than prevents. It snapshots before each boundary-checked slot and diffs after; a `bootstrap` that edited a managed file (`HOOK_BOOTSTRAP_MANAGED_WRITE`) or a `personalize` that created an unmanaged file (`HOOK_PERSONALIZE_UNMANAGED_CREATE`) surfaces a **non-fatal warning** — the bytes stay on disk (non-fatal contract). Bootstrap's check folds into the post-hook re-hash (`changed[]` ∩ managed); personalize's is a path-only vault walk (ignore + Tier-1 filtered), install/adopt only. These are warnings, not thrown `ShardMindError`s — see `docs/ERRORS.md §Hook lifecycle (non-fatal warnings)`.
 
-**Post-hook re-hash**: after every `post-install` / `post-update` invocation — success OR failure — the engine re-reads each managed file in `state.files` and recomputes `rendered_hash`, then writes the updated `state.json`. This ensures the engine's view of disk reflects actual content even when a hook only partially completed (the hook contract is non-fatal, so a hook that broke can't corrupt the engine). Per-file ENOENT and other I/O errors are tolerated; drift detection picks up any discrepancy on the next status run. Implementation: `source/core/state.ts::rehashManagedFiles`, called by both command machines after the hook subprocess returns. Spec: `docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics`.
+**Bootstrap re-run (Invariant 4)**: `state.json` records `bootstrap_fingerprint` (raw manifest string, no hashing) at each successful bootstrap. On update the engine re-runs `bootstrap` iff the target manifest's fingerprint differs (`!==`). Absent fingerprint ⇒ never re-runs. Bumps `state.json` `schema_version` 1→2 (additive; forward-migrated by `state-migrator.ts`).
 
-**If a hook throws**: ShardMind logs the error, shows a warning ("post-install hook exited with code N. Install succeeded; the hook's work may be incomplete."), does NOT rollback. Non-fatal. Same pattern as Helm post-install hooks. The post-hook re-hash still runs.
+**Post-hook re-hash**: after the hook phase exits — success OR failure — the engine re-reads each managed file in `state.files` and recomputes `rendered_hash`, then writes the updated `state.json`. This ensures the engine's view of disk reflects actual content even when a hook only partially completed (the hook contract is non-fatal, so a hook that broke can't corrupt the engine). Per-file ENOENT and other I/O errors are tolerated; drift detection picks up any discrepancy on the next status run. Implementation: `source/core/state.ts::rehashManagedFiles`, called by the orchestrator after the hook subprocess returns.
+
+**If a hook throws**: ShardMind logs the error, shows a warning ("<slot> hook exited with code N. Install succeeded; the hook's work may be incomplete."), does NOT rollback. Non-fatal. Same pattern as Helm hooks. The post-hook re-hash still runs, and subsequent independent slots still attempt.
+
+**Legacy `post-install`**: a shard declaring the deprecated `hooks.post-install` (and neither new slot) runs it once on install/adopt with the legacy flat `HookContext` (including `valuesAreDefaults`, `newFiles: []`, `removedFiles: []` for source compatibility) and no boundary enforcement, plus a `HOOK_POST_INSTALL_DEPRECATED` warning. Declaring it alongside `bootstrap`/`personalize` is a parse-time `HOOK_SLOT_CONFLICT`. Honored ≥1 minor (deprecate 0.2.0, remove ≥0.3.0).
 
 **Execution runtime**: hooks run in a subprocess spawned by `source/core/hook.ts:executeHook`. The engine ships the `tsx` TypeScript loader (~6 MB) bundled as a runtime dependency so authors can write plain `.ts` without a compile step on their side. An internal wrapper at `source/internal/hook-runner.ts` (emitted to `dist/internal/hook-runner.js`) imports the hook and invokes its default export with the typed `HookContext`.
 
-**Execution environment**: child `cwd` is `ctx.vaultRoot`; env inherits from the parent plus `SHARDMIND_HOOK=1` and `SHARDMIND_HOOK_PHASE=post-install|post-update` for the hook to branch on.
+**Execution environment**: child `cwd` is `ctx.vaultRoot`; env inherits from the parent plus `SHARDMIND_HOOK=1` and `SHARDMIND_HOOK_PHASE=bootstrap|personalize|post-update` (or `post-install` for a legacy hook), derived from `ctx.slot`, for the hook to branch on.
 
 **Output capture**: stdout and stderr are captured into separate 256 KB-capped buffers. Overflow truncates with a `[… truncated, N bytes discarded]` marker rather than dropping the hook. The command TUI additionally renders a tail-only (last 12 lines) live view during execution; the full captured output surfaces in the final summary.
 
@@ -773,7 +794,7 @@ After 4 value prompts, a module review step:
 
 Defaults: all included. User deselects what doesn't fit. Most press Enter.
 
-After confirm: render → write → state.json → post-install hook → summary.
+After confirm: render → write → state.json → hooks (orchestrator: bootstrap → personalize) → summary.
 
 ### 10.5 `shardmind update` — Upgrade Flow
 
@@ -857,7 +878,7 @@ Phase ordering (logical; UI may interleave loading messages — see IMPLEMENTATI
    - **shard-only** — user doesn't have the path → install fresh, managed.
    - Implicit **user-only** — paths in vault but not in shard → never enumerated, left untouched.
 4. **Apply** (`source/core/adopt-executor.ts::runAdopt`) — snapshot any `differs+use_shard` user file before overwriting, write shard-only fresh installs, write engine metadata (`state.json`, cached manifest+schema, templates cache, vault-root `shard-values.yaml`). Snapshot-then-restore rollback on any failure between snapshot and final state-write.
-5. **Hook** — fire the post-install hook with `valuesAreDefaults` + `newFiles=summary.installedFresh` + `removedFiles=[]`. Non-fatal (Helm semantics, §9.3).
+5. **Hooks** — run the install-side slots via the orchestrator: `bootstrap` (unmanaged setup), then `personalize` (managed edits) unless `valuesAreDefaults` (engine-skipped, Invariant 2). `newFiles=summary.installedFresh`. Non-fatal (Helm semantics, §9.3).
 6. **Re-hash** — recompute managed-file hashes per `state.ts::rehashManagedFiles` so any hook edits to managed paths land in the recorded state.
 
 Flags:

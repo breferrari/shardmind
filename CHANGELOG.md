@@ -8,6 +8,28 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (hook lifecycle split — #102) — **breaking, shard-author-facing**
+
+Part of [#102](https://github.com/breferrari/shardmind/issues/102) (the engine + fixture + docs; the issue stays open until the release-window items below land). Splits the single `post-install` hook into three named slots with engine-enforced contracts, turning yesterday's comment-checked conventions into machine-checked signals. Ships in the same release as [#121](https://github.com/breferrari/shardmind/issues/121) (engine version-compatibility check), which is the guard that stops a pre-0.2 engine from silently ignoring the new slots; obsidian-mind's hook migration ([`obsidian-mind#75`](https://github.com/breferrari/obsidian-mind/issues/75)) ships in the same window.
+
+- **Three slots** declared under `hooks:` in `shard.yaml`: `bootstrap` (unmanaged-path setup — `.qmd/`, `.git/`, caches — always runs on install/adopt, re-runs on update only when its `fingerprint` changes), `personalize` (managed-file edits, install/adopt only), `post-update` (additive managed-file edits over `ctx.newFiles`, unchanged). `bootstrap` accepts a bare path string or `{ script, fingerprint? }`.
+
+- **Invariant 2 is now engine-enforced, not hook-checked.** Authors no longer write `if (!ctx.valuesAreDefaults) …`. The engine computes `valuesAreDefaults` and, when true, **does not invoke `personalize` at all** — `PersonalizeContext` no longer carries the flag. A defaults install has no code path that can mutate a managed file.
+
+- **`HookContext` is now slotted** (`BootstrapContext` / `PersonalizeContext` / `PostUpdateContext`, discriminated by `slot`); each hook receives only its meaningful fields. `SHARDMIND_HOOK_PHASE` is derived from `ctx.slot`.
+
+- **Write-boundary detection (detect-and-warn).** A `bootstrap` that edits a managed file (`HOOK_BOOTSTRAP_MANAGED_WRITE`) or a `personalize` that creates an unmanaged file (`HOOK_PERSONALIZE_UNMANAGED_CREATE`) surfaces a **non-fatal warning** naming the paths; the bytes are left in place (Helm-style non-fatal contract). Bootstrap's check folds into the post-hook re-hash; personalize's is a path-only vault walk (install/adopt only). New modules `source/core/hook-orchestrator.ts` (slot selection/order/ctx/re-hash/fingerprint persist) and `source/core/hook-boundary.ts` (pure detector); `hook.ts`'s `runPostInstallHook`/`runPostUpdateHook` collapse into one slot-agnostic `runHook`.
+
+- **`state.json` gains `bootstrap_fingerprint`** (raw manifest string, compared with `!==`; the engine does not hash it) and bumps `schema_version` 1 → 2 (additive optional field, forward-migrated by `state-migrator.ts` — the framework's first real rule).
+
+### Deprecated (`hooks.post-install` — #102)
+
+- The combined `hooks.post-install` slot is deprecated in favor of `bootstrap` + `personalize`. A shard declaring only `post-install` keeps working: it runs once on install/adopt with the legacy flat context (incl. `valuesAreDefaults`, so existing self-gating still fires) and no boundary enforcement, plus a `HOOK_POST_INSTALL_DEPRECATED` warning. Declaring it alongside the new slots is rejected at parse time (`HOOK_SLOT_CONFLICT`). Honored for at least one minor release — removed no earlier than 0.3.0.
+
+- **Tests**: `tests/unit/hook-orchestrator.test.ts` (slot selection/order, Invariant 2 skip, fingerprint re-run + success-only persist, legacy `post-install` path + its absent write-boundary, dry-run honoring gating, abort-mid-bootstrap, `previousVersion` threading) and `tests/unit/hook-boundary.test.ts` (managed-write incl. deletes + unmanaged-create detection, Tier-1/ignore filtering, symlink skip, fast-check set-diff property); `manifest.test.ts` slot-conflict + bootstrap-string-normalization; `state`/`state-migrator` v1→v2 coverage; component tests migrated to the `outcomes` prop with new-branch + multi-outcome coverage; the `obsidian-mind-like` fixture + contract suite re-pointed at the three slots; L2 PTY hook scenarios moved onto `bootstrap`.
+
+- **Docs**: `docs/SHARD-LAYOUT.md` (Invariant 2 now engine-enforced, new Invariant 4 for bootstrap fingerprint, rewritten §Hook lifecycle, layout tree), `docs/AUTHORING.md §6` (three-slot reference + per-slot ctx + worked migration), `docs/ARCHITECTURE.md §9.3`, `docs/IMPLEMENTATION.md §4.16` + new §4.16a/§4.16b, `docs/ERRORS.md` (new `HOOK_SLOT_CONFLICT` + non-fatal hook-warning section), `CLAUDE.md` (two new core modules + module table).
+
 ### Added (multiselect value type — #101)
 
 Closes [#101](https://github.com/breferrari/shardmind/issues/101). Promotes `multiselect` from a partially-wired type (engine validation existed; the wizard rendered a comma-separated text fallback flagged in-code as v0.2 polish) to a first-class value type. Lets a shard author ask one checkbox question ("Which agents do you use?") instead of N booleans. Scope is the value type + widget; gating *which modules install* on a multiselect value remains [#80](https://github.com/breferrari/shardmind/issues/80) (v0.2).

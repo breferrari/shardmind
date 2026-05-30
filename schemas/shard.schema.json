@@ -73,18 +73,43 @@
       }
     },
     "hooks": {
-      "description": "Lifecycle hook file paths (relative to the shard root).",
+      "description": "Lifecycle hook file paths (relative to the shard root). See docs/AUTHORING.md §6.",
       "type": "object",
       "default": {},
       "additionalProperties": false,
       "properties": {
-        "post-install": {
-          "description": "Path to a TypeScript file whose default export runs after `shardmind install`.",
+        "bootstrap": {
+          "description": "Unmanaged-path setup (git init, indexes). Runs on install/adopt, and on update when its fingerprint changes. A bare path string, or an object with the script path and an optional opaque fingerprint string.",
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["script"],
+              "properties": {
+                "script": { "type": "string", "description": "Path to the bootstrap TypeScript file." },
+                "fingerprint": { "type": "string", "description": "Opaque version token; bumping it re-runs bootstrap on update (compared with !==, not hashed)." }
+              }
+            }
+          ]
+        },
+        "personalize": {
+          "description": "Managed-file edits. Runs on install/adopt only; the engine skips it entirely when the user accepted all default values (Invariant 2).",
           "type": "string"
         },
         "post-update": {
-          "description": "Path to a TypeScript file whose default export runs after `shardmind update`.",
+          "description": "Additive managed-file edits over ctx.newFiles. Runs after `shardmind update` (Invariant 3).",
           "type": "string"
+        },
+        "post-install": {
+          "description": "DEPRECATED — legacy combined hook. Mutually exclusive with `bootstrap`/`personalize` (HOOK_SLOT_CONFLICT). Honored until at least 0.3.0; migrate to the named slots.",
+          "type": "string"
+        },
+        "timeout_ms": {
+          "description": "Per-slot hook execution timeout in milliseconds. Default 30000; valid range 1000–600000.",
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 600000
         }
       }
     }

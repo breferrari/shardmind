@@ -36,7 +36,6 @@ import { downloadShard } from '../../core/download.js';
 import { parseManifest } from '../../core/manifest.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
 import { readState } from '../../core/state.js';
-import { valuesAreDefaults } from '../../core/values-defaults.js';
 import { detectDrift } from '../../core/drift.js';
 import { applyMigrations } from '../../core/migrator.js';
 import {
@@ -50,13 +49,11 @@ import {
   type NewFilePlan,
 } from '../../core/update-planner.js';
 import { runUpdate, rollbackUpdate, type UpdateSummary } from '../../core/update-executor.js';
-import { runPostUpdateHook, type RunningHookPhase } from '../../core/hook.js';
+import { type RunningHookPhase } from '../../core/hook.js';
+import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
 import {
   appendHookOutput,
-  postHookRehash,
-  summarizeHook,
   useSigintRollback,
-  type HookSummary,
 } from './shared.js';
 import { buildRenderContext } from '../../core/renderer.js';
 import { VALUES_FILE } from '../../runtime/vault-paths.js';
@@ -125,23 +122,17 @@ export type Phase =
       label: string;
       history: string[];
     }
-  | (RunningHookPhase & {
-      // Subprocess-backed post-update hook is streaming output. We are
-      // already past the point-of-no-return (state.json written by
-      // `runUpdate`); Ctrl+C in this phase kills the child but does NOT
-      // roll the update back — the contract matches post-install (Helm
-      // semantics, see docs/ARCHITECTURE.md §9.3).
-      //
-      // Shape is shared with install's running-hook variant via
-      // `RunningHookPhase` in source/core/hook.ts — keeps the `setPhase`
-      // updater in `shared.ts::appendHookOutput` generic across machines.
-      stage: 'post-update';
-    })
+  | RunningHookPhase // a lifecycle hook (bootstrap re-run / post-update) is
+      // streaming output. We are already past the point-of-no-return
+      // (state.json written by `runUpdate`); Ctrl+C here kills the child but
+      // does NOT roll the update back (Helm semantics, docs/ARCHITECTURE.md
+      // §9.3). Shape shared with install via core/hook.ts so
+      // `shared.ts::appendHookOutput` narrows generically.
   | {
       kind: 'summary';
       summary: UpdateSummary;
       migrationWarnings: string[];
-      hook: HookSummary | null;
+      hooks: HookOutcome[];
       durationMs: number;
       dryRun: boolean;
     }
@@ -556,60 +547,46 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         // work (hook subprocess) is non-fatal per spec §9.3.
         writingRef.current = false;
 
-        let hookSummary: HookSummary | null = null;
-        if (!ctx.newManifest.hooks?.['post-update']) {
-          // No hook declared — nothing to render.
-          hookSummary = null;
-        } else if (dryRun) {
-          // Dry run: call runPostUpdateHook WITHOUT a ctx so the hook
-          // module surfaces `deferred` (its "lookup only" shape). The
-          // UpdateSummary renders this as a dim "skipped (dry run)" note
-          // per docs/ARCHITECTURE.md §9.3. Mirrors the install path so a
-          // shard-author's dry-run sees hook presence announced even
-          // though the hook body doesn't execute.
-          hookSummary = summarizeHook(await runPostUpdateHook(ctx.newTempDir, ctx.newManifest));
-        } else {
-          hookAbortRef.current = new AbortController();
-          setPhase({
-            kind: 'running-hook',
-            stage: 'post-update',
-            output: '',
-            shardLabel: `${ctx.newManifest.namespace}/${ctx.newManifest.name}`,
-          });
-          try {
-            const hookCtx = {
+        // The orchestrator runs bootstrap (only if its fingerprint changed)
+        // then post-update, builds per-slot context, applies the re-hash and
+        // fingerprint persistence, and reports per-slot outcomes. Dry-run
+        // reports deferred outcomes without spawning. Fresh AbortController
+        // per run; cleared in a finally.
+        hookAbortRef.current = new AbortController();
+        let hookOutcomes: HookOutcome[];
+        try {
+          const hookRun = await runHooks(
+            {
+              command: 'update',
+              tempDir: ctx.newTempDir,
+              manifest: ctx.newManifest,
+              schema: ctx.newSchema,
               vaultRoot,
+              state: result.state,
               values,
               modules: selections,
-              shard: { name: ctx.newManifest.name, version: ctx.newManifest.version },
               previousVersion: ctx.state.version,
-              valuesAreDefaults: valuesAreDefaults(values, ctx.newSchema),
               newFiles: result.summary.addedFiles,
               removedFiles: result.summary.deletedFiles,
-            };
-            const hookResult = await runPostUpdateHook(
-              ctx.newTempDir,
-              ctx.newManifest,
-              hookCtx,
-              {
-                signal: hookAbortRef.current.signal,
-                onStdout: (chunk) => appendHookOutput(setPhase, chunk),
-                onStderr: (chunk) => appendHookOutput(setPhase, chunk),
-              },
-            );
-            hookSummary = summarizeHook(hookResult);
-          } finally {
-            hookAbortRef.current = null;
-          }
-
-          await postHookRehash(vaultRoot, result.state);
+              dryRun: Boolean(dryRun),
+            },
+            {
+              setPhase: (p) => setPhase(p),
+              onStdout: (chunk) => appendHookOutput(setPhase, chunk),
+              onStderr: (chunk) => appendHookOutput(setPhase, chunk),
+              signal: hookAbortRef.current.signal,
+            },
+          );
+          hookOutcomes = hookRun.outcomes;
+        } finally {
+          hookAbortRef.current = null;
         }
 
         finish({
           kind: 'summary',
           summary: result.summary,
           migrationWarnings: ctx.migrationWarnings,
-          hook: hookSummary,
+          hooks: hookOutcomes,
           durationMs: Date.now() - start,
           dryRun,
         });

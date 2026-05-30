@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import HookSummarySection from './HookSummarySection.js';
 import type { ShardManifest } from '../runtime/types.js';
-import type { HookSummary } from '../core/hook.js';
+import type { HookOutcome } from '../core/hook-orchestrator.js';
 import type { AdoptSummary as AdoptSummaryData } from '../core/adopt-executor.js';
 
 /**
@@ -19,8 +19,8 @@ import type { AdoptSummary as AdoptSummaryData } from '../core/adopt-executor.js
  * Counts add up to `state.files` length so the user has a precise sense
  * of how much of their vault is now under engine management. The hook
  * section is delegated to `HookSummarySection` (shared with Install /
- * Update Summary) — adopt fires the post-install hook, so `stage` is
- * `"post-install"`.
+ * Update Summary) — adopt fires the install-side slots (bootstrap +
+ * personalize, or a lone legacy post-install).
  *
  * Adopt success is independent of hook outcome (Helm semantics, per
  * ARCHITECTURE.md §9.3): a failing hook surfaces as a yellow warning in
@@ -31,7 +31,7 @@ interface AdoptSummaryProps {
   vaultRoot: string;
   summary: AdoptSummaryData;
   durationMs: number;
-  hookOutput: HookSummary | null;
+  hooks: HookOutcome[];
   dryRun?: boolean;
 }
 
@@ -40,7 +40,7 @@ export default function AdoptSummary({
   vaultRoot,
   summary,
   durationMs,
-  hookOutput,
+  hooks,
   dryRun,
 }: AdoptSummaryProps) {
   const seconds = (durationMs / 1000).toFixed(1);
@@ -85,7 +85,7 @@ export default function AdoptSummary({
         )}
       </Box>
 
-      <HookSummarySection stage="post-install" hookOutput={hookOutput} />
+      <HookSummarySection outcomes={hooks} />
 
       {!dryRun && (
         <Box flexDirection="column">

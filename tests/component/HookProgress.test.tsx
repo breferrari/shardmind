@@ -34,6 +34,28 @@ describe('HookProgress', () => {
     expect(frame).toContain('Running post-update hook for acme/demo');
   });
 
+  it('renders bootstrap and personalize headings', () => {
+    expect(render(<HookProgress stage="bootstrap" output="" shardLabel="acme/demo" />).lastFrame() ?? '')
+      .toContain('Running bootstrap hook for acme/demo');
+    expect(render(<HookProgress stage="personalize" output="" shardLabel="acme/demo" />).lastFrame() ?? '')
+      .toContain('Running personalize hook for acme/demo');
+  });
+
+  it('shows an (N of M) marker when more than one slot runs', () => {
+    const frame = render(
+      <HookProgress stage="bootstrap" output="" shardLabel="acme/demo" index={1} total={2} />,
+    ).lastFrame() ?? '';
+    expect(frame).toContain('Running bootstrap hook (1 of 2) for acme/demo');
+  });
+
+  it('omits the marker for a single-slot run', () => {
+    const frame = render(
+      <HookProgress stage="personalize" output="" shardLabel="acme/demo" index={1} total={1} />,
+    ).lastFrame() ?? '';
+    expect(frame).not.toContain('of 1');
+    expect(frame).toContain('Running personalize hook for acme/demo');
+  });
+
   it('renders only spinner + heading when output is empty', () => {
     const emptyOutput = render(
       <HookProgress stage="post-install" output="" shardLabel="acme/demo" />,

@@ -26,6 +26,7 @@ import {
   cacheTemplates,
   cacheManifest,
   writeState,
+  STATE_SCHEMA_VERSION,
 } from './state.js';
 import { sha256, toPosix, pathExists } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
@@ -248,7 +249,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   onProgress?.({ kind: 'done', total: totalFiles });
 
   const state: ShardState = {
-    schema_version: 1,
+    schema_version: STATE_SCHEMA_VERSION,
     shard: `${manifest.namespace}/${manifest.name}`,
     source: resolved.source,
     version: manifest.version,

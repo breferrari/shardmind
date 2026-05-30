@@ -44,7 +44,14 @@ const CACHE_COPY_CONCURRENCY = 16;
  */
 const REHASH_CONCURRENCY = 16;
 
-const STATE_SCHEMA_VERSION = 1;
+/**
+ * Current on-disk `state.json` schema version. Bumped 1 → 2 with the hook
+ * lifecycle split (#102): v2 adds the optional `bootstrap_fingerprint`
+ * field. The bump is additive — `state-migrator.ts` forward-migrates v1
+ * with a field-supplying rule. Exported so the install / update / adopt
+ * executors stamp the same version they read.
+ */
+export const STATE_SCHEMA_VERSION = 2;
 
 export async function readState(vaultRoot: string): Promise<ShardState | null> {
   const filePath = path.join(vaultRoot, STATE_FILE);

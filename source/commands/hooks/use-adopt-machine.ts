@@ -11,8 +11,8 @@
  *   diff-review (loop over `differs`) → executing →
  *   running-hook → summary
  *
- * Reuses `useSigintRollback`, `appendHookOutput`, `summarizeHook`, and
- * `postHookRehash` from `shared.ts` so install / update / adopt can't
+ * Reuses `useSigintRollback` and `appendHookOutput` from `shared.ts`, and
+ * the hook orchestrator from `core`, so install / update / adopt can't
  * drift on any of those concerns.
  */
 
@@ -48,14 +48,11 @@ import {
   missingValueKeys,
   resolveComputedDefaults,
 } from '../../core/install-planner.js';
-import { runPostInstallHook, type RunningHookPhase } from '../../core/hook.js';
-import { valuesAreDefaults } from '../../core/values-defaults.js';
+import { type RunningHookPhase } from '../../core/hook.js';
+import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
 import {
   appendHookOutput,
-  postHookRehash,
-  summarizeHook,
   useSigintRollback,
-  type HookSummary,
 } from './shared.js';
 
 import type { WizardResult } from '../../components/InstallWizard.js';
@@ -104,21 +101,18 @@ export type Phase =
       label: string;
       history: string[];
     }
-  | (RunningHookPhase & {
-      // Subprocess-backed post-install hook is streaming output. We are
-      // already past the point-of-no-return (state.json written by
-      // `runAdopt`); a Ctrl+C in this phase kills the child but does NOT
-      // roll the adopt back. Mirrors install/update — Helm semantics
-      // (docs/ARCHITECTURE.md §9.3).
-      stage: 'post-install';
-    })
+  | RunningHookPhase // a lifecycle hook (bootstrap / personalize / legacy
+      // post-install) is streaming output. We are already past the
+      // point-of-no-return (state.json written by `runAdopt`); a Ctrl+C here
+      // kills the child but does NOT roll the adopt back. Helm semantics,
+      // docs/ARCHITECTURE.md §9.3. Shape shared with install/update.
   | {
       kind: 'summary';
       manifest: ShardManifest;
       vaultRoot: string;
       summary: AdoptSummaryData;
       durationMs: number;
-      hook: HookSummary | null;
+      hooks: HookOutcome[];
       dryRun: boolean;
     }
   | { kind: 'cancelled'; reason: string }
@@ -380,45 +374,37 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         // install/update.
         writingRef.current = false;
 
-        let hookSummary: HookSummary | null = null;
-        if (!ctx.manifest.hooks?.['post-install']) {
-          hookSummary = null;
-        } else if (dryRun) {
-          hookSummary = summarizeHook(await runPostInstallHook(ctx.tempDir, ctx.manifest));
-        } else {
-          hookAbortRef.current = new AbortController();
-          setPhase({
-            kind: 'running-hook',
-            stage: 'post-install',
-            output: '',
-            shardLabel: `${ctx.manifest.namespace}/${ctx.manifest.name}`,
-          });
-          try {
-            const hookCtx = {
+        // Adopt runs the install-side slots: bootstrap → personalize (skipped
+        // under Invariant 2), or a lone legacy post-install. newFiles is the
+        // freshly-installed shard-only set. Orchestrator owns ordering,
+        // boundary checks, re-hash, and fingerprint persistence.
+        hookAbortRef.current = new AbortController();
+        let hookOutcomes: HookOutcome[];
+        try {
+          const hookRun = await runHooks(
+            {
+              command: 'adopt',
+              tempDir: ctx.tempDir,
+              manifest: ctx.manifest,
+              schema: ctx.schema,
               vaultRoot,
+              state: runResult.state,
               values: result.values,
               modules: result.selections,
-              shard: { name: ctx.manifest.name, version: ctx.manifest.version },
-              valuesAreDefaults: valuesAreDefaults(result.values, ctx.schema),
               newFiles: runResult.summary.installedFresh,
               removedFiles: [],
-            };
-            const hookResult = await runPostInstallHook(
-              ctx.tempDir,
-              ctx.manifest,
-              hookCtx,
-              {
-                signal: hookAbortRef.current.signal,
-                onStdout: (chunk) => appendHookOutput(setPhase, chunk),
-                onStderr: (chunk) => appendHookOutput(setPhase, chunk),
-              },
-            );
-            hookSummary = summarizeHook(hookResult);
-          } finally {
-            hookAbortRef.current = null;
-          }
-
-          await postHookRehash(vaultRoot, runResult.state);
+              dryRun: Boolean(dryRun),
+            },
+            {
+              setPhase: (p) => setPhase(p),
+              onStdout: (chunk) => appendHookOutput(setPhase, chunk),
+              onStderr: (chunk) => appendHookOutput(setPhase, chunk),
+              signal: hookAbortRef.current.signal,
+            },
+          );
+          hookOutcomes = hookRun.outcomes;
+        } finally {
+          hookAbortRef.current = null;
         }
 
         finish({
@@ -427,7 +413,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           vaultRoot,
           summary: runResult.summary,
           durationMs: Date.now() - start,
-          hook: hookSummary,
+          hooks: hookOutcomes,
           dryRun: Boolean(dryRun),
         });
       } catch (err) {

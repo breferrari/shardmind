@@ -127,6 +127,14 @@ Thrown by `source/core/manifest.ts`.
 
 **Remedy:** Check the error details and consult [`docs/AUTHORING.md`](AUTHORING.md) §3 or [`schemas/shard.schema.json`](../schemas/shard.schema.json).
 
+### `HOOK_SLOT_CONFLICT`
+
+**Meaning:** `shard.yaml` declares the deprecated `hooks.post-install` slot *together with* `hooks.bootstrap` or `hooks.personalize`. The legacy combined hook and the new named slots are mutually exclusive — a manifest carrying both is a half-finished migration, not a valid configuration.
+
+**Typical cause:** Adding `bootstrap`/`personalize` while leaving the old `post-install` line in place.
+
+**Remedy:** Remove `hooks.post-install` once you've split it into `bootstrap` (unmanaged setup) + `personalize` (managed edits). See [`docs/AUTHORING.md §6`](AUTHORING.md) for the worked migration.
+
 ---
 
 ## Schema (`shard-schema.yaml` parsing)
@@ -469,6 +477,36 @@ Thrown by `source/core/modules.ts::walkShardSource` and `source/core/shardmindig
 
 ---
 
+## Hook lifecycle (non-fatal warnings)
+
+These are **not** thrown `ShardMindError`s — they don't appear in the `ErrorCode` union and never abort an install/update. The engine surfaces them as warnings in the command Summary (yellow `StatusMessage`), the same non-fatal posture as a hook that exits non-zero (Helm semantics). They turn the hook write-boundary conventions into machine-checked signals a shard author sees during their dev loop. The bytes a misbehaving hook wrote are left in place; the warning tells the author the work belongs in a different slot. See [`docs/SHARD-LAYOUT.md §Hook lifecycle`](SHARD-LAYOUT.md) and [`docs/AUTHORING.md §6`](AUTHORING.md).
+
+### `HOOK_BOOTSTRAP_MANAGED_WRITE`
+
+**Meaning:** The `bootstrap` hook modified one or more **managed** files (tracked in `state.json`). `bootstrap` may write only unmanaged paths (`.qmd/`, `.git/`, caches). Detected via the post-hook re-hash: a managed file whose hash changed during bootstrap. The warning names the paths.
+
+**Typical cause:** Managed-file personalization left in `bootstrap.ts` after the split from `post-install`; it belongs in `personalize.ts`.
+
+**Remedy:** Move the managed-file edit to the `personalize` hook. The install/update still succeeded and the file's current bytes are recorded in `state.json`.
+
+### `HOOK_PERSONALIZE_UNMANAGED_CREATE`
+
+**Meaning:** The `personalize` hook created one or more **unmanaged** files (paths not in `state.json`). `personalize` may only edit managed files. Detected via a path-only vault snapshot taken before and after the hook (install/adopt only). The warning names the paths. Scope: *creation* only — modifying or deleting an already-present unmanaged file isn't flagged (the path set is unchanged), since the check avoids content-hashing the whole vault.
+
+**Typical cause:** Artifact/index generation left in `personalize.ts`; it belongs in `bootstrap.ts`.
+
+**Remedy:** Move the artifact creation to the `bootstrap` hook, which is permitted to write unmanaged paths and can re-run on update via a `fingerprint` bump.
+
+### `HOOK_POST_INSTALL_DEPRECATED`
+
+**Meaning:** The shard declares the deprecated combined `hooks.post-install` slot. It still runs (once, on install/adopt, with the legacy context and no boundary enforcement), but the slot is on a deprecation path.
+
+**Typical cause:** A shard authored before the `bootstrap` / `personalize` split.
+
+**Remedy:** Split `post-install.ts` into `bootstrap.ts` (unmanaged setup) + `personalize.ts` (managed edits) and update `shard.yaml`. Honored for at least one minor release (deprecated in 0.2.0; removed no earlier than 0.3.0). Worked example in [`docs/AUTHORING.md §6`](AUTHORING.md).
+
+---
+
 ## Maintenance
 
 If you're a shard author and hit a code that feels authoring-side, the specifically author-facing ones are:
@@ -476,6 +514,7 @@ If you're a shard author and hit a code that feels authoring-side, the specifica
 - `COMPUTED_DEFAULT_FAILED`, `COMPUTED_DEFAULT_INVALID`
 - `RENDER_FAILED`, `RENDER_FRONTMATTER_ERROR`, `RENDER_ITERATOR_ERROR`
 - `DOWNLOAD_MISSING_MANIFEST`, `DOWNLOAD_MISSING_SCHEMA`
+- `HOOK_SLOT_CONFLICT` (thrown), plus the non-fatal hook warnings `HOOK_BOOTSTRAP_MANAGED_WRITE`, `HOOK_PERSONALIZE_UNMANAGED_CREATE`, `HOOK_POST_INSTALL_DEPRECATED`
 
 If you're an end user, the most common ones you'll see are:
 - `SHARD_NOT_FOUND`, `VERSION_NOT_FOUND`, `REGISTRY_NETWORK`

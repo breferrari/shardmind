@@ -11,6 +11,9 @@ requires:
   node: ">=18.0.0"
 
 hooks:
-  post-install: .shardmind/hooks/post-install.ts
+  bootstrap:
+    script: .shardmind/hooks/bootstrap.ts
+    fingerprint: "v6"
+  personalize: .shardmind/hooks/personalize.ts
   post-update: .shardmind/hooks/post-update.ts
   timeout_ms: 30000

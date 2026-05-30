@@ -77,7 +77,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     // state.json exists and looks right
     const state = (await readState(vault)) as ShardState;
     expect(state).not.toBeNull();
-    expect(state.schema_version).toBe(1);
+    expect(state.schema_version).toBe(2);
     expect(state.shard).toBe('shardmind/minimal');
     expect(state.version).toBe('0.1.0');
     expect(state.tarball_sha256).toBe('deadbeef');

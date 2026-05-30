@@ -16,21 +16,20 @@ import type React from 'react';
 import { useEffect, useRef } from 'react';
 import {
   tailAtUtf8Boundary,
-  type HookResult,
+  summarizeHook,
   type HookSummary,
   type RunningHookPhase,
 } from '../../core/hook.js';
-import { rehashManagedFiles, writeState } from '../../core/state.js';
-import { assertNever, type ShardState } from '../../runtime/types.js';
 
 /**
- * Re-export so existing callers that reach for `HookSummary` via this
- * module (install/update machines) don't need to update their imports.
- * The canonical home is `source/core/hook.ts` — components must import
- * from there directly per CLAUDE.md §Module Boundaries (components
- * can import from core, not from commands).
+ * Re-export so existing callers that reach for `HookSummary` / `summarizeHook`
+ * via this module (install/update machines) don't need to update their
+ * imports. The canonical home is `source/core/hook.ts` — `summarizeHook`
+ * moved there so the hook orchestrator (also core) can use it without
+ * crossing the module boundary (core must not import from commands).
  */
 export type { HookSummary };
+export { summarizeHook };
 
 /**
  * Maximum bytes of hook output we keep in the UI live-progress buffer
@@ -41,39 +40,6 @@ export type { HookSummary };
  * for Ink's renderer at 256 KB but fine at 64 KB.
  */
 export const HOOK_OUTPUT_UI_CAP_BYTES = 64 * 1024;
-
-/**
- * Collapse a `HookResult` into the `HookSummary` shape the install and
- * update summary views both render.
- *
- * - `absent` → null (nothing happened; render nothing).
- * - `deferred` → `{ deferred: true }` (hook exists but was suppressed,
- *   e.g. dry run; UI shows a "skipped" note).
- * - `ran` → `{ stdout, stderr, exitCode }` (subprocess completed; the UI
- *   renders stdout + stderr separately with an exit-code-dependent headline).
- * - `failed` → `{ stdout, stderr, exitCode: 1 }` where `stderr` is prefixed
- *   with the failure reason (timeout / cancel / spawn error). The UI treats
- *   `failed` identically to a non-zero `ran` — from the user's perspective
- *   the hook didn't complete, and the message belongs in stderr alongside
- *   any output the child produced before dying.
- */
-export function summarizeHook(result: HookResult): HookSummary | null {
-  switch (result.kind) {
-    case 'absent':
-      return null;
-    case 'deferred':
-      return { deferred: true };
-    case 'ran':
-      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
-    case 'failed': {
-      const prefix = `hook ${result.message}`;
-      const stderr = result.stderr ? `${prefix}\n${result.stderr}` : prefix;
-      return { stdout: result.stdout, stderr, exitCode: 1 };
-    }
-    default:
-      return assertNever(result);
-  }
-}
 
 /**
  * Append a chunk of subprocess output into a running-hook phase's `output`
@@ -106,43 +72,6 @@ export function appendHookOutput<P extends { kind: string }>(
     const trimmed = tailAtUtf8Boundary(combined, HOOK_OUTPUT_UI_CAP_BYTES);
     return { ...prev, output: trimmed };
   });
-}
-
-/**
- * Re-hash every managed file after a hook subprocess returns and persist
- * the updated state.json — the post-hook contract documented in
- * `docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics`.
- *
- * Runs on success OR failure of the hook (Helm-style non-fatal contract).
- * Skips the `writeState` call when nothing changed so we don't burn a
- * redundant fs.writeFile on the common case (most hooks edit unmanaged
- * files, not managed ones).
- *
- * The wrapping try/catch is correct semantics, not paranoia: by the
- * time we get here, the executor has already written `state.json` with
- * pre-hook hashes. This function's job is to *update* that state with
- * post-hook hashes. If `writeState` fails (disk full, permission flip),
- * the pre-hook state.json survives, and drift detection surfaces the
- * discrepancy on the next `shardmind` status run — the user's vault is
- * never in a corrupted state, just an out-of-date one. Surfacing the
- * error here would also be misleading: the install/update *succeeded*
- * (state.json was written by the executor, hook ran past the point-of-
- * no-return), and a yellow warning would conflate engine work that
- * completed with a refinement that didn't.
- */
-export async function postHookRehash(vaultRoot: string, state: ShardState): Promise<void> {
-  try {
-    const rehash = await rehashManagedFiles(vaultRoot, state);
-    // Only `changed` actually mutates the returned state; `missing` and
-    // `failed` paths retain their prior hash, so the serialized state
-    // would be byte-identical to what the executor already wrote. Skip
-    // the redundant fs.writeFile.
-    if (rehash.changed.length > 0) {
-      await writeState(vaultRoot, rehash.state);
-    }
-  } catch {
-    // see comment above — non-fatal by design
-  }
 }
 
 /**
