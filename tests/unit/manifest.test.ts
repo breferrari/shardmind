@@ -3,7 +3,8 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { describe, it, expect } from 'vitest';
-import { parseManifest, ShardManifestSchema } from '../../source/core/manifest.js';
+import { parseManifest, ShardManifestSchema, assertEngineCompatible } from '../../source/core/manifest.js';
+import type { ShardManifest } from '../../source/runtime/types.js';
 
 // Unique tmp filename per call. `Date.now()` collides under parallel
 // vitest workers (two tests within the same millisecond share a path,
@@ -215,6 +216,117 @@ describe('hooks.timeout_ms validation', () => {
     });
     expect(parsed.hooks['post-install']).toBe('h.ts');
     expect(parsed.hooks.timeout_ms).toBeUndefined();
+  });
+});
+
+describe('requires.shardmind parsing (#121)', () => {
+  const base = {
+    apiVersion: 'v1' as const,
+    name: 'test',
+    namespace: 'ns',
+    version: '1.0.0',
+  };
+
+  it('accepts a valid semver range', () => {
+    const parsed = ShardManifestSchema.parse({ ...base, requires: { shardmind: '>=0.2.0' } });
+    expect(parsed.requires?.shardmind).toBe('>=0.2.0');
+  });
+
+  it('accepts caret/tilde and complex ranges', () => {
+    expect(ShardManifestSchema.parse({ ...base, requires: { shardmind: '^0.2.0' } }).requires?.shardmind).toBe('^0.2.0');
+    expect(ShardManifestSchema.parse({ ...base, requires: { shardmind: '>=0.2 <0.4' } }).requires?.shardmind).toBe('>=0.2 <0.4');
+  });
+
+  it('coexists with obsidian and node', () => {
+    const parsed = ShardManifestSchema.parse({
+      ...base,
+      requires: { obsidian: '>=1.5.0', node: '>=22.0.0', shardmind: '>=0.2.0' },
+    });
+    expect(parsed.requires).toEqual({ obsidian: '>=1.5.0', node: '>=22.0.0', shardmind: '>=0.2.0' });
+  });
+
+  it('rejects a garbage range at parse time', async () => {
+    const yaml = [
+      'apiVersion: v1',
+      'name: test',
+      'namespace: ns',
+      'version: 1.0.0',
+      'requires:',
+      '  shardmind: "not a range"',
+    ].join('\n');
+    const tmp = tmpYaml('manifest-test');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const err = await parseManifest(tmp).catch((e) => e);
+      expect(err.code).toBe('MANIFEST_VALIDATION_FAILED');
+      expect(err.message).toContain('shardmind');
+    } finally {
+      await fs.unlink(tmp);
+    }
+  });
+});
+
+describe('assertEngineCompatible (#121)', () => {
+  const make = (shardmind?: string): ShardManifest =>
+    ShardManifestSchema.parse({
+      apiVersion: 'v1',
+      name: 'test',
+      namespace: 'ns',
+      version: '1.0.0',
+      ...(shardmind ? { requires: { shardmind } } : {}),
+    }) as ShardManifest;
+
+  it('passes when the engine satisfies the range', () => {
+    expect(() => assertEngineCompatible(make('>=0.2.0'), '0.3.1')).not.toThrow();
+  });
+
+  it('passes at the exact lower bound', () => {
+    expect(() => assertEngineCompatible(make('>=0.2.0'), '0.2.0')).not.toThrow();
+  });
+
+  it('passes when the range requires a lower engine than installed', () => {
+    expect(() => assertEngineCompatible(make('>=0.1.0'), '0.9.9')).not.toThrow();
+  });
+
+  it('throws SHARDMIND_VERSION_MISMATCH when the engine is too old', () => {
+    const err = (() => {
+      try {
+        assertEngineCompatible(make('>=0.2.0'), '0.1.3');
+      } catch (e) {
+        return e as { code?: string; message?: string; hint?: string };
+      }
+    })();
+    expect(err?.code).toBe('SHARDMIND_VERSION_MISMATCH');
+    expect(err?.message).toContain('>=0.2.0');
+    expect(err?.message).toContain('0.1.3');
+  });
+
+  it('is a no-op when the manifest declares no requires.shardmind', () => {
+    expect(() => assertEngineCompatible(make(), '0.0.1')).not.toThrow();
+  });
+
+  it('skips the check when the engine version is unknown (undefined)', () => {
+    // resolveEngineVersion() returns undefined when the engine cannot locate
+    // its own package.json — a bundle-layout quirk must not hard-block a real
+    // install. See cli-version.ts PKG_VERSION_FALLBACK.
+    expect(() => assertEngineCompatible(make('>=99.0.0'), undefined)).not.toThrow();
+  });
+
+  it('skips the check when the engine version is not valid semver', () => {
+    expect(() => assertEngineCompatible(make('>=99.0.0'), 'garbage')).not.toThrow();
+  });
+
+  it('lets a prerelease engine ahead of the floor satisfy a stable range (includePrerelease)', () => {
+    // A prerelease engine *ahead* of the required floor (0.3.0-beta.1 > 0.2.0)
+    // must not be blocked. Default semver.satisfies rejects any prerelease
+    // against a non-prerelease range; includePrerelease is what allows it.
+    expect(() => assertEngineCompatible(make('>=0.2.0'), '0.3.0-beta.1')).not.toThrow();
+  });
+
+  it('still blocks a prerelease of the required version (it is genuinely older)', () => {
+    // 0.2.0-beta.1 sorts BEFORE the 0.2.0 release, so >=0.2.0 is correctly
+    // unsatisfied — even under includePrerelease. Refusing is the right call.
+    expect(() => assertEngineCompatible(make('>=0.2.0'), '0.2.0-beta.1')).toThrow();
   });
 });
 

@@ -23,6 +23,9 @@ export type ErrorCode =
   | 'MANIFEST_VALIDATION_FAILED'
   | 'HOOK_SLOT_CONFLICT'
 
+  // Engine compatibility (requires.shardmind vs. running engine, #121)
+  | 'SHARDMIND_VERSION_MISMATCH'
+
   // Shard schema (shard-schema.yaml)
   | 'SCHEMA_NOT_FOUND'
   | 'SCHEMA_READ_FAILED'
