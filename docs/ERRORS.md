@@ -491,7 +491,7 @@ These are **not** thrown `ShardMindError`s — they don't appear in the `ErrorCo
 
 ### `HOOK_PERSONALIZE_UNMANAGED_CREATE`
 
-**Meaning:** The `personalize` hook created one or more **unmanaged** files (paths not in `state.json`). `personalize` may only edit managed files. Detected via a path-only vault snapshot taken before and after the hook (install/adopt only). The warning names the paths.
+**Meaning:** The `personalize` hook created one or more **unmanaged** files (paths not in `state.json`). `personalize` may only edit managed files. Detected via a path-only vault snapshot taken before and after the hook (install/adopt only). The warning names the paths. Scope: *creation* only — modifying or deleting an already-present unmanaged file isn't flagged (the path set is unchanged), since the check avoids content-hashing the whole vault.
 
 **Typical cause:** Artifact/index generation left in `personalize.ts`; it belongs in `bootstrap.ts`.
 

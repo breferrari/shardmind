@@ -106,6 +106,16 @@ export function detectManagedWrites(touched: readonly string[]): HookViolation |
  * `personalize` boundary check. A path present in `after` but not `before`, and
  * not tracked as a managed file in `state.files`, is an unmanaged file the hook
  * created — `personalize` may only edit existing managed files.
+ *
+ * Scope: this catches CREATION of unmanaged files (the common author mistake —
+ * artifact generation that belongs in `bootstrap`). It deliberately does NOT
+ * catch a `personalize` that *modifies or deletes* an already-present unmanaged
+ * file (e.g. overwriting bootstrap's `.qmd/index.bin`): the path set is
+ * unchanged, so the path-only before/after diff can't see it. Detecting that
+ * would require content-hashing every unmanaged file (including bootstrap's
+ * large artifacts) on both snapshots — the cost the path-only walk exists to
+ * avoid. As a non-fatal courtesy check, creation-only is the deliberate scope;
+ * the broader "managed files only" rule remains the author's contract.
  */
 export function detectUnmanagedCreates(
   after: ReadonlySet<string>,

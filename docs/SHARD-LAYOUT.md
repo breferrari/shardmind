@@ -167,7 +167,7 @@ On a fresh install/adopt, slots fire in order: **`bootstrap` then `personalize`*
 A hook is an ordinary Node subprocess with full filesystem access; the engine cannot *prevent* an out-of-boundary write. Instead it **detects** one and surfaces a **non-fatal warning** — the install/update still succeeds, and the bytes the hook wrote are left in place (consistent with the non-fatal Helm contract: whatever a hook did, stays). The engine snapshots before each boundary-checked slot and diffs after:
 
 - **`bootstrap` wrote a managed file** → `HOOK_BOOTSTRAP_MANAGED_WRITE` warning naming the paths. Detection folds into the post-hook re-hash: a managed file whose hash changed during bootstrap is a violation. Move the edit to `personalize`.
-- **`personalize` created an unmanaged file** → `HOOK_PERSONALIZE_UNMANAGED_CREATE` warning. Detection is a path-only vault walk (ignore-filtered + Tier-1-filtered) before and after; install/adopt only. Move the artifact creation to `bootstrap`.
+- **`personalize` created an unmanaged file** → `HOOK_PERSONALIZE_UNMANAGED_CREATE` warning. Detection is a path-only vault walk (ignore-filtered + Tier-1-filtered) before and after; install/adopt only. Scoped to *creation* — a `personalize` that modifies or deletes an already-present unmanaged file (e.g. bootstrap's `.qmd/` artifacts) is not detected, because the path set is unchanged and the check avoids content-hashing the whole vault. Move the artifact creation to `bootstrap`.
 
 These are warnings, not thrown errors — see [`docs/ERRORS.md §Hook lifecycle (non-fatal warnings)`](ERRORS.md). They turn yesterday's comment-checked conventions into machine-checked signals an author sees during their dev loop.
 
