@@ -145,6 +145,7 @@ shardmind/
 │   │   ├── CollisionReview.tsx        # Install: backup / overwrite / cancel
 │   │   ├── ExistingInstallGate.tsx    # Install: existing-install disambiguation
 │   │   ├── DiffView.tsx               # Three-way diff + conflict resolution
+│   │   ├── AdoptValuesGate.tsx        # Adopt: values confirm-or-override page (#104)
 │   │   ├── AdoptDiffView.tsx          # Adopt: 2-way diff (no merge base) + per-file prompt
 │   │   ├── AdoptSummary.tsx           # Final adopt report (matched / mine / shard / fresh)
 │   │   ├── NewValuesPrompt.tsx        # Update: prompt for newly required values

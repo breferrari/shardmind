@@ -42,6 +42,18 @@ Closes [#121](https://github.com/breferrari/shardmind/issues/121). The guard tha
 
 - **Tests**: `tests/unit/manifest.test.ts` (range parse + reject incl. empty/whitespace → `MANIFEST_VALIDATION_FAILED` and deliberate `*`/`x` match-all; `assertEngineCompatible` matrix — satisfied / lower-bound / too-old / absent / unknown-version skip / prerelease-ahead / match-all) and Layer 1 flow tests refusing `>=99.0.0` before any write across all three commands: install (scenario 12, no `state.json`), update (scenario 18, `state.json` byte-unchanged), adopt (scenario 24, no `.shardmind/`). **Docs**: `docs/AUTHORING.md` (field reference + §6 note), `docs/ERRORS.md` (`SHARDMIND_VERSION_MISMATCH`), `schemas/shard.schema.json` (`requires.shardmind`).
 
+### Changed (adopt values confirm-or-override — #104)
+
+Closes [#104](https://github.com/breferrari/shardmind/issues/104). Adopt is for users who already have a populated vault, but it reused the full step-by-step install wizard to collect the values classification needs (the planner renders the shard's `.njk` against them before hashing). Being interrogated value-by-value reads as a fresh-install flow shoehorned onto a retrofit.
+
+- **`shardmind adopt` opens on a values confirm page** (`source/components/AdoptValuesGate.tsx`) instead of `InstallWizard`. It surfaces the exact values that will drive classification — resolved defaults, computed defaults, and any `--values` prefill, each labelled with its provenance (`default` / `computed` / `from --values`) — plus the module default, with **Use these values / Override individually / Cancel**. No more hidden defaults: the values are shown before classification runs.
+
+- **"Override individually" reuses `InstallWizard` verbatim** (per-value + module editing) rather than forking its value-iteration / computed-preview / module-review logic. A required value with no default and no prefill opens straight into the wizard (no confident set to confirm) — the predicate feeds `missingValueKeys` the *merged* map, exactly as the `--yes` path does, so the common all-defaults shard lands on the confirm page.
+
+- **`--yes` / `--values` unchanged.** Those non-interactive paths resolve values in the machine and never reach the gate, so adopt's scripted contract is byte-identical.
+
+- **Tests**: `tests/component/AdoptValuesGate.test.tsx` (provenance labels, Use → `onComplete` with resolved values + all-default selections, Override → wizard, Cancel, computed-resolve + computed-throw → `onError`, required-no-default → override, zero-values shard); Layer 1 adopt flow scenarios 19/20/21 re-driven through the confirm gate + new 25 (Override → wizard → adopt) and 26 (values surfaced before classification); Layer 2 PTY adopt scenario 20 drives the gate. **Docs**: `docs/ARCHITECTURE.md §10.5`, `docs/IMPLEMENTATION.md §3.5`, `CLAUDE.md` component tree.
+
 ### Added (multiselect value type — #101)
 
 Closes [#101](https://github.com/breferrari/shardmind/issues/101). Promotes `multiselect` from a partially-wired type (engine validation existed; the wizard rendered a comma-separated text fallback flagged in-code as v0.2 polish) to a first-class value type. Lets a shard author ask one checkbox question ("Which agents do you use?") instead of N booleans. Scope is the value type + widget; gating *which modules install* on a multiselect value remains [#80](https://github.com/breferrari/shardmind/issues/80) (v0.2).

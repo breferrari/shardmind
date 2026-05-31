@@ -872,7 +872,7 @@ Two pre-flight guards run before the network resolve, so a deterministically-wro
 Phase ordering (logical; UI may interleave loading messages — see IMPLEMENTATION §3.5 for the data-flow diagram):
 
 1. **Fetch** — resolve + download into a temp directory.
-2. **Wizard** — collect values + module selections via the same `InstallWizard` component install uses. Wizard runs **before** classification because `.njk` templates need values to render before their output bytes can be hashed.
+2. **Values gate** (`source/components/AdoptValuesGate.tsx`, #104) — adopt's user already has a populated vault, so it opens on a single confirm page that surfaces the values that will drive classification (resolved defaults, computed defaults, `--values` prefill, each labelled with its provenance) plus the module default, with **Use these values / Override individually / Cancel**. "Override individually" drops into the same `InstallWizard` install uses (per-value + module editing). Required values with no default and no prefill open straight into the wizard (no confident set to confirm). This step runs **before** classification because `.njk` templates need values to render before their output bytes can be hashed.
 3. **Classify** (`source/core/adopt-planner.ts::classifyAdoption`) — for every shard output, render or read, hash, stat the user's vault, and assign one of four buckets:
    - **matches** — byte-identical post-render → managed silently.
    - **differs** — bytes differ → 2-way diff prompt (`AdoptDiffView`); user picks `keep_mine` (record user's hash, ownership=`modified`) or `use_shard` (overwrite with shard bytes, ownership=`managed`).
@@ -883,16 +883,16 @@ Phase ordering (logical; UI may interleave loading messages — see IMPLEMENTATI
 6. **Re-hash** — recompute managed-file hashes per `state.ts::rehashManagedFiles` so any hook edits to managed paths land in the recorded state.
 
 Flags:
-- `--yes` — skip wizard + auto-pick `keep_mine` on every `differs`. Preserves the user's bytes on every divergence; safe default for retroactive adoption.
-- `--values <file>` — prefill wizard answers (same shape as `install --values`).
+- `--yes` — skip the values gate + auto-pick `keep_mine` on every `differs`. Preserves the user's bytes on every divergence; safe default for retroactive adoption.
+- `--values <file>` — prefill value answers (same shape as `install --values`); shown on the gate's confirm page as `(from --values)`.
 - `--verbose` — show per-file action history during the apply phase.
-- `--dry-run` — run the full pipeline (fetch, wizard, classify) without touching the vault. Summary reports what *would* happen.
+- `--dry-run` — run the full pipeline (fetch, values gate, classify) without touching the vault. Summary reports what *would* happen.
 
 Volatile templates (`{# shardmind: volatile #}`) skip the differs prompt entirely — their rendered output is expected to vary across renders, so a content prompt would be meaningless. User's bytes are accepted as-is; missing-on-disk falls through to shard-only.
 
 Excluded modules' files in the user's vault are not classified — adopt mirrors install's "module excluded → file not installed" rule, so user content at those paths stays user-content without any prompt.
 
-Implementation modules: `source/core/adopt-planner.ts` (IMPLEMENTATION §4.17), `source/core/adopt-executor.ts` (§4.18). Orchestration lives in `source/commands/hooks/use-adopt-machine.ts`; UI components are `source/components/AdoptDiffView.tsx` + `source/components/AdoptSummary.tsx`.
+Implementation modules: `source/core/adopt-planner.ts` (IMPLEMENTATION §4.17), `source/core/adopt-executor.ts` (§4.18). Orchestration lives in `source/commands/hooks/use-adopt-machine.ts`; UI components are `source/components/AdoptValuesGate.tsx` (values confirm-or-override), `source/components/AdoptDiffView.tsx` + `source/components/AdoptSummary.tsx`.
 
 ### 10.6 Install Location
 
