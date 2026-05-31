@@ -378,4 +378,29 @@ describe('renderString', () => {
     const ctx = makeContext({ values: { name: 'alice' } });
     expect(renderString('Hi {{ name | shout }}!', ctx, 'x.md', env)).toBe('Hi ALICE!');
   });
+
+  it('passes through content with literal {{ that is not a valid Nunjucks expression', () => {
+    // Regression test: .test.ts files and other non-template content may
+    // contain literal {{ (e.g., "garbage{{" in a test fixture). When the
+    // differ renders old/new templates for three-way merge, files without
+    // any actual Nunjucks syntax should be returned as-is rather than
+    // crashing with RENDER_TEMPLATE_ERROR.
+    const ctx = makeContext({ values: {} });
+    const source = 'const input = "garbage{{";\nassert.equal(runScript(input), expected);\n';
+    expect(renderString(source, ctx, 'stop-checklist.test.ts')).toBe(source);
+  });
+
+  it('passes through content with unclosed {{ in a string literal', () => {
+    const ctx = makeContext({ values: {} });
+    const source = 'test("handles malformed input", () => {\n  const result = parse("data{{");\n  expect(result).toBeNull();\n});\n';
+    expect(renderString(source, ctx, 'test.ts')).toBe(source);
+  });
+
+  it('still substitutes valid Nunjucks variables alongside literal {{', () => {
+    // A file that uses {{ user_name }} (valid) should still get substituted.
+    // Only broken Nunjucks that can't be parsed should fall back.
+    const ctx = makeContext({ values: { user_name: 'Alice' } });
+    const source = 'Hello {{ user_name }}!\n';
+    expect(renderString(source, ctx, 'note.md')).toBe('Hello Alice!\n');
+  });
 });
