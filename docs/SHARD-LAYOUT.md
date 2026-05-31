@@ -229,7 +229,7 @@ Phases (logical order; UI may interleave loading messages):
 
 Future `shardmind update` calls work normally — merge base is the adopt-time cache.
 
-Reuses: drift detection (`core/drift.ts`), install-executor, values wizard, hook runtime. New surfaces: 2-way diff UI component (`AdoptDiffView`), adopt-planner, adopt-executor.
+Reuses: drift detection (`core/drift.ts`), install-executor, value collection (`AdoptValuesGate` confirm page → `InstallWizard` on override, #104), hook runtime. New surfaces: 2-way diff UI component (`AdoptDiffView`), adopt-planner, adopt-executor.
 
 ## Naming decisions
 

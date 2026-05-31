@@ -3,6 +3,11 @@ import { render, cleanup } from 'ink-testing-library';
 import React from 'react';
 import AdoptValuesGate from '../../source/components/AdoptValuesGate.js';
 import type { ShardManifest, ShardSchema } from '../../source/runtime/types.js';
+import {
+  mergePrefill,
+  resolveComputedDefaults,
+  defaultModuleSelections,
+} from '../../source/core/install-planner.js';
 import { ENTER, ARROW_DOWN, tick, waitFor, waitForCall } from './helpers.js';
 
 afterEach(() => {
@@ -87,10 +92,16 @@ describe('AdoptValuesGate', () => {
     expect(frame).toMatch(/Modules: all 2 included/);
   });
 
-  it('"Use these values" → onComplete with resolved values + all-default selections', async () => {
+  it('"Use these values" → onComplete equals the --yes (runNonInteractive) value set', async () => {
+    // Parity invariant: the confirm gate's "Use these values" must feed the
+    // adopt machine exactly what the --yes path (runNonInteractive) would —
+    // resolveComputedDefaults(mergePrefill(prefill)) + all-default module
+    // selections. The machine validates both identically in runPlanning, so
+    // matching the pre-validation set is the contract.
+    const prefill = { vault_purpose: 'research' };
     const onComplete = vi.fn();
     const { stdin, lastFrame } = await mount(
-      <AdoptValuesGate {...gateProps({ onComplete })} />,
+      <AdoptValuesGate {...gateProps({ prefillValues: prefill, onComplete })} />,
     );
     await waitFor(lastFrame, (f) => f.includes('Use these values'));
     stdin.write(ENTER); // first option focused
@@ -99,9 +110,45 @@ describe('AdoptValuesGate', () => {
       values: Record<string, unknown>;
       selections: Record<string, string>;
     };
-    expect(result.values['user_name']).toBe('Ada');
+    const expectedValues = resolveComputedDefaults(
+      confirmSchema,
+      mergePrefill(confirmSchema, prefill),
+    );
+    expect(result.values).toEqual(expectedValues);
     expect(result.values['auto_tag']).toBe('autogen'); // computed resolved
-    expect(result.selections).toEqual({ core: 'included', extras: 'included' });
+    expect(result.values['vault_purpose']).toBe('research'); // prefill wins
+    expect(result.selections).toEqual(defaultModuleSelections(confirmSchema));
+  });
+
+  it('does not submit before ENTER, even for a computed-default shard', async () => {
+    // Computed defaults resolve synchronously (useMemo), so mounting the
+    // gate must NOT auto-fire onComplete via an effect-driven re-render of
+    // the Select. Guards the stale-closure / spurious-fire race.
+    const onComplete = vi.fn();
+    const { lastFrame } = await mount(
+      <AdoptValuesGate {...gateProps({ onComplete })} />, // confirmSchema has a computed default
+    );
+    await waitFor(lastFrame, (f) => f.includes('Use these values'));
+    await tick(60); // give any stray effect a chance to fire
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it('double ENTER on "Use these values" fires onComplete exactly once', async () => {
+    // firedRef guard — Select can re-fire on Ink re-focus; a double-fire
+    // would advance the adopt machine twice (CollisionReview/DiffView defense).
+    const onComplete = vi.fn();
+    const { stdin, lastFrame } = await mount(
+      <AdoptValuesGate {...gateProps({ onComplete })} />,
+    );
+    await waitFor(lastFrame, (f) => f.includes('Use these values'));
+    stdin.write(ENTER);
+    await waitForCall(onComplete);
+    // A second ENTER after the first selection is processed must not
+    // re-fire — the component is not unmounted in-test (the machine would
+    // do that in production), so this isolates the firedRef guard.
+    stdin.write(ENTER);
+    await tick(60);
+    expect(onComplete).toHaveBeenCalledTimes(1);
   });
 
   it('"Override individually" → drops into the InstallWizard', async () => {

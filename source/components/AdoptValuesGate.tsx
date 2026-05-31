@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Box, Text } from 'ink';
 import { Select } from './ui.js';
 import type { ShardManifest, ShardSchema } from '../runtime/types.js';
@@ -70,21 +70,36 @@ export default function AdoptValuesGate({
   const [mode, setMode] = useState<'confirm' | 'override'>(
     hasMissingRequired ? 'override' : 'confirm',
   );
-  const [resolved, setResolved] = useState<Record<string, unknown>>(merged);
 
-  // Resolve computed defaults once, before the confirm page reads them.
-  // Done in an effect (not render) to keep onError off the render path and
-  // dodge React 18 strict-mode double-fire — same pattern as InstallWizard.
+  // Resolve computed defaults *synchronously* so the confirm page — and the
+  // "Use these values" action that reads `resolved` — never observe a
+  // pre-resolution frame. An effect-based setState would leave a window
+  // where a fast ENTER submits unresolved values (computed keys still
+  // absent), and the re-render would re-fire the live Select. Skipped in
+  // override mode: the wizard resolves computed defaults itself after
+  // collecting values. Errors are surfaced from an effect below, not here,
+  // to keep the onError call (a parent setState) off the render path.
+  const { values: resolved, error: resolveError } = useMemo(
+    (): { values: Record<string, unknown>; error: Error | null } => {
+      if (hasMissingRequired) return { values: merged, error: null };
+      try {
+        return { values: resolveComputedDefaults(schema, merged), error: null };
+      } catch (err) {
+        return { values: merged, error: err as Error };
+      }
+    },
+    [schema, merged, hasMissingRequired],
+  );
+
   useEffect(() => {
-    if (hasMissingRequired) return;
-    try {
-      setResolved(resolveComputedDefaults(schema, merged));
-    } catch (err) {
-      onError(err as Error);
-    }
-    // Mount-only — schema/prefill are stable within a gate session.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (resolveError) onError(resolveError);
+  }, [resolveError, onError]);
+
+  // `Select` can fire onChange more than once if Ink re-focuses the
+  // instance (see CollisionReview / DiffView). Every branch is a one-shot
+  // decision, so guard all of them against a double-fire that would advance
+  // the adopt machine twice.
+  const firedRef = useRef(false);
 
   if (mode === 'override') {
     return (
@@ -140,6 +155,8 @@ export default function AdoptValuesGate({
           { label: 'Cancel', value: 'cancel' },
         ]}
         onChange={(v) => {
+          if (firedRef.current) return;
+          firedRef.current = true;
           if (v === 'use') {
             onComplete({
               values: resolved,
