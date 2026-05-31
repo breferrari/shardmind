@@ -52,17 +52,28 @@ async function mount(node: React.ReactElement) {
   return r;
 }
 
+/**
+ * Default props with `vi.fn()` callbacks; each test overrides only what it
+ * exercises, so the assertion-relevant prop is the only one spelled out.
+ */
+function gateProps(
+  overrides: Partial<React.ComponentProps<typeof AdoptValuesGate>> = {},
+): React.ComponentProps<typeof AdoptValuesGate> {
+  return {
+    manifest,
+    schema: confirmSchema,
+    prefillValues: {},
+    onComplete: vi.fn(),
+    onCancel: vi.fn(),
+    onError: vi.fn(),
+    ...overrides,
+  };
+}
+
 describe('AdoptValuesGate', () => {
   it('confirm page lists each value with its provenance label', async () => {
     const { lastFrame } = await mount(
-      <AdoptValuesGate
-        manifest={manifest}
-        schema={confirmSchema}
-        prefillValues={{ vault_purpose: 'research' }}
-        onComplete={vi.fn()}
-        onCancel={vi.fn()}
-        onError={vi.fn()}
-      />,
+      <AdoptValuesGate {...gateProps({ prefillValues: { vault_purpose: 'research' } })} />,
     );
     await waitFor(lastFrame, (f) => f.includes('autogen'));
     const frame = lastFrame() ?? '';
@@ -79,14 +90,7 @@ describe('AdoptValuesGate', () => {
   it('"Use these values" → onComplete with resolved values + all-default selections', async () => {
     const onComplete = vi.fn();
     const { stdin, lastFrame } = await mount(
-      <AdoptValuesGate
-        manifest={manifest}
-        schema={confirmSchema}
-        prefillValues={{}}
-        onComplete={onComplete}
-        onCancel={vi.fn()}
-        onError={vi.fn()}
-      />,
+      <AdoptValuesGate {...gateProps({ onComplete })} />,
     );
     await waitFor(lastFrame, (f) => f.includes('Use these values'));
     stdin.write(ENTER); // first option focused
@@ -101,16 +105,7 @@ describe('AdoptValuesGate', () => {
   });
 
   it('"Override individually" → drops into the InstallWizard', async () => {
-    const { stdin, lastFrame } = await mount(
-      <AdoptValuesGate
-        manifest={manifest}
-        schema={confirmSchema}
-        prefillValues={{}}
-        onComplete={vi.fn()}
-        onCancel={vi.fn()}
-        onError={vi.fn()}
-      />,
-    );
+    const { stdin, lastFrame } = await mount(<AdoptValuesGate {...gateProps()} />);
     await waitFor(lastFrame, (f) => f.includes('Use these values'));
     stdin.write(ARROW_DOWN); // → "Override individually"
     await tick(40);
@@ -123,14 +118,7 @@ describe('AdoptValuesGate', () => {
   it('"Cancel" → onCancel', async () => {
     const onCancel = vi.fn();
     const { stdin, lastFrame } = await mount(
-      <AdoptValuesGate
-        manifest={manifest}
-        schema={confirmSchema}
-        prefillValues={{}}
-        onComplete={vi.fn()}
-        onCancel={onCancel}
-        onError={vi.fn()}
-      />,
+      <AdoptValuesGate {...gateProps({ onCancel })} />,
     );
     await waitFor(lastFrame, (f) => f.includes('Use these values'));
     stdin.write(ARROW_DOWN);
@@ -150,14 +138,7 @@ describe('AdoptValuesGate', () => {
       },
     };
     const { lastFrame } = await mount(
-      <AdoptValuesGate
-        manifest={manifest}
-        schema={requiredSchema}
-        prefillValues={{}}
-        onComplete={vi.fn()}
-        onCancel={vi.fn()}
-        onError={vi.fn()}
-      />,
+      <AdoptValuesGate {...gateProps({ schema: requiredSchema })} />,
     );
     await waitFor(lastFrame, (f) => /question to answer/.test(f));
     // The confirm page's hallmark string must never have rendered.
@@ -174,16 +155,7 @@ describe('AdoptValuesGate', () => {
         count: { type: 'number', message: 'Count', default: '{{ "abc" }}', group: 'g' },
       },
     };
-    await mount(
-      <AdoptValuesGate
-        manifest={manifest}
-        schema={badSchema}
-        prefillValues={{}}
-        onComplete={vi.fn()}
-        onCancel={vi.fn()}
-        onError={onError}
-      />,
-    );
+    await mount(<AdoptValuesGate {...gateProps({ schema: badSchema, onError })} />);
     await waitForCall(onError);
     expect(onError).toHaveBeenCalledTimes(1);
     expect((onError.mock.calls[0]![0] as Error).message).toMatch(/computed default/i);
@@ -196,14 +168,7 @@ describe('AdoptValuesGate', () => {
       values: {},
     };
     const { stdin, lastFrame } = await mount(
-      <AdoptValuesGate
-        manifest={manifest}
-        schema={emptyValuesSchema}
-        prefillValues={{}}
-        onComplete={onComplete}
-        onCancel={vi.fn()}
-        onError={vi.fn()}
-      />,
+      <AdoptValuesGate {...gateProps({ schema: emptyValuesSchema, onComplete })} />,
     );
     await waitFor(lastFrame, (f) => f.includes('declares no values'));
     stdin.write(ENTER);

@@ -289,13 +289,13 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
         shardRef: `${SHARD_REF}#v0.1.0`,
         vaultRoot: vault,
       });
-      // Confirm gate up first; select "Override individually" (option 2).
+      // Confirm gate up first; select "Override individually" (option 2)
+      // to route into the full InstallWizard.
       await waitFor(r.lastFrame, (f) => f.includes('Override individually'), 30_000);
       r.stdin.write(ARROW_DOWN);
       await tick(40);
       r.stdin.write(ENTER);
-      // The full InstallWizard now drives — same 4-question shape install
-      // uses. Empty vault → all shard-only → Summary (no diff prompts).
+      // Empty vault → all shard-only → Summary (no diff prompts).
       await driveMinimalWizard(r, 'Override Tester', 15_000);
       r.stdin.write(ENTER); // module review default selections
       await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
