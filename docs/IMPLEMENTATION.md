@@ -339,6 +339,9 @@ const ShardManifestSchema = z.object({
   requires: z.object({
     obsidian: z.string().optional(),
     node: z.string().optional(),
+    // Engine-enforced semver range (#121). Validated as a non-empty range at
+    // parse time; checked by assertEngineCompatible before any vault write.
+    shardmind: z.string().refine(v => v.trim() && semver.validRange(v), 'range').optional(),
   }).optional(),
   dependencies: z.array(z.object({
     name: z.string(),
