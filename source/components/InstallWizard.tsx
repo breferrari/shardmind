@@ -345,7 +345,7 @@ function ConfirmStep({
   );
 }
 
-function formatValue(value: unknown): string {
+export function formatValue(value: unknown): string {
   if (value === undefined) return '(unset)';
   if (value === null) return 'null';
   if (typeof value === 'boolean') return value ? 'true' : 'false';
