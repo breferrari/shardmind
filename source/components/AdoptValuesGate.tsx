@@ -6,7 +6,6 @@ import Header from './Header.js';
 import InstallWizard, { type WizardResult, formatValue } from './InstallWizard.js';
 import {
   mergePrefill,
-  missingValueKeys,
   resolveComputedDefaults,
   defaultModuleSelections,
 } from '../core/install-planner.js';
@@ -55,20 +54,27 @@ export default function AdoptValuesGate({
     [schema, prefillValues],
   );
 
-  // Required values with no default and not supplied via `--values`: there
-  // is no confident "use these" set to confirm, so fall straight through to
-  // the per-value wizard (adopt's pre-#104 behaviour for this shard shape).
-  // `missingValueKeys` is fed the *merged* map (literal defaults filled),
-  // exactly as the `--yes` path does (`use-adopt-machine.ts::runNonInteractive`)
-  // — feeding it the raw prefill would flag every default-bearing key as
-  // "missing" and wrongly force override for the common all-defaults shard.
-  const hasMissingRequired = useMemo(
-    () => missingValueKeys(schema, merged).length > 0,
-    [schema, merged],
+  // A value blocks the confirm page only if it is **required**, has no
+  // default (literal or computed), and wasn't supplied via `--values` —
+  // there is no value to confirm, so fall straight through to the per-value
+  // wizard. Optional unset values do NOT block: "Use these values" simply
+  // leaves them unset, which the validator accepts. (This is deliberately
+  // not `missingValueKeys`, which — by design, for the install wizard's
+  // prompt list — also returns optional unset keys and would wrongly force
+  // override for a shard with any optional no-default value.)
+  const hasBlockingValue = useMemo(
+    () =>
+      Object.entries(schema.values).some(
+        ([key, def]) =>
+          def.required === true &&
+          def.default === undefined &&
+          !Object.prototype.hasOwnProperty.call(prefillValues, key),
+      ),
+    [schema, prefillValues],
   );
 
   const [mode, setMode] = useState<'confirm' | 'override'>(
-    hasMissingRequired ? 'override' : 'confirm',
+    hasBlockingValue ? 'override' : 'confirm',
   );
 
   // Resolve computed defaults *synchronously* so the confirm page — and the
@@ -81,14 +87,14 @@ export default function AdoptValuesGate({
   // to keep the onError call (a parent setState) off the render path.
   const { values: resolved, error: resolveError } = useMemo(
     (): { values: Record<string, unknown>; error: Error | null } => {
-      if (hasMissingRequired) return { values: merged, error: null };
+      if (hasBlockingValue) return { values: merged, error: null };
       try {
         return { values: resolveComputedDefaults(schema, merged), error: null };
       } catch (err) {
         return { values: merged, error: err as Error };
       }
     },
-    [schema, merged, hasMissingRequired],
+    [schema, merged, hasBlockingValue],
   );
 
   useEffect(() => {
@@ -121,6 +127,20 @@ export default function AdoptValuesGate({
     );
   }
 
+  // resolveComputedDefaults threw. The error effect above is calling
+  // onError, which moves the adopt machine to its error phase and unmounts
+  // this gate. Render a non-interactive placeholder for that brief window
+  // so the user can't select "Use these values" and submit the unresolved
+  // value set before the transition lands.
+  if (resolveError) {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Header manifest={manifest} />
+        <Text dimColor>Preparing values…</Text>
+      </Box>
+    );
+  }
+
   const moduleCount = Object.keys(schema.modules).length;
   const valueKeys = Object.keys(schema.values);
 
@@ -134,13 +154,18 @@ export default function AdoptValuesGate({
         {valueKeys.length === 0 ? (
           <Text dimColor>  (this shard declares no values)</Text>
         ) : (
-          valueKeys.map((key) => (
-            <Text key={key}>
-              <Text>  {key}: </Text>
-              <Text color="cyan">{formatValue(resolved[key])}</Text>
-              <Text dimColor>  ({provenanceOf(key, schema, prefillValues)})</Text>
-            </Text>
-          ))
+          valueKeys.map((key) => {
+            const provenance = provenanceOf(key, schema, prefillValues);
+            return (
+              <Text key={key}>
+                <Text>  {key}: </Text>
+                <Text color="cyan">{formatValue(resolved[key])}</Text>
+                {/* No label when the value has no default and no prefill —
+                    it renders as (unset); "(default)" there would be a lie. */}
+                {provenance && <Text dimColor>  ({provenance})</Text>}
+              </Text>
+            );
+          })
         )}
       </Box>
 
@@ -177,11 +202,13 @@ function provenanceOf(
   key: string,
   schema: ShardSchema,
   prefillValues: Record<string, unknown>,
-): Provenance {
+): Provenance | null {
   if (Object.prototype.hasOwnProperty.call(prefillValues, key)) return 'from --values';
   const def = schema.values[key];
-  if (def && def.default !== undefined && isComputedDefault(def.default)) {
-    return 'computed';
+  if (def && def.default !== undefined) {
+    return isComputedDefault(def.default) ? 'computed' : 'default';
   }
-  return 'default';
+  // No default and not prefilled — the value is unset; there is no
+  // provenance to report.
+  return null;
 }

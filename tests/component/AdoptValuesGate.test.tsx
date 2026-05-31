@@ -177,6 +177,29 @@ describe('AdoptValuesGate', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it('optional value with no default → stays on the confirm page, no misleading provenance', async () => {
+    // Regression for the over-broad blocking predicate: only *required*
+    // no-default-no-prefill values force the wizard. An optional unset value
+    // confirms fine (it renders as "(unset)" with no provenance label —
+    // "(default)" there would be a lie).
+    const optionalUnsetSchema: ShardSchema = {
+      ...confirmSchema,
+      values: {
+        user_name: { type: 'string', message: 'Your name', default: 'Ada', group: 'g' },
+        nickname: { type: 'string', message: 'Nickname', group: 'g' }, // optional, no default
+      },
+    };
+    const { lastFrame } = await mount(
+      <AdoptValuesGate {...gateProps({ schema: optionalUnsetSchema })} />,
+    );
+    await waitFor(lastFrame, (f) => f.includes('Use these values'));
+    const frame = lastFrame() ?? '';
+    expect(frame).toMatch(/user_name:\s+Ada\s+\(default\)/);
+    // Unset optional value: shown, but with no provenance label.
+    expect(frame).toMatch(/nickname:\s+\(unset\)/);
+    expect(frame).not.toMatch(/nickname:[^\n]*\(default\)/);
+  });
+
   it('required value with no default and no prefill → opens directly in override (no confirm page)', async () => {
     const requiredSchema: ShardSchema = {
       ...confirmSchema,
