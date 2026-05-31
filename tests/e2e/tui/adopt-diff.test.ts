@@ -28,7 +28,6 @@ import {
   spawnCliPty,
   ENTER,
   PTY_VIEWPORT_ROWS,
-  driveMinimalWizard,
 } from './helpers/pty-cli.js';
 import { tick } from '../../component/helpers.js';
 
@@ -103,7 +102,7 @@ describe.skipIf(skipOnWindows)(
             '{ "user-only": true, "no": "match" }\n',
           );
 
-          // Pin to v0.1.0 via the SHA-routed ref path so the wizard
+          // Pin to v0.1.0 via the SHA-routed ref path so the gate
           // resolves quickly and the planner runs against a known
           // tarball.
           const handle = await spawnCliPty(['adopt', `${SHARD_REF}#v0.1.0`], {
@@ -112,8 +111,15 @@ describe.skipIf(skipOnWindows)(
             rows: PTY_VIEWPORT_ROWS,
           });
           try {
-            await driveMinimalWizard(handle);
-            handle.write(ENTER); // commit at confirm
+            // Adopt opens on the AdoptValuesGate confirm page (#104); the
+            // minimal shard's values all carry defaults, so ENTER on the
+            // focused "Use these values" settles values + all modules and
+            // moves straight to classification.
+            await handle.waitForScreen((s) => /Use these values/.test(s), {
+              timeoutMs: 30_000,
+              description: 'adopt values confirm page',
+            });
+            handle.write(ENTER);
 
             // Walk three sequential AdoptDiffView prompts. ENTER
             // alone selects "Keep mine" (first option). The #109

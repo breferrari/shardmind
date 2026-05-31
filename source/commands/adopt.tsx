@@ -4,7 +4,7 @@ import zod from 'zod';
 import { ShardMindError, assertNever } from '../runtime/types.js';
 
 import { Spinner, StatusMessage, Alert } from '../components/ui.js';
-import InstallWizard from '../components/InstallWizard.js';
+import AdoptValuesGate from '../components/AdoptValuesGate.js';
 import AdoptDiffView from '../components/AdoptDiffView.js';
 import AdoptSummary from '../components/AdoptSummary.js';
 import CommandFrame from '../components/CommandFrame.js';
@@ -83,21 +83,16 @@ export default function Adopt({ args, options }: Props) {
     case 'wizard':
       return (
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
-          <InstallWizard
+          {/* Adopt opens on a values confirm-or-override page (#104)
+              instead of the full install wizard: the user already has a
+              populated vault, so a single "here's what will drive
+              classification" page beats a fresh-install-style interview.
+              "Override individually" inside the gate drops into the
+              InstallWizard for per-value + module editing. */}
+          <AdoptValuesGate
             manifest={phase.ctx.manifest}
             schema={phase.ctx.schema}
             prefillValues={phase.ctx.prefillValues}
-            // Adopt's wizard reuses install's value-collection UI but
-            // shows file counts as zero — adopt has no clean
-            // "X files would be installed" guess at this point because
-            // the planner needs values first. We pass empty maps so the
-            // module-review step still renders cleanly without bogus
-            // counts; the Summary view shows the real bucket counts at
-            // the end.
-            moduleFileCounts={Object.fromEntries(
-              Object.keys(phase.ctx.schema.modules).map((id) => [id, 0]),
-            )}
-            alwaysIncludedFileCount={0}
             onComplete={onWizardComplete}
             onCancel={onWizardCancel}
             onError={onWizardError}
