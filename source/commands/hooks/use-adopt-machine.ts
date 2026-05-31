@@ -11,6 +11,13 @@
  *   diff-review (loop over `differs`) → executing →
  *   running-hook → summary
  *
+ * The `wizard` phase renders `AdoptValuesGate` (not `InstallWizard`
+ * directly): adopt opens on a values confirm-or-override page (#104) since
+ * the user already has a populated vault. The phase still means "collect
+ * values interactively", and the `onWizard*` callbacks are unchanged — the
+ * gate's "Override individually" path renders `InstallWizard` and returns
+ * the same `WizardResult`.
+ *
  * Reuses `useSigintRollback` and `appendHookOutput` from `shared.ts`, and
  * the hook orchestrator from `core`, so install / update / adopt can't
  * drift on any of those concerns.

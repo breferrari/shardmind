@@ -158,7 +158,7 @@ graph TD
     B["registry + download<br/>Resolve + extract to temp"] --> C
     C["manifest + schema<br/>Parse new shard.yaml, shard-schema.yaml"] --> D
 
-    D["InstallWizard — Ink TUI<br/>① Value prompts from schema.groups<br/>② Module review<br/>③ Confirm<br/>(runs BEFORE classification — .njk needs values to render)"] --> E
+    D["AdoptValuesGate — Ink TUI (#104)<br/>Confirm page: values + provenance + module default<br/>Use these values / Override individually / Cancel<br/>Override → InstallWizard (value + module editing)<br/>(runs BEFORE classification — .njk needs values to render)"] --> E
 
     E["adopt-planner.ts::classifyAdoption<br/>resolveModules walks shard, render or read each output<br/>per-output sha256 vs sha256(user vault path)<br/>→ matches | differs | shard-only buckets"] --> F1
 

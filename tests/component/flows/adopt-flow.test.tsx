@@ -1,11 +1,14 @@
 /**
- * Layer 1 adopt command flow tests — scenarios 19-23 of [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1.
+ * Layer 1 adopt command flow tests — scenarios 19-26 of [#111](https://github.com/breferrari/shardmind/issues/111) Phase 1.
  *
- * Adopt always fires the InstallWizard first (no shard-values.yaml
- * exists yet on the user side), then plans against the user's vault
- * to classify each shard path as `matches` / `differs` / `shard-only`.
- * Each `differs` file gets an AdoptDiffView prompt; iteration shape is
- * the same #109 surface as DiffView.
+ * Adopt opens on the `AdoptValuesGate` confirm-or-override page (#104):
+ * a single page surfacing the values that will drive classification,
+ * with Use these values / Override individually / Cancel. "Override"
+ * drops into the full InstallWizard. After values are settled, adopt
+ * plans against the user's vault to classify each shard path as
+ * `matches` / `differs` / `shard-only`. Each `differs` file gets an
+ * AdoptDiffView prompt; iteration shape is the same #109 surface as
+ * DiffView.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -32,7 +35,7 @@ import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
 
 const SLUG_VERSION_MISMATCH = 'acme/adopt-future-engine';
 
-describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)', () => {
+describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)', () => {
   const getCtx = setupFlowSuite({
     shards: {
       [SHARD_SLUG]: {
@@ -51,18 +54,17 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
   });
 
   /**
-   * Drive the standard 4-question wizard, then advance through modules
-   * + Confirm. Adopt's wizard has the same shape as install's but is
-   * followed by the planning + diff-review phases rather than directly
-   * by the install summary.
+   * Drive adopt's default `AdoptValuesGate` path (#104): wait for the
+   * confirm page, then ENTER on the focused "Use these values" option.
+   * The minimal-shard schema's four values all carry literal defaults,
+   * so the gate opens on the confirm page (not the override wizard) and
+   * a single keystroke settles values + all-default module selections.
+   * Adopt then moves to planning + diff-review.
    */
-  async function driveAdoptWizard(
+  async function driveAdoptConfirm(
     r: ReturnType<typeof mountAdopt>,
-    userName = 'Alice',
   ): Promise<void> {
-    await driveMinimalWizard(r, userName, 15_000);
-    r.stdin.write(ENTER); // module review default selections
-    await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+    await waitFor(r.lastFrame, (f) => f.includes('Use these values'), 30_000);
     r.stdin.write(ENTER);
   }
 
@@ -77,7 +79,7 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
         shardRef: `${SHARD_REF}#v0.1.0`,
         vaultRoot: vault,
       });
-      await driveAdoptWizard(r);
+      await driveAdoptConfirm(r);
       // No differing files → planner goes straight to executing →
       // running-hook → summary. Capture the matched frame from
       // waitFor; reading r.lastFrame() afterwards races the 100 ms
@@ -117,13 +119,11 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
         '.claude/settings.json',
         '{ "user-only": true, "no": "match" }\n',
       );
-      // Wizard's prefill arg comes via --values; we'd rather drive
-      // through the wizard interactively to mirror real usage.
       const r = mountAdopt({
         shardRef: `${SHARD_REF}#v0.1.0`,
         vaultRoot: vault,
       });
-      await driveAdoptWizard(r);
+      await driveAdoptConfirm(r);
       // Walk three AdoptDiffView prompts via the shared iteration
       // helper. ENTER on default option = "Keep mine". The #109
       // regression would manifest as iteration 2 timing out on
@@ -151,7 +151,7 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
         shardRef: `${SHARD_REF}#v0.1.0`,
         vaultRoot: vault,
       });
-      await driveAdoptWizard(r);
+      await driveAdoptConfirm(r);
       await waitFor(r.lastFrame, (f) => /\(1 of 1\)/.test(f), 20_000);
       // ARROW_DOWN + ENTER → use_shard.
       r.stdin.write(ARROW_DOWN);
@@ -261,18 +261,81 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-23)',
         shardRef: `github:${SLUG_VERSION_MISMATCH}#v0.1.0`,
         vaultRoot: vault,
       });
-      await waitFor(
+      // Capture the matched frame and assert both the message and the code
+      // on it — a second r.lastFrame() races the 100 ms exit() that clears
+      // the testing-library buffer (same capture pattern as scenarios 19/22;
+      // a slow CI cell surfaced the race here).
+      const frame = await waitFor(
         r.lastFrame,
         (f) => /requires shardmind >=99\.0\.0/.test(f),
         30_000,
       );
-      expect(r.lastFrame() ?? '').toMatch(/SHARDMIND_VERSION_MISMATCH/);
+      expect(frame).toMatch(/SHARDMIND_VERSION_MISMATCH/);
       // No engine state written — the vault was never adopted.
       const stateExists = await fs
         .stat(path.join(vault, '.shardmind', 'state.json'))
         .then((s) => s.isFile())
         .catch(() => false);
       expect(stateExists).toBe(false);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
+
+  // ───── Scenario 25: confirm gate → Override individually → wizard → Summary (#104) ─────
+
+  it('25. "Override individually" drops into the wizard and still adopts', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s25-override');
+    try {
+      const r = mountAdopt({
+        shardRef: `${SHARD_REF}#v0.1.0`,
+        vaultRoot: vault,
+      });
+      // Confirm gate up first; select "Override individually" (option 2)
+      // to route into the full InstallWizard.
+      await waitFor(r.lastFrame, (f) => f.includes('Override individually'), 30_000);
+      r.stdin.write(ARROW_DOWN);
+      await tick(40);
+      r.stdin.write(ENTER);
+      // Empty vault → all shard-only → Summary (no diff prompts).
+      await driveMinimalWizard(r, 'Override Tester', 15_000);
+      r.stdin.write(ENTER); // module review default selections
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER); // confirm → planning
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Adopted shardmind\/minimal/.test(f),
+        30_000,
+      );
+      expect(frame).toMatch(/installed fresh/i);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  // ───── Scenario 26: confirm page surfaces the values before classification (#104) ─────
+
+  it('26. confirm page surfaces the values that will drive classification', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s26-surfaced');
+    try {
+      const r = mountAdopt({
+        shardRef: `${SHARD_REF}#v0.1.0`,
+        vaultRoot: vault,
+      });
+      // The default vault_purpose ("engineering") must be visible on the
+      // confirm page *before* any classification/diff/summary frame — the
+      // #104 acceptance criterion that no defaults are hidden.
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => f.includes('Use these values'),
+        30_000,
+      );
+      expect(frame).toMatch(/vault_purpose:\s+engineering/);
+      expect(frame).toMatch(/Modules: all \d+ included/);
     } finally {
       await cleanupVault(vault);
     }
