@@ -33,7 +33,8 @@ import { ShardMindError } from '../../runtime/types.js';
 import { resolve as resolveRef } from '../../core/registry.js';
 import { primeLatestVersion } from '../../core/update-check.js';
 import { downloadShard } from '../../core/download.js';
-import { parseManifest } from '../../core/manifest.js';
+import { parseManifest, assertEngineCompatible } from '../../core/manifest.js';
+import { resolveEngineVersion } from './cli-version.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
 import { readState } from '../../core/state.js';
 import { detectDrift } from '../../core/drift.js';
@@ -261,6 +262,9 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 
         setPhase({ kind: 'loading', message: 'Parsing new manifest and schema…' });
         const newManifest = await parseManifest(temp.manifest);
+        // Refuse before any vault write if this engine can't satisfy the new
+        // shard's declared requires.shardmind range (#121).
+        assertEngineCompatible(newManifest, resolveEngineVersion());
         const newSchema = await parseSchema(temp.schema);
 
         // Up-to-date short-circuit. For ref installs, "up-to-date" is

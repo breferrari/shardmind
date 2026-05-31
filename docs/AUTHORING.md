@@ -79,6 +79,7 @@ homepage: https://github.com/breferrari/obsidian-mind
 
 requires:
   node: ">=22.0.0"
+  shardmind: ">=0.2.0"
 
 hooks:
   bootstrap:
@@ -102,6 +103,7 @@ hooks:
 | `homepage` | no | URL. |
 | `requires.obsidian` | no | Semver range. Advisory only in v0.1. |
 | `requires.node` | no | Semver range. Applied when hooks run. |
+| `requires.shardmind` | no | Semver range the running engine must satisfy. **Enforced** — install/update/adopt refuse with `SHARDMIND_VERSION_MISMATCH` before any vault write when the engine is older. Absent → no check. Declare it once your shard depends on an engine feature (e.g. the post-#102 hook lifecycle). See §6. |
 | `dependencies` | no | Array of `{ name, namespace, version }`. Vendored in v0.1 (pre-install manually); auto-fetched in v0.2+. |
 | `hooks.bootstrap` | no | Path string, or `{ script, fingerprint? }`. Unmanaged-path setup. Runs on install/adopt + on update when `fingerprint` changes. See §6. |
 | `hooks.personalize` | no | Path relative to shard root. Managed-file edits. Runs on install/adopt only; skipped when values are defaults. See §6. |
@@ -403,6 +405,15 @@ export default async function (ctx: PersonalizeContext): Promise<void> {
 ```
 
 and the manifest moves from `hooks.post-install: hooks/post-install.ts` to the three-slot form above. Declaring `post-install` alongside `bootstrap`/`personalize` is rejected at parse time (`HOOK_SLOT_CONFLICT`) — finish the migration in one step. The legacy slot is honored until at least 0.3.0; migrate before then.
+
+Once your shard relies on the new lifecycle, declare the engine that introduced it so older engines refuse cleanly instead of mis-running the hook:
+
+```yaml
+requires:
+  shardmind: ">=0.2.0"
+```
+
+Install/update/adopt then refuse with `SHARDMIND_VERSION_MISMATCH` and an upgrade hint when run on an engine that can't satisfy the range — before any vault write. Absent → no check, so pre-lifecycle shards keep installing on any engine.
 
 ### Capabilities
 

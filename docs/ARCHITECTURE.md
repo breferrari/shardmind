@@ -200,6 +200,7 @@ homepage: https://github.com/breferrari/obsidian-mind
 requires:
   obsidian: ">=1.12.0"
   node: ">=18.0.0"
+  shardmind: ">=0.2.0"   # engine-enforced: install/update/adopt refuse on an older engine
 
 dependencies:
   - name: obsidian-skills

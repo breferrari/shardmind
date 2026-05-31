@@ -18,6 +18,18 @@ export const ShardManifestSchema = z.object({
   requires: z.object({
     obsidian: z.string().optional(),
     node: z.string().optional(),
+    // Semver range the running engine must satisfy (#121). Validated as a
+    // range at parse time (same posture as `version`'s semver.valid refine) so
+    // a typo surfaces as MANIFEST_VALIDATION_FAILED, not a runtime mismatch.
+    // The non-empty guard is load-bearing: `semver.validRange('')` and any
+    // whitespace-only string both normalize to `*` (match-all), so without it
+    // a declared-but-empty `shardmind: ""` would parse clean and then silently
+    // disable the check — worse than a typo, because it reads as a constraint.
+    // Deliberate match-all (`*`, `x`) stays valid.
+    shardmind: z
+      .string()
+      .refine(v => v.trim().length > 0 && semver.validRange(v) !== null, 'Must be a valid, non-empty semver range')
+      .optional(),
   }).optional(),
   dependencies: z.array(z.object({
     name: z.string(),
@@ -115,4 +127,38 @@ export async function parseManifest(filePath: string): Promise<ShardManifest> {
   }
 
   return result.data as ShardManifest;
+}
+
+/**
+ * Refuse install/update/adopt when the running engine can't satisfy the shard's
+ * declared `requires.shardmind` range (#121). Pure — the caller supplies the
+ * engine version (see `resolveEngineVersion` in commands/hooks/cli-version.ts),
+ * so this stays testable without process state and keeps the `'0.0.0'` fallback
+ * sentinel a commands-layer concern.
+ *
+ * No-ops when:
+ *  - the manifest declares no `requires.shardmind` (every pre-#121 shard), or
+ *  - `engineVersion` is `undefined` / not valid semver — an unresolvable engine
+ *    version is a bundle-layout quirk, not a reason to hard-block a real install.
+ *
+ * `includePrerelease` so a prerelease engine *ahead* of the floor (e.g.
+ * `0.3.0-beta.1` against `>=0.2.0`) isn't wrongly blocked — default
+ * `satisfies` rejects any prerelease against a stable range. A prerelease of
+ * the required version itself (`0.2.0-beta.1`) still fails: it sorts before
+ * the `0.2.0` release, so the engine is genuinely too old.
+ */
+export function assertEngineCompatible(
+  manifest: ShardManifest,
+  engineVersion: string | undefined,
+): void {
+  const range = manifest.requires?.shardmind;
+  if (!range) return;
+  if (!engineVersion || semver.valid(engineVersion) === null) return;
+  if (semver.satisfies(engineVersion, range, { includePrerelease: true })) return;
+
+  throw new ShardMindError(
+    `This shard requires shardmind ${range}, but you are running ${engineVersion}.`,
+    'SHARDMIND_VERSION_MISMATCH',
+    'Upgrade the engine with `npm i -g shardmind@latest`, then retry.',
+  );
 }

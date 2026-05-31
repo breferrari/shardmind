@@ -351,6 +351,52 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   }, 120_000);
+
+  // ───── Scenario 18: upgrade target declares an unsatisfiable engine → refuse (#121) ─────
+
+  it('18. update target requires a future engine → SHARDMIND_VERSION_MISMATCH, state untouched (#121)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    let vault: Vault | null = null;
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 's18-'));
+    try {
+      vault = await createInstalledVault({
+        stub,
+        shardRef: SHARD_REF,
+        values: DEFAULT_VALUES,
+        prefix: 's18-version-mismatch',
+      });
+      // Publish a 0.2.0 that demands a far-future engine. name/namespace
+      // stay minimal-shard's (default buildCustomTarball copy) so the
+      // update source matches the installed shard; only `requires` is added.
+      const tarPath = await buildCustomTarball({
+        version: '0.2.0',
+        manifestOverrides: { requires: { shardmind: '>=99.0.0' } },
+        outDir: tmpDir,
+      });
+      stub.setVersion(SHARD_SLUG, '0.2.0', tarPath);
+      stub.setLatest(SHARD_SLUG, '0.2.0');
+
+      const statePath = path.join(vault.root, '.shardmind', 'state.json');
+      const stateBefore = await fs.readFile(statePath, 'utf-8');
+
+      const r = mountUpdate({ vaultRoot: vault.root });
+      await waitFor(
+        r.lastFrame,
+        (f) => /requires shardmind >=99\.0\.0/.test(f),
+        30_000,
+      );
+      expect(r.lastFrame() ?? '').toMatch(/SHARDMIND_VERSION_MISMATCH/);
+      // The refusal fires after parsing the new manifest but before any
+      // executor runs — installed state is byte-unchanged (still 0.1.0).
+      const stateAfter = await fs.readFile(statePath, 'utf-8');
+      expect(stateAfter).toBe(stateBefore);
+    } finally {
+      if (vault) await vault.cleanup();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  }, 90_000);
 });
 
 // Helpers local to this file ───────────────────────────────────────

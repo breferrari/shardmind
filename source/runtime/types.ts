@@ -16,6 +16,12 @@ export interface ShardManifest {
   requires?: {
     obsidian?: string;
     node?: string;
+    /**
+     * Semver range the running ShardMind engine must satisfy. Enforced by
+     * `assertEngineCompatible` before any vault write on install/update/adopt
+     * (#121). Absent → no check (every pre-#121 shard keeps installing).
+     */
+    shardmind?: string;
   };
   dependencies: ShardDependency[];
   hooks: {

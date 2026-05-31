@@ -40,6 +40,7 @@ const SLUG_MIDDLE_DEFAULT = 'acme/select-middle';
 const SLUG_NUMBER_TYPE = 'acme/number-range';
 const SLUG_COMPUTED = 'acme/computed-default';
 const SLUG_MULTISELECT = 'acme/multiselect';
+const SLUG_VERSION_MISMATCH = 'acme/future-engine';
 
 describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10)', () => {
   const getCtx = setupFlowSuite({
@@ -61,6 +62,10 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         latest: '0.1.0',
       },
       [SLUG_MULTISELECT]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
+      [SLUG_VERSION_MISMATCH]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
@@ -526,6 +531,52 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       const valuesYaml = await fs.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8');
       const parsed = parseYaml(valuesYaml) as Record<string, unknown>;
       expect(parsed['agents']).toEqual(['claude', 'codex']);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
+
+  // ───── Scenario 12: requires.shardmind unsatisfiable → refuse before any write (#121) ─────
+
+  it('12. requires.shardmind not satisfied → SHARDMIND_VERSION_MISMATCH, no vault write (#121)', async () => {
+    const { stub } = getCtx();
+    const vault = await makeVaultDir('s12-version-mismatch');
+    try {
+      // A shard demanding a far-future engine. The running test engine
+      // (shardmind's own package.json version) can never satisfy >=99.0.0,
+      // so the check must fire and refuse before the wizard or any write.
+      const tarPath = await buildCustomTarball({
+        version: '0.1.0',
+        prefix: 'future-engine-0.1.0',
+        manifestOverrides: {
+          hooks: {},
+          name: 'future-engine',
+          namespace: 'flowtest',
+          requires: { shardmind: '>=99.0.0' },
+        },
+        outDir: vault,
+      });
+      stub.setRef(SLUG_VERSION_MISMATCH, 'v0.1.0', STUB_SHA, tarPath);
+
+      const r = mountInstall({
+        shardRef: `github:${SLUG_VERSION_MISMATCH}#v0.1.0`,
+        vaultRoot: vault,
+      });
+      await waitFor(
+        r.lastFrame,
+        (f) => /requires shardmind >=99\.0\.0/.test(f),
+        30_000,
+      );
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toMatch(/SHARDMIND_VERSION_MISMATCH/);
+      expect(frame).toMatch(/npm i -g shardmind@latest/);
+      // The refusal happens after parseManifest but before any executor
+      // runs — the vault must hold no engine state.
+      const stateExists = await fs
+        .stat(path.join(vault, '.shardmind', 'state.json'))
+        .then((s) => s.isFile())
+        .catch(() => false);
+      expect(stateExists).toBe(false);
     } finally {
       await cleanupVault(vault);
     }

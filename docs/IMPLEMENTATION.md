@@ -339,6 +339,9 @@ const ShardManifestSchema = z.object({
   requires: z.object({
     obsidian: z.string().optional(),
     node: z.string().optional(),
+    // Engine-enforced semver range (#121). Validated as a non-empty range at
+    // parse time; checked by assertEngineCompatible before any vault write.
+    shardmind: z.string().refine(v => v.trim() && semver.validRange(v), 'range').optional(),
   }).optional(),
   dependencies: z.array(z.object({
     name: z.string(),
@@ -346,8 +349,18 @@ const ShardManifestSchema = z.object({
     version: z.string(),
   })).default([]),
   hooks: z.object({
-    'post-install': z.string().optional(),
+    // Three named slots since the #102 lifecycle split. `bootstrap` accepts
+    // the bare-string form or `{ script, fingerprint? }` (normalized to the
+    // object shape post-parse).
+    bootstrap: z.union([
+      z.string().transform((script) => ({ script })),
+      z.object({ script: z.string(), fingerprint: z.string().optional() }),
+    ]).optional(),
+    personalize: z.string().optional(),
     'post-update': z.string().optional(),
+    // Deprecated combined hook — mutually exclusive with bootstrap/personalize
+    // (rejected post-parse as HOOK_SLOT_CONFLICT). Honored ≥1 minor release.
+    'post-install': z.string().optional(),
     // Per-shard hook execution timeout in milliseconds. Default 30_000
     // when absent; clamped to 1_000..600_000 at validation time.
     timeout_ms: z.number().int().min(1_000).max(600_000).optional(),
@@ -355,9 +368,14 @@ const ShardManifestSchema = z.object({
 });
 ```
 
+`requires.shardmind` is validated as a non-empty semver range at parse time
+and enforced before any vault write by `assertEngineCompatible` (#121).
+
 **Error cases**:
-- YAML parse error → `"shard.yaml is not valid YAML: {error}"`
-- Zod validation error → `"shard.yaml validation failed: {field}: {message}"`
+- YAML parse error → `MANIFEST_INVALID_YAML`
+- Zod validation error → `MANIFEST_VALIDATION_FAILED` (`"{field}: {message}"`)
+- Deprecated `post-install` declared alongside `bootstrap`/`personalize` → `HOOK_SLOT_CONFLICT` (#102)
+- Running engine can't satisfy `requires.shardmind` → `SHARDMIND_VERSION_MISMATCH` (#121, thrown by `assertEngineCompatible`, not `parseManifest`)
 
 **Dependencies**: `yaml`, `zod`, `semver`.
 

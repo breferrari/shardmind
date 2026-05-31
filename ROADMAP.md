@@ -114,7 +114,7 @@ Demoted from "Foundation BLOCKING" on 2026-04-27 (see [#113 comment](https://git
 [#102](https://github.com/breferrari/shardmind/issues/102) was previously listed as a peer to #100 (wizard scroll) and #101 (multiselect) in the flagship-UX list. It is not a peer — it deprecates the `post-install` hook (which obsidian-mind v6.0 ships with), changes Invariants 2 + 3 from comment-checked to engine-checked, requires a `docs/SHARD-LAYOUT.md` spec update, and forces every shard author to migrate. Reclassified as a single-issue release block on 2026-04-27.
 
 - [ ] **Hook lifecycle split — bootstrap / personalize / post-update** ([#102](https://github.com/breferrari/shardmind/issues/102)). Engine + fixture + docs landed in PR (the three-slot orchestrator, detect-and-warn boundaries, engine-enforced Invariant 2, bootstrap fingerprint, legacy deprecation); issue stays open pending the release-window items below. Acceptance:
-  - [ ] [#121](https://github.com/breferrari/shardmind/issues/121) (engine version-compatibility check) lands first or in the same release.
+  - [x] [#121](https://github.com/breferrari/shardmind/issues/121) (engine version-compatibility check) lands first or in the same release.
   - [x] `docs/SHARD-LAYOUT.md` updated with the new lifecycle.
   - [x] `docs/AUTHORING.md` documents the migration path with a worked example.
   - [ ] obsidian-mind hook migration ships in the same release window (cross-repo coupling — see Cross-repo dependencies below).
@@ -169,7 +169,7 @@ Deferred from v0.1 per [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT
 
 Ordered by cost ascending. Sizes are rough — small (≤1 PR), medium (2–4 PRs), large (5+ PRs touching multiple subsystems), anchor (multi-month, rideable releases on top).
 
-- [ ] **small** — Engine version-compatibility check on install ([#121](https://github.com/breferrari/shardmind/issues/121)). Should land first or with #102 — see Hook lifecycle.
+- [x] **small** — Engine version-compatibility check on install ([#121](https://github.com/breferrari/shardmind/issues/121)). Landed in the v0.1.x #102 release window (`requires.shardmind` + `SHARDMIND_VERSION_MISMATCH`, enforced on install/update/adopt).
 - [ ] **small** — `shardmind eject` command ([#83](https://github.com/breferrari/shardmind/issues/83))
 - [ ] **medium** — `shardmind init` command for shard authors ([#84](https://github.com/breferrari/shardmind/issues/84))
 - [ ] **medium** — Guided file creation (`guided_files` schema + third install phase) ([#79](https://github.com/breferrari/shardmind/issues/79))

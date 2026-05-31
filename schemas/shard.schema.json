@@ -43,16 +43,20 @@
       "format": "uri"
     },
     "requires": {
-      "description": "Environment requirements. ShardMind does not enforce these in v0.1 but tooling may warn.",
+      "description": "Environment requirements. `obsidian` / `node` are advisory in v0.1; `shardmind` is engine-enforced before any vault write (install/update/adopt).",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "obsidian": {
-          "description": "Minimum Obsidian version required (semver range).",
+          "description": "Minimum Obsidian version required (semver range). Advisory only.",
           "type": "string"
         },
         "node": {
-          "description": "Minimum Node.js version required for hook execution (semver range).",
+          "description": "Minimum Node.js version required for hook execution (semver range). Advisory only.",
+          "type": "string"
+        },
+        "shardmind": {
+          "description": "Semver range the running ShardMind engine must satisfy. Enforced: install/update/adopt refuse with SHARDMIND_VERSION_MISMATCH when unmet. Absent means no check.",
           "type": "string"
         }
       }

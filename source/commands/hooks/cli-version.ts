@@ -65,3 +65,19 @@ export function resolvePkgVersion(startUrl: string): string {
   }
   return PKG_VERSION_FALLBACK;
 }
+
+/**
+ * The running engine version for compatibility checks (#121), or `undefined`
+ * when it can't be resolved (the `PKG_VERSION_FALLBACK` sentinel).
+ *
+ * Unlike the self-update banner — which keeps the `'0.0.0'` sentinel so it
+ * errs toward over-notifying — a hard install/update/adopt refusal needs the
+ * opposite bias: an unknown engine version must not block a real install over
+ * a bundle-layout quirk. `assertEngineCompatible` treats `undefined` as
+ * "skip the check". Resolved from this module's own location; the walk finds
+ * shardmind's `package.json` regardless of which bundled chunk starts it.
+ */
+export function resolveEngineVersion(): string | undefined {
+  const version = resolvePkgVersion(import.meta.url);
+  return version === PKG_VERSION_FALLBACK ? undefined : version;
+}
