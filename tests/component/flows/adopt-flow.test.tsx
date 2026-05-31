@@ -261,12 +261,16 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
         shardRef: `github:${SLUG_VERSION_MISMATCH}#v0.1.0`,
         vaultRoot: vault,
       });
-      await waitFor(
+      // Capture the matched frame and assert both the message and the code
+      // on it — a second r.lastFrame() races the 100 ms exit() that clears
+      // the testing-library buffer (same capture pattern as scenarios 19/22;
+      // a slow CI cell surfaced the race here).
+      const frame = await waitFor(
         r.lastFrame,
         (f) => /requires shardmind >=99\.0\.0/.test(f),
         30_000,
       );
-      expect(r.lastFrame() ?? '').toMatch(/SHARDMIND_VERSION_MISMATCH/);
+      expect(frame).toMatch(/SHARDMIND_VERSION_MISMATCH/);
       // No engine state written — the vault was never adopted.
       const stateExists = await fs
         .stat(path.join(vault, '.shardmind', 'state.json'))
