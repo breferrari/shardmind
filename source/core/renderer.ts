@@ -253,6 +253,9 @@ function renderTemplate(
   try {
     return env.renderString(source, context);
   } catch (err) {
+    if (!containsNunjucksSyntax(source)) {
+      return source;
+    }
     const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(
       `Template error in ${filePath}: ${message}`,
@@ -260,6 +263,10 @@ function renderTemplate(
       'Check the template for Nunjucks syntax errors.',
     );
   }
+}
+
+function containsNunjucksSyntax(source: string): boolean {
+  return /%\}|{%|{{.*?}}/.test(source);
 }
 
 /**
