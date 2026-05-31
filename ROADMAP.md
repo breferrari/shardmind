@@ -126,7 +126,7 @@ UX gaps surfaced during real obsidian-mind v6 install + adopt runs. None block t
 
 - [x] Wizard scroll indicator + boolean prompt consistency (Y/n typed input → selectable Yes/No) ([#100](https://github.com/breferrari/shardmind/issues/100)) — smallest item, recommended starting point.
 - [x] `multiselect` value type for module-set questions ([#101](https://github.com/breferrari/shardmind/issues/101)) — pairs with #100 (shortens module list). First-class value type + scrollable widget + per-option `default` + min/max; value→module gating stays #80.
-- [ ] Adopt: replace step-by-step install wizard with confirm-or-override values flow ([#104](https://github.com/breferrari/shardmind/issues/104))
+- [x] Adopt: replace step-by-step install wizard with confirm-or-override values flow ([#104](https://github.com/breferrari/shardmind/issues/104))
 - [ ] Adopt batch operations (keep all mine / use all theirs / auto-merge non-conflicting) ([#120](https://github.com/breferrari/shardmind/issues/120)) — pairs with #104.
 - [ ] Hook stderr presentation in Summary (truncate, dim, label as non-fatal) ([#105](https://github.com/breferrari/shardmind/issues/105))
 
