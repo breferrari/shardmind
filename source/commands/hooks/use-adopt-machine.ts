@@ -41,7 +41,10 @@ import { loadValuesYaml } from '../../core/values-io.js';
 import {
   classifyAdoption,
   type AdoptPlan,
+  type AdoptClassification,
 } from '../../core/adopt-planner.js';
+import { twoWayUnionMerge } from '../../core/adopt-merge.js';
+import { sha256 } from '../../core/fs-utils.js';
 import {
   assertAdoptable,
   rollbackAdopt,
@@ -65,11 +68,14 @@ import {
 
 import type { WizardResult } from '../../components/InstallWizard.js';
 import type { AdoptDiffAction } from '../../components/AdoptDiffView.js';
+import type { AdoptMode } from '../../components/AdoptModePicker.js';
 
 export interface UseAdoptMachineInput {
   shardRef: string;
   valuesFile: string | undefined;
   yes: boolean;
+  /** Non-interactive batch mode from `--mode`; overrides the picker. */
+  mode: AdoptMode | undefined;
   verbose: boolean;
   dryRun: boolean;
   vaultRoot: string;
@@ -95,10 +101,20 @@ export type Phase =
       result: WizardResult;
     }
   | {
+      kind: 'mode-select';
+      ctx: PreparedContext;
+      result: WizardResult;
+      plan: AdoptPlan;
+    }
+  | {
       kind: 'diff-review';
       ctx: PreparedContext;
       result: WizardResult;
       plan: AdoptPlan;
+      // The files that still need a per-file decision. For `decide-per-file`
+      // this is every `differs`; for `auto-merge` it's only the conflicting
+      // ones (the rest are pre-resolved in `resolutions`).
+      queue: AdoptClassification[];
       currentIndex: number;
       resolutions: AdoptResolutions;
     }
@@ -131,11 +147,12 @@ export interface UseAdoptMachineOutput {
   onWizardComplete: (result: WizardResult) => void;
   onWizardCancel: () => void;
   onWizardError: (err: Error) => void;
+  onModeSelect: (mode: AdoptMode) => void;
   onDiffChoice: (action: AdoptDiffAction) => void;
 }
 
 export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOutput {
-  const { shardRef, valuesFile, yes, verbose, dryRun, vaultRoot } = input;
+  const { shardRef, valuesFile, yes, mode, verbose, dryRun, vaultRoot } = input;
   const { exit } = useApp();
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
@@ -285,31 +302,28 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           selections: validatedResult.selections,
         });
 
-        if (plan.differs.length === 0 || yes) {
-          // --yes auto-resolves every differs as `keep_mine` — preserves
-          // the user's bytes, which is the safe default for retroactive
-          // adoption (the user opted into keeping the vault they already
-          // had). They can re-run with explicit decisions if they want.
-          const resolutions: AdoptResolutions = {};
-          for (const c of plan.differs) resolutions[c.path] = 'keep_mine';
-          await executeAdopt(ctx, validatedResult, plan, resolutions);
+        if (plan.differs.length === 0) {
+          await executeAdopt(ctx, validatedResult, plan, {});
           return;
         }
 
-        setPhase({
-          kind: 'diff-review',
-          ctx,
-          result: validatedResult,
-          plan,
-          currentIndex: 0,
-          resolutions: {},
-        });
+        // `--mode` overrides the picker; `--yes` is shorthand for
+        // keep-all-mine (preserve the user's bytes — the safe default for
+        // retroactive adoption). With neither, prompt for the mode.
+        const effectiveMode: AdoptMode | undefined =
+          mode ?? (yes ? 'keep-all-mine' : undefined);
+        if (effectiveMode) {
+          await applyMode(effectiveMode, ctx, validatedResult, plan, false);
+          return;
+        }
+
+        setPhase({ kind: 'mode-select', ctx, result: validatedResult, plan });
       } catch (err) {
         finish({ kind: 'error', error: err as Error });
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [vaultRoot, yes, finish],
+    [vaultRoot, yes, mode, finish],
   );
 
   const executeAdopt = useCallback(
@@ -439,6 +453,87 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
     [vaultRoot, dryRun, verbose, finish],
   );
 
+  // Resolve the `differs` set according to a batch mode, then either execute
+  // directly or drop into the per-file prompt for whatever's left.
+  const applyMode = useCallback(
+    async (
+      selected: AdoptMode,
+      ctx: PreparedContext,
+      result: WizardResult,
+      plan: AdoptPlan,
+      interactive: boolean,
+    ) => {
+      try {
+        if (selected === 'keep-all-mine' || selected === 'use-all-theirs') {
+          const decision = selected === 'keep-all-mine' ? 'keep_mine' : 'use_shard';
+          const resolutions: AdoptResolutions = {};
+          for (const c of plan.differs) resolutions[c.path] = decision;
+          await executeAdopt(ctx, result, plan, resolutions);
+          return;
+        }
+
+        if (selected === 'decide-per-file') {
+          setPhase({
+            kind: 'diff-review',
+            ctx,
+            result,
+            plan,
+            queue: plan.differs,
+            currentIndex: 0,
+            resolutions: {},
+          });
+          return;
+        }
+
+        // auto-merge: two-way-union each differs file; non-conflicting files
+        // resolve to their merged bytes, conflicting files queue for a prompt.
+        const resolutions: AdoptResolutions = {};
+        const queue: AdoptClassification[] = [];
+        for (const c of plan.differs) {
+          if (c.kind !== 'differs') continue;
+          const merged = twoWayUnionMerge(c.userContent, c.shardContent, c.isBinary);
+          if (merged.hasConflict) {
+            queue.push(c);
+          } else {
+            resolutions[c.path] = {
+              kind: 'merged',
+              content: merged.content,
+              hash: sha256(merged.content),
+            };
+          }
+        }
+
+        if (queue.length === 0) {
+          await executeAdopt(ctx, result, plan, resolutions);
+          return;
+        }
+
+        if (interactive) {
+          setPhase({
+            kind: 'diff-review',
+            ctx,
+            result,
+            plan,
+            queue,
+            currentIndex: 0,
+            resolutions,
+          });
+          return;
+        }
+
+        // Non-interactive auto-merge (`--mode=auto-merge` with no prompts):
+        // conflicting files fall back to keep_mine (preserve the user's
+        // bytes). They still surface in the summary's adoptedMine bucket.
+        for (const c of queue) resolutions[c.path] = 'keep_mine';
+        await executeAdopt(ctx, result, plan, resolutions);
+      } catch (err) {
+        finish({ kind: 'error', error: err as Error });
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [finish],
+  );
+
   const onWizardComplete = useCallback(
     (result: WizardResult) => {
       const current = phaseRef.current;
@@ -458,15 +553,24 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
     [finish],
   );
 
+  const onModeSelect = useCallback(
+    (selected: AdoptMode) => {
+      const current = phaseRef.current;
+      if (current.kind !== 'mode-select') return;
+      void applyMode(selected, current.ctx, current.result, current.plan, true);
+    },
+    [applyMode],
+  );
+
   const onDiffChoice = useCallback(
     (action: AdoptDiffAction) => {
       const current = phaseRef.current;
       if (current.kind !== 'diff-review') return;
-      const target = current.plan.differs[current.currentIndex];
+      const target = current.queue[current.currentIndex];
       if (!target) return;
       const next = { ...current.resolutions, [target.path]: action };
       const nextIndex = current.currentIndex + 1;
-      if (nextIndex < current.plan.differs.length) {
+      if (nextIndex < current.queue.length) {
         setPhase({ ...current, currentIndex: nextIndex, resolutions: next });
         return;
       }
@@ -480,6 +584,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
     onWizardComplete,
     onWizardCancel,
     onWizardError,
+    onModeSelect,
     onDiffChoice,
   };
 }

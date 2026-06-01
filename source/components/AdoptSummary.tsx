@@ -14,6 +14,7 @@ import type { AdoptSummary as AdoptSummaryData } from '../core/adopt-executor.js
  *   - matched-auto       (byte-equivalent → managed silently)
  *   - adopted as managed (use_shard decisions; user file overwritten)
  *   - kept as managed    (keep_mine decisions; user bytes recorded)
+ *   - auto-merged        (#120 auto-merge mode; union bytes written)
  *   - installed fresh    (shard-only paths; new bytes written)
  *
  * Counts add up to `state.files` length so the user has a precise sense
@@ -72,6 +73,13 @@ export default function AdoptSummary({
           <Text>
             <Text color="yellow">  ↻ </Text>
             {summary.adoptedShard.length} switched to the shard's version
+          </Text>
+        )}
+        {summary.adoptedMerged.length > 0 && (
+          <Text>
+            <Text color="magenta">  ⊕ </Text>
+            {summary.adoptedMerged.length} auto-merged (best-effort —{' '}
+            <Text bold>review recommended</Text>)
           </Text>
         )}
         {summary.installedFresh.length > 0 && (

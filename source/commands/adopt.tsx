@@ -5,6 +5,7 @@ import { ShardMindError, assertNever } from '../runtime/types.js';
 
 import { Spinner, StatusMessage, Alert } from '../components/ui.js';
 import AdoptValuesGate from '../components/AdoptValuesGate.js';
+import AdoptModePicker from '../components/AdoptModePicker.js';
 import AdoptDiffView from '../components/AdoptDiffView.js';
 import AdoptSummary from '../components/AdoptSummary.js';
 import CommandFrame from '../components/CommandFrame.js';
@@ -28,6 +29,12 @@ export const options = zod.object({
     .boolean()
     .default(false)
     .describe('Skip prompts; auto-keep your version on every differs decision'),
+  mode: zod
+    .enum(['keep-all-mine', 'use-all-theirs', 'auto-merge', 'decide-per-file'])
+    .optional()
+    .describe(
+      'Resolve all divergent files non-interactively. auto-merge is best-effort (keeps your bytes, ignores shard deletions, may duplicate — review after)',
+    ),
   verbose: zod.boolean().default(false).describe('Show per-file action history during adopt'),
   dryRun: zod
     .boolean()
@@ -46,18 +53,20 @@ type Props = {
 
 export default function Adopt({ args, options }: Props) {
   const [shardRef] = args;
-  const { values: valuesFile, yes, verbose, dryRun, noUpdateCheck } = options;
+  const { values: valuesFile, yes, mode, verbose, dryRun, noUpdateCheck } = options;
 
   const {
     phase,
     onWizardComplete,
     onWizardCancel,
     onWizardError,
+    onModeSelect,
     onDiffChoice,
   } = useAdoptMachine({
     shardRef: shardRef!,
     valuesFile,
     yes,
+    mode,
     verbose,
     dryRun,
     vaultRoot: process.cwd(),
@@ -108,15 +117,24 @@ export default function Adopt({ args, options }: Props) {
           </Box>
         </CommandFrame>
       );
+    case 'mode-select':
+      return (
+        <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
+          <AdoptModePicker
+            differsCount={phase.plan.differs.length}
+            onSelect={onModeSelect}
+          />
+        </CommandFrame>
+      );
     case 'diff-review': {
-      const target = phase.plan.differs[phase.currentIndex];
+      const target = phase.queue[phase.currentIndex];
       if (!target || target.kind !== 'differs') return null;
       return (
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <AdoptDiffView
             path={target.path}
             index={phase.currentIndex + 1}
-            total={phase.plan.differs.length}
+            total={phase.queue.length}
             shardContent={target.shardContent}
             userContent={target.userContent}
             isBinary={target.isBinary}

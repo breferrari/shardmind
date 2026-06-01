@@ -256,6 +256,7 @@ export function mountUpdate(opts: {
 export interface AdoptOptions {
   values?: string;
   yes?: boolean;
+  mode?: 'keep-all-mine' | 'use-all-theirs' | 'auto-merge' | 'decide-per-file';
   verbose?: boolean;
   dryRun?: boolean;
   noUpdateCheck?: boolean;

@@ -23,6 +23,7 @@ function makeSummary(overrides: Partial<AdoptSummaryData> = {}): AdoptSummaryDat
     matchedAuto: ['CLAUDE.md', 'README.md'],
     adoptedMine: [],
     adoptedShard: [],
+    adoptedMerged: [],
     installedFresh: [],
     totalManaged: 2,
     ...overrides,
@@ -72,6 +73,17 @@ describe('AdoptSummary', () => {
     expect(frame).toContain('1 kept your version');
     expect(frame).toContain('3 switched to the shard');
     expect(frame).toContain('1 installed fresh');
+  });
+
+  it('renders the auto-merged bucket with a review-recommended note (#120)', () => {
+    const summary = makeSummary({
+      adoptedMerged: ['notes/a.md', 'notes/b.md'],
+      totalManaged: 4,
+    });
+    const { lastFrame } = render(<AdoptSummary {...baseProps} summary={summary} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toMatch(/2 auto-merged/);
+    expect(frame).toMatch(/review recommended/i);
   });
 
   it('omits zero-count rows', () => {
