@@ -362,6 +362,8 @@ The old single `post-install` hook bundled three jobs with different lifecycles 
 - **You no longer write `if (!ctx.valuesAreDefaults) …`.** The engine simply doesn't invoke `personalize` on a defaults install. `PersonalizeContext` has no `valuesAreDefaults` field — if your `personalize` hook runs, values are non-default by construction.
 - **The write boundary is checked.** If `bootstrap` edits a managed file or `personalize` creates an unmanaged one, the engine surfaces a non-fatal warning naming the paths (it does not undo the write). This catches a mis-placed responsibility during your dev loop instead of silently breaking Invariant 1 in the field.
 
+**If your hook crashes**, the install/update/adopt still succeeds (hooks are non-fatal). The Summary shows a dimmed, truncated head of the hook's output under a "Non-fatal; your vault is ready." warning, and writes the **full** captured stdout/stderr to `.shardmind/logs/<slot>.log` in the installed vault — point users there (or `cat` it yourself) to debug a failing hook.
+
 ### Per-slot context
 
 - **`BootstrapContext`** → `{ slot: 'bootstrap', vaultRoot, values, modules, shard, previousVersion? }`. No `valuesAreDefaults`, no file lists.

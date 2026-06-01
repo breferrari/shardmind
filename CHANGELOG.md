@@ -8,6 +8,16 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (hook crash presentation in the Summary — #105)
+
+Closes [#105](https://github.com/breferrari/shardmind/issues/105).
+
+- **A crashed hook no longer buries the outcome.** Hooks are non-fatal (Helm semantics — the vault is already written when a hook runs, so a failing hook never rolls back), but the Summary dumped the hook's raw multi-line stderr verbatim, so a *successful* install with a *crashed* hook looked indistinguishable from an engine failure. The crash now renders as `"<hook> exited with code N. Non-fatal; your vault is ready."` with the "operation succeeded" detail on its own dim line, and the captured stdout/stderr render **dimmed + indented**, truncated to the first 5 lines (`HOOK_OUTPUT_VISIBLE_LINES`) with a `"… N more lines (full log at .shardmind/logs/<slot>.log)"` pointer.
+
+- **Full output is persisted to a vault-local log.** When a hook crashes (non-zero exit / failure) or its output is long enough to truncate, the orchestrator writes the complete captured stdout/stderr to `.shardmind/logs/<slot>.log` (new `HOOK_LOGS_DIR`). The write is **non-fatal** — a failure (read-only vault, ENOSPC) just omits the on-screen pointer; it never breaks an install whose hook is already non-fatal by contract. Short, clean hooks write nothing. The log lives under `.shardmind/`, so it is excluded from Invariant 1 byte-equivalence.
+
+- **Tests:** `headLines` unit matrix; orchestrator log-persistence cases (crash writes a log, long-clean writes a log, short-clean writes nothing, dry-run writes nothing, unwritable `logs/` is non-fatal); `HookSummarySection` truncation + pointer + crash-header rendering; L2 PTY scenario 27 asserts the truncated on-screen UI + the full marker in the on-disk log. Invariant 1 + the contract four-branch hook tests stay green. **Docs:** `docs/SHARD-LAYOUT.md`, `docs/ARCHITECTURE.md §9.3`, `docs/AUTHORING.md §6`.
+
 ### Fixed (update merge rendered copy-origin files — #132)
 
 Closes [#132](https://github.com/breferrari/shardmind/issues/132); root cause **reported via [#129](https://github.com/breferrari/shardmind/issues/129)** (thanks!).

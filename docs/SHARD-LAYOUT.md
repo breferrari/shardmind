@@ -65,7 +65,9 @@ my-vault/
 │   ├── state.json                    ← ownership hashes + module/agent selections + version + resolved ref
 │   ├── shard.yaml                    ← cached manifest (runtime reads without re-extracting the tarball)
 │   ├── shard-schema.yaml             ← cached values schema
-│   └── templates/                    ← cached source files; merge base for three-way merge on update
+│   ├── templates/                    ← cached source files; merge base for three-way merge on update
+│   └── logs/                         ← full output of a crashed or verbose hook (<slot>.log); written
+│                                       on demand so the Summary can truncate on screen and point here
 │
 ├── shard-values.yaml                 ← user's answers from the wizard; vault-root (not under .shardmind/);
 │                                       named separately from .shardmind/ per VISION's
@@ -83,7 +85,7 @@ my-vault/
 └── (no .github/, no CONTRIBUTING.md, no translations, no demo media)
 ```
 
-The installed-side path constants are authoritative in [`source/runtime/vault-paths.ts`](../source/runtime/vault-paths.ts): `STATE_FILE`, `CACHED_MANIFEST`, `CACHED_SCHEMA`, `CACHED_TEMPLATES` all live under `.shardmind/`; `VALUES_FILE` lives at vault root.
+The installed-side path constants are authoritative in [`source/runtime/vault-paths.ts`](../source/runtime/vault-paths.ts): `STATE_FILE`, `CACHED_MANIFEST`, `CACHED_SCHEMA`, `CACHED_TEMPLATES`, `HOOK_LOGS_DIR` all live under `.shardmind/`; `VALUES_FILE` lives at vault root. Everything under `.shardmind/` (including `logs/`) is engine metadata and is excluded from the Invariant 1 byte-equivalence comparison.
 
 ## Personalization model
 
