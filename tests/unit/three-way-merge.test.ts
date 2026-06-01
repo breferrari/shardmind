@@ -179,9 +179,10 @@ describe('computeMergeAction — literal (copy-origin) inputs (#132)', () => {
       renderContext: RENDER_CTX,
       literal: true,
     });
-    // base→ours changed b→c, user unchanged → managed-style overwrite to ours.
-    expect(['overwrite', 'auto_merge']).toContain(action.type);
-    if (action.type === 'overwrite' || action.type === 'auto_merge') {
+    // ownership 'modified' → three-way merge (never the managed overwrite
+    // branch). base→ours changed b→c, user unchanged → clean auto_merge to ours.
+    expect(action.type).toBe('auto_merge');
+    if (action.type === 'auto_merge') {
       expect(action.content.endsWith('\n')).toBe(false);
     }
   });
