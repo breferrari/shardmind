@@ -14,6 +14,24 @@ export const CACHED_MANIFEST = path.join(SHARDMIND_DIR, 'shard.yaml');
 export const CACHED_SCHEMA = path.join(SHARDMIND_DIR, 'shard-schema.yaml');
 export const CACHED_TEMPLATES = path.join(SHARDMIND_DIR, 'templates');
 
+/**
+ * Where a crashed (or verbose) hook's full captured output is persisted so
+ * the Summary can truncate the on-screen block and point the user at the
+ * complete log. Under `.shardmind/`, so it is excluded from Invariant 1
+ * byte-equivalence ("modulo `.shardmind/` metadata"). See `hook-orchestrator.ts`.
+ */
+export const HOOK_LOGS_DIR = path.join(SHARDMIND_DIR, 'logs');
+
+/**
+ * Vault-relative path of one slot's full hook log, e.g.
+ * `.shardmind/logs/bootstrap.log`. Returned with forward slashes — it doubles
+ * as a user-facing pointer in the Summary, and `path.join(vaultRoot, …)`
+ * resolves a posix-style relative path correctly on every platform.
+ */
+export function hookLogRelPath(slot: string): string {
+  return `${SHARDMIND_DIR}/logs/${slot}.log`;
+}
+
 /** User-authored values file. Engine creates it on install, never overwrites. */
 export const VALUES_FILE = 'shard-values.yaml';
 

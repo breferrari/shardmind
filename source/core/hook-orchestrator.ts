@@ -19,6 +19,8 @@
  * Spec: docs/SHARD-LAYOUT.md §Hook lifecycle; docs/IMPLEMENTATION.md §4.16a.
  */
 
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import type {
   AnyHookContext,
   ModuleSelections,
@@ -26,10 +28,12 @@ import type {
   ShardSchema,
   ShardState,
 } from '../runtime/types.js';
+import { HOOK_LOGS_DIR, hookLogRelPath } from '../runtime/vault-paths.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
 import {
   runHook,
   summarizeHook,
+  headLines,
   type HookResult,
   type HookStage,
   type HookSummary,
@@ -208,7 +212,11 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
       violation = detectUnmanagedCreates(after, unmanagedBefore, state);
     }
 
-    outcomes.push({ slot: job.slot, summary: summarize(result, { violation, deprecated: job.deprecated }) });
+    const summary = summarize(result, { violation, deprecated: job.deprecated });
+    // Persist the full output (and attach the pointer) when the hook crashed or
+    // its output is long enough that the Summary will truncate it.
+    const withLog = summary ? await attachHookLog(plan.vaultRoot, job.slot, summary) : summary;
+    outcomes.push({ slot: job.slot, summary: withLog });
 
     // Persist the bootstrap fingerprint only after a SUCCESSFUL bootstrap
     // (exit 0), so the next update compares against it (Invariant 4). A
@@ -347,6 +355,57 @@ function summarize(
   }
   if (extra.deprecated) merged.deprecated = true;
   return merged;
+}
+
+/**
+ * Persist a hook's full captured output to `.shardmind/logs/<slot>.log` when it
+ * is worth pointing at — the hook crashed (non-zero exit / failure) or either
+ * stream is long enough that the Summary will truncate it — and return the
+ * summary with `logPath` set. A short, clean hook writes nothing (no clutter,
+ * no perturbation of clean-path E2E) and is returned unchanged.
+ *
+ * Non-fatal: a log-write failure (read-only vault, ENOSPC) just omits the
+ * pointer; it must never break an install whose hook is already non-fatal by
+ * contract (ARCHITECTURE.md §9.3). The log lives under `.shardmind/`, so it is
+ * excluded from Invariant 1 byte-equivalence.
+ */
+export async function attachHookLog(
+  vaultRoot: string,
+  slot: HookStage,
+  summary: HookSummary,
+): Promise<HookSummary> {
+  const stdout = summary.stdout ?? '';
+  const stderr = summary.stderr ?? '';
+  if (stdout === '' && stderr === '') return summary;
+
+  const crashed = (summary.exitCode ?? 0) !== 0;
+  const willTruncate =
+    headLines(stdout.trim()).hidden > 0 || headLines(stderr.trim()).hidden > 0;
+  if (!crashed && !willTruncate) return summary;
+
+  try {
+    await fsp.mkdir(path.join(vaultRoot, HOOK_LOGS_DIR), { recursive: true });
+    const relPath = hookLogRelPath(slot);
+    await fsp.writeFile(path.join(vaultRoot, relPath), formatHookLog(slot, summary), 'utf-8');
+    return { ...summary, logPath: relPath };
+  } catch {
+    return summary;
+  }
+}
+
+/** Readable full-output dump written to `.shardmind/logs/<slot>.log`. */
+function formatHookLog(slot: HookStage, summary: HookSummary): string {
+  return [
+    `# ShardMind ${slot} hook — full captured output`,
+    `# exit code: ${summary.exitCode ?? 0}`,
+    '',
+    '=== stdout ===',
+    summary.stdout ?? '',
+    '',
+    '=== stderr ===',
+    summary.stderr ?? '',
+    '',
+  ].join('\n');
 }
 
 function valuesAreDefaultsSafe(values: Record<string, unknown>, schema: ShardSchema): boolean {

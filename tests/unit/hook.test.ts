@@ -24,6 +24,8 @@ import {
   runHook,
   executeHook,
   tailAtUtf8Boundary,
+  headLines,
+  HOOK_OUTPUT_VISIBLE_LINES,
 } from '../../source/core/hook.js';
 import type {
   BootstrapContext,
@@ -41,6 +43,50 @@ function makeManifest(hooks: ShardManifest['hooks']): ShardManifest {
     hooks,
   };
 }
+
+describe('headLines (#105)', () => {
+  it('returns the whole text with hidden:0 when at or below the cap', () => {
+    expect(headLines('a\nb\nc', 5)).toEqual({ head: 'a\nb\nc', hidden: 0 });
+    const exact = 'a\nb\nc\nd\ne';
+    expect(headLines(exact, 5)).toEqual({ head: exact, hidden: 0 });
+  });
+
+  it('does not count a single trailing newline as an extra line', () => {
+    // "a\nb\n" is two lines, not three — the trailing "" is dropped.
+    expect(headLines('a\nb\n', 5)).toEqual({ head: 'a\nb', hidden: 0 });
+    const fiveWithEol = 'a\nb\nc\nd\ne\n';
+    expect(headLines(fiveWithEol, 5)).toEqual({ head: 'a\nb\nc\nd\ne', hidden: 0 });
+  });
+
+  it('keeps the first `max` lines and counts the remainder', () => {
+    expect(headLines('1\n2\n3\n4\n5\n6\n7', 5)).toEqual({ head: '1\n2\n3\n4\n5', hidden: 2 });
+  });
+
+  it('treats a single long line with no newline as one line', () => {
+    const long = 'x'.repeat(10_000);
+    expect(headLines(long, 5)).toEqual({ head: long, hidden: 0 });
+  });
+
+  it('handles the empty string', () => {
+    expect(headLines('', 5)).toEqual({ head: '', hidden: 0 });
+  });
+
+  it('normalizes CRLF input — no trailing \\r artifacts (Windows hooks)', () => {
+    // A Windows hook emits CRLF; `split('\n')` alone would leave a trailing
+    // \r on each line that renders as a visible control character.
+    expect(headLines('a\r\nb\r\nc\r\n', 5)).toEqual({ head: 'a\nb\nc', hidden: 0 });
+    const long = '1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7';
+    const { head, hidden } = headLines(long, 5);
+    expect(head).toBe('1\n2\n3\n4\n5');
+    expect(head).not.toContain('\r');
+    expect(hidden).toBe(2);
+  });
+
+  it('defaults to HOOK_OUTPUT_VISIBLE_LINES', () => {
+    const lines = Array.from({ length: HOOK_OUTPUT_VISIBLE_LINES + 3 }, (_, i) => `L${i}`).join('\n');
+    expect(headLines(lines).hidden).toBe(3);
+  });
+});
 
 describe('tailAtUtf8Boundary', () => {
   it('returns the whole string when byte length is under the cap', () => {

@@ -128,15 +128,15 @@ UX gaps surfaced during real obsidian-mind v6 install + adopt runs. None block t
 - [x] `multiselect` value type for module-set questions ([#101](https://github.com/breferrari/shardmind/issues/101)) — pairs with #100 (shortens module list). First-class value type + scrollable widget + per-option `default` + min/max; value→module gating stays #80.
 - [x] Adopt: replace step-by-step install wizard with confirm-or-override values flow ([#104](https://github.com/breferrari/shardmind/issues/104))
 - [x] Adopt batch operations (keep all mine / use all theirs / auto-merge non-conflicting) ([#120](https://github.com/breferrari/shardmind/issues/120)) — pairs with #104.
-- [ ] Hook stderr presentation in Summary (truncate, dim, label as non-fatal) ([#105](https://github.com/breferrari/shardmind/issues/105))
+- [x] Hook stderr presentation in Summary (truncate, dim, label as non-fatal) ([#105](https://github.com/breferrari/shardmind/issues/105))
 
 ### 0.1.x — Done gate
 
 v0.1.x ships when:
-- [ ] Foundation closed: [#111](https://github.com/breferrari/shardmind/issues/111) ✅, [#112](https://github.com/breferrari/shardmind/issues/112) ✅.
-- [ ] Parallel closed: [#113](https://github.com/breferrari/shardmind/issues/113) (self-update notifier), [#119](https://github.com/breferrari/shardmind/issues/119) (release cadence policy).
+- [x] Foundation closed: [#111](https://github.com/breferrari/shardmind/issues/111) ✅, [#112](https://github.com/breferrari/shardmind/issues/112) ✅.
+- [x] Parallel closed: [#113](https://github.com/breferrari/shardmind/issues/113) (self-update notifier), [#119](https://github.com/breferrari/shardmind/issues/119) (release cadence policy).
 - [ ] Hook lifecycle (#102) shipped with [#121](https://github.com/breferrari/shardmind/issues/121) (version-compatibility check) and obsidian-mind hook migration in the same release window.
-- [ ] Flagship-UX closed: [#100](https://github.com/breferrari/shardmind/issues/100), [#101](https://github.com/breferrari/shardmind/issues/101), [#104](https://github.com/breferrari/shardmind/issues/104), [#105](https://github.com/breferrari/shardmind/issues/105), [#120](https://github.com/breferrari/shardmind/issues/120).
+- [x] Flagship-UX closed: [#100](https://github.com/breferrari/shardmind/issues/100), [#101](https://github.com/breferrari/shardmind/issues/101), [#104](https://github.com/breferrari/shardmind/issues/104), [#105](https://github.com/breferrari/shardmind/issues/105), [#120](https://github.com/breferrari/shardmind/issues/120).
 - [ ] Research-wiki shard ([#15](https://github.com/breferrari/shardmind/issues/15)) shipped with E2E tests + registry-mode end-to-end proof.
 - [ ] v6 docs polish ([#85](https://github.com/breferrari/shardmind/issues/85)) closed.
 - [ ] Smoke gate green against both shards (obsidian-mind + research-wiki).

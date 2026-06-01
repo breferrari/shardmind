@@ -244,33 +244,44 @@ describe.skipIf(skipOnWindows)(
             },
           );
           try {
-            // The Summary must say:
+            // The Summary must say (#105 presentation):
             //   - "Installed l2hooks/throw@0.1.0" — install itself
             //     succeeded (Helm semantics: hook is non-fatal).
-            //   - "Bootstrap hook exited with code <N>" — the
-            //     warning headline from HookSummarySection.
-            //   - the thrown message (or its stderr trail) somewhere
-            //     in the captured stderr block.
+            //   - "Bootstrap hook exited with code <N>. Non-fatal; your
+            //     vault is ready." — the reworded crash headline, so a
+            //     crashed hook no longer reads as an engine failure.
+            // This hook's thrown stack is only ~3 lines (under the 5-line
+            // cap), so it is NOT truncated and shows no "(full log at …)"
+            // pointer — that path is covered at the component layer. What
+            // the real PTY proves here is the reworded headline + that the
+            // full output is persisted to the vault-local crash log.
             await handle.waitForScreen(
               (s) =>
                 /Installed l2hooks\/throw@0\.1\.0/.test(s) &&
-                /Bootstrap hook exited with code/.test(s),
+                /Bootstrap hook exited with code/.test(s) &&
+                /Non-fatal; your vault is ready/.test(s),
               {
                 timeoutMs: 30_000,
-                description: 'install summary + hook warning',
+                description: 'install summary + non-fatal crash headline',
               },
             );
             const screen = handle.screen.serialize();
-            // The thrown error string ("L2_HOOK_THROW_BANG") lands in
-            // stderr via Node's default uncaught-error printer; under
-            // PTY's 50-row viewport it surfaces in the Hook stderr
-            // section.
+            // Short stack stays on screen (dimmed); the marker is present.
             expect(screen).toMatch(/L2_HOOK_THROW_BANG/);
 
             const exit = await handle.waitForExit();
             // Install itself succeeded — exit 0 even though hook
             // failed (the contract).
             expect(exit.exitCode).toBe(0);
+
+            // A crashed hook always persists its full output verbatim to the
+            // vault-local log, even when short enough to show on screen.
+            const log = await fs.readFile(
+              path.join(vault, '.shardmind', 'logs', 'bootstrap.log'),
+              'utf-8',
+            );
+            expect(log).toMatch(/L2_HOOK_THROW_BANG/);
+            expect(log).toContain('=== stderr ===');
           } finally {
             await handle.dispose();
           }

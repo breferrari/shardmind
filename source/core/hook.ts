@@ -189,6 +189,45 @@ export interface HookSummary {
   stdout?: string;
   stderr?: string;
   exitCode?: number;
+  /**
+   * Vault-relative path of the full captured output on disk (e.g.
+   * `.shardmind/logs/bootstrap.log`), written by the orchestrator when a hook
+   * crashes or its output is long enough to truncate on screen. The Summary
+   * shows the first `HOOK_OUTPUT_VISIBLE_LINES` lines and points here for the
+   * rest. Absent when nothing was written (short clean hook, or the log write
+   * failed — non-fatal). See `hook-orchestrator.ts`.
+   */
+  logPath?: string;
+}
+
+/**
+ * How many lines of a hook's stdout / stderr the Summary renders inline before
+ * truncating with a "… N more lines — full log at <path>" pointer. Shared by
+ * the orchestrator (which decides whether a log file is worth writing) and
+ * `HookSummarySection.tsx` (which does the on-screen truncation) so the two
+ * never disagree on the threshold.
+ */
+export const HOOK_OUTPUT_VISIBLE_LINES = 5;
+
+/**
+ * Split `text` into the first `max` lines plus a count of how many were
+ * dropped. A single trailing newline is not counted as an extra empty line
+ * (so `"a\nb\n"` is two lines, not three). Pure — used both to decide whether
+ * a hook log is worth persisting and to render the truncated on-screen block.
+ */
+export function headLines(
+  text: string,
+  max: number = HOOK_OUTPUT_VISIBLE_LINES,
+): { head: string; hidden: number } {
+  // Split on CRLF or LF — a Windows hook (Git for Windows, some Node scripts)
+  // emits CRLF, and `split('\n')` alone would leave a trailing `\r` on each
+  // line that renders as a visible control character in the Summary. The head
+  // is re-joined with LF (the canonical display ending), matching the rest of
+  // the engine.
+  const lines = text.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  if (lines.length <= max) return { head: lines.join('\n'), hidden: 0 };
+  return { head: lines.slice(0, max).join('\n'), hidden: lines.length - max };
 }
 
 /**
