@@ -505,5 +505,7 @@ function labelForAction(kind: AdoptApplyKind): string {
       return '→';
     case 'differs-use-shard':
       return '↻';
+    case 'differs-merged':
+      return '⊕';
   }
 }
