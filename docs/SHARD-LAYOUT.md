@@ -214,22 +214,22 @@ Pre-conditions enforced before any walk:
 
 Phases (logical order; UI may interleave loading messages):
 1. Fetch shard at target version into a temp directory.
-2. Wizard collects values (same component / pipeline as install) and module selections. Wizard runs **before** classification because `.njk` templates need values to render before their output bytes can be hashed.
+2. Collect values via the `AdoptValuesGate` confirm-or-override page (#104) and module selections — same value pipeline as install. Runs **before** classification because `.njk` templates need values to render before their output bytes can be hashed.
 3. Classify each file the shard would install at the chosen module selections, comparing the rendered (or copied) bytes against the user's vault:
    - **Matches shard content exactly** → record hash, mark managed automatically. "Exactly" means byte-for-byte equality after the standard render pipeline (frontmatter normalized via `parseYaml → stringifyYaml`, see `renderer.ts`). A pristine clone with default values + clean YAML lands here for every file; non-default vaults legitimately produce `differs` for any rendered output the user's bytes don't post-render-equal. This is the same equality `drift.ts` enforces on update.
-   - **Differs from shard content** → 2-way diff UI (no merge base); user marks "my modification" (record user's content hash as managed) or "use shard's version" (overwrite, record shard hash as managed). Two choices, no third "leave untracked" — adopt is the moment the file becomes managed; the user can later modify it freely and the merge engine handles it on update.
+   - **Differs from shard content** → resolved per a batch mode (#120). When ≥1 file differs and neither `--mode` nor `--yes` is set, `AdoptModePicker` prompts once for the whole set: **keep all mine** / **use all theirs** / **auto-merge (best-effort)** / **decide per file**. Each `differs` file ends as one of: `keep_mine` (record user's hash, ownership `modified`), `use_shard` (overwrite, ownership `managed`), or `merged` (write union bytes, ownership `modified`). There is no "leave untracked" outcome — adopt is the moment the file becomes managed; the merge engine handles later edits on update. **Auto-merge** is a two-way *union* merge (`core/adopt-merge.ts`): adopt has no merge base, so it keeps common + each side's unique lines, sends overlapping replacements to the per-file prompt, **does not apply shard deletions**, and can duplicate non-adjacent edits — merged files are flagged "review recommended". Non-interactive auto-merge keeps-mine on conflicts.
    - **Volatile templates** (carry `{# shardmind: volatile #}`) skip the prompt: user's bytes are recorded as managed without a differs comparison (volatile content is never expected to match across renders, so a prompt would be meaningless). Symmetric with install, which records volatile-template outputs the same way.
    - **Excluded modules' files** are not classified. If the user's vault contains them, they stay as user content.
    - User has the path but it's not a shard output → user-only, left unmanaged (not in `state.files`).
    - Shard has the path but the user's vault doesn't → shard-only, installed fresh and recorded as managed.
-4. For every `differs` decision, apply: write shard bytes for "use shard's", leave user bytes for "my modification". `keep mine` paths still become `state.files` entries hashed at the user's bytes — adopt is the entry point into management.
+4. For every `differs` decision, apply: write shard bytes for `use_shard`, union bytes for `merged`, leave user bytes for `keep_mine`. All three become `state.files` entries (hashed at the user's / merged / shard bytes respectively) — adopt is the entry point into management.
 5. Write `.shardmind/state.json` + cached `.shardmind/shard.yaml` + cached `.shardmind/shard-schema.yaml` + vault-root `shard-values.yaml`; cache the shard source under `.shardmind/templates/` so future `update` runs have a merge base.
 6. Run the install-side hook slots via the orchestrator: `bootstrap` (always), then `personalize` (managed edits) unless the engine skips it because values are defaults (Invariant 2). `newFiles` = paths classified shard-only and freshly installed, `removedFiles` = [].
 7. Re-hash managed files per the usual post-hook semantics.
 
 Future `shardmind update` calls work normally — merge base is the adopt-time cache.
 
-Reuses: drift detection (`core/drift.ts`), install-executor, value collection (`AdoptValuesGate` confirm page → `InstallWizard` on override, #104), hook runtime. New surfaces: 2-way diff UI component (`AdoptDiffView`), adopt-planner, adopt-executor.
+Reuses: drift detection (`core/drift.ts`), install-executor, value collection (`AdoptValuesGate` confirm page → `InstallWizard` on override, #104), hook runtime. New surfaces: batch mode picker (`AdoptModePicker`, #120), two-way union merge (`core/adopt-merge.ts`, #120), 2-way diff UI component (`AdoptDiffView`), adopt-planner, adopt-executor.
 
 ## Naming decisions
 

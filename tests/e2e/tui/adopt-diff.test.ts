@@ -27,6 +27,7 @@ import { ensureBuilt } from '../helpers/build-once.js';
 import {
   spawnCliPty,
   ENTER,
+  ARROW_DOWN,
   PTY_VIEWPORT_ROWS,
 } from './helpers/pty-cli.js';
 import { tick } from '../../component/helpers.js';
@@ -119,6 +120,19 @@ describe.skipIf(skipOnWindows)(
               timeoutMs: 30_000,
               description: 'adopt values confirm page',
             });
+            handle.write(ENTER);
+
+            // Three files differ → the AdoptModePicker (#120) appears.
+            // Choose "Decide per file" (4th option) to reach the per-file
+            // loop this scenario exercises.
+            await handle.waitForScreen((s) => /files differ from the shard/.test(s), {
+              timeoutMs: 30_000,
+              description: 'adopt mode picker',
+            });
+            for (let i = 0; i < 3; i++) {
+              handle.write(ARROW_DOWN);
+              await tick(120);
+            }
             handle.write(ENTER);
 
             // Walk three sequential AdoptDiffView prompts. ENTER

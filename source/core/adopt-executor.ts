@@ -60,10 +60,30 @@ const SNAPSHOT_CONCURRENCY = 16;
  * One decision per `differs` entry. The diff UI returns this shape; the
  * executor reads it. Two values mirror the spec's two-choice prompt.
  */
-export type AdoptResolution = 'keep_mine' | 'use_shard';
+/**
+ * One decision per `differs` entry. `keep_mine` / `use_shard` mirror the
+ * per-file prompt. `merged` carries the bytes produced by the auto-merge
+ * mode's two-way union merge (#120) so the executor can write them without
+ * re-running the merge; the machine computes them and supplies the hash.
+ */
+export type AdoptResolution =
+  | 'keep_mine'
+  | 'use_shard'
+  | { kind: 'merged'; content: Buffer; hash: string };
 
 /** Map vault-relative path → resolution for every `plan.differs[]` entry. */
 export type AdoptResolutions = Record<string, AdoptResolution>;
+
+/** A resolution that overwrites the user's file → needs a rollback snapshot. */
+function overwritesUserFile(resolution: AdoptResolution | undefined): boolean {
+  // `resolution != null` guards the `typeof === 'object'` branch against a
+  // null map value (typeof null === 'object') even though the type excludes
+  // it — this runs on unvalidated `resolutions[path]` lookups.
+  return (
+    resolution === 'use_shard' ||
+    (resolution != null && typeof resolution === 'object' && resolution.kind === 'merged')
+  );
+}
 
 export interface AdoptRunnerOptions {
   vaultRoot: string;
@@ -100,7 +120,8 @@ export type AdoptApplyKind =
   | 'matches'
   | 'shard-only'
   | 'differs-keep-mine'
-  | 'differs-use-shard';
+  | 'differs-use-shard'
+  | 'differs-merged';
 
 export type AdoptProgressEvent =
   | { kind: 'start'; total: number }
@@ -124,6 +145,8 @@ export interface AdoptSummary {
   matchedAuto: string[];
   adoptedMine: string[];
   adoptedShard: string[];
+  /** Files written by the auto-merge mode's union merge (#120). */
+  adoptedMerged: string[];
   installedFresh: string[];
   totalManaged: number;
 }
@@ -215,6 +238,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     matchedAuto: [],
     adoptedMine: [],
     adoptedShard: [],
+    adoptedMerged: [],
     installedFresh: [],
     totalManaged: 0,
   };
@@ -275,11 +299,15 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         throw new ShardMindError(
           `Missing adopt resolution for ${c.path}`,
           'ADOPT_WRITE_FAILED',
-          'Every `differs` classification needs a `keep_mine` or `use_shard` decision before runAdopt is called.',
+          'Every `differs` classification needs a `keep_mine` / `use_shard` / `merged` resolution before runAdopt is called.',
         );
       }
       const action: AdoptApplyKind =
-        resolution === 'keep_mine' ? 'differs-keep-mine' : 'differs-use-shard';
+        resolution === 'keep_mine'
+          ? 'differs-keep-mine'
+          : resolution === 'use_shard'
+            ? 'differs-use-shard'
+            : 'differs-merged';
       onProgress?.({
         kind: 'file',
         index,
@@ -292,13 +320,25 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         fileStates[c.path] = buildFileState(c, c.userHash, 'modified');
         onFileTouched?.(c.path, false);
         summary.adoptedMine.push(c.path);
-      } else {
+      } else if (resolution === 'use_shard') {
         if (!dryRun) {
           await writeVaultFileBuffer(vaultRoot, c.path, c.shardContent);
         }
         fileStates[c.path] = buildFileState(c, c.shardHash, 'managed');
         onFileTouched?.(c.path, false);
         summary.adoptedShard.push(c.path);
+      } else {
+        // Auto-merge (#120): write the union-merged bytes. The result is
+        // user-customized content (it contains the user's lines), so it is
+        // recorded as `modified` ownership at the merged hash — exactly like
+        // a kept-but-edited managed file. A future `update` three-way-merges
+        // it against the cached shard template, which is the proper base.
+        if (!dryRun) {
+          await writeVaultFileBuffer(vaultRoot, c.path, resolution.content);
+        }
+        fileStates[c.path] = buildFileState(c, resolution.hash, 'modified');
+        onFileTouched?.(c.path, false);
+        summary.adoptedMerged.push(c.path);
       }
     }
 
@@ -363,10 +403,11 @@ async function createBackupDir(vaultRoot: string, now: Date): Promise<string> {
 }
 
 /**
- * Snapshot every path the apply phase will overwrite. Only `differs +
- * use_shard` triggers a snapshot — `matches` writes nothing,
- * `differs + keep_mine` writes nothing, and `shard-only` writes to a
- * path that doesn't exist yet (rollback erases via `addedPaths` instead).
+ * Snapshot every path the apply phase will overwrite — `differs + use_shard`
+ * and `differs + merged` (auto-merge) both replace existing user bytes.
+ * `matches` writes nothing, `differs + keep_mine` writes nothing, and
+ * `shard-only` writes to a path that doesn't exist yet (rollback erases via
+ * `addedPaths` instead).
  *
  * Tolerates ENOENT defensively: a `differs-use-shard` path whose user
  * file vanished between plan-time and execute-time is unusual but not
@@ -383,7 +424,7 @@ async function snapshotForRollback(
   await fsp.mkdir(filesBackupDir, { recursive: true });
 
   const toSnapshot = plan.differs
-    .filter((c) => resolutions[c.path] === 'use_shard')
+    .filter((c) => overwritesUserFile(resolutions[c.path]))
     .map((c) => c.path);
 
   await mapConcurrent(toSnapshot, SNAPSHOT_CONCURRENCY, async (rel) => {

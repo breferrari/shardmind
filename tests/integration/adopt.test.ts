@@ -299,6 +299,59 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     expect(result.summary.installedFresh).toContain('brain/North Star.md');
   });
 
+  it('differs + merged resolution: writes the union bytes as `modified`, buckets as adoptedMerged (#120)', async () => {
+    // The executor does not re-run the merge — it writes whatever bytes the
+    // `merged` resolution carries (the machine computes them via
+    // twoWayUnionMerge). Feed explicit merged bytes to isolate the executor's
+    // merged branch from the merge algorithm (unit-tested separately).
+    const { manifest, schema } = await loadShard();
+    const selections = defaultModuleSelections(schema);
+    const validator = buildValuesValidator(schema);
+    const values = validator.parse(resolveComputedDefaults(schema, VALUES));
+
+    await runInstall({
+      vaultRoot: vault,
+      manifest,
+      schema,
+      tempDir: MINIMAL_SHARD,
+      resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
+      values: values as Record<string, unknown>,
+      selections,
+    });
+    await fsp.rm(path.join(vault, '.shardmind'), { recursive: true, force: true });
+    await fsp.rm(path.join(vault, 'shard-values.yaml'), { force: true });
+
+    // Mutate Home.md so it classifies as `differs`.
+    await fsp.writeFile(path.join(vault, 'Home.md'), '# Home — my preferred shape\n', 'utf-8');
+
+    const adoptPlan = await plan(vault);
+    expect(adoptPlan.differs.map((c) => c.path)).toContain('Home.md');
+
+    const mergedBytes = Buffer.from('# Home — union of mine + shard\n', 'utf-8');
+    const mergedHash = sha256(mergedBytes);
+    // Resolve every differs path (minimal-shard has a time-varying template
+    // that also classifies as `differs`); only Home.md uses `merged`.
+    const resolutions: AdoptResolutions = {};
+    for (const c of adoptPlan.differs) resolutions[c.path] = 'keep_mine';
+    resolutions['Home.md'] = { kind: 'merged', content: mergedBytes, hash: mergedHash };
+
+    const { result } = await adopt(vault, resolutions);
+
+    // Merged bytes are on disk.
+    const homeDisk = await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8');
+    expect(homeDisk).toBe('# Home — union of mine + shard\n');
+
+    // Recorded as user-customized (modified) at the merged hash.
+    const state = (await readState(vault)) as ShardState;
+    expect(state.files['Home.md']?.ownership).toBe('modified');
+    expect(state.files['Home.md']?.rendered_hash).toBe(mergedHash);
+
+    expect(result.summary.adoptedMerged).toContain('Home.md');
+    expect(result.summary.adoptedMine).not.toContain('Home.md');
+    expect(result.summary.adoptedShard).not.toContain('Home.md');
+  });
+
   it('rejects adopt when .shardmind/state.json already exists', async () => {
     // Simulate a previously-installed vault.
     const { manifest, schema } = await loadShard();

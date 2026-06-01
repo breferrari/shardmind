@@ -146,6 +146,7 @@ shardmind/
 │   │   ├── ExistingInstallGate.tsx    # Install: existing-install disambiguation
 │   │   ├── DiffView.tsx               # Three-way diff + conflict resolution
 │   │   ├── AdoptValuesGate.tsx        # Adopt: values confirm-or-override page (#104)
+│   │   ├── AdoptModePicker.tsx        # Adopt: batch mode picker (keep-all / use-all / auto-merge / per-file) (#120)
 │   │   ├── AdoptDiffView.tsx          # Adopt: 2-way diff (no merge base) + per-file prompt
 │   │   ├── AdoptSummary.tsx           # Final adopt report (matched / mine / shard / fresh)
 │   │   ├── NewValuesPrompt.tsx        # Update: prompt for newly required values
@@ -180,6 +181,7 @@ shardmind/
 │   │   ├── install-executor.ts        # Apply install plan with rollback
 │   │   ├── adopt-planner.ts           # Classify user vault vs shard (matches/differs/shard-only)
 │   │   ├── adopt-executor.ts          # Apply adopt plan with snapshot-rollback
+│   │   ├── adopt-merge.ts             # Two-way union merge for adopt --mode=auto-merge (#120)
 │   │   ├── values-io.ts               # Shared YAML load for shard-values.yaml
 │   │   ├── values-defaults.ts         # `valuesAreDefaults(values, schema)` — Invariant 2 helper
 │   │   ├── update-check.ts            # 24h cached latest-version lookup (status + update)
@@ -338,6 +340,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `update-executor.ts` | §4.12 | Apply update plan with snapshot-based rollback |
 | `adopt-planner.ts` | §4.17 | Classify user vault vs shard outputs (matches / differs / shard-only) |
 | `adopt-executor.ts` | §4.18 | Apply adopt plan with snapshot-based rollback |
+| `adopt-merge.ts` | SHARD-LAYOUT.md §Adopt semantics | Two-way union merge for `adopt --mode=auto-merge` (#120) |
 | `values-io.ts` | §4.13 | Shared YAML load for shard-values.yaml (install + update) |
 | `values-defaults.ts` | §4.16 (HookContext extensions) | `valuesAreDefaults(values, schema)` — deep-equal pure fn for Invariant 2 |
 | `status.ts` | §4.14 | Pure StatusReport builder for the `shardmind` (status) command |

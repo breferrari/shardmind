@@ -68,6 +68,31 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
     r.stdin.write(ENTER);
   }
 
+  /**
+   * Drive the `AdoptModePicker` (#120) shown when there are differing files
+   * and no `--mode`/`--yes`: wait for it, then arrow to the requested mode
+   * (Keep all mine / Use all theirs / Auto-merge / Decide per file) and ENTER.
+   */
+  async function pickMode(
+    r: ReturnType<typeof mountAdopt>,
+    mode: 'keep-all-mine' | 'use-all-theirs' | 'auto-merge' | 'decide-per-file',
+  ): Promise<void> {
+    await waitFor(r.lastFrame, (f) => /files? differs? from the shard/.test(f), 20_000);
+    // Arrow counts must match AdoptModePicker.tsx's option order
+    // (keep-all-mine, use-all-theirs, auto-merge, decide-per-file).
+    const downs = {
+      'keep-all-mine': 0,
+      'use-all-theirs': 1,
+      'auto-merge': 2,
+      'decide-per-file': 3,
+    }[mode];
+    for (let i = 0; i < downs; i++) {
+      r.stdin.write(ARROW_DOWN);
+      await tick(40);
+    }
+    r.stdin.write(ENTER);
+  }
+
   // ───── Scenario 19: empty vault → all shard-only → Summary ─────
 
   it('19. empty vault → adopt → all shard-only → Summary', async () => {
@@ -124,6 +149,8 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
         vaultRoot: vault,
       });
       await driveAdoptConfirm(r);
+      // Three files differ → mode picker; choose per-file to reach the loop.
+      await pickMode(r, 'decide-per-file');
       // Walk three AdoptDiffView prompts via the shared iteration
       // helper. ENTER on default option = "Keep mine". The #109
       // regression would manifest as iteration 2 timing out on
@@ -152,6 +179,8 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
         vaultRoot: vault,
       });
       await driveAdoptConfirm(r);
+      // One file differs → mode picker; choose per-file to reach the prompt.
+      await pickMode(r, 'decide-per-file');
       await waitFor(r.lastFrame, (f) => /\(1 of 1\)/.test(f), 20_000);
       // ARROW_DOWN + ENTER → use_shard.
       r.stdin.write(ARROW_DOWN);
@@ -340,6 +369,153 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
       await cleanupVault(vault);
     }
   }, 45_000);
+
+  // ───── Scenario 27: mode picker → Keep all mine → no prompts, all kept (#120) ─────
+
+  it('27. mode picker → Keep all mine → all divergent files kept, no per-file prompts', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s27-keep-all');
+    try {
+      await writeRel(vault, 'Home.md', '# my Home\nkeep me\n');
+      await writeRel(vault, 'brain/North Star.md', '# my NS\nkeep me too\n');
+      const r = mountAdopt({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault });
+      await driveAdoptConfirm(r);
+      await pickMode(r, 'keep-all-mine');
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Adopted shardmind\/minimal/.test(f),
+        30_000,
+      );
+      expect(frame).toMatch(/kept your version/);
+      // Both user files survive byte-for-byte.
+      expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).toContain('keep me');
+      expect(
+        await fs.readFile(path.join(vault, 'brain/North Star.md'), 'utf-8'),
+      ).toContain('keep me too');
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  // ───── Scenario 28: mode picker → Use all theirs → all overwritten (#120) ─────
+
+  it('28. mode picker → Use all theirs → divergent files overwritten with shard bytes', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s28-use-all');
+    try {
+      await writeRel(vault, 'Home.md', 'my pre-existing Home\n');
+      const r = mountAdopt({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault });
+      await driveAdoptConfirm(r);
+      await pickMode(r, 'use-all-theirs');
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Adopted shardmind\/minimal/.test(f),
+        30_000,
+      );
+      expect(frame).toMatch(/switched to the shard/);
+      expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).not.toContain(
+        'my pre-existing Home',
+      );
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  // ───── Scenario 29: mode picker → Auto-merge → non-conflict auto, conflict prompts (#120) ─────
+
+  it('29. Auto-merge → non-conflicting file auto-resolved, conflicting file prompts', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s29-auto-merge');
+    try {
+      // Empty user file → pure insertion vs the rendered shard → union merge
+      // with no conflict (auto-resolved, no prompt).
+      await writeRel(vault, 'Home.md', '');
+      // Wholly different content → a replaced span → conflict → prompts.
+      await writeRel(vault, 'brain/North Star.md', '# totally different\nxyz\n');
+      const r = mountAdopt({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault });
+      await driveAdoptConfirm(r);
+      await pickMode(r, 'auto-merge');
+      // Only the conflicting file enters the prompt loop.
+      await waitFor(r.lastFrame, (f) => /\(1 of 1\)/.test(f), 20_000);
+      r.stdin.write(ENTER); // keep mine on the conflict
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Adopted shardmind\/minimal/.test(f),
+        30_000,
+      );
+      expect(frame).toMatch(/auto-merged/);
+      // The empty Home.md was union-merged to the shard's rendered bytes.
+      const home = await fs.readFile(path.join(vault, 'Home.md'), 'utf-8');
+      expect(home.length).toBeGreaterThan(0);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  // ───── Scenario 30: --mode (non-interactive) overrides --yes, no picker (#120) ─────
+
+  it('30. --yes --mode=use-all-theirs → non-interactive, no picker, files overwritten', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s30-mode-flag');
+    try {
+      await writeRel(vault, 'Home.md', 'my pre-existing Home\n');
+      const valuesFile = path.join(vault, 'values.yaml');
+      await fs.writeFile(valuesFile, stringifyYaml(DEFAULT_VALUES), 'utf-8');
+      const r = mountAdopt({
+        shardRef: `${SHARD_REF}#v0.1.0`,
+        vaultRoot: vault,
+        options: { yes: true, values: valuesFile, mode: 'use-all-theirs' },
+      });
+      // No picker, no value gate — fully non-interactive. --mode overrides
+      // --yes's default of keep-all-mine, so Home.md is overwritten.
+      await waitFor(r.lastFrame, (f) => /Adopted shardmind\/minimal/.test(f), 30_000);
+      expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).not.toContain(
+        'my pre-existing Home',
+      );
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  // ───── Scenario 31: --yes --mode=auto-merge → non-interactive, conflicts keep-mine (#120) ─────
+
+  it('31. --yes --mode=auto-merge → non-conflicting merged, conflicting falls back to keep-mine', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s31-auto-merge-yes');
+    try {
+      // Empty file → non-conflicting union (auto-merged); divergent file →
+      // conflict. Under --yes (no prompt) the conflict must fall back to
+      // keep-mine, not hang waiting for a decision.
+      await writeRel(vault, 'Home.md', '');
+      await writeRel(vault, 'brain/North Star.md', '# totally different\nxyz\n');
+      const valuesFile = path.join(vault, 'values.yaml');
+      await fs.writeFile(valuesFile, stringifyYaml(DEFAULT_VALUES), 'utf-8');
+      const r = mountAdopt({
+        shardRef: `${SHARD_REF}#v0.1.0`,
+        vaultRoot: vault,
+        options: { yes: true, values: valuesFile, mode: 'auto-merge' },
+      });
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Adopted shardmind\/minimal/.test(f),
+        30_000,
+      );
+      // Home.md auto-merged to the shard bytes; North Star kept (conflict fallback).
+      expect(frame).toMatch(/auto-merged/);
+      expect(frame).toMatch(/kept your version/);
+      expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).not.toBe('');
+      expect(
+        await fs.readFile(path.join(vault, 'brain/North Star.md'), 'utf-8'),
+      ).toContain('totally different');
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
 });
 
 async function writeRel(vault: string, rel: string, content: string): Promise<void> {
