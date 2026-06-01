@@ -125,7 +125,7 @@ function outputBlock(
         {hidden > 0 && (
           <Text dimColor>
             … {hidden} more line{hidden === 1 ? '' : 's'}
-            {logPath ? ` — full log at ${logPath}` : ''}
+            {logPath ? ` (full log at ${logPath})` : ''}
           </Text>
         )}
       </Box>

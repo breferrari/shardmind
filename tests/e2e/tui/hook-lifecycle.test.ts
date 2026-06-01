@@ -244,33 +244,42 @@ describe.skipIf(skipOnWindows)(
             },
           );
           try {
-            // The Summary must say:
+            // The Summary must say (#105 presentation):
             //   - "Installed l2hooks/throw@0.1.0" — install itself
             //     succeeded (Helm semantics: hook is non-fatal).
-            //   - "Bootstrap hook exited with code <N>" — the
-            //     warning headline from HookSummarySection.
-            //   - the thrown message (or its stderr trail) somewhere
-            //     in the captured stderr block.
+            //   - "Bootstrap hook exited with code <N>" + "Non-fatal;
+            //     your vault is ready." — the reworded crash headline.
+            //   - a "(full log at .shardmind/logs/bootstrap.log)"
+            //     pointer — the stderr stack is truncated on screen,
+            //     so the headline isn't buried under a stack trace.
             await handle.waitForScreen(
               (s) =>
                 /Installed l2hooks\/throw@0\.1\.0/.test(s) &&
-                /Bootstrap hook exited with code/.test(s),
+                /Bootstrap hook exited with code/.test(s) &&
+                /full log at \.shardmind\/logs\/bootstrap\.log/.test(s),
               {
                 timeoutMs: 30_000,
-                description: 'install summary + hook warning',
+                description: 'install summary + truncated hook warning + log pointer',
               },
             );
             const screen = handle.screen.serialize();
-            // The thrown error string ("L2_HOOK_THROW_BANG") lands in
-            // stderr via Node's default uncaught-error printer; under
-            // PTY's 50-row viewport it surfaces in the Hook stderr
-            // section.
-            expect(screen).toMatch(/L2_HOOK_THROW_BANG/);
+            expect(screen).toMatch(/Non-fatal; your vault is ready/);
 
             const exit = await handle.waitForExit();
             // Install itself succeeded — exit 0 even though hook
             // failed (the contract).
             expect(exit.exitCode).toBe(0);
+
+            // The full thrown stack is truncated on screen but persisted
+            // verbatim to the vault-local log — robust against any
+            // node/tsx stderr preamble shifting the marker off the
+            // 5-line head.
+            const log = await fs.readFile(
+              path.join(vault, '.shardmind', 'logs', 'bootstrap.log'),
+              'utf-8',
+            );
+            expect(log).toMatch(/L2_HOOK_THROW_BANG/);
+            expect(log).toContain('=== stderr ===');
           } finally {
             await handle.dispose();
           }
