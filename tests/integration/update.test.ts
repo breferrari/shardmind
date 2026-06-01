@@ -1000,6 +1000,82 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       await fsp.rm(shardDir, rmOpts);
     }
   }, 45_000);
+
+  it('merges a modified copy-origin file with a literal {{ without rendering it (#132)', async () => {
+    // A copy-origin file (no `.njk` suffix) carrying a literal `{{` that is
+    // not a valid Nunjucks expression, plus a real-looking `{{ user_name }}`.
+    // Before #132 the merge rendered both sides → crashed on `garbage{{` and
+    // would have substituted `{{ user_name }}`. Now it merges raw bytes.
+    const oldShard = path.join(os.tmpdir(), `shardmind-update-oldshard-${crypto.randomUUID()}`);
+    try {
+      await copyShard(MINIMAL_SHARD, oldShard);
+      const probeBase =
+        'line A\nconst s = "garbage{{";\nconst g = "{{ user_name }}";\nline B\n';
+      await fsp.writeFile(path.join(oldShard, 'notes.txt'), probeBase, 'utf-8');
+
+      await installBaseline(vault, oldShard, 'sha-0.1.0');
+      // Sanity: the copy file installed verbatim (no substitution at install).
+      const installed = await fsp.readFile(path.join(vault, 'notes.txt'), 'utf-8');
+      expect(installed).toBe(probeBase);
+
+      // User edits the copy file → drift classifies it `modified`.
+      const probeUser =
+        'line A\nconst s = "garbage{{";\nconst g = "{{ user_name }}";\nmy line\nline B\n';
+      await fsp.writeFile(path.join(vault, 'notes.txt'), probeUser, 'utf-8');
+
+      // New shard version edits a different region of the copy file.
+      await copyShard(oldShard, newShard);
+      await bumpVersion(newShard, '0.2.0');
+      const probeShard =
+        'line A\nshard line\nconst s = "garbage{{";\nconst g = "{{ user_name }}";\nline B\n';
+      await fsp.writeFile(path.join(newShard, 'notes.txt'), probeShard, 'utf-8');
+
+      const state = (await readState(vault)) as ShardState;
+      const oldValues = parseYaml(
+        await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8'),
+      ) as Record<string, unknown>;
+      const newManifest = await parseManifest(path.join(newShard, '.shardmind', 'shard.yaml'));
+      const newSchema = await parseSchema(path.join(newShard, '.shardmind', 'shard-schema.yaml'));
+
+      const migration = applyMigrations(oldValues, state.version, newManifest.version, newSchema.migrations);
+      const selections = mergeModuleSelections(state.modules, newSchema, {});
+      const drift = await detectDrift(vault, state);
+      const renderCtx = buildRenderContext(newManifest, migration.values, selections);
+
+      // Before #132 this call threw RENDER_TEMPLATE_ERROR on `garbage{{`.
+      const plan = await planUpdate({
+        vault: { root: vault, state, drift },
+        values: { old: oldValues, new: migration.values },
+        newShard: { schema: newSchema, selections, tempDir: newShard, renderContext: renderCtx },
+        removedFileDecisions: {},
+      });
+      expect(plan.pendingConflicts).toEqual([]);
+
+      const result = await runUpdate({
+        vaultRoot: vault,
+        plan,
+        conflictResolutions: {},
+        currentState: state,
+        newManifest,
+        newSchema,
+        newValues: migration.values,
+        newSelections: selections,
+        resolved: { ...RESOLVED, version: newManifest.version },
+        tarballSha256: 'sha-0.2.0',
+        newTempDir: newShard,
+      });
+      expect(result.state.version).toBe('0.2.0');
+
+      const merged = await fsp.readFile(path.join(vault, 'notes.txt'), 'utf-8');
+      expect(merged).toContain('garbage{{'); // no crash, literal intact
+      expect(merged).toContain('{{ user_name }}'); // NOT substituted
+      expect(merged).not.toContain('Alice'); // proof it was never rendered
+      expect(merged).toContain('my line'); // user edit kept
+      expect(merged).toContain('shard line'); // shard edit kept
+    } finally {
+      await fsp.rm(oldShard, { recursive: true, force: true });
+    }
+  }, 45_000);
 });
 
 // Shard copy helper for the hook integration test. Mirrors the one in

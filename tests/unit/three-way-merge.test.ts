@@ -6,7 +6,16 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { threeWayMerge } from '../../source/core/differ.js';
+import { threeWayMerge, computeMergeAction } from '../../source/core/differ.js';
+import type { RenderContext } from '../../source/runtime/types.js';
+
+const RENDER_CTX: RenderContext = {
+  values: {},
+  included_modules: [],
+  shard: { name: 'test-shard', version: '0.1.0' },
+  install_date: '2026-04-01',
+  year: '2026',
+};
 
 describe('threeWayMerge — stats accounting', () => {
   it('counts every unchanged line when base === theirs === ours', () => {
@@ -105,5 +114,128 @@ describe('threeWayMerge — stats accounting', () => {
     expect(result.content).toContain('toString');
     expect(result.content).toContain('hasOwnProperty');
     expect(result.content).toContain('user added');
+  });
+});
+
+describe('computeMergeAction — literal (copy-origin) inputs (#132)', () => {
+  it('literal: merges raw bytes without rendering — literal {{ survives, no crash', async () => {
+    // A copy file containing a literal `{{` that is not a valid Nunjucks
+    // expression AND a real-looking `{{ user_name }}`. Rendering (the bug)
+    // would crash on the former and substitute the latter. literal=true
+    // merges the raw bytes; both survive.
+    const old = 'a\nconst s = "garbage{{";\nconst g = "{{ user_name }}";\n';
+    const neu = 'a\nshard line\nconst s = "garbage{{";\nconst g = "{{ user_name }}";\n';
+    const actual = 'a\nconst s = "garbage{{";\nconst g = "{{ user_name }}";\nmine\n';
+    const action = await computeMergeAction({
+      path: 'scripts/foo.test.ts',
+      ownership: 'modified',
+      oldTemplate: old,
+      newTemplate: neu,
+      oldValues: { user_name: 'Alice' },
+      newValues: { user_name: 'Alice' },
+      actualContent: actual,
+      renderContext: RENDER_CTX,
+      literal: true,
+    });
+    expect(action.type).toBe('auto_merge');
+    if (action.type === 'auto_merge') {
+      expect(action.content).toContain('garbage{{'); // not crashed
+      expect(action.content).toContain('{{ user_name }}'); // NOT substituted to "Alice"
+      expect(action.content).not.toContain('Alice');
+      expect(action.content).toContain('mine'); // user edit kept
+      expect(action.content).toContain('shard line'); // shard edit kept
+    }
+  });
+
+  it('literal: preserves the user file\'s CRLF line endings on raw merge', async () => {
+    const action = await computeMergeAction({
+      path: 'win.txt',
+      ownership: 'modified',
+      oldTemplate: 'a\nb\n',
+      newTemplate: 'a\nshard\nb\n',
+      oldValues: {},
+      newValues: {},
+      actualContent: 'a\r\nb\r\nmine\r\n', // user file is CRLF
+      renderContext: RENDER_CTX,
+      literal: true,
+    });
+    expect(action.type).toBe('auto_merge');
+    if (action.type === 'auto_merge') {
+      expect(action.content).toContain('\r\n'); // user's CRLF honored
+      expect(action.content).toContain('shard');
+      expect(action.content).toContain('mine');
+    }
+  });
+
+  it('literal: copy file with no trailing newline merges without inventing one', async () => {
+    const action = await computeMergeAction({
+      path: 'no-eol.txt',
+      ownership: 'modified',
+      oldTemplate: 'a\nb',
+      newTemplate: 'a\nc',
+      oldValues: {},
+      newValues: {},
+      actualContent: 'a\nb',
+      renderContext: RENDER_CTX,
+      literal: true,
+    });
+    // ownership 'modified' → three-way merge (never the managed overwrite
+    // branch). base→ours changed b→c, user unchanged → clean auto_merge to ours.
+    expect(action.type).toBe('auto_merge');
+    if (action.type === 'auto_merge') {
+      expect(action.content.endsWith('\n')).toBe(false);
+    }
+  });
+
+  it('literal: a genuine divergence still produces a conflict on raw bytes', async () => {
+    const action = await computeMergeAction({
+      path: 'data.json',
+      ownership: 'modified',
+      oldTemplate: 'a\nbase\nc\n',
+      newTemplate: 'a\nshard{{\nc\n',
+      oldValues: {},
+      newValues: {},
+      actualContent: 'a\nmine{{\nc\n',
+      renderContext: RENDER_CTX,
+      literal: true,
+    });
+    expect(action.type).toBe('conflict');
+  });
+
+  it('non-literal (.njk template) with a real syntax error STILL throws — no #129 masking', async () => {
+    // Regression guard: the fix must NOT make `.njk` authoring errors silent.
+    // A broken template (`{{ user_name }` — missing brace) on the rendered
+    // path must still surface RENDER_TEMPLATE_ERROR, not pass through.
+    await expect(
+      computeMergeAction({
+        path: 'note.md.njk',
+        ownership: 'modified',
+        oldTemplate: 'ok\n',
+        newTemplate: 'Hi {{ user_name }\n', // genuine Nunjucks syntax error
+        oldValues: { user_name: 'Alice' },
+        newValues: { user_name: 'Alice' },
+        actualContent: 'ok\nedited\n',
+        renderContext: RENDER_CTX,
+        literal: false,
+      }),
+    ).rejects.toMatchObject({ code: 'RENDER_TEMPLATE_ERROR' });
+  });
+
+  it('non-literal default: omitting literal renders as before (back-compat)', async () => {
+    // No `literal` field → renders, substituting `{{ user_name }}`.
+    const action = await computeMergeAction({
+      path: 'note.md.njk',
+      ownership: 'managed',
+      oldTemplate: 'Hi {{ user_name }}\n',
+      newTemplate: 'Hello {{ user_name }}\n',
+      oldValues: { user_name: 'Alice' },
+      newValues: { user_name: 'Alice' },
+      actualContent: 'Hi Alice\n',
+      renderContext: RENDER_CTX,
+    });
+    expect(action.type).toBe('overwrite');
+    if (action.type === 'overwrite') {
+      expect(action.content).toBe('Hello Alice\n'); // substituted
+    }
   });
 });

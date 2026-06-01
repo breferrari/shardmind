@@ -734,6 +734,7 @@ computeMergeAction(input: {
   newValues: Record<string, unknown>;
   actualContent: string;       // File on disk
   renderContext: RenderContext;
+  literal?: boolean;           // copy-origin file → merge raw bytes, don't render (#132)
 }): Promise<MergeAction>
 
 type MergeAction =
@@ -749,9 +750,12 @@ interface MergeStats {
 ```
 
 **Algorithm**:
-1. Render old template with old values → `base`
-2. Render new template with new values → `ours`
+1. Render old template with old values → `base` (**unless `literal`** — see below)
+2. Render new template with new values → `ours` (**unless `literal`**)
 3. `theirs` = `actualContent` (what's on disk)
+
+**Copy-origin files (`literal: true`, #132)**: in v6 only `.njk` files are templates; everything else is copied verbatim (`modules.ts`). The update planner sets `literal` for copy-origin files (those carrying `copyFromSourcePath`). When set, steps 1–2 **skip rendering** — `base = oldTemplate`, `ours = newTemplate` — and the three-way merge runs on the raw bytes. Rendering a copy file would (a) crash on a literal `{{` that isn't a valid expression and (b) silently substitute any real `{{ expr }}` it contains as data. The renderer itself stays strict, so genuine `.njk` authoring errors still throw `RENDER_TEMPLATE_ERROR`.
+
 4. If `sha256(base) === sha256(ours)` → no upstream change → `{ type: 'skip' }`
 5. If ownership is `managed` (base === theirs) → `{ type: 'overwrite', content: ours }`
 6. If ownership is `modified`:

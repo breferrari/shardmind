@@ -8,6 +8,16 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (update merge rendered copy-origin files — #132)
+
+Closes [#132](https://github.com/breferrari/shardmind/issues/132); root cause **reported via [#129](https://github.com/breferrari/shardmind/issues/129)** (thanks!).
+
+- **`shardmind update` no longer crashes** when a modified copy-origin file (any non-`.njk` file — scripts, `.test.ts`, JSON) contains a literal `{{` that isn't a valid Nunjucks expression. The three-way merge (`source/core/differ.ts`) was rendering both sides of *every* modified file through Nunjucks; in v6 only `.njk` files are templates, so copy files were being rendered when they shouldn't be — which crashed on a literal `{{` and **silently substituted** any real `{{ expr }}` a copy file legitimately contained.
+
+- **Fix:** `computeMergeAction` takes a `literal` flag; `update-planner` sets it for copy-origin files (those carrying `copyFromSourcePath`). When set, the merge runs on the raw bytes (`base = oldTemplate`, `ours = newTemplate`, no render). The renderer stays strict, so genuine `.njk` template syntax errors still fail loudly with `RENDER_TEMPLATE_ERROR` — a renderer-level "swallow the parse error" approach would have masked them. Binary copy files through the utf-8 merge remain tracked by [#63](https://github.com/breferrari/shardmind/issues/63).
+
+- **Tests:** merge fixture 21 (`tests/fixtures/merge/21-copy-origin-literal-braces/`, authored RED-first) proving the copy file merges without rendering and both literals survive; unit tests for `literal` raw-merge + conflict and a regression guard that a broken `.njk` still throws; an end-to-end `update` integration test. **Docs:** `docs/IMPLEMENTATION.md §4.9`, `docs/SHARD-LAYOUT.md`.
+
 ### Added (adopt batch operations — #120)
 
 Closes [#120](https://github.com/breferrari/shardmind/issues/120). `shardmind adopt` against a divergent vault asked for a decision on *every* differing file (the flagship obsidian-mind run had 35). A top-level mode picker now resolves the whole set at once, with per-file prompting kept as a mode.
