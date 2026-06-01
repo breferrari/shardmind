@@ -8,6 +8,18 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (adopt batch operations — #120)
+
+Closes [#120](https://github.com/breferrari/shardmind/issues/120). `shardmind adopt` against a divergent vault asked for a decision on *every* differing file (the flagship obsidian-mind run had 35). A top-level mode picker now resolves the whole set at once, with per-file prompting kept as a mode.
+
+- **Mode picker** (`source/components/AdoptModePicker.tsx`) shown once before the per-file loop when files differ and neither `--mode` nor `--yes` is set: **Keep all mine** / **Use all theirs** / **Auto-merge (best-effort)** / **Decide per file**. A `--mode=keep-all-mine|use-all-theirs|auto-merge|decide-per-file` flag drives it non-interactively (overrides `--yes`, which is now shorthand for keep-all-mine).
+
+- **Auto-merge is a best-effort two-way *union* merge** (`source/core/adopt-merge.ts`), not a three-way merge: adopt has no merge base (the vault was cloned without shardmind), so a base-anchored merge is impossible. It keeps common lines, unions each side's unique lines, and sends files where both sides replaced the same span to the per-file prompt. **Its limits are surfaced, not hidden:** it keeps the user's bytes so it **does not apply shard deletions**, and can duplicate non-adjacent edits. Merged files are written as `modified` ownership and flagged **"review recommended"** in the Summary. Non-interactive auto-merge keeps-mine on conflicts.
+
+- **Executor** gains a `{ kind:'merged', content, hash }` resolution (`adopt-executor.ts`): writes the union bytes, records `modified` ownership at the merged hash, snapshots merged paths for rollback, and buckets them in `summary.adoptedMerged`. A subsequent `update` three-way-merges the result against the cached shard template (the proper base). The machine's `diff-review` phase now iterates a `queue` (only the files needing a prompt) with pre-seeded resolutions, so per-file and auto-merge share one loop.
+
+- **Tests**: `adopt-merge` unit matrix + determinism/union properties (fast-check); executor merged-resolution integration test; `AdoptModePicker` component test (modes + firedRef guard); Layer 1 flow scenarios 27-30 (keep-all / use-all / auto-merge mixed conflict / `--mode` non-interactive); Layer 2 PTY scenario picks decide-per-file; `AdoptSummary` merged-bucket test. **Docs**: `docs/ARCHITECTURE.md §10.5` (modes + best-effort note), `docs/AUTHORING.md`, `CLAUDE.md`.
+
 ### Changed (hook lifecycle split — #102) — **breaking, shard-author-facing**
 
 Part of [#102](https://github.com/breferrari/shardmind/issues/102) (the engine + fixture + docs; the issue stays open until the release-window items below land). Splits the single `post-install` hook into three named slots with engine-enforced contracts, turning yesterday's comment-checked conventions into machine-checked signals. Ships in the same release as [#121](https://github.com/breferrari/shardmind/issues/121) (engine version-compatibility check), which is the guard that stops a pre-0.2 engine from silently ignoring the new slots; obsidian-mind's hook migration ([`obsidian-mind#75`](https://github.com/breferrari/obsidian-mind/issues/75)) ships in the same window.

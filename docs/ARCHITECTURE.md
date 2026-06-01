@@ -875,15 +875,20 @@ Phase ordering (logical; UI may interleave loading messages — see IMPLEMENTATI
 2. **Values gate** (`source/components/AdoptValuesGate.tsx`, #104) — adopt's user already has a populated vault, so it opens on a single confirm page that surfaces the values that will drive classification (resolved defaults, computed defaults, `--values` prefill, each labelled with its provenance) plus the module default, with **Use these values / Override individually / Cancel**. "Override individually" drops into the same `InstallWizard` install uses (per-value + module editing). Required values with no default and no prefill open straight into the wizard (no confident set to confirm). This step runs **before** classification because `.njk` templates need values to render before their output bytes can be hashed.
 3. **Classify** (`source/core/adopt-planner.ts::classifyAdoption`) — for every shard output, render or read, hash, stat the user's vault, and assign one of four buckets:
    - **matches** — byte-identical post-render → managed silently.
-   - **differs** — bytes differ → 2-way diff prompt (`AdoptDiffView`); user picks `keep_mine` (record user's hash, ownership=`modified`) or `use_shard` (overwrite with shard bytes, ownership=`managed`).
+   - **differs** — bytes differ → resolved per the chosen batch mode (below); `keep_mine` records the user's hash (ownership=`modified`), `use_shard` overwrites with shard bytes (ownership=`managed`), `merged` writes union bytes (ownership=`modified`).
    - **shard-only** — user doesn't have the path → install fresh, managed.
    - Implicit **user-only** — paths in vault but not in shard → never enumerated, left untouched.
-4. **Apply** (`source/core/adopt-executor.ts::runAdopt`) — snapshot any `differs+use_shard` user file before overwriting, write shard-only fresh installs, write engine metadata (`state.json`, cached manifest+schema, templates cache, vault-root `shard-values.yaml`). Snapshot-then-restore rollback on any failure between snapshot and final state-write.
+3a. **Mode select** (`source/components/AdoptModePicker.tsx`, #120) — when there is at least one `differs` file and neither `--mode` nor `--yes` is set, adopt prompts once for how to resolve the whole set rather than file-by-file. Four modes:
+   - **Keep all mine** / **Use all theirs** — resolve every `differs` one way.
+   - **Auto-merge (best-effort)** — two-way-union each file (`source/core/adopt-merge.ts`): non-conflicting files resolve to their merged bytes; files where both sides replaced the same span fall through to the per-file prompt. **This is a union merge with no merge base** (adopt has no record of the original shard version): it keeps the user's bytes, **does not apply shard deletions**, and can duplicate non-adjacent edits — merged files are flagged "review recommended" in the Summary. Non-interactive auto-merge (`--mode=auto-merge` under `--yes`) keeps-mine on conflicts.
+   - **Decide per file** — the per-file `AdoptDiffView` prompt (`keep_mine` / `use_shard`).
+4. **Apply** (`source/core/adopt-executor.ts::runAdopt`) — snapshot any user file an apply will overwrite (`differs+use_shard` and `differs+merged`), write shard-only fresh installs, write engine metadata (`state.json`, cached manifest+schema, templates cache, vault-root `shard-values.yaml`). Snapshot-then-restore rollback on any failure between snapshot and final state-write.
 5. **Hooks** — run the install-side slots via the orchestrator: `bootstrap` (unmanaged setup), then `personalize` (managed edits) unless `valuesAreDefaults` (engine-skipped, Invariant 2). `newFiles=summary.installedFresh`. Non-fatal (Helm semantics, §9.3).
 6. **Re-hash** — recompute managed-file hashes per `state.ts::rehashManagedFiles` so any hook edits to managed paths land in the recorded state.
 
 Flags:
-- `--yes` — skip the values gate + auto-pick `keep_mine` on every `differs`. Preserves the user's bytes on every divergence; safe default for retroactive adoption.
+- `--yes` — skip the values gate + the mode picker; resolve every `differs` as `keep_mine` (shorthand for `--mode=keep-all-mine`). Preserves the user's bytes on every divergence; safe default for retroactive adoption.
+- `--mode <keep-all-mine|use-all-theirs|auto-merge|decide-per-file>` (#120) — resolve the `differs` set non-interactively without the picker. Overrides `--yes`'s default. Combine with `--yes`/`--values` for a fully non-interactive run (the flag governs the diff set, not value collection).
 - `--values <file>` — prefill value answers (same shape as `install --values`); shown on the gate's confirm page as `(from --values)`.
 - `--verbose` — show per-file action history during the apply phase.
 - `--dry-run` — run the full pipeline (fetch, values gate, classify) without touching the vault. Summary reports what *would* happen.
@@ -892,7 +897,7 @@ Volatile templates (`{# shardmind: volatile #}`) skip the differs prompt entirel
 
 Excluded modules' files in the user's vault are not classified — adopt mirrors install's "module excluded → file not installed" rule, so user content at those paths stays user-content without any prompt.
 
-Implementation modules: `source/core/adopt-planner.ts` (IMPLEMENTATION §4.17), `source/core/adopt-executor.ts` (§4.18). Orchestration lives in `source/commands/hooks/use-adopt-machine.ts`; UI components are `source/components/AdoptValuesGate.tsx` (values confirm-or-override), `source/components/AdoptDiffView.tsx` + `source/components/AdoptSummary.tsx`.
+Implementation modules: `source/core/adopt-planner.ts` (IMPLEMENTATION §4.17), `source/core/adopt-executor.ts` (§4.18), `source/core/adopt-merge.ts` (two-way union merge for auto-merge mode). Orchestration lives in `source/commands/hooks/use-adopt-machine.ts`; UI components are `source/components/AdoptValuesGate.tsx` (values confirm-or-override), `source/components/AdoptModePicker.tsx` (batch mode picker), `source/components/AdoptDiffView.tsx` + `source/components/AdoptSummary.tsx`.
 
 ### 10.6 Install Location
 
