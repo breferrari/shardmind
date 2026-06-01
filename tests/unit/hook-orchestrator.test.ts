@@ -491,3 +491,80 @@ describe('runHooks — legacy + resilience', () => {
     await expect(fsp.access(path.join(vault, 'p.txt'))).rejects.toBeTruthy();
   }, 30_000);
 });
+
+describe('runHooks — full-output log persistence (#105)', () => {
+  const LOG = path.join('.shardmind', 'logs', 'bootstrap.log');
+
+  it('writes a log + sets logPath when a hook crashes (non-zero exit)', async () => {
+    await hook(
+      'bootstrap.ts',
+      `export default async function () { process.stderr.write('boom-marker\\n'); process.exit(2); }`,
+    );
+    const result = await runHooks(
+      installPlan({ manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } }) }),
+      NOOP_UI,
+    );
+    const boot = result.outcomes.find((o) => o.slot === 'bootstrap');
+    expect(boot?.summary?.exitCode).toBe(2);
+    expect(boot?.summary?.logPath).toBe('.shardmind/logs/bootstrap.log');
+    const contents = await fsp.readFile(path.join(vault, LOG), 'utf-8');
+    expect(contents).toContain('boom-marker');
+    expect(contents).toContain('# exit code: 2');
+  }, 30_000);
+
+  it('writes a log for a clean hook whose output is long enough to truncate', async () => {
+    await hook(
+      'bootstrap.ts',
+      `export default async function () { for (let i = 0; i < 8; i++) console.log('line ' + i); }`,
+    );
+    const result = await runHooks(
+      installPlan({ manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } }) }),
+      NOOP_UI,
+    );
+    const boot = result.outcomes.find((o) => o.slot === 'bootstrap');
+    expect(boot?.summary?.exitCode).toBe(0);
+    expect(boot?.summary?.logPath).toBe('.shardmind/logs/bootstrap.log');
+    expect((await fsp.readFile(path.join(vault, LOG), 'utf-8'))).toContain('line 7');
+  }, 30_000);
+
+  it('writes NO log (and no logPath) for a short, clean hook', async () => {
+    await hook('bootstrap.ts', `export default async function () { console.log('ok'); }`);
+    const result = await runHooks(
+      installPlan({ manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } }) }),
+      NOOP_UI,
+    );
+    const boot = result.outcomes.find((o) => o.slot === 'bootstrap');
+    expect(boot?.summary?.logPath).toBeUndefined();
+    await expect(fsp.access(path.join(vault, '.shardmind', 'logs'))).rejects.toBeTruthy();
+  }, 30_000);
+
+  it('does not write a log on a dry run, even when the hook crashes', async () => {
+    await hook('bootstrap.ts', `export default async function () { process.exit(2); }`);
+    const result = await runHooks(
+      installPlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } }),
+        dryRun: true,
+      }),
+      NOOP_UI,
+    );
+    const boot = result.outcomes.find((o) => o.slot === 'bootstrap');
+    expect(boot?.summary?.logPath).toBeUndefined();
+    await expect(fsp.access(path.join(vault, '.shardmind', 'logs'))).rejects.toBeTruthy();
+  }, 30_000);
+
+  it('is non-fatal when the log cannot be written (logs/ path is a file)', async () => {
+    // Block the log dir: put a FILE where `.shardmind/logs/` should be, so the
+    // recursive mkdir fails. The hook outcome must still be reported; only the
+    // pointer is omitted.
+    await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind', 'logs'), 'not a dir', 'utf-8');
+    await hook('bootstrap.ts', `export default async function () { process.exit(2); }`);
+    const result = await runHooks(
+      installPlan({ manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } }) }),
+      NOOP_UI,
+    );
+    const boot = result.outcomes.find((o) => o.slot === 'bootstrap');
+    expect(boot?.summary?.exitCode).toBe(2); // outcome intact
+    expect(boot?.summary?.logPath).toBeUndefined(); // pointer omitted, no throw
+  }, 30_000);
+});
