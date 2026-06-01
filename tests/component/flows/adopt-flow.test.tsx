@@ -480,6 +480,42 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
       await cleanupVault(vault);
     }
   }, 60_000);
+
+  // ───── Scenario 31: --yes --mode=auto-merge → non-interactive, conflicts keep-mine (#120) ─────
+
+  it('31. --yes --mode=auto-merge → non-conflicting merged, conflicting falls back to keep-mine', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s31-auto-merge-yes');
+    try {
+      // Empty file → non-conflicting union (auto-merged); divergent file →
+      // conflict. Under --yes (no prompt) the conflict must fall back to
+      // keep-mine, not hang waiting for a decision.
+      await writeRel(vault, 'Home.md', '');
+      await writeRel(vault, 'brain/North Star.md', '# totally different\nxyz\n');
+      const valuesFile = path.join(vault, 'values.yaml');
+      await fs.writeFile(valuesFile, stringifyYaml(DEFAULT_VALUES), 'utf-8');
+      const r = mountAdopt({
+        shardRef: `${SHARD_REF}#v0.1.0`,
+        vaultRoot: vault,
+        options: { yes: true, values: valuesFile, mode: 'auto-merge' },
+      });
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Adopted shardmind\/minimal/.test(f),
+        30_000,
+      );
+      // Home.md auto-merged to the shard bytes; North Star kept (conflict fallback).
+      expect(frame).toMatch(/auto-merged/);
+      expect(frame).toMatch(/kept your version/);
+      expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).not.toBe('');
+      expect(
+        await fs.readFile(path.join(vault, 'brain/North Star.md'), 'utf-8'),
+      ).toContain('totally different');
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
 });
 
 async function writeRel(vault: string, rel: string, content: string): Promise<void> {

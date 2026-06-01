@@ -49,6 +49,18 @@ describe('twoWayUnionMerge', () => {
     expect(r.hasConflict).toBe(true);
   });
 
+  it('trailing-newline-only difference → conservative conflict (documented)', () => {
+    // diffLines aligns "line2" vs "line2\n" as a replacement (removed+added
+    // in one run), so a file that differs ONLY in its final newline is
+    // reported as a conflict and falls through to the per-file prompt rather
+    // than auto-resolving. This is intentional best-effort behaviour: the
+    // merge never normalizes newlines (that could mask a real diff), so it
+    // errs toward asking. Pinned so the choice is explicit, not accidental.
+    const user = 'line1\nline2';
+    const shard = 'line1\nline2\n';
+    expect(twoWayUnionMerge(buf(user), buf(shard), false).hasConflict).toBe(true);
+  });
+
   it('binary input → always conflict (no line merge attempted)', () => {
     const user = '\x00\x01mine';
     const shard = '\x00\x01theirs';

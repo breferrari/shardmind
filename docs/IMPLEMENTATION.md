@@ -163,17 +163,23 @@ graph TD
     E["adopt-planner.ts::classifyAdoption<br/>resolveModules walks shard, render or read each output<br/>per-output sha256 vs sha256(user vault path)<br/>→ matches | differs | shard-only buckets"] --> F1
 
     F1{Any<br/>differs?}
-    F1 -->|Yes, --yes| F2["auto-resolve every differs as keep_mine"]
-    F1 -->|Yes, interactive| F3["diff-review loop<br/>AdoptDiffView per file → keep_mine / use_shard"]
+    F1 -->|"Yes, --mode / --yes"| F2["applyMode (non-interactive)<br/>keep-all-mine / use-all-theirs /<br/>auto-merge (conflicts→keep_mine) / —"]
+    F1 -->|Yes, interactive| FM["mode-select — AdoptModePicker (#120)<br/>keep-all-mine · use-all-theirs ·<br/>auto-merge · decide-per-file"]
     F1 -->|No| G
 
-    F2 --> G
-    F3 --> G
+    FM -->|keep-all / use-all| G
+    FM -->|"auto-merge"| FA["adopt-merge.ts::twoWayUnionMerge<br/>non-conflicting → merged bytes<br/>conflicting → queue"]
+    FM -->|decide-per-file| F3
+    FA -->|conflicts| F3
+    FA -->|no conflicts| G
+    F3["diff-review loop (queue)<br/>AdoptDiffView per file → keep_mine / use_shard"] --> G
 
-    G["adopt-executor.ts::runAdopt<br/>① Snapshot every differs+use_shard user file<br/>② Apply per classification + resolution<br/>③ Cache templates + manifest + schema<br/>④ Write shard-values.yaml + state.json"] --> H
+    F2 --> G
+
+    G["adopt-executor.ts::runAdopt<br/>① Snapshot every differs+use_shard / differs+merged user file<br/>② Apply per classification + resolution (keep_mine / use_shard / merged)<br/>③ Cache templates + manifest + schema<br/>④ Write shard-values.yaml + state.json"] --> H
 
     H["hooks (orchestrator)<br/>bootstrap → personalize (non-fatal)<br/>newFiles = summary.installedFresh"] --> I
-    I["summary — AdoptSummary<br/>Counts: matched-auto / kept-mine / use-shard / fresh<br/>+ hook output"]
+    I["summary — AdoptSummary<br/>Counts: matched-auto / kept-mine / use-shard / merged / fresh<br/>+ hook output"]
 
     G -->|Any failure| R["rollbackAdopt<br/>Restore snapshot + erase added paths<br/>+ drop .shardmind/ + shard-values.yaml"]
 

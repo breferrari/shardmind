@@ -322,6 +322,10 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         finish({ kind: 'error', error: err as Error });
       }
     },
+    // References `applyMode` + `executeAdopt` via closure (defined below);
+    // both are stable across a session (their own deps — vaultRoot, dryRun,
+    // verbose, finish — are fixed CLI flags / process.cwd), so a captured
+    // binding is never stale. Listing them here would be a TDZ ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [vaultRoot, yes, mode, finish],
   );
@@ -523,8 +527,12 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         finish({ kind: 'error', error: err as Error });
       }
     },
+    // `executeAdopt` + `finish` are the only non-stable values applyMode
+    // calls. `setPhase` is a stable useState setter; `twoWayUnionMerge` /
+    // `sha256` are module imports. `ctx`/`result`/`plan` are arguments. The
+    // deps cover the closure; the lint rule can't see callbacks-as-args.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [finish],
+    [executeAdopt, finish],
   );
 
   const onWizardComplete = useCallback(

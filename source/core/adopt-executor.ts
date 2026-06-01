@@ -293,7 +293,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         throw new ShardMindError(
           `Missing adopt resolution for ${c.path}`,
           'ADOPT_WRITE_FAILED',
-          'Every `differs` classification needs a `keep_mine` or `use_shard` decision before runAdopt is called.',
+          'Every `differs` classification needs a `keep_mine` / `use_shard` / `merged` resolution before runAdopt is called.',
         );
       }
       const action: AdoptApplyKind =

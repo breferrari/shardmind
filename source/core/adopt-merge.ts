@@ -21,6 +21,9 @@
  *     same idea that `diffLines` does not align as one replacement run are
  *     both kept (union), which can duplicate content. Overlapping (adjacent
  *     removed+added) runs are always reported as conflicts, never combined.
+ *   - Newlines are never normalized, so a file that differs only in its
+ *     trailing newline is a conflict (it prompts) — deliberately conservative
+ *     rather than risk masking a real diff.
  *
  * `content` is the union and is only meaningful when `hasConflict === false`;
  * the caller sends conflicting files to the per-file prompt instead.
