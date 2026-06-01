@@ -147,6 +147,45 @@ describe('computeMergeAction — literal (copy-origin) inputs (#132)', () => {
     }
   });
 
+  it('literal: preserves the user file\'s CRLF line endings on raw merge', async () => {
+    const action = await computeMergeAction({
+      path: 'win.txt',
+      ownership: 'modified',
+      oldTemplate: 'a\nb\n',
+      newTemplate: 'a\nshard\nb\n',
+      oldValues: {},
+      newValues: {},
+      actualContent: 'a\r\nb\r\nmine\r\n', // user file is CRLF
+      renderContext: RENDER_CTX,
+      literal: true,
+    });
+    expect(action.type).toBe('auto_merge');
+    if (action.type === 'auto_merge') {
+      expect(action.content).toContain('\r\n'); // user's CRLF honored
+      expect(action.content).toContain('shard');
+      expect(action.content).toContain('mine');
+    }
+  });
+
+  it('literal: copy file with no trailing newline merges without inventing one', async () => {
+    const action = await computeMergeAction({
+      path: 'no-eol.txt',
+      ownership: 'modified',
+      oldTemplate: 'a\nb',
+      newTemplate: 'a\nc',
+      oldValues: {},
+      newValues: {},
+      actualContent: 'a\nb',
+      renderContext: RENDER_CTX,
+      literal: true,
+    });
+    // base→ours changed b→c, user unchanged → managed-style overwrite to ours.
+    expect(['overwrite', 'auto_merge']).toContain(action.type);
+    if (action.type === 'overwrite' || action.type === 'auto_merge') {
+      expect(action.content.endsWith('\n')).toBe(false);
+    }
+  });
+
   it('literal: a genuine divergence still produces a conflict on raw bytes', async () => {
     const action = await computeMergeAction({
       path: 'data.json',
