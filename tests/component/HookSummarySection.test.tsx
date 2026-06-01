@@ -63,6 +63,56 @@ describe('HookSummarySection', () => {
     expect(frame).toContain('hook boom');
   });
 
+  it('truncates a long crashed-hook stderr and points at the full log (#105)', () => {
+    const stderr = Array.from({ length: 9 }, (_, i) => `trace line ${i}`).join('\n');
+    const frame = out([
+      {
+        slot: 'bootstrap',
+        summary: { stdout: '', stderr, exitCode: 1, logPath: '.shardmind/logs/bootstrap.log' },
+      },
+    ]).lastFrame() ?? '';
+    // Crash header: clearly non-fatal + vault safe, still names the exit code.
+    expect(frame).toContain('Bootstrap hook exited with code 1');
+    expect(frame).toContain('Non-fatal; your vault is ready');
+    // First HOOK_OUTPUT_VISIBLE_LINES lines shown; the tail is hidden.
+    expect(frame).toContain('trace line 0');
+    expect(frame).toContain('trace line 4');
+    expect(frame).not.toContain('trace line 8');
+    // Pointer to the full on-disk log.
+    expect(frame).toContain('… 4 more lines');
+    expect(frame).toContain('full log at .shardmind/logs/bootstrap.log');
+  });
+
+  it('truncates long output on a clean exit too, with the log pointer (#105)', () => {
+    const stdout = Array.from({ length: 7 }, (_, i) => `out ${i}`).join('\n');
+    const frame = out([
+      {
+        slot: 'post-update',
+        summary: { stdout, stderr: '', exitCode: 0, logPath: '.shardmind/logs/post-update.log' },
+      },
+    ]).lastFrame() ?? '';
+    expect(frame).toContain('Post-update hook completed.');
+    expect(frame).toContain('out 0');
+    expect(frame).not.toContain('out 6');
+    expect(frame).toContain('… 2 more lines');
+    expect(frame).toContain('full log at .shardmind/logs/post-update.log');
+  });
+
+  it('omits the "more lines" pointer for output within the visible cap (#105)', () => {
+    const frame = out([
+      { slot: 'bootstrap', summary: { stdout: 'a\nb\nc', stderr: '', exitCode: 0 } },
+    ]).lastFrame() ?? '';
+    expect(frame).toContain('a');
+    expect(frame).not.toContain('more line');
+  });
+
+  it('shows the truncation count without a path when no log was written (#105)', () => {
+    const stderr = Array.from({ length: 8 }, (_, i) => `e${i}`).join('\n');
+    const frame = out([{ slot: 'bootstrap', summary: { stdout: '', stderr, exitCode: 1 } }]).lastFrame() ?? '';
+    expect(frame).toContain('… 3 more lines');
+    expect(frame).not.toContain('full log at');
+  });
+
   it('renders a bootstrap managed-write boundary violation', () => {
     const frame = out([
       { slot: 'bootstrap', summary: { exitCode: 0, violation: { kind: 'managed-write', paths: ['Home.md', 'brain/North Star.md'] } } },

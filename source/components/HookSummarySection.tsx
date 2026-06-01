@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react';
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
-import type { HookStage, HookSummary } from '../core/hook.js';
+import { headLines, type HookStage, type HookSummary } from '../core/hook.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
 import { assertNever } from '../runtime/types.js';
 
@@ -80,9 +80,12 @@ function renderOutcome(
       {succeeded ? (
         <Text color="green">{name} completed.</Text>
       ) : (
-        <StatusMessage variant="warning">
-          {name} exited with code {exitCode}. The operation succeeded; the hook's work may be incomplete.
-        </StatusMessage>
+        <Box flexDirection="column">
+          <StatusMessage variant="warning">
+            {name} exited with code {exitCode}. Non-fatal; your vault is ready.
+          </StatusMessage>
+          <Text dimColor>The operation succeeded; the hook's work may be incomplete.</Text>
+        </Box>
       )}
       {summary.deprecated && (
         <StatusMessage variant="warning">
@@ -92,18 +95,40 @@ function renderOutcome(
       {summary.violation && (
         <StatusMessage variant="warning">{violationMessage(stage, summary.violation)}</StatusMessage>
       )}
-      {stdout && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold>Hook stdout:</Text>
-          <Text>{stdout}</Text>
-        </Box>
-      )}
-      {stderr && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold>Hook stderr:</Text>
-          <Text>{stderr}</Text>
-        </Box>
-      )}
+      {stdout && outputBlock('Hook stdout:', stdout, summary.logPath, 'stdout')}
+      {stderr && outputBlock('Hook stderr:', stderr, summary.logPath, 'stderr')}
+    </Box>
+  );
+}
+
+/**
+ * One captured-output block: a bold label, then the first
+ * `HOOK_OUTPUT_VISIBLE_LINES` lines dimmed + indented so the hook's output
+ * never reads as the primary outcome. When the output is longer, a dim
+ * "… N more lines" pointer follows — naming the full log on disk when one was
+ * written (`summary.logPath`). A long Node stack trace from a crashed hook
+ * thus collapses to a few dim lines plus a path, instead of dominating the
+ * Summary. See #105.
+ */
+function outputBlock(
+  label: string,
+  text: string,
+  logPath: string | undefined,
+  key: string,
+): ReactElement {
+  const { head, hidden } = headLines(text);
+  return (
+    <Box key={key} flexDirection="column" marginTop={1}>
+      <Text bold>{label}</Text>
+      <Box flexDirection="column" marginLeft={2}>
+        <Text dimColor>{head}</Text>
+        {hidden > 0 && (
+          <Text dimColor>
+            … {hidden} more line{hidden === 1 ? '' : 's'}
+            {logPath ? ` — full log at ${logPath}` : ''}
+          </Text>
+        )}
+      </Box>
     </Box>
   );
 }
