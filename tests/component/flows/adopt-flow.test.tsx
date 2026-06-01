@@ -77,7 +77,7 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
     r: ReturnType<typeof mountAdopt>,
     mode: 'keep-all-mine' | 'use-all-theirs' | 'auto-merge' | 'decide-per-file',
   ): Promise<void> {
-    await waitFor(r.lastFrame, (f) => /files? differ from the shard/.test(f), 20_000);
+    await waitFor(r.lastFrame, (f) => /files? differs? from the shard/.test(f), 20_000);
     // Arrow counts must match AdoptModePicker.tsx's option order
     // (keep-all-mine, use-all-theirs, auto-merge, decide-per-file).
     const downs = {

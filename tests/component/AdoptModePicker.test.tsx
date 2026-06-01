@@ -32,7 +32,7 @@ describe('AdoptModePicker', () => {
       <AdoptModePicker differsCount={1} onSelect={vi.fn()} />,
     );
     await waitFor(lastFrame, (f) => f.includes('Keep all mine'));
-    expect(lastFrame() ?? '').toMatch(/1 file differ(?!s)/);
+    expect(lastFrame() ?? '').toMatch(/1 file differs from the shard/);
   });
 
   it('ENTER on the focused option selects keep-all-mine', async () => {

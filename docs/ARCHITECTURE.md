@@ -888,7 +888,7 @@ Phase ordering (logical; UI may interleave loading messages — see IMPLEMENTATI
 
 Flags:
 - `--yes` — skip the values gate + the mode picker; resolve every `differs` as `keep_mine` (shorthand for `--mode=keep-all-mine`). Preserves the user's bytes on every divergence; safe default for retroactive adoption.
-- `--mode <keep-all-mine|use-all-theirs|auto-merge|decide-per-file>` (#120) — resolve the `differs` set non-interactively without the picker. Overrides `--yes`'s default. Combine with `--yes`/`--values` for a fully non-interactive run (the flag governs the diff set, not value collection).
+- `--mode <keep-all-mine|use-all-theirs|auto-merge|decide-per-file>` (#120) — choose how to resolve the `differs` set, skipping the picker. `keep-all-mine`/`use-all-theirs`/`auto-merge` are non-interactive (`auto-merge` still prompts on conflicts unless `--yes` is also set, which keeps-mine on them); `decide-per-file` is the per-file prompt loop. Overrides `--yes`'s default. The flag governs the diff set, not value collection — combine with `--yes`/`--values` for a fully non-interactive run.
 - `--values <file>` — prefill value answers (same shape as `install --values`); shown on the gate's confirm page as `(from --values)`.
 - `--verbose` — show per-file action history during the apply phase.
 - `--dry-run` — run the full pipeline (fetch, values gate, classify) without touching the vault. Summary reports what *would* happen.

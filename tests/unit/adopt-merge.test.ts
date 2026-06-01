@@ -61,6 +61,15 @@ describe('twoWayUnionMerge', () => {
     expect(twoWayUnionMerge(buf(user), buf(shard), false).hasConflict).toBe(true);
   });
 
+  it('non-UTF-8 but non-binary input → conflict, never lossy-merged', () => {
+    // 0xFF is invalid UTF-8 and there is no NUL, so the planner's looksBinary
+    // returns false. Merging would corrupt the byte via U+FFFD; the guard
+    // forces a prompt instead.
+    const user = Buffer.from([0x61, 0xff, 0x0a]); // "a", 0xFF, "\n"
+    const shard = Buffer.from('a\nb\n', 'utf8');
+    expect(twoWayUnionMerge(user, shard, false).hasConflict).toBe(true);
+  });
+
   it('binary input → always conflict (no line merge attempted)', () => {
     const user = '\x00\x01mine';
     const shard = '\x00\x01theirs';

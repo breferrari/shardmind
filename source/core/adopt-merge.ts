@@ -56,7 +56,23 @@ export function twoWayUnionMerge(
     return { content: userContent, hasConflict: true };
   }
 
-  const parts = diffLines(userContent.toString('utf8'), shardContent.toString('utf8'));
+  const userText = userContent.toString('utf8');
+  const shardText = shardContent.toString('utf8');
+
+  // The merge round-trips through UTF-8 (decode → diff → re-encode). A
+  // non-binary file (no NUL, so `looksBinary` returned false) that is still
+  // not clean UTF-8 — e.g. Latin-1 / Windows-1252 bytes — would have its
+  // invalid bytes replaced by U+FFFD and silently corrupted in the union
+  // output. Detect non-round-trippable input and force a prompt instead of
+  // merging it.
+  if (
+    !Buffer.from(userText, 'utf8').equals(userContent) ||
+    !Buffer.from(shardText, 'utf8').equals(shardContent)
+  ) {
+    return { content: userContent, hasConflict: true };
+  }
+
+  const parts = diffLines(userText, shardText);
 
   let hasConflict = false;
   let out = '';

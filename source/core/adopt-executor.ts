@@ -76,7 +76,13 @@ export type AdoptResolutions = Record<string, AdoptResolution>;
 
 /** A resolution that overwrites the user's file → needs a rollback snapshot. */
 function overwritesUserFile(resolution: AdoptResolution | undefined): boolean {
-  return resolution === 'use_shard' || (typeof resolution === 'object' && resolution.kind === 'merged');
+  // `resolution != null` guards the `typeof === 'object'` branch against a
+  // null map value (typeof null === 'object') even though the type excludes
+  // it — this runs on unvalidated `resolutions[path]` lookups.
+  return (
+    resolution === 'use_shard' ||
+    (resolution != null && typeof resolution === 'object' && resolution.kind === 'merged')
+  );
 }
 
 export interface AdoptRunnerOptions {

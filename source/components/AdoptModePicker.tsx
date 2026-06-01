@@ -48,7 +48,7 @@ export default function AdoptModePicker({ differsCount, onSelect }: AdoptModePic
   return (
     <Box flexDirection="column" gap={1}>
       <Text bold color="yellow">
-        {differsCount} file{differsCount === 1 ? '' : 's'} differ from the shard.
+        {differsCount} file{differsCount === 1 ? ' differs' : 's differ'} from the shard.
       </Text>
       <Text>How should I resolve them?</Text>
 
