@@ -113,6 +113,30 @@ describe('HookSummarySection', () => {
     expect(frame).not.toContain('full log at');
   });
 
+  it('shows the log pointer only when output actually truncates, not just because logPath is set (#105)', () => {
+    // A crashed hook with SHORT output: a log may exist, but the on-screen
+    // block fits — so no "more lines"/pointer noise.
+    const frame = out([
+      {
+        slot: 'bootstrap',
+        summary: { stdout: 'ok', stderr: 'boom', exitCode: 1, logPath: '.shardmind/logs/bootstrap.log' },
+      },
+    ]).lastFrame() ?? '';
+    expect(frame).toContain('boom');
+    expect(frame).not.toContain('more line');
+    expect(frame).not.toContain('full log at');
+  });
+
+  it('renders only the crash header when a crashed hook produced no output (#105)', () => {
+    const frame = out([
+      { slot: 'bootstrap', summary: { stdout: '', stderr: '', exitCode: 1, logPath: '.shardmind/logs/bootstrap.log' } },
+    ]).lastFrame() ?? '';
+    expect(frame).toContain('Bootstrap hook exited with code 1');
+    expect(frame).not.toContain('Hook stdout:');
+    expect(frame).not.toContain('Hook stderr:');
+    expect(frame).not.toContain('full log at');
+  });
+
   it('renders a bootstrap managed-write boundary violation', () => {
     const frame = out([
       { slot: 'bootstrap', summary: { exitCode: 0, violation: { kind: 'managed-write', paths: ['Home.md', 'brain/North Star.md'] } } },

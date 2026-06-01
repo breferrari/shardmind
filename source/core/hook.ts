@@ -219,7 +219,12 @@ export function headLines(
   text: string,
   max: number = HOOK_OUTPUT_VISIBLE_LINES,
 ): { head: string; hidden: number } {
-  const lines = text.split('\n');
+  // Split on CRLF or LF — a Windows hook (Git for Windows, some Node scripts)
+  // emits CRLF, and `split('\n')` alone would leave a trailing `\r` on each
+  // line that renders as a visible control character in the Summary. The head
+  // is re-joined with LF (the canonical display ending), matching the rest of
+  // the engine.
+  const lines = text.split(/\r?\n/);
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
   if (lines.length <= max) return { head: lines.join('\n'), hidden: 0 };
   return { head: lines.slice(0, max).join('\n'), hidden: lines.length - max };

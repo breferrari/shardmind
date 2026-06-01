@@ -71,6 +71,17 @@ describe('headLines (#105)', () => {
     expect(headLines('', 5)).toEqual({ head: '', hidden: 0 });
   });
 
+  it('normalizes CRLF input — no trailing \\r artifacts (Windows hooks)', () => {
+    // A Windows hook emits CRLF; `split('\n')` alone would leave a trailing
+    // \r on each line that renders as a visible control character.
+    expect(headLines('a\r\nb\r\nc\r\n', 5)).toEqual({ head: 'a\nb\nc', hidden: 0 });
+    const long = '1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7';
+    const { head, hidden } = headLines(long, 5);
+    expect(head).toBe('1\n2\n3\n4\n5');
+    expect(head).not.toContain('\r');
+    expect(hidden).toBe(2);
+  });
+
   it('defaults to HOOK_OUTPUT_VISIBLE_LINES', () => {
     const lines = Array.from({ length: HOOK_OUTPUT_VISIBLE_LINES + 3 }, (_, i) => `L${i}`).join('\n');
     expect(headLines(lines).hidden).toBe(3);

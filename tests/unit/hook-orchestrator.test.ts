@@ -510,6 +510,10 @@ describe('runHooks — full-output log persistence (#105)', () => {
     const contents = await fsp.readFile(path.join(vault, LOG), 'utf-8');
     expect(contents).toContain('boom-marker');
     expect(contents).toContain('# exit code: 2');
+    // Pin the log format so on-disk logs stay readable.
+    expect(contents).toContain('# ShardMind bootstrap hook');
+    expect(contents).toContain('=== stdout ===');
+    expect(contents).toContain('=== stderr ===');
   }, 30_000);
 
   it('writes a log for a clean hook whose output is long enough to truncate', async () => {
