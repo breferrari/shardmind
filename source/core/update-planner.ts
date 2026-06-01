@@ -451,6 +451,10 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
         newValues,
         actualContent,
         renderContext: newRenderContext,
+        // Copy-origin files (no `.njk` suffix) are verbatim, not templates.
+        // Rendering them through Nunjucks crashes on a literal `{{` and would
+        // substitute any real `{{ expr }}` as data, so merge raw bytes (#132).
+        literal: target.copyFromSourcePath !== undefined,
       });
 
       switch (mergeAction.type) {

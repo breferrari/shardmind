@@ -69,6 +69,12 @@ interface Scenario {
   partial_update?: boolean;
   module_change?: 'newly_included' | 'newly_excluded';
   module?: string;
+  /**
+   * Copy-origin file (not a `.njk` template). The merge must NOT render it —
+   * `oldTemplate`/`newTemplate` are verbatim bytes. Threads to
+   * `computeMergeAction`'s `literal` flag. See #132.
+   */
+  copy_origin?: boolean;
 }
 
 interface FixtureFiles {
@@ -154,7 +160,7 @@ function makeRenderContext(scenario: Scenario): RenderContext {
   };
 }
 
-const EXPECTED_FIXTURE_COUNT = 20;
+const EXPECTED_FIXTURE_COUNT = 21;
 
 describe('merge engine (fixture-driven)', () => {
   it(`discovers all ${EXPECTED_FIXTURE_COUNT} scenarios`, () => {
@@ -229,6 +235,7 @@ async function assertStandardMerge(
     newValues: files.newValues,
     actualContent: files.actualContent,
     renderContext: makeRenderContext(scenario),
+    literal: scenario.copy_origin ?? false,
   });
 
   expect(action.type).toBe(scenario.expected_action);

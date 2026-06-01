@@ -68,6 +68,16 @@ export interface ComputeMergeActionInput {
   readonly newValues: Record<string, unknown>;
   readonly actualContent: string;
   readonly renderContext: RenderContext;
+  /**
+   * Copy-origin file (not a `.njk` template): `oldTemplate` / `newTemplate`
+   * are verbatim bytes, NOT Nunjucks sources. Skip rendering them — a copy
+   * file is never templated, so rendering it (a) crashes on a literal `{{`
+   * that isn't a valid expression (e.g. `garbage{{` in a test fixture) and
+   * (b) silently substitutes any real `{{ expr }}` the file contains as
+   * data. The three-way merge runs on the raw bytes instead. Default
+   * `false` keeps the rendered path for `.njk` templates. See #132.
+   */
+  readonly literal?: boolean;
 }
 
 export interface ThreeWayMergeResult {
@@ -79,16 +89,23 @@ export interface ThreeWayMergeResult {
 export async function computeMergeAction(
   input: ComputeMergeActionInput,
 ): Promise<MergeAction> {
-  const base = renderString(
-    input.oldTemplate,
-    { ...input.renderContext, values: input.oldValues },
-    input.path,
-  );
-  const ours = renderString(
-    input.newTemplate,
-    { ...input.renderContext, values: input.newValues },
-    input.path,
-  );
+  // Copy-origin files are verbatim — never run Nunjucks over them (see
+  // `literal` on the input type). Template files render old/new values so the
+  // diff3 below sees only the user's manual edits, not value churn.
+  const base = input.literal
+    ? input.oldTemplate
+    : renderString(
+        input.oldTemplate,
+        { ...input.renderContext, values: input.oldValues },
+        input.path,
+      );
+  const ours = input.literal
+    ? input.newTemplate
+    : renderString(
+        input.newTemplate,
+        { ...input.renderContext, values: input.newValues },
+        input.path,
+      );
 
   if (sha256(base) === sha256(ours)) {
     return { type: 'skip', reason: 'no upstream change' };

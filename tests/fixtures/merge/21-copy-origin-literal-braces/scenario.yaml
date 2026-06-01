@@ -1,0 +1,17 @@
+name: "Copy-origin file with literal {{ — merged verbatim, never rendered"
+description: >
+  A modified copy-origin file (not a .njk template) containing a literal `{{`
+  that is not a valid Nunjucks expression ("garbage{{"), plus a real-looking
+  `{{ user_name }}`. The three-way merge must NOT render it: rendering would
+  crash on `garbage{{` and would substitute `{{ user_name }}` as data. With
+  copy_origin the merge runs on raw bytes — the user's add and the shard's add
+  combine non-conflicting, and both literals survive untouched.
+  Reported via #129; root cause #132.
+
+copy_origin: true
+ownership_before: modified
+user_edited: true
+template_changed: true
+values_changed: false
+conflict_expected: false
+expected_action: auto_merge
