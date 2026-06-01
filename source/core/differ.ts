@@ -92,20 +92,12 @@ export async function computeMergeAction(
   // Copy-origin files are verbatim — never run Nunjucks over them (see
   // `literal` on the input type). Template files render old/new values so the
   // diff3 below sees only the user's manual edits, not value churn.
-  const base = input.literal
-    ? input.oldTemplate
-    : renderString(
-        input.oldTemplate,
-        { ...input.renderContext, values: input.oldValues },
-        input.path,
-      );
-  const ours = input.literal
-    ? input.newTemplate
-    : renderString(
-        input.newTemplate,
-        { ...input.renderContext, values: input.newValues },
-        input.path,
-      );
+  const sideContent = (template: string, values: Record<string, unknown>): string =>
+    input.literal
+      ? template
+      : renderString(template, { ...input.renderContext, values }, input.path);
+  const base = sideContent(input.oldTemplate, input.oldValues);
+  const ours = sideContent(input.newTemplate, input.newValues);
 
   if (sha256(base) === sha256(ours)) {
     return { type: 'skip', reason: 'no upstream change' };
