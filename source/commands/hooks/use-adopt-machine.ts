@@ -463,25 +463,26 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
       plan: AdoptPlan,
       interactive: boolean,
     ) => {
+      const enterDiffReview = (
+        queue: AdoptClassification[],
+        resolutions: AdoptResolutions,
+      ) =>
+        setPhase({ kind: 'diff-review', ctx, result, plan, queue, currentIndex: 0, resolutions });
+
       try {
         if (selected === 'keep-all-mine' || selected === 'use-all-theirs') {
           const decision = selected === 'keep-all-mine' ? 'keep_mine' : 'use_shard';
-          const resolutions: AdoptResolutions = {};
-          for (const c of plan.differs) resolutions[c.path] = decision;
-          await executeAdopt(ctx, result, plan, resolutions);
+          await executeAdopt(
+            ctx,
+            result,
+            plan,
+            Object.fromEntries(plan.differs.map((c) => [c.path, decision])),
+          );
           return;
         }
 
         if (selected === 'decide-per-file') {
-          setPhase({
-            kind: 'diff-review',
-            ctx,
-            result,
-            plan,
-            queue: plan.differs,
-            currentIndex: 0,
-            resolutions: {},
-          });
+          enterDiffReview(plan.differs, {});
           return;
         }
 
@@ -509,15 +510,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         }
 
         if (interactive) {
-          setPhase({
-            kind: 'diff-review',
-            ctx,
-            result,
-            plan,
-            queue,
-            currentIndex: 0,
-            resolutions,
-          });
+          enterDiffReview(queue, resolutions);
           return;
         }
 
