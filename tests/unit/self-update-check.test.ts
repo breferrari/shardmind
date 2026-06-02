@@ -644,5 +644,15 @@ describe('self-update-check', () => {
         expect(getConfiguredFetchTimeoutMs()).toBe(FETCH_TIMEOUT_MS);
       }
     });
+
+    it('truncates fractions and clamps to the 32-bit setTimeout ceiling', () => {
+      // Fractional → truncated (setTimeout would truncate anyway).
+      process.env[KEY] = '45000.9';
+      expect(getConfiguredFetchTimeoutMs()).toBe(45000);
+      // Above 2^31−1 would overflow setTimeout to ~1ms; clamp to the ceiling
+      // so a fat-fingered huge value never makes the timeout *shorter*.
+      process.env[KEY] = '9999999999';
+      expect(getConfiguredFetchTimeoutMs()).toBe(2_147_483_647);
+    });
   });
 });

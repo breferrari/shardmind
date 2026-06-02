@@ -76,6 +76,8 @@ export interface SelfUpdateResult {
 export const CACHE_FILENAME = 'self-update.json';
 export const TTL_MS = 24 * 60 * 60 * 1000;
 export const FETCH_TIMEOUT_MS = 3000;
+/** Node's `setTimeout` delay ceiling (2^31−1 ms); larger values overflow to ~1ms. */
+const TIMER_MAX_MS = 2_147_483_647;
 export const NPM_REGISTRY_URL = 'https://registry.npmjs.org/shardmind/latest';
 const CACHE_SCHEMA_VERSION = 1 as const;
 const SHARDMIND_DIRNAME = 'shardmind';
@@ -146,7 +148,11 @@ export function getConfiguredFetchTimeoutMs(): number {
   const raw = process.env['SHARDMIND_SELF_UPDATE_FETCH_TIMEOUT_MS'];
   if (raw === undefined) return FETCH_TIMEOUT_MS;
   const n = Number(raw.trim());
-  return Number.isFinite(n) && n > 0 ? n : FETCH_TIMEOUT_MS;
+  if (!Number.isFinite(n) || n <= 0) return FETCH_TIMEOUT_MS;
+  // Node's setTimeout delay is a 32-bit signed int; a value above that overflows
+  // to ~1ms (the OPPOSITE of a longer timeout — it would abort the fetch almost
+  // immediately). Truncate fractions and clamp to the timer ceiling.
+  return Math.min(Math.trunc(n), TIMER_MAX_MS);
 }
 
 function cachePath(cacheDir: string): string {
