@@ -24,8 +24,10 @@ import crypto from 'node:crypto';
 import {
   checkSelfUpdate,
   getSelfUpdateCacheDir,
+  getConfiguredFetchTimeoutMs,
   CACHE_FILENAME,
   TTL_MS,
+  FETCH_TIMEOUT_MS,
 } from '../../source/core/self-update-check.js';
 
 function npmLatestResponse(version: string): Response {
@@ -612,6 +614,35 @@ describe('self-update-check', () => {
       });
       // Live answer still returned despite the cache write failure.
       expect(result).toEqual({ outdated: true, latest: '1.0.0' });
+    });
+  });
+
+  describe('getConfiguredFetchTimeoutMs — SHARDMIND_SELF_UPDATE_FETCH_TIMEOUT_MS', () => {
+    const KEY = 'SHARDMIND_SELF_UPDATE_FETCH_TIMEOUT_MS';
+    let original: string | undefined;
+    beforeEach(() => {
+      original = process.env[KEY];
+    });
+    afterEach(() => {
+      if (original === undefined) delete process.env[KEY];
+      else process.env[KEY] = original;
+    });
+
+    it('defaults to FETCH_TIMEOUT_MS when unset', () => {
+      delete process.env[KEY];
+      expect(getConfiguredFetchTimeoutMs()).toBe(FETCH_TIMEOUT_MS);
+    });
+
+    it('honors a positive numeric override (trimmed)', () => {
+      process.env[KEY] = '  45000 ';
+      expect(getConfiguredFetchTimeoutMs()).toBe(45000);
+    });
+
+    it('falls back to the default on non-numeric / non-positive / empty input', () => {
+      for (const bad of ['', '   ', 'abc', '0', '-5', 'NaN', 'Infinity']) {
+        process.env[KEY] = bad;
+        expect(getConfiguredFetchTimeoutMs()).toBe(FETCH_TIMEOUT_MS);
+      }
     });
   });
 });
