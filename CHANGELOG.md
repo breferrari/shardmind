@@ -8,6 +8,8 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-06-02
+
 ### Changed (hook crash presentation in the Summary — #105)
 
 Closes [#105](https://github.com/breferrari/shardmind/issues/105).
