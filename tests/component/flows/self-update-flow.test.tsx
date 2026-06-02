@@ -121,6 +121,7 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
     'SHARDMIND_SELF_UPDATE_FORCE_TTY',
     'SHARDMIND_SELF_UPDATE_REGISTRY_URL',
     'SHARDMIND_SELF_UPDATE_CACHE_DIR',
+    'SHARDMIND_SELF_UPDATE_FETCH_TIMEOUT_MS',
     'CI',
   ] as const;
   let envSnapshot: Partial<Record<(typeof TOUCHED_ENV)[number], string | undefined>>;
@@ -165,6 +166,13 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
     delete process.env['CI'];
     process.env['SHARDMIND_SELF_UPDATE_FORCE_TTY'] = '1';
     process.env['SHARDMIND_SELF_UPDATE_REGISTRY_URL'] = npmStub.url;
+    // The local stub answers in single-digit ms, but under heavy parallel CPU
+    // load the event loop can starve past the production 3s fetch timeout
+    // before the response is processed — aborting the fetch so the banner
+    // never renders and the banner-wait below times out. Give the fetch a wide
+    // budget here (above the 30s banner waitFor below, under the 60s test
+    // timeout); production keeps the 3s default. (Fixes the flaky scenario 7.)
+    process.env['SHARDMIND_SELF_UPDATE_FETCH_TIMEOUT_MS'] = '45000';
     // Per-test cache dir keeps the dev's real ~/.cache/shardmind clean
     // and avoids one test's cache hit suppressing the next test's fetch.
     const cacheDir = path.join(cacheDirParent, crypto.randomUUID());
@@ -293,7 +301,7 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
           f.includes(`shardmind ${NEWER_VERSION}`) &&
           f.includes('npm install -g shardmind@latest') &&
           /shardmind\/minimal/.test(f),
-        15_000,
+        30_000,
       );
       // Banner is above the status header (StatusView's first line is
       // the namespace/name + version badge). String-position check
@@ -402,7 +410,7 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
       await waitFor(
         r.lastFrame,
         (f) => f.includes(`shardmind ${NEWER_VERSION}`),
-        15_000,
+        30_000,
       );
     } finally {
       if (vault) await vault.cleanup();

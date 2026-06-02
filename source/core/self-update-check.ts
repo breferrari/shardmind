@@ -76,6 +76,8 @@ export interface SelfUpdateResult {
 export const CACHE_FILENAME = 'self-update.json';
 export const TTL_MS = 24 * 60 * 60 * 1000;
 export const FETCH_TIMEOUT_MS = 3000;
+/** Node's `setTimeout` delay ceiling (2^31−1 ms); larger values overflow to ~1ms. */
+const TIMER_MAX_MS = 2_147_483_647;
 export const NPM_REGISTRY_URL = 'https://registry.npmjs.org/shardmind/latest';
 const CACHE_SCHEMA_VERSION = 1 as const;
 const SHARDMIND_DIRNAME = 'shardmind';
@@ -128,6 +130,29 @@ export function getSelfUpdateCacheDir(): string {
     }
   }
   return path.join(os.homedir(), '.cache', SHARDMIND_DIRNAME);
+}
+
+/**
+ * Resolve the fetch timeout at call time. Production default is
+ * `FETCH_TIMEOUT_MS` (3s) — short, because a courtesy notifier must never make
+ * a real command feel slow. It can be raised via
+ * `SHARDMIND_SELF_UPDATE_FETCH_TIMEOUT_MS` for two cases: a user on a genuinely
+ * slow link, and Layer-1 flow tests where heavy parallel CPU load can starve
+ * the event loop past 3s before the (fast, local) stub response is processed —
+ * which would spuriously abort the fetch and the banner would never render.
+ * Mirrors the call-time env reads in `getRegistryUrl` / `getSelfUpdateCacheDir`.
+ * A non-numeric or non-positive value falls back to the default (never disables
+ * the timeout).
+ */
+export function getConfiguredFetchTimeoutMs(): number {
+  const raw = process.env['SHARDMIND_SELF_UPDATE_FETCH_TIMEOUT_MS'];
+  if (raw === undefined) return FETCH_TIMEOUT_MS;
+  const n = Number(raw.trim());
+  if (!Number.isFinite(n) || n <= 0) return FETCH_TIMEOUT_MS;
+  // Node's setTimeout delay is a 32-bit signed int; a value above that overflows
+  // to ~1ms (the OPPOSITE of a longer timeout — it would abort the fetch almost
+  // immediately). Truncate fractions and clamp to the timer ceiling.
+  return Math.min(Math.trunc(n), TIMER_MAX_MS);
 }
 
 function cachePath(cacheDir: string): string {
@@ -253,7 +278,7 @@ export async function checkSelfUpdate(
     currentVersion,
     cacheDir = getSelfUpdateCacheDir(),
     ttlMs = TTL_MS,
-    fetchTimeoutMs = FETCH_TIMEOUT_MS,
+    fetchTimeoutMs = getConfiguredFetchTimeoutMs(),
     now = Date.now(),
     signal,
   } = opts;
