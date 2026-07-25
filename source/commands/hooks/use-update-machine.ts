@@ -399,7 +399,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         // Render the new shard once and thread the result through to
         // `runPlanAndResolve`. The planner reuses this plan instead of
         // rendering a second time.
-        const newRenderContext = buildRenderContext(ctx.newManifest, values, selections);
+        const newRenderContext = buildRenderContext(ctx.newManifest, values, selections, undefined, vaultRoot);
         const [drift, newFilePlan] = await Promise.all([
           detectDrift(vaultRoot, ctx.state),
           renderNewShard(ctx.newSchema, ctx.newTempDir, selections, newRenderContext),
@@ -437,7 +437,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     ) => {
       try {
         setPhase({ kind: 'loading', message: 'Planning update…' });
-        const newRenderContext = buildRenderContext(ctx.newManifest, values, selections);
+        const newRenderContext = buildRenderContext(ctx.newManifest, values, selections, undefined, vaultRoot);
         const drift = precomputed?.drift ?? (await detectDrift(vaultRoot, ctx.state));
         const plan = await planUpdate({
           vault: { root: vaultRoot, state: ctx.state, drift },

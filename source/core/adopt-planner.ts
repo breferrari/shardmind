@@ -142,7 +142,7 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
 
   const resolution = await resolveModules(schema, selections, tempDir);
   const env = createRenderer(tempDir);
-  const renderContext = buildRenderContext(manifest, values, selections, now);
+  const renderContext = buildRenderContext(manifest, values, selections, now, vaultRoot);
 
   // `renderFile` reads the source file then runs Nunjucks; `buildItemFromCopy`
   // reads the source file. Both are independent across entries — fan out to

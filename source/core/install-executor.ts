@@ -185,7 +185,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   onProgress?.({ kind: 'start', total: totalFiles });
 
   const env = createRenderer(tempDir);
-  const context = buildRenderContext(manifest, values, selections);
+  const context = buildRenderContext(manifest, values, selections, undefined, vaultRoot);
 
   let index = 0;
 

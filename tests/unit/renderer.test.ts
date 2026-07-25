@@ -3,8 +3,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { parse as parseYaml } from 'yaml';
 import { describe, it, expect } from 'vitest';
-import { createRenderer, renderFile, renderString } from '../../source/core/renderer.js';
-import type { FileEntry, RenderContext } from '../../source/runtime/types.js';
+import {
+  createRenderer,
+  renderFile,
+  renderString,
+  buildRenderContext,
+  slugifyVaultName,
+} from '../../source/core/renderer.js';
+import type { FileEntry, RenderContext, ShardManifest } from '../../source/runtime/types.js';
 
 const FIXTURES = path.resolve('tests/fixtures/render');
 
@@ -14,6 +20,8 @@ function makeContext(overrides: Partial<RenderContext> & { values: Record<string
     shard: { name: 'test', version: '0.1.0' },
     install_date: '2026-04-01',
     year: '2026',
+    vault_name: '',
+    vault_slug: '',
     ...overrides,
   };
 }
@@ -377,5 +385,52 @@ describe('renderString', () => {
     env.addFilter('shout', (s: string) => s.toUpperCase());
     const ctx = makeContext({ values: { name: 'alice' } });
     expect(renderString('Hi {{ name | shout }}!', ctx, 'x.md', env)).toBe('Hi ALICE!');
+  });
+});
+
+/**
+ * #137: every install shipped the same `qmd_index` because the only identity a
+ * template could reach was the shard name, which is identical everywhere. The
+ * install LOCATION is the one thing that differs per vault, so the context now
+ * carries it.
+ */
+describe('buildRenderContext — vault identity (#137)', () => {
+  const manifest: ShardManifest = {
+    apiVersion: 'v1',
+    name: 'obsidian-mind',
+    namespace: 'breferrari',
+    version: '7.0.1',
+    dependencies: [],
+    hooks: {},
+  };
+
+  it('derives vault_name and vault_slug from the install directory', () => {
+    const ctx = buildRenderContext(manifest, {}, {}, new Date('2026-07-25T00:00:00Z'), '/tmp/My Second Vault');
+    expect(ctx.vault_name).toBe('My Second Vault');
+    expect(ctx.vault_slug).toBe('my-second-vault');
+  });
+
+  it('distinguishes two installs of the SAME shard — the actual bug', () => {
+    const a = buildRenderContext(manifest, {}, {}, new Date(), '/tmp/vault-one');
+    const b = buildRenderContext(manifest, {}, {}, new Date(), '/tmp/vault-two');
+    expect(a.shard.name).toBe(b.shard.name);
+    expect(a.vault_slug).not.toBe(b.vault_slug);
+  });
+
+  it('is empty rather than "undefined" when the install root is unknown', () => {
+    const ctx = buildRenderContext(manifest, {}, {}, new Date());
+    expect(ctx.vault_name).toBe('');
+    expect(ctx.vault_slug).toBe('');
+  });
+
+  it('slugifies to a safe identifier', () => {
+    expect(slugifyVaultName('My Vault')).toBe('my-vault');
+    expect(slugifyVaultName('  spaces  ')).toBe('spaces');
+    expect(slugifyVaultName('__leading')).toBe('leading');
+    expect(slugifyVaultName('trailing--')).toBe('trailing');
+    expect(slugifyVaultName('a/b c')).toBe('a-b-c');
+    expect(slugifyVaultName(String.fromCharCode(97, 92, 98))).toBe('a-b');
+    expect(slugifyVaultName('keep.dots_and-dashes')).toBe('keep.dots_and-dashes');
+    expect(slugifyVaultName('!!!')).toBe('');
   });
 });
