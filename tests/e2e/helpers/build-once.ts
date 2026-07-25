@@ -92,9 +92,12 @@ async function doBuild(): Promise<void> {
 const BUILD_TIMEOUT_MS = 180_000;
 
 /**
- * Tied to the options runBuild() actually passes.  * resolves against the LAST overload in Node's typings, so it drifts across
- * @types upgrades and can disagree with  — which is exactly
- * what makes stdout/stderr string vs Buffer here.
+ * Tied to the options `runBuild()` actually passes.
+ *
+ * `ReturnType<typeof spawnSync>` resolves against the LAST overload in Node's
+ * typings, so it drifts across `@types/node` upgrades and can disagree with the
+ * `encoding: 'utf-8'` option below — which is what decides whether `stdout` and
+ * `stderr` are `string` or `Buffer`.
  */
 type BuildResult = SpawnSyncReturns<string>;
 
