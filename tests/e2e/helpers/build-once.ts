@@ -13,6 +13,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import type { SpawnSyncReturns } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,7 +91,12 @@ async function doBuild(): Promise<void> {
  */
 const BUILD_TIMEOUT_MS = 180_000;
 
-type BuildResult = ReturnType<typeof spawnSync>;
+/**
+ * Tied to the options runBuild() actually passes.  * resolves against the LAST overload in Node's typings, so it drifts across
+ * @types upgrades and can disagree with  — which is exactly
+ * what makes stdout/stderr string vs Buffer here.
+ */
+type BuildResult = SpawnSyncReturns<string>;
 
 function runBuild(capture: boolean): BuildResult {
   return spawnSync('npx', ['tsup'], {
