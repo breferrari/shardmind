@@ -247,7 +247,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     if (!dryRun) {
       await initShardDir(vaultRoot);
       await cacheTemplates(vaultRoot, newTempDir);
-      await cacheManifest(vaultRoot, newManifest, newSchema);
+      await cacheManifest(vaultRoot, newManifest, newSchema, newTempDir);
       await writeValuesFile(vaultRoot, newValues);
       await writeState(vaultRoot, nextState);
     }

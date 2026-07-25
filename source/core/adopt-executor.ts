@@ -364,7 +364,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     if (!dryRun) {
       await initShardDir(vaultRoot);
       await cacheTemplates(vaultRoot, tempDir);
-      await cacheManifest(vaultRoot, manifest, schema);
+      await cacheManifest(vaultRoot, manifest, schema, tempDir);
       await writeValuesFile(vaultRoot, values);
       await writeState(vaultRoot, state);
     }
