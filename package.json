@@ -1,6 +1,6 @@
 {
   "name": "shardmind",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Package manager for Obsidian vault templates",
   "type": "module",
   "bin": {

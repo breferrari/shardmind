@@ -8,6 +8,20 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-07-25
+
+### Fixed (YAML fidelity when caching a shard manifest — #140)
+
+Closes [#140](https://github.com/breferrari/shardmind/issues/140).
+
+- **`shard.yaml` and `shard-schema.yaml` are now copied verbatim into `.shardmind/`.** `cacheManifest` re-serialised the *parsed* manifest and schema, round-tripping the YAML and discarding everything the parser does not model: every comment, and every quoting choice the shard author made. Measured against obsidian-mind 7.0.1, `shard-schema.yaml` lost **all 74 of its comment lines** and `shard.yaml` went **1,755 → 621 bytes**. Those comments are the only in-file explanation a user gets when they open the file to change a value, and the loss was silent.
+
+- **It also broke shards that assert on their own rendered artifact.** obsidian-mind ships a contract test requiring a quoted `fingerprint`; the round-trip unquoted it, so a clean install failed one of its own tests with no way for the shard author to fix it. That test passes again.
+
+- **Fallback preserved.** `cacheManifest` takes an optional shard source directory; when it is absent or the copy fails, the previous serialising path still runs. Cache fidelity must never fail an install.
+
+- **Tests:** byte-identity assertion against fixture YAML carrying leading/trailing comments and quoted scalars, with the parsed objects deliberately disagreeing with the source bytes so the test can only pass by copying; plus a fallback case asserting an unreadable source still writes. Mutation-checked — disabling the verbatim branch fails the first test.
+
 ## [0.1.3] - 2026-06-02
 
 ### Changed (hook crash presentation in the Summary — #105)
