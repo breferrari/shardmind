@@ -284,10 +284,13 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       });
       await driveMinimalWizard(r);
       r.stdin.write(ENTER); // modules → confirm
-      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
       // Confirm step shows resolved values; boolean false renders as
-      // "false" via formatValue.
-      const confirmFrame = r.lastFrame() ?? '';
+      // "false" via formatValue. Wait on the assertion target and use the
+      // returned frame — re-reading races Ink's next render (#136).
+      const confirmFrame = await waitFor(
+        r.lastFrame,
+        (f) => f.includes('Ready to install') && /qmd_enabled:\s*false/.test(f),
+      );
       expect(confirmFrame).toMatch(/qmd_enabled:\s*false/);
     } finally {
       await cleanupVault(vault);
@@ -339,8 +342,14 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       // No missing required values (the only value has a computed
       // default that resolves automatically). Wizard skips the value
       // step and lands on the computed-preview screen.
-      await waitFor(r.lastFrame, (f) => f.includes("Auto-filled values"), 30_000);
-      const previewFrame = r.lastFrame() ?? '';
+      const previewFrame = await waitFor(
+        r.lastFrame,
+        (f) =>
+          f.includes('Auto-filled values') &&
+          /install_token/.test(f) &&
+          /DERIVED-VALUE/.test(f),
+        30_000,
+      );
       expect(previewFrame).toMatch(/install_token/);
       expect(previewFrame).toMatch(/DERIVED-VALUE/);
     } finally {
@@ -389,15 +398,20 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       // Module review uses LABELS for both Always-included (brain →
       // "Goals, memories, patterns") and Optional (extras → "Extra
       // features (for testing module exclusion)").
-      const moduleFrame = r.lastFrame() ?? '';
+      const moduleFrame = await waitFor(
+        r.lastFrame,
+        (f) => /Goals, memories, patterns/.test(f) && /Extra features/.test(f),
+      );
       expect(moduleFrame).toMatch(/Goals, memories, patterns/);
       expect(moduleFrame).toMatch(/Extra features/);
       r.stdin.write(ENTER);
-      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
       // Confirm step lists module IDs (not labels) under "Modules
       // included" — both `brain` (always) and `extras` (default-on
       // optional) end up included.
-      const confirmFrame = r.lastFrame() ?? '';
+      const confirmFrame = await waitFor(
+        r.lastFrame,
+        (f) => f.includes('Ready to install') && /Modules included \(2\)/.test(f),
+      );
       expect(confirmFrame).toMatch(/Modules included \(2\)/);
       expect(confirmFrame).toMatch(/brain/);
       expect(confirmFrame).toMatch(/extras/);
@@ -562,12 +576,19 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         shardRef: `github:${SLUG_VERSION_MISMATCH}#v0.1.0`,
         vaultRoot: vault,
       });
-      await waitFor(
+      // Wait on everything this test asserts, and use the frame waitFor
+      // RETURNS. Waiting on one string and then re-reading `lastFrame()` for a
+      // different one races Ink's next render: under CPU pressure the second
+      // read landed between renders and returned an empty frame, which is the
+      // `expected '\n' to match /SHARDMIND_VERSION_MISMATCH/` flake in #136.
+      const frame = await waitFor(
         r.lastFrame,
-        (f) => /requires shardmind >=99\.0\.0/.test(f),
+        (f) =>
+          /requires shardmind >=99\.0\.0/.test(f) &&
+          /SHARDMIND_VERSION_MISMATCH/.test(f) &&
+          /npm i -g shardmind@latest/.test(f),
         30_000,
       );
-      const frame = r.lastFrame() ?? '';
       expect(frame).toMatch(/SHARDMIND_VERSION_MISMATCH/);
       expect(frame).toMatch(/npm i -g shardmind@latest/);
       // The refusal happens after parseManifest but before any executor
