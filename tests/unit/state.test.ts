@@ -268,6 +268,122 @@ describe('core/state', () => {
       expect(manifestYaml).toContain('namespace: breferrari');
       expect(schemaYaml).toContain('schema_version: 1');
     });
+
+    /**
+     * Regression guard for #140. Re-serialising the parsed objects silently
+     * discarded every comment and every quoting choice the shard author made —
+     * measured on obsidian-mind 7.0.1, shard-schema.yaml lost all 74 of its
+     * comment lines. Byte-identity is the assertion, because "contains the
+     * right keys" is precisely what the lossy version also satisfied.
+     */
+    it('copies shard.yaml and shard-schema.yaml verbatim when sourceDir is given', async () => {
+      const src = path.join(os.tmpdir(), `shardmind-src-${crypto.randomUUID()}`);
+      await fsp.mkdir(path.join(src, '.shardmind'), { recursive: true });
+
+      const manifestSource = [
+        '# Leading comment that a YAML round-trip destroys.',
+        'apiVersion: v1',
+        'name: obsidian-mind',
+        'namespace: breferrari',
+        'version: "3.5.0" # trailing comment, and a deliberately quoted scalar',
+        'dependencies: []',
+        'hooks:',
+        '  bootstrap:',
+        '    script: .shardmind/hooks/bootstrap.ts',
+        '    # Bump to force a re-bootstrap on update.',
+        '    fingerprint: "qmd-v2"',
+        '',
+      ].join('\n');
+      const schemaSource = [
+        '# Schema comments are the only in-file guidance a user gets.',
+        'schema_version: 1',
+        'values: {}',
+        'groups: []',
+        'modules: {}',
+        'signals: []',
+        'frontmatter: {}',
+        'migrations: []',
+        '',
+      ].join('\n');
+
+      await fsp.writeFile(path.join(src, '.shardmind', 'shard.yaml'), manifestSource, 'utf-8');
+      await fsp.writeFile(path.join(src, '.shardmind', 'shard-schema.yaml'), schemaSource, 'utf-8');
+
+      // The parsed objects deliberately DISAGREE with the source bytes, so a
+      // passing assertion can only come from copying, never from re-serialising.
+      const manifest: ShardManifest = {
+        apiVersion: 'v1',
+        name: 'not-the-source',
+        namespace: 'wrong',
+        version: '0.0.0',
+        dependencies: [],
+        hooks: {},
+      };
+      const schema: ShardSchema = {
+        schema_version: 1,
+        values: {},
+        groups: [],
+        modules: {},
+        signals: [],
+        frontmatter: {},
+        migrations: [],
+      };
+
+      await cacheManifest(vault, manifest, schema, src);
+
+      const cachedManifest = await fsp.readFile(
+        path.join(vault, '.shardmind', 'shard.yaml'),
+        'utf-8',
+      );
+      const cachedSchema = await fsp.readFile(
+        path.join(vault, '.shardmind', 'shard-schema.yaml'),
+        'utf-8',
+      );
+
+      expect(cachedManifest).toBe(manifestSource);
+      expect(cachedSchema).toBe(schemaSource);
+      // The three things the round-trip specifically ate.
+      expect(cachedManifest).toContain('# Leading comment');
+      expect(cachedManifest).toContain('fingerprint: "qmd-v2"');
+      expect(cachedSchema).toContain('# Schema comments are the only in-file guidance');
+
+      await fsp.rm(src, { recursive: true, force: true });
+    });
+
+    it('falls back to serialization when the source files are unreadable', async () => {
+      // A directory with no .shardmind/ inside: the copy must fail, and the
+      // install must not fail with it.
+      const emptySrc = path.join(os.tmpdir(), `shardmind-src-${crypto.randomUUID()}`);
+      await fsp.mkdir(emptySrc, { recursive: true });
+
+      const manifest: ShardManifest = {
+        apiVersion: 'v1',
+        name: 'obsidian-mind',
+        namespace: 'breferrari',
+        version: '3.5.0',
+        dependencies: [],
+        hooks: {},
+      };
+      const schema: ShardSchema = {
+        schema_version: 1,
+        values: {},
+        groups: [],
+        modules: {},
+        signals: [],
+        frontmatter: {},
+        migrations: [],
+      };
+
+      await expect(cacheManifest(vault, manifest, schema, emptySrc)).resolves.toBeUndefined();
+
+      const manifestYaml = await fsp.readFile(
+        path.join(vault, '.shardmind', 'shard.yaml'),
+        'utf-8',
+      );
+      expect(manifestYaml).toContain('name: obsidian-mind');
+
+      await fsp.rm(emptySrc, { recursive: true, force: true });
+    });
   });
 
   describe('errors are ShardMindError instances', () => {
