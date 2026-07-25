@@ -329,6 +329,26 @@ Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-fl
 
 **Remedy:** Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.
 
+### `INSTALL_NON_INTERACTIVE_WITHOUT_VALUES`
+
+**Meaning:** `shardmind install` ran without an interactive terminal (piped stdin, CI, an agent harness) and without any way to answer the wizard. There is nothing to prompt with, and nothing to prompt from.
+
+The engine refuses rather than falling back to schema defaults, because a silently-defaulted install records values nobody chose — `user_name: ""` lands in `shard-values.yaml` looking exactly like a deliberate answer.
+
+**Remedy:** Pass `--values <file>` to supply answers, or `--yes` / `--defaults` to accept schema defaults deliberately. `--values` alone is sufficient without a TTY: the answers are already on disk, so the wizard is skipped rather than rendered.
+
+### `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`
+
+**Meaning:** `shardmind adopt` ran without an interactive terminal and without `--values`. Same rule as `INSTALL_NON_INTERACTIVE_WITHOUT_VALUES`: the engine refuses rather than recording schema defaults nobody chose over a vault that already has real content.
+
+**Remedy:** Pass `--values <file>` to supply answers, or `--yes` to accept schema defaults deliberately. `--values` alone is sufficient without a TTY.
+
+### `INSTALL_GATE_NON_INTERACTIVE`
+
+**Meaning:** The target directory is already shardmind-managed, so the install needs an answer from the existing-install gate, and there is no interactive terminal to ask for one. `--yes` does **not** answer this gate — overwriting a managed vault is not a default the engine assumes on your behalf.
+
+**Remedy:** Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.
+
 ---
 
 ## Render

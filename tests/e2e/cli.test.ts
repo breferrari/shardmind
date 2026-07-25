@@ -413,6 +413,68 @@ describe('shardmind install', () => {
     expect(await vault.exists('shard-values.yaml')).toBe(false);
   });
 
+  it('--values alone installs headlessly and applies the supplied values', async () => {
+    // `--values` is a wizard PREFILL, so before #139 a non-TTY run rendered the
+    // wizard, Ink threw "Raw mode is not supported" from inside its own render
+    // tree, and the process installed NOTHING while exiting 0 — a total failure
+    // reported as success to anything branching on $?. With every answer already
+    // on disk there is nothing to prompt for, so the wizard is skipped.
+    vault = await createEmptyVault('install-values-headless');
+    const valuesPath = await writeValuesFile(vault, {
+      ...DEFAULT_VALUES,
+      user_name: 'Test Agent',
+      org_name: 'Acme',
+    });
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/Raw mode is not supported/);
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+    // The values must actually land — a headless install that silently used
+    // schema defaults would also "succeed" here.
+    const values = await vault.readFile('shard-values.yaml');
+    expect(values).toContain('user_name: Test Agent');
+    expect(values).toContain('org_name: Acme');
+  });
+
+  it('refuses a non-interactive install with no values via INSTALL_NON_INTERACTIVE_WITHOUT_VALUES', async () => {
+    // No terminal and no answers. Refusing beats installing schema defaults
+    // nobody chose: `user_name: ""` would land in shard-values.yaml looking
+    // exactly like a deliberate answer (#139 finding 6).
+    vault = await createEmptyVault('install-no-tty-no-values');
+    const result = await spawnCli(['install', SHARD_REF], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/INSTALL_NON_INTERACTIVE_WITHOUT_VALUES/);
+    expect(result.stdout).toMatch(/--values/);
+    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+    expect(await vault.exists('shard-values.yaml')).toBe(false);
+  });
+
+  it('refuses the existing-install gate without a TTY via INSTALL_GATE_NON_INTERACTIVE', async () => {
+    // The gate is a prompt and `--yes` does not answer it — overwriting a
+    // managed vault is not a default the engine assumes. Before #139 this
+    // rendered a prompt nobody could answer and exited 0.
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'install-gate-no-tty',
+    });
+    const result = await spawnCli(['install', SHARD_REF, '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/INSTALL_GATE_NON_INTERACTIVE/);
+    expect(result.stdout).toMatch(/already shardmind-managed/);
+    expect(result.stdout).toMatch(/shardmind update/);
+  });
+
   it('--defaults refuses to overwrite an existing install with INSTALL_DEFAULTS_OVER_EXISTING', async () => {
     // --defaults is the deterministic CI mode: the existing-install gate
     // requires interactive input that --defaults can't provide, so the
@@ -1365,6 +1427,44 @@ describe('install — property-based invariants', () => {
 describe('shardmind adopt', () => {
   let vault: Vault;
   afterEach(async () => vault?.cleanup());
+
+  it('--values alone adopts headlessly and applies the supplied values', async () => {
+    // #139 was filed from an agent driving `adopt`. `--values` prefills the
+    // wizard rather than replacing it, so before this fix a non-TTY adopt
+    // rendered the wizard, Ink threw "Raw mode is not supported" from inside
+    // its own render tree, and the process adopted NOTHING while exiting 0.
+    vault = await createEmptyVault('adopt-values-headless');
+    const valuesPath = await writeValuesFile(vault, {
+      ...DEFAULT_VALUES,
+      user_name: 'Test Agent',
+      org_name: 'Acme',
+    });
+    const result = await spawnCli(['adopt', SHARD_REF, '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/Raw mode is not supported/);
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+    const values = await vault.readFile('shard-values.yaml');
+    expect(values).toContain('user_name: Test Agent');
+    expect(values).toContain('org_name: Acme');
+  });
+
+  it('refuses a non-interactive adopt with no values via ADOPT_NON_INTERACTIVE_WITHOUT_VALUES', async () => {
+    // Adopting headless without --values previously recorded `user_name: ""`
+    // into shard-values.yaml as though it had been answered — over a vault
+    // that already has real content (#139 finding 6).
+    vault = await createEmptyVault('adopt-no-tty-no-values');
+    const result = await spawnCli(['adopt', SHARD_REF], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/ADOPT_NON_INTERACTIVE_WITHOUT_VALUES/);
+    expect(result.stdout).toMatch(/--values/);
+    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+  });
 
   it('--yes adopts an empty vault — every shard file installs fresh', async () => {
     vault = await createEmptyVault('adopt-empty');

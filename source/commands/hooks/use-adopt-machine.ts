@@ -24,7 +24,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useApp } from 'ink';
+import { useApp, useStdin } from 'ink';
 
 import type {
   ResolvedShard,
@@ -155,6 +155,12 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
   const { shardRef, valuesFile, yes, mode, verbose, dryRun, vaultRoot } = input;
   const { exit } = useApp();
 
+  // See use-install-machine.ts for the full rationale. Short version: without
+  // this gate a non-TTY run renders the wizard, Ink throws "Raw mode is not
+  // supported" from inside its own render tree, and the process adopts NOTHING
+  // while exiting 0. Adopt is the command #139 was actually filed from.
+  const { isRawModeSupported } = useStdin();
+
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
   const phaseRef = useRef<Phase>(phase);
   phaseRef.current = phase;
@@ -239,6 +245,22 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         if (disposed) return;
         if (yes) {
           await runNonInteractive(ctx);
+        } else if (!isRawModeSupported) {
+          // `--values` prefills the wizard rather than replacing it, which is
+          // right with a terminal and impossible without one. Every answer is
+          // already on disk, so skip the wizard instead of failing on it.
+          if (valuesFile !== undefined) {
+            await runNonInteractive(ctx);
+          } else {
+            // Refusing beats recording values nobody chose. Adopting headless
+            // without `--values` previously wrote `user_name: ""` into
+            // shard-values.yaml as though it had been answered (#139).
+            throw new ShardMindError(
+              'No interactive terminal, and no values were supplied',
+              'ADOPT_NON_INTERACTIVE_WITHOUT_VALUES',
+              'Pass --values <file> to supply answers, or --yes to accept schema defaults deliberately.',
+            );
+          }
         } else {
           setPhase({ kind: 'wizard', ctx });
         }
@@ -255,7 +277,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shardRef, valuesFile, yes, vaultRoot]);
+  }, [shardRef, valuesFile, yes, vaultRoot, isRawModeSupported]);
 
   const runNonInteractive = useCallback(
     async (ctx: PreparedContext) => {
