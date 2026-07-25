@@ -271,9 +271,9 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 
 ### `VALUES_MISSING`
 
-**Meaning:** Running with `--yes` but the `--values` file doesn't include every required value.
+**Meaning:** A non-interactive run couldn't supply every required value. Two ways to get here: `--yes`, where a required value has no usable default; or a headless `--values` run whose file is incomplete.
 
-**Remedy:** Provide the missing keys in your `--values` file, or drop `--yes` to answer interactively.
+**Remedy:** Provide the missing keys in your `--values` file. Under `--yes` you can instead drop the flag to answer interactively — that is not an option in a headless run, so the hint adapts to which case you hit.
 
 ---
 
@@ -326,6 +326,26 @@ Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-fl
 ### `INSTALL_DEFAULTS_OVER_EXISTING`
 
 **Meaning:** `shardmind install --defaults` was invoked in a directory that already contains `.shardmind/state.json`. `--defaults` is the deterministic CI / non-TTY mode; the existing-install gate requires interactive input it can't provide, so the engine errors before any network call.
+
+**Remedy:** Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.
+
+### `INSTALL_NON_INTERACTIVE_WITHOUT_VALUES`
+
+**Meaning:** `shardmind install` ran without an interactive terminal (piped stdin, CI, an agent harness) and without any way to answer the wizard. There is nothing to prompt with, and nothing to prompt from.
+
+The engine refuses rather than falling back to schema defaults, because a silently-defaulted install records values nobody chose — `user_name: ""` lands in `shard-values.yaml` looking exactly like a deliberate answer.
+
+**Remedy:** Pass `--values <file>` to supply answers, or `--yes` / `--defaults` to accept schema defaults deliberately. `--values` alone is sufficient without a TTY: the answers are already on disk, so the wizard is skipped rather than rendered.
+
+### `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`
+
+**Meaning:** `shardmind adopt` ran without an interactive terminal and without `--values`. Same rule as `INSTALL_NON_INTERACTIVE_WITHOUT_VALUES`: the engine refuses rather than recording schema defaults nobody chose over a vault that already has real content.
+
+**Remedy:** Pass `--values <file>` to supply answers, or `--yes` to accept schema defaults deliberately. `--values` alone is sufficient without a TTY.
+
+### `INSTALL_GATE_NON_INTERACTIVE`
+
+**Meaning:** The target directory is already shardmind-managed, so the install needs an answer from the existing-install gate, and there is no interactive terminal to ask for one. `--yes` does **not** answer this gate — overwriting a managed vault is not a default the engine assumes on your behalf.
 
 **Remedy:** Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.
 

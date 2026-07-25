@@ -11,7 +11,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { useApp } from 'ink';
+import { useApp, useStdin } from 'ink';
 import { loadValuesYaml } from '../../core/values-io.js';
 
 import type {
@@ -116,6 +116,18 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   // path through `runNonInteractive`). Computed once so the boot effect and
   // gate handler agree on which mode is active.
   const nonInteractive = yes || defaults;
+
+  // Whether an interactive phase (wizard, existing-install gate) can run at
+  // all. Read from Ink's own stdin rather than `process.stdin` so it reflects
+  // the stream Ink will actually attach to — the injected stub under
+  // ink-testing-library, the real handle in production.
+  //
+  // Without this gate, a non-TTY invocation renders the wizard and Ink throws
+  // "Raw mode is not supported". That throw happens inside Ink's render tree,
+  // not this machine, so it never reaches `finish({ kind: 'error' })` — the
+  // process writes a stack trace, installs NOTHING, and **exits 0**. Any
+  // caller branching on `$?` reads a total failure as success (#139).
+  const { isRawModeSupported } = useStdin();
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
 
@@ -239,6 +251,16 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
         if (existing) {
           if (disposed) return;
+          // The gate is a prompt, and `--yes` does not answer it — overwriting
+          // an existing managed vault is not a default anyone should inherit.
+          // Refuse loudly instead of rendering a prompt nobody can answer.
+          if (!isRawModeSupported) {
+            throw new ShardMindError(
+              `Vault already shardmind-managed (${existing.shard}@${existing.version}); cannot prompt for a choice without an interactive terminal`,
+              'INSTALL_GATE_NON_INTERACTIVE',
+              'Run `shardmind update` to upgrade in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.',
+            );
+          }
           setPhase({ kind: 'gate', state: existing, ctx });
           return;
         }
@@ -246,6 +268,24 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         if (disposed) return;
         if (nonInteractive) {
           await runNonInteractive(ctx);
+        } else if (!isRawModeSupported) {
+          // `--values` is a *prefill* for the wizard, not a skip — which is
+          // right with a terminal and impossible without one. When every
+          // answer is already on disk there is nothing left to prompt for, so
+          // take the non-interactive path rather than failing on a wizard the
+          // caller never needed.
+          if (valuesFile !== undefined) {
+            await runNonInteractive(ctx);
+          } else {
+            // No terminal and no answers. Refusing beats installing schema
+            // defaults nobody chose: a silently-defaulted vault records
+            // `user_name: ""` as if the user had picked it (#139).
+            throw new ShardMindError(
+              'No interactive terminal, and no values were supplied',
+              'INSTALL_NON_INTERACTIVE_WITHOUT_VALUES',
+              'Pass --values <file> to supply answers, or --yes / --defaults to accept schema defaults deliberately.',
+            );
+          }
         } else {
           setPhase({ kind: 'wizard', ctx });
         }
@@ -262,17 +302,23 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shardRef, valuesFile, yes, defaults]);
+  }, [shardRef, valuesFile, yes, defaults, isRawModeSupported]);
 
   const runNonInteractive = useCallback(
     async (ctx: PreparedContext) => {
       const merged = mergePrefill(ctx.schema, ctx.prefillValues);
       const missing = missingValueKeys(ctx.schema, merged);
       if (missing.length > 0) {
+        // The hint has to match how we got here. This path is reachable two
+        // ways now: `--yes` (defaults accepted, a required value has no
+        // usable default) and a headless `--values` run. Telling the latter
+        // to "drop --yes" is advice it cannot follow.
         throw new ShardMindError(
-          `Missing required values for --yes: ${missing.join(', ')}`,
+          `Missing required values: ${missing.join(', ')}`,
           'VALUES_MISSING',
-          'Provide them via --values <file> or drop --yes to prompt interactively.',
+          yes
+            ? 'Provide them via --values <file> or drop --yes to prompt interactively.'
+            : 'Add them to your --values file, or run in an interactive terminal to be prompted.',
         );
       }
       const validator = buildValuesValidator(ctx.schema);
@@ -284,7 +330,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         ctx,
       );
     },
-    [],
+    [yes],
   );
 
   const executeInstall = useCallback(
