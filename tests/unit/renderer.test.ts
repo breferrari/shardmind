@@ -10,7 +10,7 @@ import {
   buildRenderContext,
   slugifyVaultName,
 } from '../../source/core/renderer.js';
-import type { FileEntry, RenderContext } from '../../source/runtime/types.js';
+import type { FileEntry, RenderContext, ShardManifest } from '../../source/runtime/types.js';
 
 const FIXTURES = path.resolve('tests/fixtures/render');
 
@@ -395,7 +395,14 @@ describe('renderString', () => {
  * carries it.
  */
 describe('buildRenderContext — vault identity (#137)', () => {
-  const manifest = { apiVersion: 'v1', name: 'obsidian-mind', namespace: 'breferrari', version: '7.0.1', dependencies: [], hooks: {} } as never;
+  const manifest: ShardManifest = {
+    apiVersion: 'v1',
+    name: 'obsidian-mind',
+    namespace: 'breferrari',
+    version: '7.0.1',
+    dependencies: [],
+    hooks: {},
+  };
 
   it('derives vault_name and vault_slug from the install directory', () => {
     const ctx = buildRenderContext(manifest, {}, {}, new Date('2026-07-25T00:00:00Z'), '/tmp/My Second Vault');

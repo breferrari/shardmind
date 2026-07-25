@@ -59,11 +59,6 @@ export function renderString(
 }
 
 /**
- * Build the Nunjucks render context for an install or update operation.
- * Centralizes the shape so the two commands can't drift apart on what's
- * available to templates.
- */
-/**
  * Slugify a directory name into something safe to use as an identifier:
  * lowercase, non-alphanumerics collapsed to single hyphens, trimmed, and
  * guaranteed to start with an alphanumeric. Returns '' for input that has no
@@ -79,6 +74,15 @@ export function slugifyVaultName(name: string): string {
   return slug;
 }
 
+/**
+ * Build the Nunjucks render context for an install or update operation.
+ * Centralizes the shape so the two commands can't drift apart on what's
+ * available to templates.
+ *
+ * `vaultRoot` is optional and supplies `vault_name` / `vault_slug` — the only
+ * per-install identity a template can reach, since `shard.name` is identical
+ * for every install of the same shard (#137). Omitted, both are ''.
+ */
 export function buildRenderContext(
   manifest: ShardManifest,
   values: Record<string, unknown>,
