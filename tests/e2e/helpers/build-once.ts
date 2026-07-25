@@ -13,6 +13,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import type { SpawnSyncReturns } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,20 +61,85 @@ async function doBuild(): Promise<void> {
     return; // cache hit
   }
 
-  const result = spawnSync('npx', ['tsup'], {
-    cwd: REPO_ROOT,
-    stdio: 'inherit',
-    // On Windows, `npx` is a cmd shim — spawn must use `shell: true` to
-    // invoke it. On POSIX, shell adds no overhead worth avoiding here.
-    shell: true,
-  });
+  // First attempt streams to the terminal so a local `npm test` still shows
+  // live build progress. The retry captures instead, so a real failure can
+  // report why rather than just an exit code.
+  let result = runBuild(false);
 
-  if (result.status !== 0) {
-    throw new Error(`tsup build failed with exit code ${result.status}`);
+  if (!buildSucceeded(result)) {
+    // Retry once. `tsup` here is deterministic and idempotent, so a retry
+    // cannot mask a genuine breakage — a broken build fails twice. What it
+    // absorbs is contention: this runs inside `beforeAll`, so one CPU-starved
+    // build failure skips every test in the file (#144), and the skip count is
+    // the only symptom. `npm run build` succeeds standalone every time.
+    result = runBuild(true);
+  }
+
+  if (!buildSucceeded(result)) {
+    throw new Error(describeBuildFailure(result));
   }
 
   // Sanity: dist/cli.js must exist now.
   await fs.access(DIST_CLI);
+}
+
+/**
+ * Wall-clock cap for a single build attempt. Generous — a cold tsup run on a
+ * loaded CI box is a few seconds, so anything approaching this is wedged rather
+ * than slow. Without it a hung `npx` blocks until the suite-level timeout and
+ * reports nothing useful.
+ */
+const BUILD_TIMEOUT_MS = 180_000;
+
+/**
+ * Tied to the options `runBuild()` actually passes.
+ *
+ * `ReturnType<typeof spawnSync>` resolves against the LAST overload in Node's
+ * typings, so it drifts across `@types/node` upgrades and can disagree with the
+ * `encoding: 'utf-8'` option below — which is what decides whether `stdout` and
+ * `stderr` are `string` or `Buffer`.
+ */
+type BuildResult = SpawnSyncReturns<string>;
+
+function runBuild(capture: boolean): BuildResult {
+  return spawnSync('npx', ['tsup'], {
+    cwd: REPO_ROOT,
+    stdio: capture ? 'pipe' : 'inherit',
+    // On Windows, `npx` is a cmd shim — spawn must use `shell: true` to
+    // invoke it. On POSIX, shell adds no overhead worth avoiding here.
+    shell: true,
+    timeout: BUILD_TIMEOUT_MS,
+    encoding: 'utf-8',
+  });
+}
+
+function buildSucceeded(result: BuildResult): boolean {
+  return result.error === undefined && result.signal === null && result.status === 0;
+}
+
+/**
+ * Distinguish the three ways this can fail. The previous message reported only
+ * `status`, which is `null` for a timeout or signal kill — so the most common
+ * real failure printed "exit code null".
+ */
+function describeBuildFailure(result: BuildResult): string {
+  const tail = (s: string | null | undefined): string => {
+    const text = (s ?? '').trim();
+    if (text === '') return '';
+    const lines = text.split('\n');
+    return `\n${lines.slice(-20).join('\n')}`;
+  };
+
+  if (result.error !== undefined) {
+    const timedOut = (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT';
+    return timedOut
+      ? `tsup build timed out after ${BUILD_TIMEOUT_MS}ms (retried once)${tail(result.stderr)}`
+      : `tsup build could not be spawned: ${result.error.message}`;
+  }
+  if (result.signal !== null) {
+    return `tsup build was killed by ${result.signal} (retried once)${tail(result.stderr)}`;
+  }
+  return `tsup build failed with exit code ${result.status} (retried once)${tail(result.stderr)}`;
 }
 
 async function walkSources(): Promise<string[]> {
