@@ -1012,6 +1012,54 @@ describe('shardmind update', () => {
     expect(result.stdout).toMatch(/reinstall/i);
   });
 
+  it('--dry-run --json emits one parseable per-file plan and nothing else', async () => {
+    // Symmetric with the adopt case. `update` carries more chrome than adopt
+    // (banner, spinners, multi-phase progress), so the "stdout is exactly one
+    // JSON document" contract is easier to regress here without noticing.
+    vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-json' });
+    stub.setLatest(SHARD_SLUG, '0.2.0');
+    const result = await spawnCli(['update', '--dry-run', '--json'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const doc = JSON.parse(result.stdout);
+    expect(doc.schemaVersion).toBe(1);
+    expect(doc.command).toBe('update');
+    expect(doc.ok).toBe(true);
+    expect(doc.result.dryRun).toBe(true);
+    expect(Array.isArray(doc.result.files)).toBe(true);
+    expect(doc.result.files.length).toBeGreaterThan(0);
+    // Every entry carries a path and an action kind, the two fields a caller
+    // branches on.
+    for (const file of doc.result.files) {
+      expect(typeof file.path).toBe('string');
+      expect(typeof file.action).toBe('string');
+    }
+    expect(doc.result.counts).toBeTruthy();
+
+    // Dry run: the vault is untouched.
+    expect(await vault.readFile('.shardmind/state.json')).toContain(SHARD_SLUG.split('/')[1]);
+  });
+
+  it('rejects --json without --dry-run rather than silently doing nothing', async () => {
+    // Executing with --json renders no UI (the command returns null) and emits
+    // no document, so the process would sit at a conflict prompt nobody can
+    // answer and exit 0 — a silent no-op reporting success.
+    vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-json-nodry' });
+    stub.setLatest(SHARD_SLUG, '0.2.0');
+    const result = await spawnCli(['update', '--json'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    const doc = JSON.parse(result.stdout);
+    expect(doc.ok).toBe(false);
+    expect(doc.error.code).toBe('JSON_REQUIRES_DRY_RUN');
+    expect(doc.error.hint).toMatch(/--dry-run/);
+  });
+
   it('--dry-run on a bump leaves vault content unchanged', async () => {
     vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-dry' });
     stub.setLatest(SHARD_SLUG, '0.2.0');
@@ -1427,6 +1475,79 @@ describe('install — property-based invariants', () => {
 describe('shardmind adopt', () => {
   let vault: Vault;
   afterEach(async () => vault?.cleanup());
+
+  it('--dry-run --json emits one parseable per-file plan and nothing else', async () => {
+    // #139 finding 5: the prose summary reports `99 exact / 33 customized /
+    // 13 missing` and never says WHICH files, so an agent cannot safely pick a
+    // bulk --mode and falls back to keep-all-mine plus a hand audit. The
+    // document has to be parseable with no stripping, so the strict assertion
+    // here is that stdout is EXACTLY one JSON value.
+    vault = await createEmptyVault('adopt-json-plan');
+    await vault.writeFile('Home.md', '# My own home (not the shard version)');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['adopt', SHARD_REF, '--values', valuesPath, '--dry-run', '--json'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const doc = JSON.parse(result.stdout);
+    expect(doc.schemaVersion).toBe(1);
+    expect(doc.command).toBe('adopt');
+    expect(doc.ok).toBe(true);
+    expect(doc.result.dryRun).toBe(true);
+    expect(doc.result.mode).toBeNull();
+
+    // The file we deliberately diverged must be reported as such, with both
+    // sides identified — the mine-vs-theirs signal the summary never gave.
+    const home = doc.result.files.find((f: { path: string }) => f.path === 'Home.md');
+    expect(home.classification).toBe('differs');
+    expect(home.userHash).toBeTruthy();
+    expect(home.shardHash).toBeTruthy();
+    expect(home.userHash).not.toBe(home.shardHash);
+
+    // Every bucket is represented and the counts agree with the list.
+    const counted =
+      doc.result.counts.matches + doc.result.counts.differs + doc.result.counts.shardOnly;
+    expect(doc.result.files).toHaveLength(counted);
+
+    // A plan is a decision aid, not a transport for the vault.
+    expect(result.stdout).not.toContain('not the shard version');
+
+    // Dry run: nothing on disk.
+    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+  });
+
+  it('rejects --json without --dry-run rather than silently doing nothing', async () => {
+    // Before the guard this produced one byte on stdout and exit 0 while
+    // adopting nothing — the class of failure #146 removed from install.
+    vault = await createEmptyVault('adopt-json-nodry');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(['adopt', SHARD_REF, '--values', valuesPath, '--json'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    const doc = JSON.parse(result.stdout);
+    expect(doc.ok).toBe(false);
+    expect(doc.error.code).toBe('JSON_REQUIRES_DRY_RUN');
+    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+  });
+
+  it('--dry-run --json reports a failure as a document with a non-zero exit', async () => {
+    // Finding 3: an agent branches on $?, and a failure still has to be
+    // parseable rather than a stack trace on stdout.
+    vault = await createEmptyVault('adopt-json-error');
+    const result = await spawnCli(
+      ['adopt', 'github:breferrari/does-not-exist-xyz', '--yes', '--dry-run', '--json'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(1);
+    const doc = JSON.parse(result.stdout);
+    expect(doc.ok).toBe(false);
+    expect(doc.command).toBe('adopt');
+    expect(typeof doc.error.message).toBe('string');
+  });
 
   it('--values alone adopts headlessly and applies the supplied values', async () => {
     // #139 was filed from an agent driving `adopt`. `--values` prefills the

@@ -26,12 +26,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp, useStdin } from 'ink';
 
+
 import type {
   ResolvedShard,
   ShardManifest,
   ShardSchema,
 } from '../../runtime/types.js';
 import { ShardMindError } from '../../runtime/types.js';
+import { adoptPlanResult, emitJson, jsonSuccess } from '../../core/json-output.js';
 import { resolve as resolveRef } from '../../core/registry.js';
 import { downloadShard } from '../../core/download.js';
 import { parseManifest, assertEngineCompatible } from '../../core/manifest.js';
@@ -79,6 +81,12 @@ export interface UseAdoptMachineInput {
   verbose: boolean;
   dryRun: boolean;
   vaultRoot: string;
+  /**
+   * `--json`. With `--dry-run`, emits the per-file plan as one JSON document
+   * and stops before resolving a mode. The command renders nothing in this
+   * mode, so stdout carries the document alone.
+   */
+  json: boolean;
 }
 
 export interface PreparedContext {
@@ -152,7 +160,7 @@ export interface UseAdoptMachineOutput {
 }
 
 export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOutput {
-  const { shardRef, valuesFile, yes, mode, verbose, dryRun, vaultRoot } = input;
+  const { shardRef, valuesFile, yes, mode, verbose, dryRun, vaultRoot, json } = input;
   const { exit } = useApp();
 
   // See use-install-machine.ts for the full rationale. Short version: without
@@ -208,6 +216,20 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
 
     (async () => {
       try {
+        // `--json` is currently the PLAN surface only: the document is emitted
+        // at the dry-run decision point, before any prompt. Allowing it on a
+        // real run renders nothing (the command returns null under --json) and
+        // emits nothing, so the process sits at a prompt with no UI — a silent
+        // no-op that exits 0, which is the exact failure #146 just removed.
+        // Refuse loudly instead of half-supporting it.
+        if (json && !dryRun) {
+          throw new ShardMindError(
+            '--json is only supported together with --dry-run',
+            'JSON_REQUIRES_DRY_RUN',
+            'Add --dry-run to get the machine-readable plan. Executing with --json is not supported yet — run without --json to execute.',
+          );
+        }
+
         // Pre-flight guard runs FIRST, before any network call. Saves
         // the user a multi-second wait on a downloads-and-then-rejects
         // path that's deterministically wrong from byte zero.
@@ -277,7 +299,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shardRef, valuesFile, yes, vaultRoot, isRawModeSupported]);
+  }, [shardRef, valuesFile, yes, vaultRoot, isRawModeSupported, json, dryRun]);
 
   const runNonInteractive = useCallback(
     async (ctx: PreparedContext) => {
@@ -329,6 +351,19 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           values: validated,
           selections: validatedResult.selections,
         });
+
+        // `--json --dry-run` is the agent's decision step: emit the per-file
+        // classification and stop, BEFORE any mode is resolved. Choosing a
+        // `--mode` is exactly what this document exists to inform, so running
+        // one first would answer the question with itself. Emitted even when
+        // nothing differs, so a caller always gets a document back (#139).
+        if (json && dryRun) {
+          emitJson(
+            jsonSuccess('adopt', adoptPlanResult(plan, { dryRun: true, mode: mode ?? null })),
+          );
+          finish({ kind: 'cancelled', reason: 'Plan emitted as JSON (--dry-run).' });
+          return;
+        }
 
         if (plan.differs.length === 0) {
           await executeAdopt(ctx, validatedResult, plan, {});

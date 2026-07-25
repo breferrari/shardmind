@@ -129,6 +129,7 @@ shardmind update
   --yes                                    # Auto-keep on every conflict
   --dry-run                                # Plan without writing
   --verbose                                # Per-file action history
+  --json                                   # Machine-readable output; with --dry-run, the per-file plan
 
 # Retrofit shardmind into an existing shard clone (pre-shardmind era)
 shardmind adopt <shard>
@@ -136,7 +137,25 @@ shardmind adopt <shard>
   --yes                                    # Auto-keep your version on every differs decision
   --dry-run                                # Preview classification + plan
   --verbose                                # Per-file action history
+  --json                                   # Machine-readable output; with --dry-run, the per-file plan
 ```
+
+### Driving shardmind from a script or agent
+
+`--values <file>` is enough on its own without a terminal: the answers are already on disk, so the wizard is skipped rather than rendered. Without values and without a TTY the command **refuses** (`INSTALL_/ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`) rather than quietly recording schema defaults as though you had chosen them.
+
+`--json` makes `update` and `adopt` emit exactly one JSON document on stdout and nothing else, so `JSON.parse(stdout)` needs no stripping. Every document carries `schemaVersion`, `command`, and `ok`; a failure adds `error` (`code`, `message`, `hint`) and exits non-zero, so `$?` and the body agree.
+
+Paired with `--dry-run` you get the **per-file plan** rather than summary counts — path, action or classification, and both hashes where a file diverges — which is what makes choosing a bulk `--mode` safe to automate:
+
+```bash
+shardmind adopt <shard> --values v.yaml --dry-run --json |
+  jq -r '.result.files[] | select(.classification == "differs") | .path'
+```
+
+The list is uncapped: the terminal views sample long lists, the document never does.
+
+`--json` currently requires `--dry-run` and refuses otherwise (`JSON_REQUIRES_DRY_RUN`) — it is the plan surface, not an execution surface. `status` has no `--json` yet; see [#147](https://github.com/breferrari/shardmind/issues/147).
 
 `adopt` is the migration path for users who cloned a shard repo before shardmind support existed — see [`docs/ARCHITECTURE.md §10.5a`](docs/ARCHITECTURE.md) for the flow. `--defaults` on install is the determinism flag: paired with the same shard ref, two runs on different machines produce byte-equivalent vaults (Invariant 1).
 

@@ -29,6 +29,7 @@ import type {
   MigrationChange,
 } from '../../runtime/types.js';
 import { ShardMindError } from '../../runtime/types.js';
+import { emitJson, jsonSuccess, updatePlanResult } from '../../core/json-output.js';
 
 import { resolve as resolveRef } from '../../core/registry.js';
 import { primeLatestVersion } from '../../core/update-check.js';
@@ -65,6 +66,12 @@ export interface UseUpdateMachineInput {
   yes: boolean;
   verbose: boolean;
   dryRun: boolean;
+  /**
+   * `--json`. With `--dry-run`, emits the per-file plan as one JSON document
+   * and stops before any conflict prompt. The command renders nothing, so
+   * stdout carries the document alone.
+   */
+  json: boolean;
   /**
    * `--release <v>`: pin to an exact tag (stable or prerelease). Named
    * `--release` rather than `--version` because Pastel reserves the
@@ -150,7 +157,7 @@ export interface UseUpdateMachineOutput {
 }
 
 export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachineOutput {
-  const { vaultRoot, yes, verbose, dryRun, release, includePrerelease } = input;
+  const { vaultRoot, yes, verbose, dryRun, release, includePrerelease, json } = input;
   const { exit } = useApp();
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
@@ -216,6 +223,20 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 
     (async () => {
       try {
+        // `--json` is currently the PLAN surface only: the document is emitted
+        // at the dry-run decision point, before any prompt. Allowing it on a
+        // real run renders nothing (the command returns null under --json) and
+        // emits nothing, so the process sits at a prompt with no UI — a silent
+        // no-op that exits 0, which is the exact failure #146 just removed.
+        // Refuse loudly instead of half-supporting it.
+        if (json && !dryRun) {
+          throw new ShardMindError(
+            '--json is only supported together with --dry-run',
+            'JSON_REQUIRES_DRY_RUN',
+            'Add --dry-run to get the machine-readable plan. Executing with --json is not supported yet — run without --json to execute.',
+          );
+        }
+
         setPhase({ kind: 'loading', message: 'Reading install state…' });
         const state = await readState(vaultRoot);
         if (!state) throwNoInstall();
@@ -424,7 +445,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [vaultRoot, yes, finish],
+    [vaultRoot, yes, dryRun, json, finish],
   );
 
   const runPlanAndResolve = useCallback(
@@ -451,6 +472,16 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           },
           removedFileDecisions: removedDecisions,
         });
+
+        // `--json --dry-run` is the read-only decision step: emit the per-file
+        // plan and stop, BEFORE the conflict prompts. Conflicts are exactly
+        // what a caller needs the document to tell them about, so prompting
+        // first would require answering the question being asked (#139).
+        if (json && dryRun) {
+          emitJson(jsonSuccess('update', updatePlanResult(plan, { dryRun: true })));
+          finish({ kind: 'cancelled', reason: 'Plan emitted as JSON (--dry-run).' });
+          return;
+        }
 
         if (plan.pendingConflicts.length > 0 && !yes) {
           setPhase({
