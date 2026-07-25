@@ -271,9 +271,9 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 
 ### `VALUES_MISSING`
 
-**Meaning:** Running with `--yes` but the `--values` file doesn't include every required value.
+**Meaning:** A non-interactive run couldn't supply every required value. Two ways to get here: `--yes`, where a required value has no usable default; or a headless `--values` run whose file is incomplete.
 
-**Remedy:** Provide the missing keys in your `--values` file, or drop `--yes` to answer interactively.
+**Remedy:** Provide the missing keys in your `--values` file. Under `--yes` you can instead drop the flag to answer interactively — that is not an option in a headless run, so the hint adapts to which case you hit.
 
 ---
 

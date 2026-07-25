@@ -84,7 +84,6 @@ export type ErrorCode =
   | 'INSTALL_DEFAULTS_OVER_EXISTING'
   | 'INSTALL_NON_INTERACTIVE_WITHOUT_VALUES'
   | 'INSTALL_GATE_NON_INTERACTIVE'
-  | 'ADOPT_NON_INTERACTIVE_WITHOUT_VALUES'
 
   // Update / merge
   | 'MERGE_FAILED'
@@ -96,6 +95,7 @@ export type ErrorCode =
 
   // Adopt
   | 'ADOPT_EXISTING_INSTALL'
+  | 'ADOPT_NON_INTERACTIVE_WITHOUT_VALUES'
   | 'ADOPT_WRITE_FAILED'
   | 'MIGRATION_INVALID_VERSION'
   // Reserved for the v0.2 sandboxed-transform path: currently migrator.ts

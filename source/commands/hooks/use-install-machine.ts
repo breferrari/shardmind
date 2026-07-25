@@ -309,10 +309,16 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       const merged = mergePrefill(ctx.schema, ctx.prefillValues);
       const missing = missingValueKeys(ctx.schema, merged);
       if (missing.length > 0) {
+        // The hint has to match how we got here. This path is reachable two
+        // ways now: `--yes` (defaults accepted, a required value has no
+        // usable default) and a headless `--values` run. Telling the latter
+        // to "drop --yes" is advice it cannot follow.
         throw new ShardMindError(
-          `Missing required values for --yes: ${missing.join(', ')}`,
+          `Missing required values: ${missing.join(', ')}`,
           'VALUES_MISSING',
-          'Provide them via --values <file> or drop --yes to prompt interactively.',
+          yes
+            ? 'Provide them via --values <file> or drop --yes to prompt interactively.'
+            : 'Add them to your --values file, or run in an interactive terminal to be prompted.',
         );
       }
       const validator = buildValuesValidator(ctx.schema);
@@ -324,7 +330,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         ctx,
       );
     },
-    [],
+    [yes],
   );
 
   const executeInstall = useCallback(
