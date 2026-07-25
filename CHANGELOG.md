@@ -8,6 +8,29 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-07-26
+
+Agent ergonomics. Both changes come from [#139](https://github.com/breferrari/shardmind/issues/139), filed after driving shardmind from an AI agent; the issue stays open for the findings not covered here.
+
+### Fixed (headless install and adopt — #139 findings 1, 2, 3, 6)
+
+- **`--values` alone now works without a TTY, and a headless run can no longer fail silently.** `--values` prefills the wizard rather than replacing it — right with a terminal, impossible without one. A non-TTY run rendered the wizard, Ink threw `Raw mode is not supported` **from inside its own render tree**, and because that throw never reached the machine's error handling the process printed a stack trace, installed **nothing**, and **exited 0**. A total failure reported as success to anything branching on `$?`, which is precisely the caller this matters to. Measured: `--values` alone → exit 0, zero files. (`CI=true` did nothing; the documented workaround worked because of `--yes`, which pins every value to a schema default.)
+
+  Interactive phases are now gated on Ink's own `isRawModeSupported`, read via `useStdin()` rather than `process.stdin` so it reflects the stream Ink actually attaches to. With values on disk the wizard is skipped; with none, the command **refuses** (`INSTALL_NON_INTERACTIVE_WITHOUT_VALUES` / `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`) rather than recording `user_name: ""` as though it had been chosen. `--yes` deliberately does **not** answer the existing-install gate (`INSTALL_GATE_NON_INTERACTIVE`) — overwriting a managed vault is not a default the engine assumes.
+
+  `adopt` carried the identical defect and is the command #139 was filed from, so it is fixed in the same pass.
+
+### Added (`--json` with a per-file plan — #139 findings 4, 5)
+
+- **`--json` on `adopt` and `update` emits exactly one JSON document on stdout and nothing else**, so `JSON.parse(stdout)` needs no stripping. Every document carries `schemaVersion`, `command`, and `ok`; failures add `error` (`code`, `message`, `hint`) alongside a non-zero exit, so `$?` and the body agree. Documents are written straight to stdout rather than rendered through Ink, which wraps at the terminal width — 80 columns with no TTY, exactly the agent case — and would corrupt the JSON.
+
+- **With `--dry-run` you get the per-file plan instead of summary counts.** The prose summary reports `99 exact / 33 customized / 13 missing` and never says *which* files, with no mine-vs-theirs signal — so a caller cannot safely choose a bulk `--mode` and falls back to the most conservative one plus a hand audit. Each entry now carries the path, the action or classification, and both hashes where a file diverges. Lists are uncapped and path-sorted: the terminal views sample long lists, the document never does. File content is never serialized — a plan is a decision aid, not a transport for the vault.
+
+  Each command stops **before the decision the document exists to inform**: `adopt` ahead of mode resolution, `update` ahead of the conflict prompts. `--json` requires `--dry-run` and refuses otherwise (`JSON_REQUIRES_DRY_RUN`); it is the plan surface, not an execution surface.
+
+- `status` has no `--json` yet, and that is a bug rather than a scope call — see [#147](https://github.com/breferrari/shardmind/issues/147): any option declared on the root command silently shadows a same-named subcommand option, so declaring it there makes `adopt --json` and `update --json` inert. The same defect means **`adopt --verbose` and `update --verbose` have been doing nothing in shipped releases**.
+
+
 ## [0.1.5] - 2026-07-25
 
 ### Added (per-install identity for templates — #137)
