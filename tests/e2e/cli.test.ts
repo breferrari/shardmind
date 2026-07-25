@@ -1012,6 +1012,54 @@ describe('shardmind update', () => {
     expect(result.stdout).toMatch(/reinstall/i);
   });
 
+  it('--dry-run --json emits one parseable per-file plan and nothing else', async () => {
+    // Symmetric with the adopt case. `update` carries more chrome than adopt
+    // (banner, spinners, multi-phase progress), so the "stdout is exactly one
+    // JSON document" contract is easier to regress here without noticing.
+    vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-json' });
+    stub.setLatest(SHARD_SLUG, '0.2.0');
+    const result = await spawnCli(['update', '--dry-run', '--json'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const doc = JSON.parse(result.stdout);
+    expect(doc.schemaVersion).toBe(1);
+    expect(doc.command).toBe('update');
+    expect(doc.ok).toBe(true);
+    expect(doc.result.dryRun).toBe(true);
+    expect(Array.isArray(doc.result.files)).toBe(true);
+    expect(doc.result.files.length).toBeGreaterThan(0);
+    // Every entry carries a path and an action kind, the two fields a caller
+    // branches on.
+    for (const file of doc.result.files) {
+      expect(typeof file.path).toBe('string');
+      expect(typeof file.action).toBe('string');
+    }
+    expect(doc.result.counts).toBeTruthy();
+
+    // Dry run: the vault is untouched.
+    expect(await vault.readFile('.shardmind/state.json')).toContain(SHARD_SLUG.split('/')[1]);
+  });
+
+  it('rejects --json without --dry-run rather than silently doing nothing', async () => {
+    // Executing with --json renders no UI (the command returns null) and emits
+    // no document, so the process would sit at a conflict prompt nobody can
+    // answer and exit 0 — a silent no-op reporting success.
+    vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-json-nodry' });
+    stub.setLatest(SHARD_SLUG, '0.2.0');
+    const result = await spawnCli(['update', '--json'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    const doc = JSON.parse(result.stdout);
+    expect(doc.ok).toBe(false);
+    expect(doc.error.code).toBe('JSON_REQUIRES_DRY_RUN');
+    expect(doc.error.hint).toMatch(/--dry-run/);
+  });
+
   it('--dry-run on a bump leaves vault content unchanged', async () => {
     vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-dry' });
     stub.setLatest(SHARD_SLUG, '0.2.0');
@@ -1467,6 +1515,22 @@ describe('shardmind adopt', () => {
     expect(result.stdout).not.toContain('not the shard version');
 
     // Dry run: nothing on disk.
+    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+  });
+
+  it('rejects --json without --dry-run rather than silently doing nothing', async () => {
+    // Before the guard this produced one byte on stdout and exit 0 while
+    // adopting nothing — the class of failure #146 removed from install.
+    vault = await createEmptyVault('adopt-json-nodry');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(['adopt', SHARD_REF, '--values', valuesPath, '--json'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    const doc = JSON.parse(result.stdout);
+    expect(doc.ok).toBe(false);
+    expect(doc.error.code).toBe('JSON_REQUIRES_DRY_RUN');
     expect(await vault.exists('.shardmind/state.json')).toBe(false);
   });
 

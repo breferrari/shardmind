@@ -329,6 +329,14 @@ Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-fl
 
 **Remedy:** Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.
 
+### `JSON_REQUIRES_DRY_RUN`
+
+**Meaning:** `--json` was passed without `--dry-run` on `adopt` or `update`. The JSON surface is currently the **plan** surface: the document is emitted at the dry-run decision point, before any prompt.
+
+Allowing it on a real run would render no UI (the command renders nothing under `--json`) and emit no document, so the process would sit at a prompt nobody can answer and exit 0 — a silent no-op reporting success. The engine refuses instead.
+
+**Remedy:** Add `--dry-run` to get the machine-readable plan, or drop `--json` to execute with the normal interface.
+
 ### `INSTALL_NON_INTERACTIVE_WITHOUT_VALUES`
 
 **Meaning:** `shardmind install` ran without an interactive terminal (piped stdin, CI, an agent harness) and without any way to answer the wizard. There is nothing to prompt with, and nothing to prompt from.

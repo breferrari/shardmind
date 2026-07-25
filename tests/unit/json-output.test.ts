@@ -195,8 +195,8 @@ describe('updatePlanResult', () => {
 
   it('gives a conflict both sides plus the preexisting flag', () => {
     const file = updatePlanResult(plan, { dryRun: true }).files.find((f) => f.path === 'a.md')!;
-    expect(file.renderedHash).toBe('new-a');
-    expect(file.theirsHash).toBe('mine-a');
+    expect(file.shardHash).toBe('new-a');
+    expect(file.userHash).toBe('mine-a');
     expect(file.preexisting).toBe(true);
   });
 

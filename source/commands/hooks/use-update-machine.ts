@@ -223,6 +223,20 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 
     (async () => {
       try {
+        // `--json` is currently the PLAN surface only: the document is emitted
+        // at the dry-run decision point, before any prompt. Allowing it on a
+        // real run renders nothing (the command returns null under --json) and
+        // emits nothing, so the process sits at a prompt with no UI — a silent
+        // no-op that exits 0, which is the exact failure #146 just removed.
+        // Refuse loudly instead of half-supporting it.
+        if (json && !dryRun) {
+          throw new ShardMindError(
+            '--json is only supported together with --dry-run',
+            'JSON_REQUIRES_DRY_RUN',
+            'Add --dry-run to get the machine-readable plan. Executing with --json is not supported yet — run without --json to execute.',
+          );
+        }
+
         setPhase({ kind: 'loading', message: 'Reading install state…' });
         const state = await readState(vaultRoot);
         if (!state) throwNoInstall();

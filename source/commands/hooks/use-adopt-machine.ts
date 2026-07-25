@@ -216,6 +216,20 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
 
     (async () => {
       try {
+        // `--json` is currently the PLAN surface only: the document is emitted
+        // at the dry-run decision point, before any prompt. Allowing it on a
+        // real run renders nothing (the command returns null under --json) and
+        // emits nothing, so the process sits at a prompt with no UI — a silent
+        // no-op that exits 0, which is the exact failure #146 just removed.
+        // Refuse loudly instead of half-supporting it.
+        if (json && !dryRun) {
+          throw new ShardMindError(
+            '--json is only supported together with --dry-run',
+            'JSON_REQUIRES_DRY_RUN',
+            'Add --dry-run to get the machine-readable plan. Executing with --json is not supported yet — run without --json to execute.',
+          );
+        }
+
         // Pre-flight guard runs FIRST, before any network call. Saves
         // the user a multi-second wait on a downloads-and-then-rejects
         // path that's deterministically wrong from byte zero.
@@ -285,7 +299,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shardRef, valuesFile, yes, vaultRoot, isRawModeSupported, json]);
+  }, [shardRef, valuesFile, yes, vaultRoot, isRawModeSupported, json, dryRun]);
 
   const runNonInteractive = useCallback(
     async (ctx: PreparedContext) => {

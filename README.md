@@ -155,6 +155,8 @@ shardmind adopt <shard> --values v.yaml --dry-run --json |
 
 The list is uncapped: the terminal views sample long lists, the document never does.
 
+`--json` currently requires `--dry-run` and refuses otherwise (`JSON_REQUIRES_DRY_RUN`) — it is the plan surface, not an execution surface. `status` has no `--json` yet; see [#147](https://github.com/breferrari/shardmind/issues/147).
+
 `adopt` is the migration path for users who cloned a shard repo before shardmind support existed — see [`docs/ARCHITECTURE.md §10.5a`](docs/ARCHITECTURE.md) for the flow. `--defaults` on install is the determinism flag: paired with the same shard ref, two runs on different machines produce byte-equivalent vaults (Invariant 1).
 
 ### Shard references

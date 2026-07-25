@@ -184,10 +184,15 @@ export interface UpdatePlanFile {
   readonly path: string;
   /** The `UpdateAction` kind verbatim — `conflict`, `auto_merge`, `add`, … */
   readonly action: UpdateAction['kind'];
-  /** Hash of the newly rendered content, where the action produces one. */
-  readonly renderedHash?: string;
+  /**
+   * Hash of what the shard produces for this path, where the action produces
+   * one. Named to match adopt's `shardHash` rather than the engine-internal
+   * `renderedHash`/`theirsHash` pair: one vocabulary across the whole `--json`
+   * surface, so a consumer doesn't learn two words for the same concept.
+   */
+  readonly shardHash?: string;
   /** Hash of the user's on-disk bytes at plan time (conflicts only). */
-  readonly theirsHash?: string;
+  readonly userHash?: string;
   /** `noop` only — why nothing happens. */
   readonly reason?: string;
   /** `conflict` only — the shard newly introduces a path the user already has. */
@@ -203,12 +208,12 @@ function updateFile(action: UpdateAction): UpdatePlanFile {
     case 'auto_merge':
     case 'add':
     case 'restore_missing':
-      return { ...base, renderedHash: action.renderedHash };
+      return { ...base, shardHash: action.renderedHash };
     case 'conflict':
       return {
         ...base,
-        renderedHash: action.newContentHash,
-        theirsHash: action.theirsHash,
+        shardHash: action.newContentHash,
+        userHash: action.theirsHash,
         ...(action.preexisting === undefined ? {} : { preexisting: action.preexisting }),
       };
     default:
