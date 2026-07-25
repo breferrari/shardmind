@@ -8,6 +8,25 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-07-25
+
+### Added (per-install identity for templates — #137)
+
+Groundwork for [#137](https://github.com/breferrari/shardmind/issues/137).
+
+- **`RenderContext` now carries `vault_name` and `vault_slug`.** A shard previously had no way to derive per-install identity: the only identity available was the shard name, which is identical for every install of that shard. That is the root cause of #137 — obsidian-mind ships `"qmd_index": "obsidian-mind"` as a literal, so every vault on a machine collides on one QMD store. The install **location** is the one thing that differs, and the engine knew it without passing it on. `vault_name` is the directory basename verbatim; `vault_slug` is lowercased with non-alphanumerics collapsed to hyphens, trimmed, guaranteed to start alphanumeric. Both are `""` when the install root is unknown, so a template never renders `undefined`.
+
+- `buildRenderContext` takes `vaultRoot` as an optional 5th parameter — existing callers are unchanged; install, update, adopt and status all pass it. **The flagship fix is a one-line template change (`"qmd_index": "{{ vault_slug }}"`) that needs this release first.**
+
+### Fixed (two independent CI flakes)
+
+Closes [#136](https://github.com/breferrari/shardmind/issues/136) and [#144](https://github.com/breferrari/shardmind/issues/144). Both are test-only; no production behaviour changes.
+
+- **Layer-1 flow tests raced the renderer (#136).** The tests waited for one string, then called `lastFrame()` **again** and asserted a different one. `waitFor` already returns the matched frame; discarding it and re-reading races Ink's next render, so under CPU pressure the second read landed between renders and returned an empty frame — the reported `expected '
+' to match /.../` signature. Not a timeout: raising the budget would not have helped. All four sites now use the returned frame and wait on everything they assert.
+
+- **The E2E build guard had no timeout and no retry (#144).** `ensureBuilt()` shells out to `npx tsup` inside `beforeAll`, so one contention-induced build failure skipped **every test in the file** — and a load failure reports its tests as *skipped*, so the only symptom was the skip count moving, with no assertion output pointing anywhere. Now: a 180s timeout, one retry (the build is deterministic and idempotent, so a genuine breakage still fails twice), and an error that distinguishes spawn failure / timeout / signal / exit code and carries the last 20 lines of stderr. The old message reported only `status`, which is `null` for a timeout — so the likeliest real failure printed `exit code null`.
+
 ## [0.1.4] - 2026-07-25
 
 ### Fixed (YAML fidelity when caching a shard manifest — #140)
