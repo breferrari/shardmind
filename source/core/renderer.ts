@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
+import path from 'node:path';
 import nunjucks from 'nunjucks';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type {
@@ -62,12 +63,31 @@ export function renderString(
  * Centralizes the shape so the two commands can't drift apart on what's
  * available to templates.
  */
+/**
+ * Slugify a directory name into something safe to use as an identifier:
+ * lowercase, non-alphanumerics collapsed to single hyphens, trimmed, and
+ * guaranteed to start with an alphanumeric. Returns '' for input that has no
+ * usable characters, so callers can fall back rather than emit a broken value.
+ */
+export function slugifyVaultName(name: string): string {
+  const slug = name
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[^a-z0-9]+|[-._]+$/g, '');
+  return slug;
+}
+
 export function buildRenderContext(
   manifest: ShardManifest,
   values: Record<string, unknown>,
   selections: ModuleSelections,
   now: Date = new Date(),
+  vaultRoot?: string,
 ): RenderContext {
+  const vaultName = vaultRoot === undefined ? '' : path.basename(path.resolve(vaultRoot));
+
   const included_modules = Object.entries(selections)
     .filter(([, s]) => s === 'included')
     .map(([id]) => id);
@@ -78,6 +98,8 @@ export function buildRenderContext(
     shard: { name: manifest.name, version: manifest.version },
     install_date: now.toISOString(),
     year: now.getUTCFullYear().toString(),
+    vault_name: vaultName,
+    vault_slug: slugifyVaultName(vaultName),
   };
 }
 

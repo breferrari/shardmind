@@ -538,7 +538,7 @@ async function computeModifiedChanges(
     }));
   }
 
-  const renderCtx = buildRenderContext(manifest, rawValues, selections);
+  const renderCtx = buildRenderContext(manifest, rawValues, selections, undefined, vaultRoot);
   return mapConcurrent(entries, MODIFIED_DIFF_CONCURRENCY, entry =>
     renderAndDiffEntry(vaultRoot, entry, renderCtx),
   );

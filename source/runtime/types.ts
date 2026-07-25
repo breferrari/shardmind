@@ -252,6 +252,18 @@ export interface RenderContext {
   shard: { name: string; version: string };
   install_date: string;
   year: string;
+  /**
+   * Basename of the directory the shard is being installed into, and a
+   * slugified form safe to use as an identifier.
+   *
+   * Exposed so a shard can derive per-install identity from WHERE it lives
+   * rather than from the shard name, which is identical for every install
+   * (#137: every obsidian-mind vault shipped the same `qmd_index`, so they
+   * all collided on one search index). Empty strings when the install root is
+   * unknown, so a template referencing them never renders "undefined".
+   */
+  vault_name: string;
+  vault_slug: string;
 }
 
 export interface DriftReport {
