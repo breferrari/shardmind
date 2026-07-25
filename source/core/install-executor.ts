@@ -269,7 +269,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   if (!dryRun) {
     await initShardDir(vaultRoot);
     await cacheTemplates(vaultRoot, tempDir);
-    await cacheManifest(vaultRoot, manifest, schema);
+    await cacheManifest(vaultRoot, manifest, schema, tempDir);
     await writeState(vaultRoot, state);
     await writeValuesFile(vaultRoot, values);
     writtenPaths.push(VALUES_FILE);

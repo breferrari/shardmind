@@ -22,6 +22,7 @@ import {
   CACHED_TEMPLATES,
   SHARD_SOURCE_DIR,
   SHARD_MANIFEST_FILE,
+  SHARD_SCHEMA_FILE,
 } from '../runtime/vault-paths.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { migrateState } from './state-migrator.js';
@@ -170,12 +171,48 @@ export async function cacheTemplates(vaultRoot: string, tempDir: string): Promis
   });
 }
 
+/**
+ * Cache the shard's manifest and schema under `.shardmind/`.
+ *
+ * Prefers a **verbatim copy** of the source files. Re-serialising the parsed
+ * objects round-trips the YAML and discards everything the parser does not
+ * model — every comment, and every quoting choice the shard author made
+ * (#140). Measured against obsidian-mind 7.0.1: `shard-schema.yaml` lost all
+ * 74 of its comment lines, and `shard.yaml` went 1,755 to 621 bytes. Those
+ * comments are the only in-file explanation a user gets when they open the
+ * file to change a value, and losing them is silent.
+ *
+ * It also breaks shards that assert on their own rendered artifact: OM's
+ * `shard-contract.test.ts` requires a quoted `fingerprint`, which the
+ * round-trip unquotes, so a clean install fails one of its own tests.
+ *
+ * `sourceDir` is optional so existing callers keep working. When it is absent,
+ * or the copy fails, fall back to serialising the parsed objects — lossy, but
+ * always a valid and complete file. Cache fidelity must never fail an install.
+ */
 export async function cacheManifest(
   vaultRoot: string,
   manifest: ShardManifest,
   schema: ShardSchema,
+  sourceDir?: string,
 ): Promise<void> {
   await fsp.mkdir(path.join(vaultRoot, SHARDMIND_DIR), { recursive: true });
+
+  if (sourceDir !== undefined) {
+    try {
+      await fsp.copyFile(
+        path.join(sourceDir, SHARD_SOURCE_DIR, SHARD_MANIFEST_FILE),
+        path.join(vaultRoot, CACHED_MANIFEST),
+      );
+      await fsp.copyFile(
+        path.join(sourceDir, SHARD_SOURCE_DIR, SHARD_SCHEMA_FILE),
+        path.join(vaultRoot, CACHED_SCHEMA),
+      );
+      return;
+    } catch {
+      // Source unreadable — fall through rather than failing the install.
+    }
+  }
 
   const serializedManifest = stringifyYaml(manifest, { lineWidth: 0 }).trimEnd() + '\n';
   const serializedSchema = stringifyYaml(schema, { lineWidth: 0 }).trimEnd() + '\n';
