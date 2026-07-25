@@ -1,5 +1,8 @@
-import { Box, Text } from 'ink';
+import { Box, Text, useApp } from 'ink';
+import { useEffect } from 'react';
 import zod from 'zod';
+
+import { emitJson, jsonFailure } from '../core/json-output.js';
 
 import { ShardMindError, assertNever } from '../runtime/types.js';
 
@@ -44,6 +47,10 @@ export const options = zod.object({
     .boolean()
     .default(false)
     .describe('Disable the once-per-day npm registry check for newer shardmind versions'),
+  json: zod
+    .boolean()
+    .default(false)
+    .describe('Emit machine-readable JSON instead of the TUI'),
 });
 
 type Props = {
@@ -53,7 +60,8 @@ type Props = {
 
 export default function Adopt({ args, options }: Props) {
   const [shardRef] = args;
-  const { values: valuesFile, yes, mode, verbose, dryRun, noUpdateCheck } = options;
+  const { values: valuesFile, yes, mode, verbose, dryRun, noUpdateCheck, json } = options;
+  const { exit: exitApp } = useApp();
 
   const {
     phase,
@@ -70,9 +78,28 @@ export default function Adopt({ args, options }: Props) {
     verbose,
     dryRun,
     vaultRoot: process.cwd(),
+    json,
   });
 
-  const banner = useSelfUpdateBanner({ noUpdateCheck });
+  // The banner is chrome; suppress it under --json so stdout is exactly one
+  // JSON document.
+  const banner = useSelfUpdateBanner({ noUpdateCheck: noUpdateCheck || json });
+
+  // A --json run must answer with a document on failure too, not a rendered
+  // error box (which returns null here) and certainly not a stack trace. The
+  // machine's `finish` already sets a non-zero exit code; this supplies the
+  // parseable body to go with it (#139 finding 3).
+  useEffect(() => {
+    if (!json) return;
+    if (phase.kind !== 'error') return;
+    emitJson(jsonFailure('adopt', phase.error));
+    process.exitCode = 1;
+    exitApp();
+  }, [json, phase, exitApp]);
+
+  // Render nothing under --json: the machine writes the document straight to
+  // stdout, and an Ink frame would wrap it at the terminal width.
+  if (json) return null;
 
   // Exhaustive switch: adding a new Phase variant without a case here is
   // a compile error, not a silent render-nothing bug.

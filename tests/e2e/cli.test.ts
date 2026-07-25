@@ -1428,6 +1428,63 @@ describe('shardmind adopt', () => {
   let vault: Vault;
   afterEach(async () => vault?.cleanup());
 
+  it('--dry-run --json emits one parseable per-file plan and nothing else', async () => {
+    // #139 finding 5: the prose summary reports `99 exact / 33 customized /
+    // 13 missing` and never says WHICH files, so an agent cannot safely pick a
+    // bulk --mode and falls back to keep-all-mine plus a hand audit. The
+    // document has to be parseable with no stripping, so the strict assertion
+    // here is that stdout is EXACTLY one JSON value.
+    vault = await createEmptyVault('adopt-json-plan');
+    await vault.writeFile('Home.md', '# My own home (not the shard version)');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['adopt', SHARD_REF, '--values', valuesPath, '--dry-run', '--json'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const doc = JSON.parse(result.stdout);
+    expect(doc.schemaVersion).toBe(1);
+    expect(doc.command).toBe('adopt');
+    expect(doc.ok).toBe(true);
+    expect(doc.result.dryRun).toBe(true);
+    expect(doc.result.mode).toBeNull();
+
+    // The file we deliberately diverged must be reported as such, with both
+    // sides identified — the mine-vs-theirs signal the summary never gave.
+    const home = doc.result.files.find((f: { path: string }) => f.path === 'Home.md');
+    expect(home.classification).toBe('differs');
+    expect(home.userHash).toBeTruthy();
+    expect(home.shardHash).toBeTruthy();
+    expect(home.userHash).not.toBe(home.shardHash);
+
+    // Every bucket is represented and the counts agree with the list.
+    const counted =
+      doc.result.counts.matches + doc.result.counts.differs + doc.result.counts.shardOnly;
+    expect(doc.result.files).toHaveLength(counted);
+
+    // A plan is a decision aid, not a transport for the vault.
+    expect(result.stdout).not.toContain('not the shard version');
+
+    // Dry run: nothing on disk.
+    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+  });
+
+  it('--dry-run --json reports a failure as a document with a non-zero exit', async () => {
+    // Finding 3: an agent branches on $?, and a failure still has to be
+    // parseable rather than a stack trace on stdout.
+    vault = await createEmptyVault('adopt-json-error');
+    const result = await spawnCli(
+      ['adopt', 'github:breferrari/does-not-exist-xyz', '--yes', '--dry-run', '--json'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(1);
+    const doc = JSON.parse(result.stdout);
+    expect(doc.ok).toBe(false);
+    expect(doc.command).toBe('adopt');
+    expect(typeof doc.error.message).toBe('string');
+  });
+
   it('--values alone adopts headlessly and applies the supplied values', async () => {
     // #139 was filed from an agent driving `adopt`. `--values` prefills the
     // wizard rather than replacing it, so before this fix a non-TTY adopt
