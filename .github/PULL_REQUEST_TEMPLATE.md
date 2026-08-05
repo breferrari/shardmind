@@ -36,6 +36,7 @@ Delete this section for non-v6 PRs.
 - [ ] **Step-by-step commits** (not a single squash) — CLAUDE.md §Working Agreement §7. Typecheck + relevant tests must be green at every commit; reviewers should be able to read the series incrementally and `git bisect`.
 - [ ] Adversarial cases from the section above are all covered by tests
 - [ ] Copilot review requested and every comment addressed (or marked false-positive with justification in the PR thread)
+- [ ] `/simplify` (small diff) or `/harden` until dry (larger, or merge-engine-adjacent) ran with the docs carve-out; audit artifact (rounds, findings, exit reason) included — CLAUDE.md §Working Agreement §4
 - [ ] Issue acceptance criteria checked off with evidence below (or in the issue)
 - [ ] ROADMAP.md checkbox updated in this PR
 - [ ] For PRs on #73-#77: manual Invariant 1 proxy run (`git clone <shard>` + `shardmind install --defaults` + `diff -r`) — pending #78's CI test
