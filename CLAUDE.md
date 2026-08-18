@@ -70,6 +70,7 @@ Every PR for a v6 issue must demonstrate in its description:
 - [ ] New behavior has new tests (§2) — no code without tests.
 - [ ] Adversarial cases from §3 are enumerated and covered.
 - [ ] Copilot review requested and addressed (or each flag explicitly justified as false-positive in PR conversation).
+- [ ] `/simplify` ran on the diff (under ~200 lines across ≤3 files), or `/harden` ran until dry (anything larger, or anything the merge engine stands on — it runs `/simplify` as its own phase; pass the docs carve-out into the invocation). Audit artifact — rounds, findings per round, exit reason — in the PR description. Both instruments were codified from this repo's own M4 and post-launch sessions; this row is the bar returning home.
 - [ ] Once [#78](https://github.com/breferrari/shardmind/issues/78) lands: Invariant 1 E2E test still green.
 - [ ] Issue's acceptance criteria checked off with evidence.
 - [ ] Roadmap checkbox updated in the same PR.
