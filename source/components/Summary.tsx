@@ -26,6 +26,8 @@ interface SummaryProps {
   fileCount: number;
   durationMs: number;
   backups: BackupRecord[];
+  /** Vault-relative paths replaced with no backup: Overwrite or `--force` (#55). */
+  replaced?: string[];
   hooks: HookOutcome[];
   dryRun?: boolean;
 }
@@ -36,6 +38,7 @@ export default function Summary({
   fileCount,
   durationMs,
   backups,
+  replaced = [],
   hooks,
   dryRun,
 }: SummaryProps) {
@@ -59,6 +62,20 @@ export default function Summary({
             </Text>
           ))}
           {backups.length > 10 && <Text dimColor>  …and {backups.length - 10} more</Text>}
+        </Box>
+      )}
+
+      {replaced.length > 0 && (
+        <Box flexDirection="column">
+          <Text bold>
+            {dryRun ? 'Would replace' : 'Replaced'} {replaced.length} existing file{replaced.length === 1 ? '' : 's'} (no backup):
+          </Text>
+          {replaced.slice(0, 10).map((p) => (
+            <Text key={p} dimColor>
+              · {p}
+            </Text>
+          ))}
+          {replaced.length > 10 && <Text dimColor>  …and {replaced.length - 10} more</Text>}
         </Box>
       )}
 

@@ -57,6 +57,25 @@ describe('Summary', () => {
     expect(frame).toContain('…and 3 more');
   });
 
+  it('lists files replaced without a backup, truncated above 10 (#55)', () => {
+    const replaced = Array.from({ length: 12 }, (_, i) => `notes/n${i}.md`);
+    const { lastFrame } = render(<Summary {...baseProps} replaced={replaced} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Replaced 12 existing files (no backup):');
+    expect(frame).toContain('notes/n0.md');
+    expect(frame).toContain('notes/n9.md');
+    expect(frame).not.toContain('notes/n10.md');
+    expect(frame).toContain('…and 2 more');
+  });
+
+  it('says "would replace" in a dry run, and nothing when none were replaced (#55)', () => {
+    const dry = render(<Summary {...baseProps} dryRun replaced={['Home.md']} />);
+    expect(dry.lastFrame() ?? '').toContain('Would replace 1 existing file (no backup):');
+    cleanup();
+    const none = render(<Summary {...baseProps} />);
+    expect(none.lastFrame() ?? '').not.toContain('no backup');
+  });
+
   it('renders a "skipped" note when a hook is deferred (dry run)', () => {
     const { lastFrame } = render(
       <Summary {...baseProps} hooks={[{ slot: 'bootstrap', summary: { deferred: true } }]} />,
