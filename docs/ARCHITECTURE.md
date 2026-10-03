@@ -683,6 +683,8 @@ No `list` (vault-local, one shard per vault, nothing to list). No `doctor` (bake
 
 **Option scope.** An option written after a subcommand name belongs to that subcommand; root options (`--verbose`, `--no-update-check` for status) go before it. `shardmind adopt <shard> --verbose` is adopt's `--verbose`, and `shardmind --verbose` is the status command's. Commander binds program-level options anywhere on the line by default, so a root option silently shadowed every subcommand option of the same name, and the subcommand saw its default (#147). Pastel builds the Commander program internally and never calls `enablePositionalOptions()`, so `source/cli-options.ts` enables it on Pastel's own Commander before `app.run()`. A flag a subcommand does not declare is then an `unknown option` error rather than being swallowed by the root.
 
+**Negatable flags are named for the positive.** Pastel turns a boolean option that defaults to `true` into a `--no-<name>` flag, which Commander stores under `<name>`. A `--no-` flag must therefore be declared as its positive (`updateCheck: zod.boolean().default(true)` for `--no-update-check`). Declared as `noUpdateCheck` defaulting to `false`, Pastel still emits `--no-update-check`, Commander stores it under `updateCheck`, and the command's `noUpdateCheck` never changes (#147).
+
 ### 10.2 `shardmind` — Status
 
 The root command. Shows vault health at a glance. Runs hash comparisons and file existence checks. No network call by default (update check cached for 24 hours).
