@@ -310,6 +310,29 @@ describe('executeHook — subprocess runtime', () => {
     expect(result.stderr).toContain('boom');
   }, 30_000);
 
+  // #106: the runner exited with `process.exit(1)` on a throw, which drops
+  // stdout still queued on a POSIX pipe. Small output only lost the race
+  // under load; more than a pipe buffer (64 KiB) loses it every time.
+  it('keeps every byte a hook wrote to stdout before it threw (#106)', async () => {
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          const line = 'x'.repeat(1023) + '\\n';
+          for (let i = 0; i < 200; i++) process.stdout.write(line);
+          process.stdout.write('END-OF-OUTPUT\\n');
+          throw new Error('boom');
+        }
+      `,
+    );
+    const result = await executeHook(hookPath, baseCtx());
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}`);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout.length).toBe(200 * 1024 + 'END-OF-OUTPUT\n'.length);
+    expect(result.stdout).toContain('END-OF-OUTPUT');
+    expect(result.stderr).toContain('boom');
+  }, 30_000);
+
   it('surfaces a syntax-error hook as ran + exitCode 1 with the parse error captured', async () => {
     const hookPath = await writeHook(
       'hook.ts',
