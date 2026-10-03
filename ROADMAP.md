@@ -40,7 +40,7 @@ Pre-existing files and binary files get a deliberate path through install and up
 | | Task | Issue |
 |---|---|---|
 | ✅ | Binary files should bypass three-way merge entirely | [#63](https://github.com/breferrari/shardmind/issues/63) |
-| ⬜ | Byte-identical preexisting add-collision should adopt silently | [#62](https://github.com/breferrari/shardmind/issues/62) |
+| ✅ | Byte-identical preexisting add-collision should adopt silently | [#62](https://github.com/breferrari/shardmind/issues/62) |
 | ⬜ | --yes policy for preexisting add-collisions churns every update | [#61](https://github.com/breferrari/shardmind/issues/61) |
 | ⬜ | DiffView: distinguish preexisting add-collision from modified-file conflict | [#60](https://github.com/breferrari/shardmind/issues/60) |
 | ⬜ | --force flag on install for scripted collision overwrite without backup | [#55](https://github.com/breferrari/shardmind/issues/55) |
