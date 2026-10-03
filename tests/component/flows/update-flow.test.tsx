@@ -218,10 +218,9 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
       // v0.3.0's append should be present.
       expect(updated).toContain('Updated again in v0.3.0.');
       // #153: the summary names the replaced file and where its old bytes went.
-      const frame = summaryFrame;
-      expect(frame).toContain("Replaced with the shard's version");
-      expect(frame).toContain('· Home.md');
-      expect(frame).toMatch(/Previous copies: \.shardmind\/backups\/update-[^\s/]+\//);
+      expect(summaryFrame).toContain("Replaced with the shard's version");
+      expect(summaryFrame).toContain('· Home.md');
+      expect(summaryFrame).toMatch(/Previous copies: \.shardmind\/backups\/update-[^\s/]+\/files\//);
     } finally {
       if (vault) await vault.cleanup();
     }
@@ -412,12 +411,14 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
       const stateBefore = await fs.readFile(statePath, 'utf-8');
 
       const r = mountUpdate({ vaultRoot: vault.root });
-      await waitFor(
+      // Assert on the frame waitFor matched: re-reading lastFrame() races the
+      // app's unmount after the error renders (it can come back as '\n').
+      const errorFrame = await waitFor(
         r.lastFrame,
         (f) => /requires shardmind >=99\.0\.0/.test(f),
         30_000,
       );
-      expect(r.lastFrame() ?? '').toMatch(/SHARDMIND_VERSION_MISMATCH/);
+      expect(errorFrame).toMatch(/SHARDMIND_VERSION_MISMATCH/);
       // The refusal fires after parsing the new manifest but before any
       // executor runs — installed state is byte-unchanged (still 0.1.0).
       const stateAfter = await fs.readFile(statePath, 'utf-8');

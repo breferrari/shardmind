@@ -580,6 +580,16 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       expect(updatePlanResult(plan, { dryRun: true }).counts.overwritten).toBe(overwrites);
     });
 
+    it('lists an untracked file the user let a newly added shard path replace', async () => {
+      await install();
+      await write('brain/New Note.md', 'my own untracked note\n');
+      const v2 = await shardAt('0.2.0', { 'brain/New Note.md': () => '# New\n' });
+      const { plan, result } = await update(v2, 'accept_new');
+      expect(plan.pendingConflicts.map((c) => c.path)).toContain('brain/New Note.md');
+      expect(result.summary.replacedFiles).toContain('brain/New Note.md');
+      expect(await read('brain/New Note.md')).toBe('# New\n');
+    });
+
     it('is populated in a dry run', async () => {
       await install();
       const v2 = await shardAt('0.2.0', { '.claude/settings.json.njk': (s) => s.replace('{', '{\n  "v2": true,') });

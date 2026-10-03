@@ -24,7 +24,7 @@ interface UpdateSummaryProps {
   migrationWarnings: string[];
   hooks: HookOutcome[];
   dryRun?: boolean;
-  /** Vault-relative snapshot dir holding replaced files' previous bytes; `null` in a dry run. */
+  /** Vault-relative snapshot dir (previous bytes under its `files/`); `null` in a dry run. */
   backupDir?: string | null;
 }
 
@@ -72,7 +72,7 @@ export default function UpdateSummary({
       {replaced.length > 0 && (
         <Box flexDirection="column">
           <Text dimColor>
-            {dryRun ? 'Would replace' : 'Replaced'} with the shard's version ({replaced.length}):
+            {dryRun ? 'Would replace' : 'Replaced'} with the shard's version:
           </Text>
           {replaced.slice(0, REPLACED_VISIBLE).map((p) => (
             <Text key={p}>  · {p}</Text>
@@ -81,9 +81,9 @@ export default function UpdateSummary({
             <Text dimColor>  …and {replaced.length - REPLACED_VISIBLE} more</Text>
           )}
           {dryRun ? (
-            <Text dimColor>Full list: shardmind update --dry-run --json</Text>
+            <Text dimColor>Full list: add --json to this command</Text>
           ) : (
-            backupDir && <Text dimColor>Previous copies: {backupDir}/</Text>
+            backupDir && <Text dimColor>Previous copies: {backupDir}/files/</Text>
           )}
         </Box>
       )}

@@ -232,11 +232,12 @@ describe('UpdateSummary', () => {
       });
       expect(frame).toContain('2 replaced · 41 unchanged');
       expect(frame).not.toContain('silent');
+      expect(frame).not.toMatch(/version \(\d+\)/);
     });
 
     it('lists replaced paths sorted under their heading', () => {
       const frame = frameFor({ replacedFiles: ['z.md', 'brain/North Star.md', 'a.md'] });
-      expect(frame).toContain("Replaced with the shard's version (3):");
+      expect(frame).toContain("Replaced with the shard's version:");
       const at = (p: string) => frame.indexOf(`· ${p}`);
       expect(at('a.md')).toBeGreaterThan(-1);
       expect(at('a.md')).toBeLessThan(at('brain/North Star.md'));
@@ -260,13 +261,14 @@ describe('UpdateSummary', () => {
 
     it('points to the backup dir after a real run', () => {
       const frame = frameFor({ replacedFiles: ['a.md'] }, { backupDir: '.shardmind/backups/update-2026-10-03T17-35-00-000' });
-      expect(frame).toContain('Previous copies: .shardmind/backups/update-2026-10-03T17-35-00-000/');
+      expect(frame).toContain('Previous copies: .shardmind/backups/update-2026-10-03T17-35-00-000/files/');
     });
 
     it('says "Would replace" and points to --dry-run --json in a dry run', () => {
       const frame = frameFor({ replacedFiles: ['a.md'] }, { dryRun: true });
-      expect(frame).toContain("Would replace with the shard's version (1):");
-      expect(frame).toContain('shardmind update --dry-run --json');
+      expect(frame).toContain("Would replace with the shard's version:");
+      // Generic, so it keeps whatever flags (--release, …) the user ran with.
+      expect(frame).toContain('Full list: add --json to this command');
       expect(frame).not.toContain('Previous copies');
     });
 
