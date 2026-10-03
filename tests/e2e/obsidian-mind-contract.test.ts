@@ -370,7 +370,9 @@ describe('update (obsidian-mind-like)', () => {
   it('user-edited managed file is preserved when upstream did not change it', async () => {
     // Scenario 9 — docs/SHARD-LAYOUT.md §Update semantics: when
     // upstream did not modify a path the user edited, the user's
-    // bytes survive and state.hash reflects user content.
+    // bytes survive and state records the shard's hash as the
+    // baseline, labelled modified — never the user's hash, which the
+    // next update would read as engine-owned and overwrite (#150).
     vault = await createInstalledVault({
       stub,
       shardRef: SHARD_REF,
@@ -392,10 +394,18 @@ describe('update (obsidian-mind-like)', () => {
     expect(claudeAfter).toContain('My bespoke CLAUDE addition.');
 
     const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
-      files: Record<string, { rendered_hash: string }>;
+      files: Record<string, { rendered_hash: string; ownership: string }>;
     };
-    expect(state.files['CLAUDE.md']?.rendered_hash).toBe(sha256(claudeAfter));
-  }, 90_000);
+    expect(state.files['CLAUDE.md']?.rendered_hash).not.toBe(sha256(claudeAfter));
+    expect(state.files['CLAUDE.md']?.ownership).toBe('modified');
+
+    // And the edit survives the update after that, which the user's hash
+    // as baseline would have overwritten silently.
+    stub.setLatest(SHARD_SLUG, '6.1.0');
+    const second = await spawnCli(['update', '--yes'], { cwd: vault.root, env: envWithStub() });
+    expect(second.exitCode).toBe(0);
+    expect(await vault.readFile('CLAUDE.md')).toContain('My bespoke CLAUDE addition.');
+  }, 120_000);
 
   it('non-conflicting user edit (bottom of file) auto-merges with upstream top-of-file change', async () => {
     // Scenario 10 — docs/SHARD-LAYOUT.md §Update semantics: 3-way

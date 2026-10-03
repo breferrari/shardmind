@@ -572,3 +572,92 @@ describe('runHooks — full-output log persistence (#105)', () => {
     expect(boot?.summary?.logPath).toBeUndefined(); // pointer omitted, no throw
   }, 30_000);
 });
+
+// #150: the re-hash compared disk against `rendered_hash`, so a file the user
+// edited before the hook phase read as a hook write and had the user's bytes
+// recorded as its baseline — and the next update overwrote it.
+describe('runHooks — user edits made before the hook phase (#150)', () => {
+  /** A tracked file whose recorded baseline is the engine's, with the user's edit on disk. */
+  async function edited(rel: string) {
+    const abs = path.join(vault, rel);
+    await fsp.mkdir(path.dirname(abs), { recursive: true });
+    await fsp.writeFile(abs, 'the user edit\n', 'utf-8');
+    return makeFileState({ rendered_hash: sha256('engine render\n'), ownership: 'modified' });
+  }
+
+  function updatePlan(over: Partial<HookRunPlan> & { manifest: ShardManifest }): HookRunPlan {
+    return {
+      command: 'update',
+      tempDir: shardDir,
+      schema: SCHEMA,
+      vaultRoot: vault,
+      state: makeShardState(),
+      values: { user_name: 'default' },
+      modules: {},
+      previousVersion: '0.9.0',
+      newFiles: [],
+      removedFiles: [],
+      dryRun: false,
+      ...over,
+    };
+  }
+
+  it('a bootstrap re-run neither flags nor re-baselines a file the user edited before the update', async () => {
+    const files = { 'mine.md': await edited('mine.md') };
+    await hook('bootstrap.ts', `export default async function () {}`);
+    const result = await runHooks(
+      updatePlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v2' } }),
+        state: makeShardState({ files, bootstrap_fingerprint: 'v1' }),
+      }),
+      NOOP_UI,
+    );
+    expect(result.outcomes.find((o) => o.slot === 'bootstrap')?.summary?.violation).toBeUndefined();
+    expect(result.finalState.files['mine.md']!.rendered_hash).toBe(sha256('engine render\n'));
+  }, 30_000);
+
+  it('a post-update hook that writes nothing leaves a user-edited file\'s baseline alone', async () => {
+    const files = { 'mine.md': await edited('mine.md') };
+    await hook('post-update.ts', `export default async function () {}`);
+    const result = await runHooks(
+      updatePlan({
+        manifest: manifest({ 'post-update': '.shardmind/hooks/post-update.ts' }),
+        state: makeShardState({ files }),
+      }),
+      NOOP_UI,
+    );
+    expect(result.finalState.files['mine.md']!.rendered_hash).toBe(sha256('engine render\n'));
+    expect(result.stateChanged).toBe(false);
+  }, 30_000);
+
+  it('personalize editing a file the user already edited does not re-baseline it', async () => {
+    const files = { 'mine.md': await edited('mine.md') };
+    await hook('personalize.ts', `
+      import { appendFile } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx) {
+        await appendFile(join(ctx.vaultRoot, 'mine.md'), 'personalized\\n');
+      }
+    `);
+    const result = await runHooks(
+      installPlan({
+        manifest: manifest({ personalize: '.shardmind/hooks/personalize.ts' }),
+        state: makeShardState({ files }),
+        values: { user_name: 'Alice' },
+      }),
+      NOOP_UI,
+    );
+    expect(await fsp.readFile(path.join(vault, 'mine.md'), 'utf-8')).toContain('personalized');
+    expect(result.finalState.files['mine.md']!.rendered_hash).toBe(sha256('engine render\n'));
+  }, 30_000);
+
+  it('runs no re-hash when no slot runs', async () => {
+    const files = { 'mine.md': await edited('mine.md') };
+    const result = await runHooks(
+      updatePlan({ manifest: manifest(undefined), state: makeShardState({ files }) }),
+      NOOP_UI,
+    );
+    expect(result.stateChanged).toBe(false);
+    expect(result.finalState.files['mine.md']!.rendered_hash).toBe(sha256('engine render\n'));
+  });
+});

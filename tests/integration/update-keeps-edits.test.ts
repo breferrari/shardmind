@@ -19,6 +19,7 @@ import { parse as parseYaml } from 'yaml';
 import { parseManifest } from '../../source/core/manifest.js';
 import { parseSchema, buildValuesValidator } from '../../source/core/schema.js';
 import { readState } from '../../source/core/state.js';
+import { runHooks } from '../../source/core/hook-orchestrator.js';
 import { detectDrift } from '../../source/core/drift.js';
 import { planUpdate, mergeModuleSelections } from '../../source/core/update-planner.js';
 import type { ConflictResolution } from '../../source/core/update-planner.js';
@@ -56,6 +57,12 @@ const COPY = 'CLAUDE.md';
 const COPY_LINE = 'Static agent-config file for the minimal-shard fixture.';
 
 type SourceEdits = Record<string, (source: string) => string>;
+
+/** A post-update hook that writes nothing: only the engine's post-hook re-hash acts. */
+const IDLE_POST_UPDATE: SourceEdits = {
+  '.shardmind/shard.yaml': (s) => s.replace(/^hooks:\n(?: {2}.+\n)+/m, 'hooks:\n  post-update: .shardmind/hooks/post-update.ts\n'),
+  '.shardmind/hooks/post-update.ts': () => 'export default async function () {}\n',
+};
 
 describe('update keeps the user\'s edits across updates (#150)', () => {
   let root: string;
@@ -98,7 +105,9 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     await fsp.writeFile(manifestPath, manifest.replace(/^version: .+$/m, `version: ${version}`), 'utf-8');
     for (const [rel, edit] of Object.entries(edits)) {
       const p = path.join(dir, rel);
-      await fsp.writeFile(p, edit(await fsp.readFile(p, 'utf-8')), 'utf-8');
+      const current = await fsp.readFile(p, 'utf-8').catch(() => '');
+      await fsp.mkdir(path.dirname(p), { recursive: true });
+      await fsp.writeFile(p, edit(current), 'utf-8');
     }
     return dir;
   }
@@ -138,7 +147,25 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       tarballSha256: `sha-${manifest.version}`,
       newTempDir: shardDir,
     });
-    return { plan, result };
+    // The hook phase, as the update machine runs it after the state write.
+    const hooks = await runHooks(
+      {
+        command: 'update',
+        tempDir: shardDir,
+        manifest,
+        schema,
+        vaultRoot: vault,
+        state: (await readState(vault)) as ShardState,
+        values,
+        modules: selections,
+        previousVersion: state.version,
+        newFiles: result.summary.addedFiles,
+        removedFiles: result.summary.deletedFiles,
+        dryRun: false,
+      },
+      { setPhase: () => {}, onStdout: () => {}, onStderr: () => {} },
+    );
+    return { plan, result, hooks };
   }
 
   const read = (rel: string) => fsp.readFile(path.join(vault, rel), 'utf-8');
@@ -187,6 +214,20 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     expect(entry.rendered_hash).not.toBe(sha256(await fsp.readFile(path.join(vault, HOME))));
     expect(entry.ownership).toBe('modified');
   });
+
+  it('an edit survives the post-hook re-hash of an update that does not touch the file', async () => {
+    await install();
+    await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.');
+    await editFile(COPY, COPY_LINE, 'My own line.');
+
+    // 0.2.0 changes neither file, and runs a post-update hook.
+    const first = await update(await shardAt('0.2.0', IDLE_POST_UPDATE));
+    expect(first.hooks.outcomes.map((o) => o.slot)).toContain('post-update');
+
+    await update(await shardAt('0.3.0', IDLE_POST_UPDATE));
+    expect(await read(HOME)).toContain('My own welcome line.');
+    expect(await read(COPY)).toContain('My own line.');
+  }, 30_000);
 
   it('a line the user added survives a second update after an auto-merge', async () => {
     await install();

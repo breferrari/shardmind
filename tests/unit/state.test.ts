@@ -10,6 +10,7 @@ import {
   cacheTemplates,
   cacheManifest,
   rehashManagedFiles,
+  snapshotTrackedHashes,
 } from '../../source/core/state.js';
 import type { ShardState, ShardManifest, ShardSchema } from '../../source/runtime/types.js';
 import { ShardMindError } from '../../source/runtime/types.js';
@@ -409,7 +410,7 @@ describe('core/state', () => {
         files: { 'a.md': makeFileState({ rendered_hash: helloHash }) },
       });
 
-      const result = await rehashManagedFiles(vault, state);
+      const result = await rehashManagedFiles(vault, state, await snapshotTrackedHashes(vault, state));
       expect(result.changed).toEqual([]);
       expect(result.missing).toEqual([]);
       expect(result.failed).toEqual([]);
@@ -427,10 +428,11 @@ describe('core/state', () => {
           'brain/Static.md': makeFileState({ rendered_hash: staticHash }),
         },
       });
+      const baseline = await snapshotTrackedHashes(vault, state);
       // Simulate a hook editing the file:
       const newHash = await writeManagedFile('brain/Index.md', 'after edit');
 
-      const result = await rehashManagedFiles(vault, state);
+      const result = await rehashManagedFiles(vault, state, baseline);
       expect(result.changed).toEqual(['brain/Index.md']);
       expect(result.missing).toEqual([]);
       expect(result.failed).toEqual([]);
@@ -450,9 +452,10 @@ describe('core/state', () => {
           }),
         },
       });
+      const baseline = await snapshotTrackedHashes(vault, state);
       await writeManagedFile('iter.md', 'new');
 
-      const result = await rehashManagedFiles(vault, state);
+      const result = await rehashManagedFiles(vault, state, baseline);
       expect(result.state.files['iter.md']).toMatchObject({
         template: 'iter.md.njk',
         ownership: 'managed',
@@ -465,23 +468,48 @@ describe('core/state', () => {
       const state = makeShardState({
         files: { 'gone.md': makeFileState({ rendered_hash: priorHash }) },
       });
+      const baseline = await snapshotTrackedHashes(vault, state);
       await fsp.unlink(path.join(vault, 'gone.md'));
 
-      const result = await rehashManagedFiles(vault, state);
+      const result = await rehashManagedFiles(vault, state, baseline);
       expect(result.missing).toEqual(['gone.md']);
       expect(result.changed).toEqual([]);
       expect(result.state.files['gone.md']!.rendered_hash).toBe(priorHash);
     });
 
+    it('does not report a file that was already missing before the hook phase', async () => {
+      const state = makeShardState({
+        files: { 'gone.md': makeFileState({ rendered_hash: sha256('orig') }) },
+      });
+      const baseline = await snapshotTrackedHashes(vault, state);
+
+      const result = await rehashManagedFiles(vault, state, baseline);
+      expect(result.missing).toEqual([]);
+      expect(result.changed).toEqual([]);
+    });
+
+    it('records a tracked file a hook created after it was missing at snapshot time', async () => {
+      const state = makeShardState({
+        files: { 'restored.md': makeFileState({ rendered_hash: sha256('orig') }) },
+      });
+      const baseline = await snapshotTrackedHashes(vault, state);
+      const newHash = await writeManagedFile('restored.md', 'from hook');
+
+      const result = await rehashManagedFiles(vault, state, baseline);
+      expect(result.changed).toEqual(['restored.md']);
+      expect(result.state.files['restored.md']!.rendered_hash).toBe(newHash);
+    });
+
     it('ignores files the hook added that are not in state.files (unmanaged)', async () => {
       const aHash = await writeManagedFile('a.md', 'one');
-      // Hook adds an unmanaged file:
-      await writeManagedFile('side-effect.md', 'unmanaged content');
-
       const state = makeShardState({
         files: { 'a.md': makeFileState({ rendered_hash: aHash }) },
       });
-      const result = await rehashManagedFiles(vault, state);
+      const baseline = await snapshotTrackedHashes(vault, state);
+      // Hook adds an unmanaged file:
+      await writeManagedFile('side-effect.md', 'unmanaged content');
+
+      const result = await rehashManagedFiles(vault, state, baseline);
       expect(Object.keys(result.state.files)).toEqual(['a.md']);
       expect(result.changed).toEqual([]);
     });
@@ -497,12 +525,13 @@ describe('core/state', () => {
           'c.md': makeFileState({ rendered_hash: cHash }),
         },
       });
+      const baseline = await snapshotTrackedHashes(vault, state);
       // Hook: modifies a.md, deletes b.md, adds an unmanaged d.md.
       const aNewHash = await writeManagedFile('a.md', 'a-new');
       await fsp.unlink(path.join(vault, 'b.md'));
       await writeManagedFile('d.md', 'd-from-hook');
 
-      const result = await rehashManagedFiles(vault, state);
+      const result = await rehashManagedFiles(vault, state, baseline);
       expect(result.changed).toEqual(['a.md']);
       expect(result.missing).toEqual(['b.md']);
       expect(result.failed).toEqual([]);
@@ -514,28 +543,62 @@ describe('core/state', () => {
 
     it('returns input untouched on an empty managed-file set', async () => {
       const state = makeShardState({ files: {} });
-      const result = await rehashManagedFiles(vault, state);
-      expect(result).toEqual({ state, changed: [], missing: [], failed: [] });
+      const result = await rehashManagedFiles(vault, state, new Map());
+      expect(result).toEqual({ state, changed: [], missing: [], failed: [], current: new Map() });
     });
 
     it('hashes 50 managed files correctly under the concurrency cap', async () => {
       const files: Record<string, ReturnType<typeof makeFileState>> = {};
-      const expected: Record<string, string> = {};
       for (let i = 0; i < 50; i++) {
         const rel = `f-${i.toString().padStart(3, '0')}.md`;
-        const hash = await writeManagedFile(rel, `content-${i}`);
-        // Seed state with stale hashes so changed[] surfaces every entry.
-        files[rel] = makeFileState({ rendered_hash: 'stale' });
-        expected[rel] = hash;
+        files[rel] = makeFileState({ rendered_hash: await writeManagedFile(rel, `before-${i}`) });
       }
       const state = makeShardState({ files });
-      const result = await rehashManagedFiles(vault, state);
+      const baseline = await snapshotTrackedHashes(vault, state);
+      const expected: Record<string, string> = {};
+      for (const rel of Object.keys(files)) {
+        expected[rel] = await writeManagedFile(rel, `after-${rel}`);
+      }
+
+      const result = await rehashManagedFiles(vault, state, baseline);
       expect(result.changed).toHaveLength(50);
       expect(result.missing).toEqual([]);
       expect(result.failed).toEqual([]);
       for (const [rel, hash] of Object.entries(expected)) {
         expect(result.state.files[rel]!.rendered_hash).toBe(hash);
+        expect(result.current.get(rel)).toBe(hash);
       }
+    });
+
+    // #150: the re-hash recorded every tracked file's current bytes, so a
+    // user's pre-update edit became the baseline and the next update read
+    // it as engine-owned and overwrote it.
+    it('does not re-baseline a file the user edited before the hook phase', async () => {
+      const engineHash = sha256('engine render');
+      await writeManagedFile('mine.md', 'the user edit');
+      const state = makeShardState({
+        files: { 'mine.md': makeFileState({ rendered_hash: engineHash, ownership: 'modified' }) },
+      });
+
+      const result = await rehashManagedFiles(vault, state, await snapshotTrackedHashes(vault, state));
+      expect(result.changed).toEqual([]);
+      expect(result.state.files['mine.md']!.rendered_hash).toBe(engineHash);
+    });
+
+    it('does not re-baseline a user-edited file even when a hook rewrites it', async () => {
+      const engineHash = sha256('engine render');
+      await writeManagedFile('mine.md', 'the user edit');
+      const state = makeShardState({
+        files: { 'mine.md': makeFileState({ rendered_hash: engineHash, ownership: 'modified' }) },
+      });
+      const baseline = await snapshotTrackedHashes(vault, state);
+      await writeManagedFile('mine.md', 'the user edit + a hook line');
+
+      const result = await rehashManagedFiles(vault, state, baseline);
+      // Reported as a hook write (bootstrap's boundary check needs it) …
+      expect(result.changed).toEqual(['mine.md']);
+      // … but the engine's baseline stands.
+      expect(result.state.files['mine.md']!.rendered_hash).toBe(engineHash);
     });
 
     // Permission-denied / EACCES — POSIX only. Windows lacks meaningful
@@ -550,12 +613,13 @@ describe('core/state', () => {
       async () => {
         const priorHash = await writeManagedFile('locked.md', 'sealed');
         const abs = path.join(vault, 'locked.md');
+        const state = makeShardState({
+          files: { 'locked.md': makeFileState({ rendered_hash: priorHash }) },
+        });
+        const baseline = await snapshotTrackedHashes(vault, state);
         await fsp.chmod(abs, 0o000);
         try {
-          const state = makeShardState({
-            files: { 'locked.md': makeFileState({ rendered_hash: priorHash }) },
-          });
-          const result = await rehashManagedFiles(vault, state);
+          const result = await rehashManagedFiles(vault, state, baseline);
           expect(result.failed).toHaveLength(1);
           expect(result.failed[0]!.path).toBe('locked.md');
           expect(result.changed).toEqual([]);

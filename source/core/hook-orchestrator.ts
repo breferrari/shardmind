@@ -45,7 +45,7 @@ import {
   snapshotUnmanaged,
   type HookViolation,
 } from './hook-boundary.js';
-import { rehashManagedFiles, writeState } from './state.js';
+import { rehashManagedFiles, snapshotTrackedHashes, writeState } from './state.js';
 import { loadShardmindignore, parseShardmindignore, type IgnoreFilter } from './shardmindignore.js';
 import { valuesAreDefaults } from './values-defaults.js';
 
@@ -145,6 +145,12 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   // Lazily loaded once and reused across a slot's before/after snapshots so
   // the vault `.shardmindignore` is parsed at most once per run.
   let ignore: IgnoreFilter | undefined;
+  // Tracked-file hashes before any slot runs. The re-hash compares against
+  // this, not against `rendered_hash`: a file the user edited before the
+  // hook phase differs from its recorded baseline without any hook touching
+  // it, and must neither be re-baselined nor read as a bootstrap write
+  // (#150). No slot runs ⇒ nothing to attribute ⇒ no snapshot, no re-hash.
+  let baseline = runnableCount > 0 ? await snapshotSafe(plan.vaultRoot, state) : null;
 
   for (const job of jobs) {
     if (job.relPath === undefined) continue;
@@ -197,9 +203,12 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
       // attributable to it. Reuses the post-hook re-hash machinery. A managed
       // file bootstrap *deleted* lands in `missing`, not `changed` — fold both
       // in so a destructive write is flagged too.
-      const rehash = await rehashSafe(plan.vaultRoot, state);
+      const rehash = baseline ? await rehashSafe(plan.vaultRoot, state, baseline) : null;
       if (rehash) {
         state = rehash.state;
+        // Later slots' writes are measured from here, so bootstrap's are not
+        // attributed to them twice.
+        baseline = rehash.current;
         if (rehash.changed.length > 0) stateChanged = true;
         // `changed` (modified) + `missing` (deleted) only. `rehash.failed`
         // (EACCES/EIO) is deliberately NOT folded in: a transient I/O error is
@@ -233,7 +242,7 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
 
   // Final re-hash so state.json reflects any managed-file edits the last hook
   // made (personalize / post-update writes), then persist if anything moved.
-  const finalRehash = await rehashSafe(plan.vaultRoot, state);
+  const finalRehash = baseline ? await rehashSafe(plan.vaultRoot, state, baseline) : null;
   if (finalRehash) {
     state = finalRehash.state;
     if (finalRehash.changed.length > 0) stateChanged = true;
@@ -429,13 +438,25 @@ async function loadIgnoreSafe(vaultRoot: string): Promise<IgnoreFilter> {
   }
 }
 
+async function snapshotSafe(
+  vaultRoot: string,
+  state: ShardState,
+): Promise<Map<string, string> | null> {
+  try {
+    return await snapshotTrackedHashes(vaultRoot, state);
+  } catch {
+    return null;
+  }
+}
+
 async function rehashSafe(
   vaultRoot: string,
   state: ShardState,
-): Promise<{ state: ShardState; changed: string[]; missing: string[] } | null> {
+  baseline: ReadonlyMap<string, string>,
+): Promise<{ state: ShardState; changed: string[]; missing: string[]; current: Map<string, string> } | null> {
   try {
-    const r = await rehashManagedFiles(vaultRoot, state);
-    return { state: r.state, changed: r.changed, missing: r.missing };
+    const r = await rehashManagedFiles(vaultRoot, state, baseline);
+    return { state: r.state, changed: r.changed, missing: r.missing, current: r.current };
   } catch {
     return null;
   }

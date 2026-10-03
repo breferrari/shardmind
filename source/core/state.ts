@@ -221,29 +221,69 @@ export async function cacheManifest(
   await fsp.writeFile(path.join(vaultRoot, CACHED_SCHEMA), serializedSchema, 'utf-8');
 }
 
+/** Paths a re-hash reads: every tracked entry except volatile (`user`) ones. */
+function rehashablePaths(state: ShardState): string[] {
+  return Object.entries(state.files)
+    .filter(([, file]) => file.ownership !== 'user')
+    .map(([rel]) => rel);
+}
+
+/**
+ * Hash every tracked non-volatile file as it is on disk right now. The
+ * hook orchestrator takes this snapshot before the first hook slot runs,
+ * and `rehashManagedFiles` compares against it: a file whose bytes moved
+ * since the snapshot was written by a hook. Paths that cannot be read
+ * (ENOENT, EACCES, …) are left out of the map.
+ */
+export async function snapshotTrackedHashes(
+  vaultRoot: string,
+  state: ShardState,
+): Promise<Map<string, string>> {
+  const hashes = new Map<string, string>();
+  await mapConcurrent(rehashablePaths(state), REHASH_CONCURRENCY, async (rel) => {
+    try {
+      hashes.set(rel, sha256(await fsp.readFile(path.join(vaultRoot, rel))));
+    } catch {
+      // Unreadable now; a hook that creates it reads as a change.
+    }
+  });
+  return hashes;
+}
+
 export interface RehashResult {
   state: ShardState;
-  /** Paths whose `rendered_hash` changed during the re-hash pass. */
+  /** Paths whose bytes moved since the baseline snapshot (written by a hook). */
   changed: string[];
   /**
-   * Files that disappeared between the prior write and the re-read pass
-   * (typically because a buggy hook deleted them). Drift detection will
-   * flag them as `missing` on the next status run; we do not remove them
-   * from `state.files` here since rehash is a hash-update operation, not
-   * a state-membership operation.
+   * Files present at the baseline snapshot and gone now (typically because
+   * a buggy hook deleted them). Drift detection will flag them as
+   * `missing` on the next status run; we do not remove them from
+   * `state.files` here since rehash is a hash-update operation, not a
+   * state-membership operation.
    */
   missing: string[];
   /** I/O failures other than ENOENT (permission, EBUSY, …). */
   failed: Array<{ path: string; reason: string }>;
+  /** Every readable path's hash now: the baseline for a later re-hash. */
+  current: Map<string, string>;
 }
 
 /**
- * Recompute `rendered_hash` for every managed file in `state.files` by
- * reading the current bytes off disk. Returns a NEW state value; the
- * input is not mutated. Per `docs/SHARD-LAYOUT.md §Hooks, state, and
- * re-hash semantics`, the engine runs this after every post-install /
- * post-update hook (success OR failure) so `state.json` reflects actual
- * file content even when a hook touched managed files.
+ * Record what hooks wrote since `baseline` (from `snapshotTrackedHashes`).
+ * Returns a NEW state value; the input is not mutated. Per
+ * `docs/SHARD-LAYOUT.md §Re-hash + state`, the engine runs this after the
+ * hook phase (success OR failure).
+ *
+ * A path whose bytes moved since the baseline was written by a hook, and
+ * is reported in `changed`. Its new hash is recorded only when the file
+ * was engine-owned when the baseline was taken: the baseline hash equals
+ * `rendered_hash`, or the file was absent then. A file the user had
+ * already edited is never re-baselined, even if a hook rewrote it —
+ * `rendered_hash` is the engine's baseline, never the user's bytes, and
+ * recording theirs would make drift read the edit as engine-owned so the
+ * next update overwrites it (#150). The comparison is against the
+ * snapshot rather than `rendered_hash` for the same reason: a user edit
+ * made before the hook phase is not a hook write.
  *
  * Per-file ENOENT and other I/O errors are tolerated — the file's hash
  * stays at its prior value and the path is reported via `missing` /
@@ -252,36 +292,35 @@ export interface RehashResult {
  * status run surfaces drift on the affected paths.
  *
  * Entries with `ownership === 'user'` are skipped: drift detection
- * already routes those through the volatile bucket (see `drift.ts:104`)
- * and never compares their stored hash, so re-reading + sha256-ing
- * them is wasted I/O that would also cause the function's behavior to
- * drift from its name (it really is "managed files", not "every entry
- * in state.files").
+ * routes those through the volatile bucket (see `drift.ts`) and never
+ * compares their stored hash.
  */
 export async function rehashManagedFiles(
   vaultRoot: string,
   state: ShardState,
+  baseline: ReadonlyMap<string, string>,
 ): Promise<RehashResult> {
-  const paths = Object.entries(state.files)
-    .filter(([, file]) => file.ownership !== 'user')
-    .map(([rel]) => rel);
   const changed: string[] = [];
   const missing: string[] = [];
   const failed: Array<{ path: string; reason: string }> = [];
+  const current = new Map<string, string>();
   const nextFiles: Record<string, FileState> = { ...state.files };
 
-  await mapConcurrent(paths, REHASH_CONCURRENCY, async (rel) => {
+  await mapConcurrent(rehashablePaths(state), REHASH_CONCURRENCY, async (rel) => {
     const prior = state.files[rel]!;
+    const before = baseline.get(rel);
     try {
-      const buf = await fsp.readFile(path.join(vaultRoot, rel));
-      const hash = sha256(buf);
-      if (hash !== prior.rendered_hash) {
+      const hash = sha256(await fsp.readFile(path.join(vaultRoot, rel)));
+      current.set(rel, hash);
+      if (hash === before) return;
+      changed.push(rel);
+      const engineOwned = before === undefined || before === prior.rendered_hash;
+      if (engineOwned && hash !== prior.rendered_hash) {
         nextFiles[rel] = { ...prior, rendered_hash: hash };
-        changed.push(rel);
       }
     } catch (err) {
       if (isEnoent(err)) {
-        missing.push(rel);
+        if (before !== undefined) missing.push(rel);
         return;
       }
       failed.push({
@@ -296,6 +335,6 @@ export async function rehashManagedFiles(
     changed,
     missing,
     failed,
+    current,
   };
 }
-
