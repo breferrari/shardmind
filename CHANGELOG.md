@@ -10,7 +10,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Changed (the conflict prompt names a new-path collision — #60)
 
-- **The update conflict prompt says when the file is yours and the path is new.** When a new shard version adds a path where you already have your own untracked file, the prompt reads "New file from shard collides with your file" instead of "Conflict in", says that Keep mine and Skip leave the file untracked (or, with `--adopt-preexisting`, track it as your modified copy), and labels Keep mine "keep your file". A conflict in a shard file you edited looks as before.
+- **The update conflict prompt says when the file is yours and the path is new.** When a new shard version adds a path where you already have your own untracked file, the prompt reads "New file from shard collides with your file" instead of "Conflict in", says that Keep mine and Skip leave the file untracked (or, with `--adopt-preexisting`, track it as your modified copy), labels Keep mine "keep your file" and Accept new "replace your file", and leaves out the merge stats, since no merge ran. A conflict in a shard file you edited looks as before.
 
 ### Added (keep your file at a new path — #61)
 
