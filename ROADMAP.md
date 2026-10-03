@@ -41,7 +41,7 @@ Pre-existing files and binary files get a deliberate path through install and up
 |---|---|---|
 | ✅ | Binary files should bypass three-way merge entirely | [#63](https://github.com/breferrari/shardmind/issues/63) |
 | ✅ | Byte-identical preexisting add-collision should adopt silently | [#62](https://github.com/breferrari/shardmind/issues/62) |
-| ⬜ | --yes policy for preexisting add-collisions churns every update | [#61](https://github.com/breferrari/shardmind/issues/61) |
+| ✅ | --yes policy for preexisting add-collisions churns every update | [#61](https://github.com/breferrari/shardmind/issues/61) |
 | ⬜ | DiffView: distinguish preexisting add-collision from modified-file conflict | [#60](https://github.com/breferrari/shardmind/issues/60) |
 | ⬜ | --force flag on install for scripted collision overwrite without backup | [#55](https://github.com/breferrari/shardmind/issues/55) |
 | ⬜ | Refuse to write through symlinks and hard links at vault paths | [#163](https://github.com/breferrari/shardmind/issues/163) |
@@ -103,6 +103,7 @@ Every item on the deferral shelf below has a milestone here, so a milestone-filt
 | ⬜ | Agent/headless ergonomics: non-interactive mode, JSON output, per-file plan, value detection | [#139](https://github.com/breferrari/shardmind/issues/139) |
 | ⬜ | Align the RELEASE-SMOKE cancellation rows with the engine | [#155](https://github.com/breferrari/shardmind/issues/155) |
 | ⬜ | Make the test suite independent of FORCE_COLOR | [#159](https://github.com/breferrari/shardmind/issues/159) |
+| ⬜ | Let the update prompt track a kept add-collision file per file | [#165](https://github.com/breferrari/shardmind/issues/165) |
 
 ## Deferral shelf
 
@@ -144,6 +145,7 @@ Items moved out of the build order, each with the phase it moved to and a dated 
 | Declare & enforce external CLI tool dependencies (e.g. qmd) with version ranges at install/update ([#138](https://github.com/breferrari/shardmind/issues/138)) | tracker restructure, 2026-10-03 | Shelf | Engine polish with no user report behind it. Comes back when one arrives. |
 | Agent/headless ergonomics: non-interactive mode, JSON output, per-file plan, value detection ([#139](https://github.com/breferrari/shardmind/issues/139)) | tracker restructure, 2026-10-03 | Shelf | Engine polish with no user report behind it. Comes back when one arrives. |
 | Make the test suite independent of FORCE_COLOR ([#159](https://github.com/breferrari/shardmind/issues/159)) | #147 pass, 2026-10-03 | Shelf | A defect in the test harness, not a product pass: CI does not set `FORCE_COLOR`, so it stays green; locally `env -u FORCE_COLOR npm test` works around it. |
+| Let the update prompt track a kept add-collision file per file ([#165](https://github.com/breferrari/shardmind/issues/165)) | #61 pass, 2026-10-03 | Shelf | `--adopt-preexisting` stops the `--yes` churn #61 reported; a per-file choice is a prompt redesign with no user report behind it. |
 | Align the RELEASE-SMOKE cancellation rows with the engine ([#155](https://github.com/breferrari/shardmind/issues/155)) | v0.1.7 release smoke, 2026-10-03 | Shelf | A defect in a gate, not a product pass. Both behaviours predate 0.1.7 and the smoke table records them as deviations; the wizard exit code is a product question to decide first. |
 
 ## Pull-forward log

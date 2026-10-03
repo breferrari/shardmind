@@ -61,6 +61,11 @@ export interface UpdateRunnerOptions {
   newTempDir: string;
   now?: Date;
   dryRun?: boolean;
+  /**
+   * `--adopt-preexisting` (#61): a preexisting add-collision the user keeps
+   * is tracked as their modified copy instead of being left untracked.
+   */
+  adoptPreexisting?: boolean;
   onProgress?: (event: UpdateProgressEvent) => void;
   /**
    * Fires exactly once, after the backup directory is created and the
@@ -120,6 +125,12 @@ export interface UpdateSummary {
    * Populated in dry run too.
    */
   replacedFiles: string[];
+  /**
+   * Preexisting add-collisions the user kept (keep mine / skip) and that
+   * stay untracked, so the next update raises them again. Empty when the
+   * run sets `adoptPreexisting` (#61).
+   */
+  keptUntracked: string[];
 }
 
 /**
@@ -152,6 +163,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     newTempDir,
     now = new Date(),
     dryRun = false,
+    adoptPreexisting = false,
     onProgress,
     onBackupReady,
     onFileTouched,
@@ -192,6 +204,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       deletedFiles: [],
       addedFiles: [],
       replacedFiles: [],
+      keptUntracked: [],
     };
 
     // Two-pass: writes first, deletes second. Writes use mkdir -p so they
@@ -207,6 +220,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
         summary,
         addedPaths,
         dryRun,
+        adoptPreexisting,
         onProgress,
         onFileTouched,
         index: ++index,
@@ -320,6 +334,7 @@ interface ApplyContext {
   summary: UpdateSummary;
   addedPaths: string[];
   dryRun: boolean;
+  adoptPreexisting: boolean;
   onProgress: ((event: UpdateProgressEvent) => void) | undefined;
   onFileTouched?: (outputPath: string, introduced: boolean) => void;
   index: number;
@@ -450,9 +465,13 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         // modified at the NEW RENDER's hash: recording the user's hash
         // would make the next drift read their bytes as engine-owned and
         // overwrite them silently (#150).
-        if (action.preexisting) {
+        if (action.preexisting && !ctx.adoptPreexisting) {
+          // Left untracked; it will be raised again next update (#61).
           delete ctx.nextFiles[action.path];
+          ctx.summary.keptUntracked.push(action.path);
         } else {
+          // A modified file — or, with --adopt-preexisting, the user's own
+          // file at a newly added path, now tracked as their modified copy.
           ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'modified');
         }
         if (resolution === 'keep_mine') ctx.summary.conflictsKeptMine++;

@@ -33,6 +33,8 @@ const NEW_VALUE_SLUG = 'acme/new-value';
 const NEW_VALUE_REF = `github:${NEW_VALUE_SLUG}`;
 const REMOVED_FILE_SLUG = 'acme/removed-file';
 const REMOVED_FILE_REF = `github:${REMOVED_FILE_SLUG}`;
+const ADD_COLLISION_SLUG = 'acme/add-collision';
+const ADD_COLLISION_REF = `github:${ADD_COLLISION_SLUG}`;
 
 describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)', () => {
   const getCtx = setupFlowSuite({
@@ -50,6 +52,10 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         latest: '0.1.0',
       },
       [REMOVED_FILE_SLUG]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
+      [ADD_COLLISION_SLUG]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
@@ -380,6 +386,65 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   }, 120_000);
+
+  // ───── Scenario 17b: --yes keeps an add-collision file; --adopt-preexisting tracks it (#61) ─────
+
+  // A user file at a path v0.2.0 adds; --yes keeps it (#61).
+  async function runAddCollision(adoptPreexisting: boolean) {
+    const { stub } = getCtx();
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'addc-'));
+    const NOTE = 'New Note.md';
+    try {
+      const manifestOverrides = { hooks: {}, name: 'add-collision', namespace: 'flowtest' };
+      const v01 = await buildCustomTarball({
+        version: '0.1.0', prefix: 'add-collision-0.1.0', manifestOverrides, outDir: tmpDir,
+      });
+      const v02 = await buildCustomTarball({
+        version: '0.2.0', prefix: 'add-collision-0.2.0', manifestOverrides, outDir: tmpDir,
+        mutate: async (work) => {
+          await fs.writeFile(path.join(work, NOTE), 'The shard note.\n');
+        },
+      });
+      stub.setVersion(ADD_COLLISION_SLUG, '0.1.0', v01);
+      stub.setLatest(ADD_COLLISION_SLUG, '0.1.0');
+      const vault = await createInstalledVault({
+        stub,
+        shardRef: ADD_COLLISION_REF,
+        values: DEFAULT_VALUES,
+        prefix: `s17b-add-collision-${adoptPreexisting}`,
+      });
+      try {
+        await vault.writeFile(NOTE, 'My own note.\n');
+        stub.setVersion(ADD_COLLISION_SLUG, '0.2.0', v02);
+        stub.setLatest(ADD_COLLISION_SLUG, '0.2.0');
+
+        const r = mountUpdate({ vaultRoot: vault.root, options: { yes: true, adoptPreexisting } });
+        const frame = await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.2\.0/.test(f), 30_000);
+        const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+          files: Record<string, { ownership: string }>;
+        };
+        return { frame, entry: state.files[NOTE], content: await vault.readFile(NOTE) };
+      } finally {
+        await vault.cleanup();
+      }
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  }
+
+  it('17b. --yes keeps a file at a path the new version adds untracked and says so (#61)', async () => {
+    const { frame, entry, content } = await runAddCollision(false);
+    expect(content).toBe('My own note.\n');
+    expect(entry).toBeUndefined();
+    expect(frame).toContain('Re-run with --adopt-preexisting to track it.');
+  }, 90_000);
+
+  it('17c. --yes --adopt-preexisting tracks that file as modified (#61)', async () => {
+    const { frame, entry, content } = await runAddCollision(true);
+    expect(content).toBe('My own note.\n');
+    expect(entry?.ownership).toBe('modified');
+    expect(frame).not.toContain('--adopt-preexisting');
+  }, 90_000);
 
   // ───── Scenario 18: upgrade target declares an unsatisfiable engine → refuse (#121) ─────
 
