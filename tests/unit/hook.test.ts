@@ -310,9 +310,11 @@ describe('executeHook — subprocess runtime', () => {
     expect(result.stderr).toContain('boom');
   }, 30_000);
 
-  // #106: the runner exited with `process.exit(1)` on a throw, which drops
-  // stdout still queued on a POSIX pipe. Small output only lost the race
-  // under load; more than a pipe buffer (64 KiB) loses it every time.
+  // #106: `process.exit` drops stdout still queued on a POSIX pipe. Small
+  // output only lost the race under load; more than a pipe buffer (64 KiB)
+  // loses it every time on Linux. Windows pipes are already blocking, so
+  // these pass there with or without the fix: only Linux and macOS CI
+  // guard it.
   it('keeps every byte a hook wrote to stdout before it threw (#106)', async () => {
     const hookPath = await writeHook(
       'hook.ts',
@@ -333,7 +335,40 @@ describe('executeHook — subprocess runtime', () => {
     expect(result.stderr).toContain('boom');
   }, 30_000);
 
-  // The flush in #106 must not turn into waiting for the hook's own handles:
+  it("keeps every byte a hook wrote before it called process.exit itself (#106)", async () => {
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          const line = 'x'.repeat(1023) + '\\n';
+          for (let i = 0; i < 200; i++) process.stdout.write(line);
+          process.stdout.write('END-OF-OUTPUT\\n');
+          process.exit(3);
+        }
+      `,
+    );
+    const result = await executeHook(hookPath, baseCtx());
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}`);
+    expect(result.exitCode).toBe(3);
+    expect(result.stdout.length).toBe(200 * 1024 + 'END-OF-OUTPUT\n'.length);
+  }, 30_000);
+
+  it('describes a thrown value that cannot be converted to a string', async () => {
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          throw Object.create(null);
+        }
+      `,
+    );
+    const result = await executeHook(hookPath, baseCtx());
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}`);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('cannot be converted to a string');
+  }, 30_000);
+
+  // Exiting on a throw must not wait on the hook's own handles:
   // a hook that throws with a timer still running exits 1, not on timeout.
   it('still exits 1 promptly when a hook throws with a timer left running (#106)', async () => {
     const hookPath = await writeHook(
@@ -346,9 +381,13 @@ describe('executeHook — subprocess runtime', () => {
         }
       `,
     );
+    const started = Date.now();
     const result = await executeHook(hookPath, baseCtx(), { timeoutMs: 20_000 });
     if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}: ${result.message}`);
     expect(result.exitCode).toBe(1);
+    // Spawning tsx takes a few seconds under load; waiting on the hook's
+    // interval would take the full 20s timeout.
+    expect(Date.now() - started).toBeLessThan(15_000);
     expect(result.stdout).toContain('before throw');
   }, 30_000);
 

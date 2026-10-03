@@ -35,6 +35,28 @@ import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import type { HookContext } from '../runtime/types.js';
 
+/**
+ * Make writes to stdout and stderr synchronous when they are pipes (#106).
+ * On POSIX, Node queues pipe writes, and `process.exit` drops what is still
+ * queued: a hook that printed more than a pipe buffer (64 KiB on Linux)
+ * and then threw, or called `process.exit` itself, lost the rest, and under
+ * load even a short line could go. Node already makes pipes blocking on
+ * Windows; this does the same here, through the stream handle's
+ * `setBlocking` (an internal API, reached by runtime checks). Where it is
+ * missing, writes stay as they were. The parent always reads both pipes,
+ * so a blocking write never waits on it for long.
+ */
+function makeStdioBlocking(): void {
+  for (const stream of [process.stdout, process.stderr]) {
+    const handle: unknown = Reflect.get(stream, '_handle');
+    if (typeof handle !== 'object' || handle === null) continue;
+    const setBlocking: unknown = Reflect.get(handle, 'setBlocking');
+    if (typeof setBlocking === 'function') setBlocking.call(handle, true);
+  }
+}
+
+makeStdioBlocking();
+
 async function main(): Promise<void> {
   const [, , hookPath, ctxPath] = process.argv;
   if (!hookPath || !ctxPath) {
@@ -68,39 +90,17 @@ async function main(): Promise<void> {
   await (fn as (c: HookContext) => Promise<void> | void)(ctx);
 }
 
-/** How long a failed run waits for its output to reach the parent before exiting anyway. */
-const FLUSH_TIMEOUT_MS = 2_000;
-
-/**
- * Exit with `code` once everything written to stdout and stderr has
- * reached the parent (#106). `process.exit` drops output still queued on
- * a POSIX pipe: a hook that printed more than a pipe buffer (64 KiB on
- * Linux) before throwing lost the rest, and under load even a short line
- * could go. A zero-length write's callback runs after every earlier write
- * on that stream has flushed. The exit stays forced, so a hook that threw
- * with a timer or socket still open does not hang the parent until its
- * timeout; the fallback timer is ref'd for the same reason. `exitCode` is
- * set first so that if the loop empties before the callbacks run, the
- * natural exit still reports the failure (exiting 0 there sank an
- * earlier attempt at this fix).
- */
-function exitAfterFlush(code: number): void {
-  process.exitCode = code;
-  let pending = 2;
-  const done = (): void => {
-    pending -= 1;
-    if (pending === 0) process.exit(code);
-  };
-  process.stdout.write('', done);
-  process.stderr.write('', done);
-  setTimeout(() => process.exit(code), FLUSH_TIMEOUT_MS);
+/** What a thrown value says, even one `String()` cannot convert. */
+function describe(err: unknown): string {
+  if (err instanceof Error) return err.stack ?? err.message;
+  try {
+    return String(err);
+  } catch {
+    return 'a value that cannot be converted to a string';
+  }
 }
 
 main().catch((err: unknown) => {
-  if (err instanceof Error) {
-    process.stderr.write(`${err.stack ?? err.message}\n`);
-  } else {
-    process.stderr.write(`${String(err)}\n`);
-  }
-  exitAfterFlush(1);
+  process.stderr.write(`${describe(err)}\n`);
+  process.exit(1);
 });
