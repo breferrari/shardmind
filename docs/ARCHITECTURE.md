@@ -801,6 +801,10 @@ Defaults: all included. User deselects what doesn't fit. Most press Enter.
 
 After confirm: render → write → state.json → hooks (orchestrator: bootstrap → personalize) → summary.
 
+Two prompts can destroy content before any of that: the **existing-install gate** (the directory is already shardmind-managed: keep it, reinstall from scratch, or cancel) and **collision review** (files of yours sit at paths the shard writes: back them up, overwrite, or cancel). `--yes` and `--defaults` answer neither: a collision is backed up to `<path>.shardmind-backup-<timestamp>`, and an existing install is refused without a terminal (`INSTALL_GATE_NON_INTERACTIVE`) or under `--defaults` (`INSTALL_DEFAULTS_OVER_EXISTING`).
+
+- `--force` answers both, in any mode (#55): an existing install is reinstalled without the gate, and colliding paths are removed with no backup before the install writes, as the interactive Overwrite choice does. It answers nothing else: values still come from the wizard, `--values`, `--yes` or `--defaults`. On a non-interactive reinstall the values are validated before `.shardmind/` and `shard-values.yaml` are removed, so a bad `--values` file fails with the existing install intact. Under `--dry-run` nothing is removed, and a reinstall is refused as it is from the gate. The summary lists every path replaced without a backup, whether by `--force` or by the interactive Overwrite choice.
+
 ### 10.5 `shardmind update` — Upgrade Flow
 
 ```

@@ -26,6 +26,11 @@ Status (`shardmind` / `shardmind --verbose`) deliberately stays at `0` on every 
 # Fail fast on install error
 shardmind install acme/demo --yes --values values.yaml || exit $?
 
+# Reinstall over an existing install, overwriting colliding files with no
+# backup (#55). Without --force, an existing install is refused and
+# collisions are backed up to <path>.shardmind-backup-<timestamp>.
+shardmind install acme/demo --yes --force --values values.yaml || exit $?
+
 # Detect "nothing to do" separately from failure
 if ! shardmind update --yes; then
   echo "update failed" >&2
