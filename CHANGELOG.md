@@ -18,6 +18,8 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **A bootstrap re-run on update no longer reports files you edited as `HOOK_BOOTSTRAP_MANAGED_WRITE`.** The check now compares against a snapshot taken before the hook phase, not against the recorded baseline.
 
+- **`update --dry-run --json` reports an auto-merged file's `shardHash` as the new render**, which is what the shard produces (as for a conflict) and what state records, rather than the hash of the merged bytes.
+
 ## [0.1.6] - 2026-07-26
 
 Agent ergonomics. Both changes come from [#139](https://github.com/breferrari/shardmind/issues/139), filed after driving shardmind from an AI agent; the issue stays open for the findings not covered here.
