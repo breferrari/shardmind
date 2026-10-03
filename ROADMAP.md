@@ -25,7 +25,8 @@ An update never replaces a file the user changed, and every install gets its own
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | update silently overwrites locally-modified files while reporting "kept mine" (state.json labels user-edited files `managed`) | [#150](https://github.com/breferrari/shardmind/issues/150) |
+| ✅ | update silently overwrites locally-modified files while reporting "kept mine" (state.json labels user-edited files `managed`) | [#150](https://github.com/breferrari/shardmind/issues/150) |
+| ⬜ | update summary should list the paths it overwrote | [#153](https://github.com/breferrari/shardmind/issues/153) |
 | ⬜ | qmd_index not personalized on install — every vault collides on the same QMD store | [#137](https://github.com/breferrari/shardmind/issues/137) |
 | ⬜ | Root-command options silently shadow same-named subcommand options (`adopt --verbose` does nothing) | [#147](https://github.com/breferrari/shardmind/issues/147) |
 | ⬜ | v0.2: Rename migrations in shard.yaml + shardmind adopt --from-version | [#88](https://github.com/breferrari/shardmind/issues/88) |
