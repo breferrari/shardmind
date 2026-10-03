@@ -82,6 +82,7 @@ Every PR for a v6 issue must demonstrate in its description:
 
 ### 6. PR hygiene
 
+- **PR and issue titles are imperative**: they say what to do, not what is true or what should happen. PR titles keep the conventional-commit prefix (`fix: keep user edits across updates`, not `fix: update no longer overwrites edits`); issue titles take no prefix (`List the paths an update replaced`, not `update summary should list the paths it overwrote`). Applies to every PR and issue opened from 2026-10-03 on; older titles stay as they are.
 - **One PR per issue** by default. Bundling multiple issues into one PR is discouraged — it tangles review, makes revert granularity worse, and confuses the roadmap-checkbox flow. If two issues are truly inseparable, comment on both issues explaining why before opening the combined PR.
 - The quality-gate checklist above lives in [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) and auto-populates every new PR. Don't delete items — check them or justify their absence.
 - **Interim proxy for Invariant 1** while #73-#77 are in-flight: until [#78](https://github.com/breferrari/shardmind/issues/78) lands its CI test, each PR on #73-#77 should manually run `git clone <a fixture shard>` + `shardmind install --defaults` + `diff -r` and paste the result (or "no diff beyond Tier 1 + `.shardmind/` metadata") into the PR description.
