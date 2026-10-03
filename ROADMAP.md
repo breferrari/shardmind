@@ -54,7 +54,7 @@ The suite fails only on real defects, on all three operating systems.
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | Flaky test: merge-adversarial 10K-lines tokenize times out under parallel pressure | [#114](https://github.com/breferrari/shardmind/issues/114) |
+| ✅ | Flaky test: merge-adversarial 10K-lines tokenize times out under parallel pressure | [#114](https://github.com/breferrari/shardmind/issues/114) |
 | ⬜ | Flake: hook-runner pre-throw stdout dropped under parallel CPU pressure | [#106](https://github.com/breferrari/shardmind/issues/106) |
 | ⬜ | E2E: bridge SIGINT delivery reliably on GH Actions Windows runner | [#57](https://github.com/breferrari/shardmind/issues/57) |
 
@@ -105,6 +105,7 @@ Every item on the deferral shelf below has a milestone here, so a milestone-filt
 | ⬜ | Make the test suite independent of FORCE_COLOR | [#159](https://github.com/breferrari/shardmind/issues/159) |
 | ⬜ | Let the update prompt track a kept add-collision file per file | [#165](https://github.com/breferrari/shardmind/issues/165) |
 | ⬜ | Apply a shard release that only changes a file's case | [#169](https://github.com/breferrari/shardmind/issues/169) |
+| ⬜ | Merge files with many repeated lines in less than cubic time | [#170](https://github.com/breferrari/shardmind/issues/170) |
 
 ## Deferral shelf
 
@@ -148,6 +149,7 @@ Items moved out of the build order, each with the phase it moved to and a dated 
 | Make the test suite independent of FORCE_COLOR ([#159](https://github.com/breferrari/shardmind/issues/159)) | #147 pass, 2026-10-03 | Shelf | A defect in the test harness, not a product pass: CI does not set `FORCE_COLOR`, so it stays green; locally `env -u FORCE_COLOR npm test` works around it. |
 | Let the update prompt track a kept add-collision file per file ([#165](https://github.com/breferrari/shardmind/issues/165)) | #61 pass, 2026-10-03 | Shelf | `--adopt-preexisting` stops the `--yes` churn #61 reported; a per-file choice is a prompt redesign with no user report behind it. |
 | Apply a shard release that only changes a file's case ([#169](https://github.com/breferrari/shardmind/issues/169)) | #163 review, 2026-10-04 | Shelf | The #163 guard refuses it on macOS and Windows instead of losing the file; no shard has shipped a case-only rename. |
+| Merge files with many repeated lines in less than cubic time ([#170](https://github.com/breferrari/shardmind/issues/170)) | #114 pass, 2026-10-04 | Shelf | Measured near-cubic in node-diff3 on repeated lines; a faster LCS must prove it changes no merge, and no vault has hit it. |
 | Align the RELEASE-SMOKE cancellation rows with the engine ([#155](https://github.com/breferrari/shardmind/issues/155)) | v0.1.7 release smoke, 2026-10-03 | Shelf | A defect in a gate, not a product pass. Both behaviours predate 0.1.7 and the smoke table records them as deviations; the wizard exit code is a product question to decide first. |
 
 ## Pull-forward log
