@@ -663,4 +663,28 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await vault.cleanup();
     }
   }, 60_000);
+  // ───── Scenario 15: dry run → Overwrite removes nothing (#55) ─────
+
+  it('15. --dry-run → collision review → Overwrite leaves the file alone (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s15-dry-overwrite');
+    try {
+      await fs.writeFile(path.join(vault, 'Home.md'), 'my own home\n');
+      const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault, options: { dryRun: true } });
+      await driveMinimalWizard(r, 'Dana');
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Overwrite'), 15_000);
+      r.stdin.write(ARROW_DOWN);
+      await tick(40);
+      r.stdin.write(ENTER);
+      const frame = await waitFor(r.lastFrame, (f) => /Dry run complete/.test(f), 15_000);
+      expect(frame).toContain('Would replace 1 existing file (no backup):');
+      expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('my own home\n');
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
 });
