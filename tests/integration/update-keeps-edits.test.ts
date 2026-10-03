@@ -612,6 +612,69 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     });
   });
 
+  // #63: a binary file never goes through the line-based three-way merge,
+  // which decodes bytes as UTF-8 and writes back mangled output.
+  describe('binary files', () => {
+    const BIN = 'assets/logo.bin';
+    const V1 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0a, 0xff, 0xfe, 0x01]);
+    const V2 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0a, 0xff, 0xfe, 0x02, 0x03]);
+    const MINE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0a, 0xc3, 0x28, 0x01]);
+
+    async function shardWithBin(version: string, bytes: Buffer): Promise<string> {
+      const dir = await shardAt(version);
+      await fsp.mkdir(path.join(dir, 'assets'), { recursive: true });
+      await fsp.writeFile(path.join(dir, BIN), bytes);
+      return dir;
+    }
+    const disk = () => fsp.readFile(path.join(vault, BIN));
+
+    it('an edited binary whose source changed is a whole-file conflict, not a merge', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+
+      const { plan } = await update(await shardWithBin('0.2.0', V2));
+      expect(actionFor(plan, BIN)).toBe('conflict');
+      expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toEqual({ yours: MINE.length, shard: V2.length });
+      // keep_mine (the helper's default): the user's bytes are untouched.
+      expect(await disk()).toEqual(MINE);
+    });
+
+    it('accept new writes the shard\'s bytes exactly', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+
+      await update(await shardWithBin('0.2.0', V2), 'accept_new');
+      expect(await disk()).toEqual(V2);
+      expect((await recorded(BIN)).ownership).toBe('managed');
+    });
+
+    it('an edited binary whose source did not change is left alone', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+
+      const { plan } = await update(await shardWithBin('0.2.0', V1));
+      expect(actionFor(plan, BIN)).toBe('noop');
+      expect(await disk()).toEqual(MINE);
+    });
+
+    it('a user who already has the new bytes is relabelled managed, without a prompt', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), V2);
+
+      const { plan } = await update(await shardWithBin('0.2.0', V2));
+      expect(plan.pendingConflicts.map((c) => c.path)).not.toContain(BIN);
+      expect(await disk()).toEqual(V2);
+      expect((await recorded(BIN)).ownership).toBe('managed');
+    });
+
+    it('a pristine binary is still overwritten byte for byte', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      const { plan } = await update(await shardWithBin('0.2.0', V2));
+      expect(actionFor(plan, BIN)).toBe('overwrite');
+      expect(await disk()).toEqual(V2);
+    });
+  });
+
   it('a pristine copy-origin file is still overwritten silently when its source changes', async () => {
     await install();
     const { plan } = await update(await shardAt('0.2.0', { [COPY]: (s) => s.replace(COPY_LINE, 'New upstream line.') }));

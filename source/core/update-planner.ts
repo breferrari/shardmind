@@ -32,7 +32,7 @@ import { isEnoent } from '../runtime/errno.js';
 import { computeMergeAction } from './differ.js';
 import { resolveModules } from './modules.js';
 import { renderFile, createRenderer } from './renderer.js';
-import { sha256, mapConcurrent } from './fs-utils.js';
+import { looksBinary, sha256, mapConcurrent } from './fs-utils.js';
 import { CACHED_TEMPLATES } from '../runtime/vault-paths.js';
 
 /** Cap fan-out when reading templates + user files during merge planning. */
@@ -86,6 +86,11 @@ export type UpdateAction =
       theirsHash: string;
       templateKey: string | null;
       iteratorKey?: string;
+      /**
+       * Set for a copy-origin target: Accept new copies these bytes rather
+       * than writing `newContent`, a UTF-8 view that mangles binary (#63).
+       */
+      copyFromSourcePath?: string;
       /**
        * Set when the user has untracked content at a path the new shard
        * newly introduces (`add` that collided with a user-created file).
@@ -512,6 +517,18 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       const actualContent = actualRead.content;
       const theirsHash = actualRead.hash;
 
+      // A binary copy-origin file never reaches the line merge, which runs on
+      // a UTF-8 projection and writes mangled bytes back (#63).
+      if (target.copyFromSourcePath) {
+        const [oldBytes, newBytes] = await Promise.all([
+          readCachedTemplate(vaultRoot, fileState.template),
+          fsp.readFile(target.copyFromSourcePath),
+        ]);
+        if (looksBinary(actualRead.buf) || looksBinary(newBytes) || (oldBytes !== null && looksBinary(oldBytes))) {
+          return planBinary(entry.path, target, actualRead, oldBytes, newBytes, newTempDir);
+        }
+      }
+
       if (oldTemplate === null) {
         return conflictFromDirect(
           entry.path,
@@ -580,6 +597,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             theirsHash,
             templateKey,
             ...iterator,
+            ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
           };
       }
     },
@@ -695,6 +713,53 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   return { actions, pendingConflicts, counts };
 }
 
+/**
+ * Plan a modified binary copy-origin file without the line merge (#63). The
+ * user's bytes already equal the new source: nothing to do, and the file is
+ * the engine's again. The source did not change: keep the user's bytes. Any
+ * other case is a whole-file conflict carrying byte counts; Accept new copies
+ * the source's bytes.
+ */
+function planBinary(
+  filePath: string,
+  target: RenderedFileEntry,
+  actual: { buf: Buffer; hash: string },
+  oldBytes: Buffer | null,
+  newBytes: Buffer,
+  newTempDir: string,
+): UpdateAction {
+  const templateKey = toTemplateKey(newTempDir, target.entry.sourcePath);
+  const iterator = target.entry.iterator ? { iteratorKey: target.entry.iterator } : {};
+  const rebaseline = (ownership: 'managed' | 'modified') => ({
+    renderedHash: target.hash,
+    templateKey,
+    ...iterator,
+    ownership,
+  });
+  if (actual.hash === target.hash) {
+    return { kind: 'noop', path: filePath, reason: 'already the new version', rebaseline: rebaseline('managed') };
+  }
+  if (oldBytes !== null && sha256(oldBytes) === target.hash) {
+    return { kind: 'noop', path: filePath, reason: 'no upstream change', rebaseline: rebaseline('modified') };
+  }
+  return {
+    kind: 'conflict',
+    path: filePath,
+    result: {
+      content: '',
+      conflicts: [],
+      stats: { linesUnchanged: 0, linesAutoMerged: 0, linesConflicted: 0 },
+      binary: { yours: actual.buf.length, shard: newBytes.length },
+    },
+    newContent: target.content,
+    newContentHash: target.hash,
+    theirsHash: actual.hash,
+    templateKey,
+    ...iterator,
+    ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
+  };
+}
+
 function conflictFromDirect(
   filePath: string,
   target: RenderedFileEntry,
@@ -733,6 +798,7 @@ function conflictFromDirect(
     newContentHash: target.hash,
     theirsHash,
     templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
+    ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
   };
 }
 
@@ -752,10 +818,10 @@ function conflictFromDirect(
  */
 async function readStringAndByteHash(
   absPath: string,
-): Promise<{ content: string; hash: string } | null> {
+): Promise<{ content: string; hash: string; buf: Buffer } | null> {
   try {
     const buf = await fsp.readFile(absPath);
-    return { content: buf.toString('utf-8'), hash: sha256(buf) };
+    return { content: buf.toString('utf-8'), hash: sha256(buf), buf };
   } catch (err) {
     if (isEnoent(err)) return null;
     throw err;

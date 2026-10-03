@@ -302,6 +302,11 @@ export interface MergeResult {
   content: string;
   conflicts: ConflictRegion[];
   stats: MergeStatsWithConflicts;
+  /**
+   * Set for a binary file (#63): no line merge ran and `conflicts` is empty;
+   * the conflict is the whole file. Byte counts let the prompt say so.
+   */
+  binary?: { yours: number; shard: number };
 }
 
 export interface ConflictRegion {

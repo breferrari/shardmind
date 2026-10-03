@@ -432,7 +432,14 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         action: action.kind,
       });
       if (resolution === 'accept_new') {
-        if (!ctx.dryRun) await writeFile(ctx.vaultRoot, action.path, action.newContent);
+        if (!ctx.dryRun) {
+          // Copy-origin: copy the bytes; a UTF-8 write mangles binary (#63).
+          if (action.copyFromSourcePath) {
+            await copyFile(ctx.vaultRoot, action.path, action.copyFromSourcePath);
+          } else {
+            await writeFile(ctx.vaultRoot, action.path, action.newContent);
+          }
+        }
         ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'managed');
         ctx.summary.wroteFiles.push(action.path);
         // The other replacement besides `overwrite`; see `UpdateSummary.replacedFiles`.
@@ -707,6 +714,21 @@ function reasonOf(err: unknown): string {
 // ---------------------------------------------------------------------------
 // Low-level file ops
 // ---------------------------------------------------------------------------
+
+/** Byte-for-byte copy of a copy-origin source into the vault. */
+async function copyFile(vaultRoot: string, outputPath: string, sourcePath: string): Promise<void> {
+  const abs = path.join(vaultRoot, outputPath);
+  try {
+    await fsp.mkdir(path.dirname(abs), { recursive: true });
+    await fsp.copyFile(sourcePath, abs);
+  } catch (err) {
+    throw new ShardMindError(
+      `Could not write ${outputPath} during update`,
+      'UPDATE_WRITE_FAILED',
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
 
 async function writeFile(vaultRoot: string, outputPath: string, content: string): Promise<void> {
   const abs = path.join(vaultRoot, outputPath);
