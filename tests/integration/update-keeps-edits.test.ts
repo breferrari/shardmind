@@ -423,6 +423,16 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     });
   });
 
+  it('a CRLF-saved edit survives two updates byte for byte', async () => {
+    await install();
+    const crlf = (await read(COPY)).replace(COPY_LINE, 'My own line.').replace(/\n/g, '\r\n');
+    await write(COPY, crlf);
+
+    await update(await shardAt('0.2.0'));
+    await update(await shardAt('0.3.0'));
+    expect(await read(COPY)).toBe(crlf);
+  });
+
   it('a user who reverts their edit is relabelled managed by the next update', async () => {
     await install();
     const pristine = await read(COPY);
