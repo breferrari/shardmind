@@ -635,6 +635,9 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   // user's content through DiffView instead.
   const trackedPaths = new Set(Object.keys(currentState.files));
   const addCandidates = newPlan.outputs.filter(o => !trackedPaths.has(o.outputPath));
+  // One directory listing per folder for the exact-name check below, however
+  // many identical files a folder holds.
+  const listings = new Map<string, Promise<string[]>>();
   const addActions = await mapConcurrent<typeof addCandidates[number], UpdateAction>(
     addCandidates,
     PLAN_IO_CONCURRENCY,
@@ -696,7 +699,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       // managed, with no write (#62) — but not through a symlink (a later
       // update would write through it, possibly outside the vault) or under
       // a name that differs from the one on disk only in case.
-      if (actualRead.hash === output.hash && (await isPlainFileNamedExactly(abs))) {
+      if (actualRead.hash === output.hash && (await isPlainFileNamedExactly(abs, listings))) {
         return alreadyNewVersion(output, newTempDir);
       }
       // A binary collision gets the whole-file binary prompt, not a text
@@ -935,10 +938,16 @@ function alreadyNewVersion(output: RenderedFileEntry, newTempDir: string): Updat
  * A regular file (not a symlink) whose name on disk is exactly the one asked
  * for, which a case-insensitive filesystem would otherwise let differ.
  */
-async function isPlainFileNamedExactly(abs: string): Promise<boolean> {
+async function isPlainFileNamedExactly(abs: string, listings: Map<string, Promise<string[]>>): Promise<boolean> {
   try {
     if ((await fsp.lstat(abs)).isSymbolicLink()) return false;
-    return (await fsp.readdir(path.dirname(abs))).includes(path.basename(abs));
+    const dir = path.dirname(abs);
+    let listing = listings.get(dir);
+    if (!listing) {
+      listing = fsp.readdir(dir);
+      listings.set(dir, listing);
+    }
+    return (await listing).includes(path.basename(abs));
   } catch {
     return false;
   }

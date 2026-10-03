@@ -272,6 +272,11 @@ describe('UpdateSummary', () => {
       expect(frame).not.toContain('Previous copies');
     });
 
+    it('shows adopted files apart from unchanged ones (#62)', () => {
+      const frame = frameFor({ counts: { ...counts, adopted: 2 }, replacedFiles: [] });
+      expect(frame).toContain('43 unchanged · 2 adopted');
+    });
+
     it('omits the section and the replaced count when nothing was replaced', () => {
       const frame = frameFor({ replacedFiles: [] }, { backupDir: '.shardmind/backups/update-x' });
       expect(frame).not.toContain('Replaced');
