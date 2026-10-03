@@ -27,10 +27,18 @@ const SELECT_OPTIONS: Array<{ label: string; value: DiffAction | 'open_editor_di
   { label: '(Open in editor · v0.2)', value: 'open_editor_disabled' },
 ];
 
-/** An add-collision has no edits to preserve: the file is the user's own (#60). */
-const PREEXISTING_OPTIONS = SELECT_OPTIONS.map((o) =>
-  o.value === 'keep_mine' ? { ...o, label: 'Keep mine (keep your file)' } : o,
-);
+/**
+ * An add-collision's file is the user's own, not an edited shard file
+ * (#60): there are no edits to preserve, and Accept new replaces it.
+ */
+const PREEXISTING_LABELS: Partial<Record<DiffAction, string>> = {
+  accept_new: 'Accept new (replace your file)',
+  keep_mine: 'Keep mine (keep your file)',
+};
+const PREEXISTING_OPTIONS = SELECT_OPTIONS.map((o) => {
+  const label = o.value === 'open_editor_disabled' ? undefined : PREEXISTING_LABELS[o.value];
+  return label ? { ...o, label } : o;
+});
 
 interface DiffViewProps {
   path: string;
@@ -97,10 +105,13 @@ export default function DiffView({
             ))}
           </Box>
 
-          <Text dimColor>
-            {result.stats.linesUnchanged} unchanged · {result.stats.linesAutoMerged} auto-merged ·{' '}
-            {result.conflicts.length} region{result.conflicts.length === 1 ? '' : 's'} conflicted
-          </Text>
+          {/* An add-collision ran no merge (#60): its stats would describe one. */}
+          {!preexisting && (
+            <Text dimColor>
+              {result.stats.linesUnchanged} unchanged · {result.stats.linesAutoMerged} auto-merged ·{' '}
+              {result.conflicts.length} region{result.conflicts.length === 1 ? '' : 's'} conflicted
+            </Text>
+          )}
         </>
       )}
 

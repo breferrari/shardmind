@@ -464,6 +464,13 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     expect(entry).toBeUndefined();
   }, 90_000);
 
+  it('17e. with --adopt-preexisting, the prompt says Keep mine tracks the file, and it does (#60)', async () => {
+    const { prompt, entry, content } = await runAddCollision(true, true);
+    expect(prompt.replace(/\s+/g, ' ')).toContain('tracks it as your modified copy');
+    expect(content).toBe('My own note.\n');
+    expect(entry?.ownership).toBe('modified');
+  }, 90_000);
+
   // ───── Scenario 18: upgrade target declares an unsatisfiable engine → refuse (#121) ─────
 
   it('18. update target requires a future engine → SHARDMIND_VERSION_MISMATCH, state untouched (#121)', async () => {
