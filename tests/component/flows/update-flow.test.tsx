@@ -390,7 +390,8 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
   // ───── Scenario 17b: --yes keeps an add-collision file; --adopt-preexisting tracks it (#61) ─────
 
   // A user file at a path v0.2.0 adds; --yes keeps it (#61).
-  async function runAddCollision(adoptPreexisting: boolean) {
+  // `interactive` drives the prompt instead of --yes: it keeps mine and returns the prompt's frame (#60).
+  async function runAddCollision(adoptPreexisting: boolean, interactive = false) {
     const { stub } = getCtx();
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'addc-'));
     const NOTE = 'New Note.md';
@@ -418,12 +419,20 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         stub.setVersion(ADD_COLLISION_SLUG, '0.2.0', v02);
         stub.setLatest(ADD_COLLISION_SLUG, '0.2.0');
 
-        const r = mountUpdate({ vaultRoot: vault.root, options: { yes: true, adoptPreexisting } });
+        const r = mountUpdate({ vaultRoot: vault.root, options: { yes: !interactive, adoptPreexisting } });
+        let prompt = '';
+        if (interactive) {
+          prompt = await waitFor(r.lastFrame, (f) => /collides with your file/.test(f), 30_000);
+          // Options: [accept_new, keep_mine, skip, (open_editor_disabled)].
+          r.stdin.write(ARROW_DOWN);
+          await tick(40);
+          r.stdin.write(ENTER);
+        }
         const frame = await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.2\.0/.test(f), 30_000);
         const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
           files: Record<string, { ownership: string }>;
         };
-        return { frame, entry: state.files[NOTE], content: await vault.readFile(NOTE) };
+        return { frame, prompt, entry: state.files[NOTE], content: await vault.readFile(NOTE) };
       } finally {
         await vault.cleanup();
       }
@@ -444,6 +453,22 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     expect(content).toBe('My own note.\n');
     expect(entry?.ownership).toBe('modified');
     expect(frame).not.toContain('--adopt-preexisting');
+  }, 90_000);
+
+  it('17d. the prompt names an add-collision, and Keep mine leaves the file untracked (#60)', async () => {
+    const { prompt, entry, content } = await runAddCollision(false, true);
+    // The wording is DiffView's; this asserts the flag reaches it from the planner.
+    expect(prompt).toContain('New Note.md');
+    expect(prompt).not.toContain('Conflict in');
+    expect(content).toBe('My own note.\n');
+    expect(entry).toBeUndefined();
+  }, 90_000);
+
+  it('17e. with --adopt-preexisting, the prompt says a kept file is tracked, and it is (#60)', async () => {
+    const { prompt, entry, content } = await runAddCollision(true, true);
+    expect(prompt.replace(/\s+/g, ' ')).toContain('tracks it as your modified copy');
+    expect(content).toBe('My own note.\n');
+    expect(entry?.ownership).toBe('modified');
   }, 90_000);
 
   // ───── Scenario 18: upgrade target declares an unsatisfiable engine → refuse (#121) ─────

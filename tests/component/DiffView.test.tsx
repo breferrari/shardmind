@@ -319,4 +319,110 @@ describe('DiffView', () => {
       expect(onChoice).toHaveBeenNthCalledWith(2, 'keep_mine');
     });
   });
+
+  // #60: an untracked file at a path the new version adds is not an edit
+  // of a shard file, and the prompt says which one it is.
+  describe('add-collision (preexisting)', () => {
+    // The note wraps at the 100-column test width; read it as one line.
+    const plainText = (frame: string | undefined) =>
+      (frame ?? '').replace(/\u001b\[[0-9;]*m/g, '').replace(/\s+/g, ' ');
+
+    it('names the collision instead of "Conflict in"', () => {
+      const { lastFrame } = render(
+        <DiffView path="brain/Backlog.md" index={1} total={3} result={makeResult()} preexisting onChoice={() => {}} />,
+      );
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('New file from shard collides with your file');
+      expect(frame).toContain('brain/Backlog.md');
+      expect(frame).toContain('(1 of 3)');
+      expect(frame).not.toContain('Conflict in');
+      expect(frame).toContain('Keep mine (keep your file)');
+      expect(frame).not.toContain('preserve your edits');
+      // Accept new replaces a file the shard never owned.
+      expect(frame).toContain('Accept new (replace your file)');
+      // No merge ran, so there are no merge stats or merged-file line numbers to show.
+      expect(frame).not.toContain('auto-merged');
+      expect(frame).not.toContain('lines 3–7');
+      expect(frame).toContain('user line');
+    });
+
+    it('says Keep mine and Skip leave the file untracked, and names the flag', () => {
+      const { lastFrame } = render(
+        <DiffView path="a.md" index={1} total={1} result={makeResult()} preexisting onChoice={() => {}} />,
+      );
+      const frame = plainText(lastFrame());
+      expect(frame).toContain('keeps your file untracked, so the next update asks again');
+      expect(frame).toContain('--adopt-preexisting');
+    });
+
+    it('with --adopt-preexisting, says the kept file is tracked as your modified copy', () => {
+      const { lastFrame } = render(
+        <DiffView path="a.md" index={1} total={1} result={makeResult()} preexisting adoptPreexisting onChoice={() => {}} />,
+      );
+      const frame = plainText(lastFrame());
+      expect(frame).toContain('tracks it as your modified copy');
+      expect(frame).not.toContain('untracked');
+    });
+
+    it('leaves a modified-file conflict as it was', () => {
+      const { lastFrame } = render(
+        <DiffView path="a.md" index={1} total={1} result={makeResult()} adoptPreexisting onChoice={() => {}} />,
+      );
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('Conflict in');
+      expect(frame).toContain('Keep mine (preserve your edits)');
+      expect(frame).toContain('Accept new (use shard version)');
+      expect(frame).toContain('auto-merged');
+      expect(frame).not.toContain('collides');
+      expect(frame).not.toContain('--adopt-preexisting');
+    });
+
+    it('names a binary collision too', () => {
+      const { lastFrame } = render(
+        <DiffView
+          path="assets/logo.png"
+          index={1}
+          total={1}
+          result={{
+            content: '',
+            conflicts: [],
+            stats: { linesUnchanged: 0, linesAutoMerged: 0, linesConflicted: 0 },
+            binary: { yours: 10, shard: 20 },
+          }}
+          preexisting
+          onChoice={() => {}}
+        />,
+      );
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('New file from shard collides with your file');
+      expect(frame).toContain("Can't merge this file line by line");
+    });
+
+    it('switches heading per file on the same mount and still takes the next choice', async () => {
+      const onChoice = vi.fn<(a: DiffAction) => void>();
+      const r = render(
+        <DiffView path="new.md" index={1} total={2} result={makeResult()} preexisting onChoice={onChoice} />,
+      );
+      await tick(30);
+      expect(r.lastFrame() ?? '').toContain('collides with your file');
+      r.stdin.write(ENTER);
+      await waitForCall(onChoice);
+      r.rerender(
+        <DiffView path="edited.md" index={2} total={2} result={makeResult()} onChoice={onChoice} />,
+      );
+      await tick(30);
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('Conflict in');
+      expect(frame).not.toContain('collides');
+      expect(frame).toContain('Keep mine (preserve your edits)');
+      expect(frame).toContain('Accept new (use shard version)');
+      expect(frame).toContain('auto-merged');
+      expect(frame).toContain('lines 3–7');
+      r.stdin.write(ARROW_DOWN);
+      await tick(30);
+      r.stdin.write(ENTER);
+      await waitForCall(onChoice, 2);
+      expect(onChoice).toHaveBeenNthCalledWith(2, 'keep_mine');
+    });
+  });
 });

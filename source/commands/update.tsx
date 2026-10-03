@@ -159,6 +159,8 @@ export default function Update({ options }: Props) {
             index={phase.currentIndex + 1}
             total={phase.plan.pendingConflicts.length}
             result={pending.result}
+            preexisting={pending.preexisting}
+            adoptPreexisting={adoptPreexisting}
             onChoice={onConflictChoice}
           />
         </CommandFrame>
