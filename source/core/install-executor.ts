@@ -30,6 +30,7 @@ import {
 } from './state.js';
 import { sha256, toPosix, pathExists } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
+import { assertSafeVaultPaths, ENGINE_WRITE_PATHS } from './vault-path-guard.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
 
 export interface BackupRecord {
@@ -234,6 +235,13 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, onFileWritten, dryRun } = opts;
 
   const resolution = await resolveModules(schema, selections, tempDir);
+  // Refuse before the first write, dry run included, if any path would
+  // send it through a link or a case-folded name (#163).
+  await assertSafeVaultPaths(vaultRoot, [
+    ...resolution.render.map((e) => e.outputPath),
+    ...resolution.copy.map((e) => e.outputPath),
+    ...ENGINE_WRITE_PATHS,
+  ]);
   const totalFiles = resolution.render.length + resolution.copy.length;
   const writtenPaths: string[] = [];
   const fileStates: Record<string, FileState> = {};

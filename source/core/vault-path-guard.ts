@@ -16,6 +16,10 @@ import type { Stats } from 'node:fs';
 import path from 'node:path';
 import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
+import { STATE_FILE, VALUES_FILE } from '../runtime/vault-paths.js';
+
+/** The engine's own files every install, update and adopt writes. */
+export const ENGINE_WRITE_PATHS: readonly string[] = [VALUES_FILE, STATE_FILE];
 
 export type UnsafeVaultPathReason = 'symlink' | 'symlinked-folder' | 'hard-link' | 'case-mismatch';
 
@@ -29,7 +33,7 @@ export interface UnsafeVaultPath {
 const LISTED = 10;
 
 /**
- * The given vault-relative paths (POSIX separators) that are unsafe to
+ * The given vault-relative paths (either separator) that are unsafe to
  * write or delete, walking each component from the vault root. A path
  * whose parent does not exist yet is safe: nothing on its way is a link.
  * The vault root itself is not checked. Directory listings and `lstat`
@@ -71,7 +75,7 @@ export async function findUnsafeVaultPaths(
   };
 
   const check = async (rel: string): Promise<UnsafeVaultPathReason | null> => {
-    const segments = rel.split('/').filter((s) => s !== '' && s !== '.');
+    const segments = rel.split(/[\\/]/).filter((s) => s !== '' && s !== '.');
     let dir = vaultRoot;
     for (let i = 0; i < segments.length; i++) {
       const name = segments[i]!;

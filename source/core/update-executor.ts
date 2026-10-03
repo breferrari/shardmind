@@ -22,6 +22,8 @@ import type {
 import { ShardMindError } from '../runtime/types.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent } from './fs-utils.js';
+import { pathsTheUpdateTouches } from './update-planner.js';
+import { assertSafeVaultPaths, ENGINE_WRITE_PATHS } from './vault-path-guard.js';
 import { hashValues } from './install-planner.js';
 import {
   cacheTemplates,
@@ -168,6 +170,10 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     onBackupReady,
     onFileTouched,
   } = opts;
+
+  // Checked again at write time (#163): planning may have been a while
+  // ago, behind prompts. Before the snapshot or any write, dry run included.
+  await assertSafeVaultPaths(vaultRoot, [...pathsTheUpdateTouches(plan.actions), ...ENGINE_WRITE_PATHS]);
 
   const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now);
   const addedPaths: string[] = [];

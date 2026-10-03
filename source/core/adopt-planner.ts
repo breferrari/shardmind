@@ -31,6 +31,7 @@ import type {
 import { ShardMindError } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { resolveModules } from './modules.js';
+import { assertSafeVaultPaths, ENGINE_WRITE_PATHS } from './vault-path-guard.js';
 import {
   buildRenderContext,
   createRenderer,
@@ -178,6 +179,13 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
     else if (c.kind === 'differs') differs.push(c);
     else shardOnly.push(c);
   }
+
+  // Refuse before any prompt or `--json` plan (#163); the executor checks
+  // again before it writes.
+  await assertSafeVaultPaths(vaultRoot, [
+    ...classifications.map((c) => c.path),
+    ...ENGINE_WRITE_PATHS,
+  ]);
 
   return {
     matches,

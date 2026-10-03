@@ -30,6 +30,7 @@ import type {
 import { ShardMindError } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { computeMergeAction } from './differ.js';
+import { assertSafeVaultPaths, ENGINE_WRITE_PATHS } from './vault-path-guard.js';
 import { resolveModules } from './modules.js';
 import { renderFile, createRenderer } from './renderer.js';
 import { isBinaryForMerge, sha256, mapConcurrent } from './fs-utils.js';
@@ -369,6 +370,21 @@ export async function renderNewShard(
  * entries and the cached old-template content for three-way merges, but
  * never writes.
  */
+/** Actions that write, delete, or record a path the next update may write. */
+const GUARDED_ACTIONS = new Set<UpdateAction['kind']>([
+  'overwrite',
+  'auto_merge',
+  'conflict',
+  'add',
+  'restore_missing',
+  'delete',
+]);
+
+/** The vault paths an update plan writes, deletes or keeps tracking (#163). */
+export function pathsTheUpdateTouches(actions: readonly UpdateAction[]): string[] {
+  return actions.filter((a) => GUARDED_ACTIONS.has(a.kind)).map((a) => a.path);
+}
+
 export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   const { vault, values, newShard, removedFileDecisions } = input;
   const { root: vaultRoot, state: currentState, drift } = vault;
@@ -733,6 +749,10 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       counts.conflicts++;
     }
   }
+
+  // Refuse before any prompt or `--json` plan, so a dry run reports what
+  // the run would do (#163). The executor checks again before it writes.
+  await assertSafeVaultPaths(vaultRoot, [...pathsTheUpdateTouches(actions), ...ENGINE_WRITE_PATHS]);
 
   return { actions, pendingConflicts, counts };
 }
