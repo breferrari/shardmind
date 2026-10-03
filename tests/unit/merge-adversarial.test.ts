@@ -621,10 +621,8 @@ describe('merge adversarial — token interning stress', () => {
     const result = threeWayMerge(content, content, content);
     expect(result.content).toBe(content);
     expect(result.stats.linesConflicted).toBe(0);
-  }, 60_000);  // node-diff3 on 10K identical lines is near-linear in
-               // isolation but parallel-CPU contention on macOS CI can
-               // push it past the 30s default. Doubled budget gives
-               // headroom under load without masking a real regression.
+  });  // Identical inputs skip diff3, whose LCS slows toward cubic time on
+       // repeated lines (#114); this used to need a 60s budget under load.
 
   it('all lines identical is the densest interning case', () => {
     const content = Array.from({ length: 1000 }, () => 'same').join('\n') + '\n';
