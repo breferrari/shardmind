@@ -863,6 +863,7 @@ Flags:
 - `--yes` — skip every prompt; opt into every new optional module and auto-keep every conflict (useful for unattended CI upgrades).
 - `--verbose` — show per-file action history during the write phase.
 - `--dry-run` — run the full pipeline (fetch, migrate, plan, merge) without touching the vault; the summary reports what *would* happen.
+- `--adopt-preexisting` — when the new version adds a path where you already have an untracked file of your own and you keep yours (by hand, or by `--yes`), start tracking it as your modified copy of that file, so later updates merge into it, instead of leaving it untracked to come back as the same question every update (#61). Off by default: the engine never starts managing a file you did not opt in to.
 
 Implementation modules: `source/core/migrator.ts` (IMPLEMENTATION §4.10), `source/core/update-planner.ts` (§4.11), `source/core/update-executor.ts` (§4.12). Orchestration lives in `source/commands/hooks/use-update-machine.ts`. The full phase diagram is in IMPLEMENTATION §3.
 
