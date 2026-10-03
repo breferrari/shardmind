@@ -68,7 +68,10 @@ describe('@inkjs/ui TextInput onChange quirk (regression)', () => {
     await waitFor(
       () => (onChangeValues.length > 3 ? 'ok' : ''),
       (f) => f === 'ok',
-      500,
+      // A ceiling, not a delay: the poll returns as soon as the spurious
+      // fire lands. 500 ms was too tight under the full suite's parallel
+      // load (it failed twice on the #153 branch, alone it passes).
+      2000,
     );
 
     expect(submitValues).toEqual(['abc']);
