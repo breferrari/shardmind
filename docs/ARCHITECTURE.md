@@ -843,15 +843,15 @@ The final summary names what the update replaced, because a count alone cannot t
   Changes:
     12 replaced · 131 unchanged · 2 auto-merged · 3 added
 
-  Replaced with the shard's version (13):
+  Replaced with the shard's version:
     · .claude/commands/standup.md
     · CLAUDE.md
     · …
     …and 3 more
-  Previous copies: .shardmind/backups/update-2026-10-03T17-35-00-000/
+  Previous copies: .shardmind/backups/update-2026-10-03T17-35-00-000/files/
 ```
 
-"Replaced" is every tracked file whose bytes the update swapped wholesale for the shard's: a silent overwrite of an engine-owned file, or a conflict the user resolved with **Accept new** (the list includes both; the Changes split counts only the silent ones). Auto-merged, added and restored files are not replacements and stay counts. The list is sorted and shows at most 10 paths. The backup line points at the snapshot that holds every replaced file's previous bytes; a dry run says "Would replace" and points at `shardmind update --dry-run --json` for the uncapped per-file plan instead.
+"Replaced" is every file on disk whose bytes the update swapped wholesale for the shard's: a silent overwrite of an engine-owned file, or a conflict the user resolved with **Accept new** — including a collision with an untracked file at a path the new shard adds. The list includes both kinds; the Changes split counts only the silent ones, as accepted conflicts are already counted as conflicts, so the list header carries no count of its own to disagree with. Auto-merged, added and restored files are not replacements and stay counts. The list is sorted and shows at most 10 paths. The backup line points at the snapshot's `files/` tree, which mirrors the vault layout and holds every replaced file's previous bytes; a dry run says "Would replace" and points at `--json` (added to the same command, so `--release` and friends carry over) for the uncapped per-file plan instead.
 
 Flags:
 - `--yes` — skip every prompt; opt into every new optional module and auto-keep every conflict (useful for unattended CI upgrades).

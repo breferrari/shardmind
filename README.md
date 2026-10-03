@@ -55,7 +55,7 @@ shardmind update
   CLAUDE.md — you added a custom section
   [Accept new] [Keep mine] [Open in editor] [Skip]
 
-  Updated. 43 silent. 2 merged. 1 reviewed.
+  Updated. 3 replaced · 40 unchanged · 2 merged · 1 reviewed.
 ```
 
 ---
