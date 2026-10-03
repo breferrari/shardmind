@@ -66,7 +66,7 @@ describe('AdoptDiffView', () => {
       />,
     );
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('Binary file');
+    expect(frame).toContain('Binary or non-UTF-8 file');
     expect(frame).toContain('Mine: 5B');
     expect(frame).toContain('Shard: 4B');
     // The Select choices remain available — user can still pick a side.

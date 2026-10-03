@@ -277,4 +277,46 @@ describe('DiffView', () => {
     expect(frame).toContain('after');
     expect(frame).toContain('<<<<<<< yours');
   });
+
+  // #63: a binary file has no line merge to show.
+  describe('binary file', () => {
+    const binary = (): MergeResult => ({
+      content: '',
+      conflicts: [],
+      stats: { linesUnchanged: 0, linesAutoMerged: 0, linesConflicted: 0 },
+      binary: { yours: 1234, shard: 2048 },
+    });
+
+    it('renders the byte counts instead of text regions', () => {
+      const { lastFrame } = render(
+        <DiffView path="assets/logo.png" index={1} total={1} result={binary()} onChoice={() => {}} />,
+      );
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain("Can't merge this file line by line");
+      expect(frame).toContain('yours 1234 bytes');
+      expect(frame).toContain('shard 2048 bytes');
+      expect(frame).not.toContain('<<<<<<<');
+      expect(frame).not.toContain('region');
+    });
+
+    it('still takes a choice for a binary file after a text conflict on the same mount', async () => {
+      const onChoice = vi.fn<(a: DiffAction) => void>();
+      const r = render(
+        <DiffView path="a.md" index={1} total={2} result={makeResult()} onChoice={onChoice} />,
+      );
+      await tick(30);
+      r.stdin.write(ENTER);
+      await waitForCall(onChoice);
+      r.rerender(
+        <DiffView path="assets/logo.png" index={2} total={2} result={binary()} onChoice={onChoice} />,
+      );
+      await tick(30);
+      expect(r.lastFrame() ?? '').toContain("Can't merge this file line by line");
+      r.stdin.write(ARROW_DOWN);
+      await tick(30);
+      r.stdin.write(ENTER);
+      await waitForCall(onChoice, 2);
+      expect(onChoice).toHaveBeenNthCalledWith(2, 'keep_mine');
+    });
+  });
 });

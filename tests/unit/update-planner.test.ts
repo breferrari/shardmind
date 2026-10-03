@@ -319,6 +319,56 @@ describe('planUpdate', () => {
     ]);
   });
 
+  // The whole-file fallback conflict (cached template missing) used to drop
+  // iteratorKey, so an iterator output's state entry lost iterator_key.
+  it('keeps iteratorKey on the whole-file conflict when the cached template is missing', async () => {
+    const schema = baseSchema();
+    const selections: ModuleSelections = { brain: 'included' };
+    const values = { user_name: 'brenno' };
+    const vault = await buildVault({
+      vaultFiles: { 'perf/Alpha.md': '# Alpha, my version\n' },
+      cachedTemplates: {}, // the cache lost the iterator template
+    });
+    const shardDir = await buildShardTempDir({ 'perf/_each.md.njk': '# {{ item }}\n' });
+    const content = '# Alpha\n';
+    const state = makeShardState({
+      version: '1.0.0',
+      modules: selections,
+      files: {
+        'perf/Alpha.md': makeFileState({ template: 'perf/_each.md.njk', rendered_hash: sha256(content), ownership: 'managed', iterator_key: 'perf' }),
+      },
+    });
+    const drift: DriftReport = {
+      managed: [],
+      modified: [{ path: 'perf/Alpha.md', template: 'perf/_each.md.njk', renderedHash: sha256(content), actualHash: 'x', ownership: 'modified' }],
+      volatile: [],
+      missing: [],
+      orphaned: [],
+    };
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: values, new: values },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx(values),
+        filePlan: {
+          outputs: [{
+            outputPath: 'perf/Alpha.md',
+            entry: { sourcePath: path.join(shardDir, 'perf/_each.md.njk'), outputPath: 'perf/Alpha.md', module: null, volatile: false, iterator: 'perf' },
+            content,
+            hash: sha256(content),
+          }],
+        },
+      },
+      removedFileDecisions: {},
+    });
+    const conflict = plan.actions.find((a) => a.path === 'perf/Alpha.md');
+    expect(conflict?.kind).toBe('conflict');
+    expect(conflict).toMatchObject({ iteratorKey: 'perf' });
+  });
+
   it('no-ops on a managed file that is identical to the new render', async () => {
     const schema = baseSchema();
     const selections: ModuleSelections = { brain: 'included' };

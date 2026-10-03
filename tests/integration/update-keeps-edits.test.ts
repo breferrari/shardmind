@@ -612,6 +612,182 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     });
   });
 
+  // #63: a binary file never goes through the line-based three-way merge,
+  // which decodes bytes as UTF-8 and writes back mangled output.
+  describe('binary files', () => {
+    const BIN = 'assets/logo.bin';
+    const V1 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0a, 0xff, 0xfe, 0x01]);
+    const V2 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0a, 0xff, 0xfe, 0x02, 0x03]);
+    const MINE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0a, 0xc3, 0x28, 0x01]);
+
+    async function shardWithBin(version: string, bytes: Buffer): Promise<string> {
+      const dir = await shardAt(version);
+      await fsp.mkdir(path.join(dir, 'assets'), { recursive: true });
+      await fsp.writeFile(path.join(dir, BIN), bytes);
+      return dir;
+    }
+    const disk = () => fsp.readFile(path.join(vault, BIN));
+    const disk2 = (rel: string) => fsp.readFile(path.join(vault, rel));
+
+    it('an edited binary whose source changed is a whole-file conflict, not a merge', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+
+      const { plan } = await update(await shardWithBin('0.2.0', V2));
+      expect(actionFor(plan, BIN)).toBe('conflict');
+      expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toEqual({ yours: MINE.length, shard: V2.length });
+      // keep_mine (the helper's default): the user's bytes are untouched.
+      expect(await disk()).toEqual(MINE);
+    });
+
+    it('accept new writes the shard\'s bytes exactly', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+
+      await update(await shardWithBin('0.2.0', V2), 'accept_new');
+      expect(await disk()).toEqual(V2);
+      expect((await recorded(BIN)).ownership).toBe('managed');
+    });
+
+    it('an edited binary whose source did not change is left alone', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+
+      const { plan } = await update(await shardWithBin('0.2.0', V1));
+      expect(actionFor(plan, BIN)).toBe('noop');
+      expect(await disk()).toEqual(MINE);
+    });
+
+    it('a user who already has the new bytes is relabelled managed, without a prompt', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), V2);
+
+      const { plan } = await update(await shardWithBin('0.2.0', V2));
+      expect(plan.pendingConflicts.map((c) => c.path)).not.toContain(BIN);
+      expect(await disk()).toEqual(V2);
+      expect((await recorded(BIN)).ownership).toBe('managed');
+    });
+
+    it('a text source that becomes binary is a binary conflict for an edited file', async () => {
+      const TEXT = Buffer.from('plain text v1\n');
+      await install(await shardWithBin('0.1.0', TEXT));
+      await fsp.writeFile(path.join(vault, BIN), Buffer.from('plain text v1\nmy line\n'));
+
+      const { plan } = await update(await shardWithBin('0.2.0', V2));
+      expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toBeDefined();
+    });
+
+    it('a binary user edit over a text source is a binary conflict', async () => {
+      const TEXT1 = Buffer.from('plain text v1\n');
+      const TEXT2 = Buffer.from('plain text v2\n');
+      await install(await shardWithBin('0.1.0', TEXT1));
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+
+      const { plan } = await update(await shardWithBin('0.2.0', TEXT2));
+      expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toEqual({ yours: MINE.length, shard: TEXT2.length });
+      expect(await disk()).toEqual(MINE); // keep_mine, the --yes default
+    });
+
+    it('with the cached source missing, an edited binary is still a whole-file binary conflict', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+      await fsp.rm(path.join(vault, '.shardmind', 'templates', BIN));
+
+      const { plan } = await update(await shardWithBin('0.2.0', V2));
+      expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toEqual({ yours: MINE.length, shard: V2.length });
+    });
+
+    it('--dry-run --json lists the binary conflict', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+
+      const { plan } = await update(await shardWithBin('0.2.0', V2), 'keep_mine', true);
+      const file = updatePlanResult(plan, { dryRun: true }).files.find((f) => f.path === BIN);
+      expect(file?.action).toBe('conflict');
+      expect(await disk()).toEqual(MINE);
+    });
+
+    it('a NUL after the first 8 KB reads as text and takes the line merge', async () => {
+      const big = (tail: string) => Buffer.concat([Buffer.alloc(8192, 0x61), Buffer.from('\n'), Buffer.from(tail), Buffer.from([0x00]), Buffer.from('\n')]);
+      await install(await shardWithBin('0.1.0', big('v1')));
+      await fsp.writeFile(path.join(vault, BIN), Buffer.concat([big('v1'), Buffer.from('my line\n')]));
+
+      const { plan } = await update(await shardWithBin('0.2.0', big('v2')));
+      expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toBeUndefined();
+      expect(actionFor(plan, BIN)).not.toBe('noop');
+    });
+
+    it('a non-UTF-8 file with no NUL (a Latin-1 CSV) is not line-merged either', async () => {
+      // 0xE9 = 'é' in Latin-1, invalid as UTF-8; no NUL anywhere.
+      const latin = (row: string) => Buffer.from(`name;city\n${row};Montr\xe9al\n`, 'latin1');
+      await install(await shardWithBin('0.1.0', latin('v1')));
+      const mine = Buffer.concat([latin('v1'), Buffer.from('extra;caf\xe9\n', 'latin1')]);
+      await fsp.writeFile(path.join(vault, BIN), mine);
+
+      const { plan } = await update(await shardWithBin('0.2.0', latin('v2')));
+      expect(actionFor(plan, BIN)).toBe('conflict');
+      expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toBeDefined();
+      expect(await disk()).toEqual(mine);
+    });
+
+    it('binary bytes the user put over a rendered file are not line-merged', async () => {
+      await install();
+      await fsp.writeFile(path.join(vault, HOME), MINE);
+
+      const { plan } = await update(await shardAt('0.2.0', welcome('Welcome, {{ user_name }}! (v2)')), 'accept_new');
+      expect(plan.pendingConflicts.find((c) => c.path === HOME)?.result.binary?.yours).toBe(MINE.length);
+      // Accept new on a rendered target writes the render, as text.
+      expect(await read(HOME)).toContain('Welcome, Alice! (v2)');
+    });
+
+    it('binary bytes over a rendered file whose template did not change are left alone', async () => {
+      await install();
+      await fsp.writeFile(path.join(vault, HOME), MINE);
+
+      // Same Home.md.njk; its render differs per run (install_date), so only a
+      // source-to-source comparison sees "unchanged".
+      const { plan } = await update(await shardAt('0.2.0'));
+      expect(plan.pendingConflicts.map((c) => c.path)).not.toContain(HOME);
+      expect(await disk2(HOME)).toEqual(MINE);
+      const again = await update(await shardAt('0.3.0'));
+      expect(again.plan.pendingConflicts.map((c) => c.path)).not.toContain(HOME);
+    });
+
+    it('a non-UTF-8 cached old source alone is enough to skip the line merge', async () => {
+      const latinV1 = Buffer.from('v1;caf\xe9\n', 'latin1');
+      await install(await shardWithBin('0.1.0', latinV1));
+      await fsp.writeFile(path.join(vault, BIN), Buffer.from('v1;cafe\nmine\n')); // valid UTF-8
+      const { plan } = await update(await shardWithBin('0.2.0', Buffer.from('v2;cafe\n')));
+      expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toBeDefined();
+    });
+
+    it('--dry-run --json flags a binary conflict as binary', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+      const { plan } = await update(await shardWithBin('0.2.0', V2), 'keep_mine', true);
+      expect(updatePlanResult(plan, { dryRun: true }).files.find((f) => f.path === BIN)?.binary).toBe(true);
+    });
+
+    it('an untracked binary at a path the new version adds gets the binary prompt', async () => {
+      await install();
+      await fsp.mkdir(path.join(vault, 'assets'), { recursive: true });
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+
+      const { plan } = await update(await shardWithBin('0.2.0', V2), 'accept_new');
+      const conflict = plan.pendingConflicts.find((c) => c.path === BIN);
+      expect(conflict?.result.binary).toEqual({ yours: MINE.length, shard: V2.length });
+      expect(conflict?.result.conflicts).toEqual([]);
+      expect(await disk()).toEqual(V2);
+    });
+
+    it('a pristine binary is still overwritten byte for byte', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      const { plan } = await update(await shardWithBin('0.2.0', V2));
+      expect(actionFor(plan, BIN)).toBe('overwrite');
+      expect(await disk()).toEqual(V2);
+    });
+  });
+
   it('a pristine copy-origin file is still overwritten silently when its source changes', async () => {
     await install();
     const { plan } = await update(await shardAt('0.2.0', { [COPY]: (s) => s.replace(COPY_LINE, 'New upstream line.') }));

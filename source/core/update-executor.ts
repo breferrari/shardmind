@@ -432,7 +432,11 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         action: action.kind,
       });
       if (resolution === 'accept_new') {
-        if (!ctx.dryRun) await writeFile(ctx.vaultRoot, action.path, action.newContent);
+        if (!ctx.dryRun) {
+          // Copy-origin: writeAction copies the bytes; a UTF-8 write of
+          // `newContent` mangles binary (#63).
+          await writeAction(ctx.vaultRoot, { ...action, content: action.newContent });
+        }
         ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'managed');
         ctx.summary.wroteFiles.push(action.path);
         // The other replacement besides `overwrite`; see `UpdateSummary.replacedFiles`.
@@ -732,10 +736,7 @@ async function writeFile(vaultRoot: string, outputPath: string, content: string)
  */
 async function writeAction(
   vaultRoot: string,
-  action:
-    | Extract<UpdateAction, { kind: 'overwrite' }>
-    | Extract<UpdateAction, { kind: 'add' }>
-    | Extract<UpdateAction, { kind: 'restore_missing' }>,
+  action: { path: string; content: string; copyFromSourcePath?: string },
 ): Promise<void> {
   const abs = path.join(vaultRoot, action.path);
   try {
