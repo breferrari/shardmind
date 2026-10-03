@@ -1346,6 +1346,36 @@ The directory is created on first successful fetch. Writes are atomic (`writeFil
 
 **Dependencies**: `runtime/types` (ShardMindError), `runtime/errno` (errnoCode), `semver`. No GitHub registry imports — this module deliberately stays separate from §4.15 so the npm vs GitHub split is structural, not just a convention.
 
+### 4.20 `vault-path-guard.ts`
+
+Refuses a vault path that a write would send somewhere else (#163). `fsp.writeFile` / `copyFile` follow links, so install, update and adopt check every path they will touch before touching any.
+
+```typescript
+export type UnsafeVaultPathReason = 'symlink' | 'symlinked-folder' | 'hard-link' | 'case-mismatch';
+export interface UnsafeVaultPath { path: string; reason: UnsafeVaultPathReason }
+
+export function findUnsafeVaultPaths(vaultRoot: string, writes: readonly string[], deletes?: readonly string[]): Promise<UnsafeVaultPath[]>;
+export function assertSafeVaultPaths(vaultRoot: string, writes: readonly string[], deletes?: readonly string[]): Promise<void>; // throws VAULT_PATH_UNSAFE
+```
+
+Algorithm, per vault-relative path, walking each component from the vault root (the root itself is not checked):
+
+1. If the component does not exist (`lstat` ENOENT / ENOTDIR), the path is safe: nothing beyond it exists yet.
+2. On a case-folding filesystem (probed once: the vault root's name with its case swapped reaches the same inode), list the parent folder. If the exact name (NFC) is absent but a case-insensitive match is present, the reason is `case-mismatch`. A folder that cannot be listed (EACCES / EPERM) skips this step.
+3. For a delete, the last component stops here: unlinking a symlink or a hard-linked file harms nothing else.
+4. A symlink is `symlinked-folder` before the last component and `symlink` at it, dangling or not.
+5. At the last component, a file with `nlink > 1` is `hard-link`.
+
+`assertSafeVaultPaths` always adds the engine's own paths as writes: `shard-values.yaml`, and `.shardmind/`'s `state.json`, `shard.yaml`, `shard-schema.yaml`, `templates/`, `backups/` and `logs/`. Any other `lstat` failure throws `COLLISION_CHECK_FAILED`. Paths are checked concurrently (16), with listings and `lstat` results cached per call.
+
+Call sites, each before any prompt, move or write, and in dry runs too:
+
+- **Install:** `useInstallMachine` checks the planned outputs, before the collision review. `runInstall` checks again, after collisions are moved aside, plus the files each `_each` template expands to as it renders them.
+- **Update:** `planUpdate` checks `pathsTheUpdateTouches(actions)`. Writes are `overwrite`, `auto_merge`, `conflict`, `add`, `restore_missing`, and a `noop` adopting an untracked file (`ALREADY_NEW_VERSION`); deletes are `delete`. `runUpdate` checks the same again.
+- **Adopt:** `classifyAdoption` checks every classified path, and `runAdopt` checks again.
+
+The second check covers a link that appears while a prompt is open.
+
 ---
 
 ## 5. Runtime Module: `shardmind/runtime`
