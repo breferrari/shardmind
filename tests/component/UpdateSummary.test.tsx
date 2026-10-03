@@ -30,6 +30,7 @@ function summary(overrides: Partial<Summary> = {}): Summary {
     wroteFiles: [],
     deletedFiles: [],
     addedFiles: [],
+    replacedFiles: [],
     ...overrides,
   };
 }

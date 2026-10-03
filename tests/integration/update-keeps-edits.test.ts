@@ -156,7 +156,7 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
   }
 
   /** One full update, drift to state write, resolving every conflict as `resolution`. */
-  async function update(shardDir: string, resolution: ConflictResolution = 'keep_mine') {
+  async function update(shardDir: string, resolution: ConflictResolution = 'keep_mine', dryRun = false) {
     const state = (await readState(vault)) as ShardState;
     const values = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
     const manifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
@@ -187,7 +187,9 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       resolved: { ...RESOLVED, version: manifest.version },
       tarballSha256: `sha-${manifest.version}`,
       newTempDir: shardDir,
+      dryRun,
     });
+    if (dryRun) return { plan, result, hooks: null };
     // The hook phase, as the update machine runs it after the state write.
     const hooks = await runHooks(
       {
@@ -542,6 +544,52 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     await write(COPY, pristine);
     await update(await shardAt('0.3.0'));
     expect((await recorded(COPY)).ownership).toBe('managed');
+  });
+
+  // #153: the summary names the files an update replaced wholesale.
+  describe('summary.replacedFiles', () => {
+    it('lists a silent overwrite and an accepted conflict, nothing merged, added or restored', async () => {
+      await install();
+      await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.'); // → conflict, accept_new
+      await write(COPY, (await read(COPY)) + '\n- User-added link\n'); // → auto_merge
+      await fsp.rm(path.join(vault, '.claude', 'commands', 'example-command.md')); // → restore_missing
+
+      const v2 = await shardAt('0.2.0', {
+        ...welcome('Welcome to your vault, {{ user_name }}! (v2)'),
+        [COPY]: (s) => s.replace('# Minimal Shard', '# Minimal Shard v2'),
+        '.claude/settings.json.njk': (s) => s.replace('{', '{\n  "v2": true,'), // pristine → overwrite
+        'brain/New Note.md': () => '# New\n', // → add
+      });
+      const { plan, result } = await update(v2, 'accept_new');
+      expect(actionFor(plan, '.claude/settings.json')).toBe('overwrite');
+      expect(actionFor(plan, COPY)).toBe('auto_merge');
+
+      const replaced = result.summary.replacedFiles;
+      expect(replaced).toContain('.claude/settings.json'); // silent overwrite
+      expect(replaced).toContain(HOME); // accept_new
+      expect(replaced).not.toContain(COPY); // auto_merge
+      expect(replaced).not.toContain('.claude/commands/example-command.md'); // restore_missing
+      expect(replaced).not.toContain('brain/New Note.md'); // add
+      // Every entry is a path the plan overwrote or a conflict it resolved.
+      const replacing = new Set(plan.actions.filter((a) => a.kind === 'overwrite' || a.kind === 'conflict').map((a) => a.path));
+      for (const p of replaced) expect(replacing.has(p)).toBe(true);
+    });
+
+    it('is populated in a dry run', async () => {
+      await install();
+      const v2 = await shardAt('0.2.0', { '.claude/settings.json.njk': (s) => s.replace('{', '{\n  "v2": true,') });
+      const { result } = await update(v2, 'keep_mine', true);
+      expect(result.summary.replacedFiles).toContain('.claude/settings.json');
+    });
+
+    it('does not count a kept conflict or a merge left alone', async () => {
+      await install();
+      await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.');
+      await editFile(COPY, COPY_LINE, 'My own line.');
+      const { result } = await update(await shardAt('0.2.0', welcome('Welcome to your vault, {{ user_name }}! (v2)')));
+      expect(result.summary.replacedFiles).not.toContain(HOME);
+      expect(result.summary.replacedFiles).not.toContain(COPY);
+    });
   });
 
   it('a pristine copy-origin file is still overwritten silently when its source changes', async () => {
