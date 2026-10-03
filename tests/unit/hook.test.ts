@@ -368,6 +368,24 @@ describe('executeHook — subprocess runtime', () => {
     expect(result.stderr).toContain('cannot be converted to a string');
   }, 30_000);
 
+  it('describes an error whose stack getter throws, instead of crashing the runner', async () => {
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        class Weird extends Error {
+          get stack(): string { throw new Error('no stack for you'); }
+        }
+        export default async function () {
+          throw new Weird('boom');
+        }
+      `,
+    );
+    const result = await executeHook(hookPath, baseCtx());
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}`);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('cannot be converted to a string');
+  }, 30_000);
+
   // Exiting on a throw must not wait on the hook's own handles:
   // a hook that throws with a timer still running exits 1, not on timeout.
   it('still exits 1 promptly when a hook throws with a timer left running (#106)', async () => {
