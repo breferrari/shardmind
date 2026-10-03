@@ -201,7 +201,7 @@ export interface InstallOptions {
   defaults?: boolean;
   verbose?: boolean;
   dryRun?: boolean;
-  noUpdateCheck?: boolean;
+  updateCheck?: boolean;
 }
 
 export function mountInstall(opts: {
@@ -218,7 +218,7 @@ export function mountInstall(opts: {
         defaults: false,
         verbose: false,
         dryRun: false,
-        noUpdateCheck: false,
+        updateCheck: true,
         ...opts.options,
       }}
     />,
@@ -231,7 +231,7 @@ export interface UpdateOptions {
   dryRun?: boolean;
   release?: string;
   includePrerelease?: boolean;
-  noUpdateCheck?: boolean;
+  updateCheck?: boolean;
 }
 
 export function mountUpdate(opts: {
@@ -246,7 +246,7 @@ export function mountUpdate(opts: {
         verbose: false,
         dryRun: false,
         includePrerelease: false,
-        noUpdateCheck: false,
+        updateCheck: true,
         ...opts.options,
       }}
     />,
@@ -259,7 +259,7 @@ export interface AdoptOptions {
   mode?: 'keep-all-mine' | 'use-all-theirs' | 'auto-merge' | 'decide-per-file';
   verbose?: boolean;
   dryRun?: boolean;
-  noUpdateCheck?: boolean;
+  updateCheck?: boolean;
 }
 
 export function mountAdopt(opts: {
@@ -275,7 +275,7 @@ export function mountAdopt(opts: {
         yes: false,
         verbose: false,
         dryRun: false,
-        noUpdateCheck: false,
+        updateCheck: true,
         ...opts.options,
       }}
     />,
@@ -284,7 +284,7 @@ export function mountAdopt(opts: {
 
 export interface StatusOptions {
   verbose?: boolean;
-  noUpdateCheck?: boolean;
+  updateCheck?: boolean;
 }
 
 export function mountStatus(opts: {
@@ -296,7 +296,7 @@ export function mountStatus(opts: {
     <Index
       options={{
         verbose: false,
-        noUpdateCheck: false,
+        updateCheck: true,
         ...opts.options,
       }}
     />,

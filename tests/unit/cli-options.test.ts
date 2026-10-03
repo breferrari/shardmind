@@ -96,3 +96,20 @@ describe('enablePositionalOptions guard', () => {
     expect(() => enablePositionalOptions(NotCommander)).toThrow(/enablePositionalOptions/);
   });
 });
+
+// Pastel maps a boolean option that defaults to `true` to a `--no-<name>` flag,
+// which Commander stores under `<name>`. An option named `noUpdateCheck`
+// defaulting to `false` instead became the flag `--no-update-check` stored
+// under `updateCheck`, so it never reached the command (#147). The fixture
+// above proves the mapping; this pins that every real command declares the
+// option in that shape.
+describe('update-check option shape on the real commands', () => {
+  it.each(['index', 'install', 'update', 'adopt'])('%s declares updateCheck, defaulting to true', async (name) => {
+    const mod = (await import(`../../source/commands/${name}.tsx`)) as {
+      options: { shape: Record<string, unknown>; parse: (v: unknown) => Record<string, unknown> };
+    };
+    expect(Object.keys(mod.options.shape)).toContain('updateCheck');
+    expect(Object.keys(mod.options.shape)).not.toContain('noUpdateCheck');
+    expect(mod.options.parse({})['updateCheck']).toBe(true);
+  });
+});

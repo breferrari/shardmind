@@ -25,9 +25,11 @@ export const options = zod.object({
   defaults: zod.boolean().default(false).describe('Use schema defaults for every value (Invariant 1 mode); skips the wizard. Mutually exclusive with --values.'),
   verbose: zod.boolean().default(false).describe('Show per-file rendering progress'),
   dryRun: zod.boolean().default(false).describe('Preview what would be installed without writing'),
-  noUpdateCheck: zod
+  // Named for the positive so Pastel emits `--no-update-check` and Commander
+  // stores it here: a `noUpdateCheck` option never reached the command (#147).
+  updateCheck: zod
     .boolean()
-    .default(false)
+    .default(true)
     .describe('Disable the once-per-day npm registry check for newer shardmind versions'),
 });
 
@@ -38,7 +40,7 @@ type Props = {
 
 export default function Install({ args, options }: Props) {
   const [shardRef] = args;
-  const { values: valuesFile, yes, defaults, verbose, dryRun, noUpdateCheck } = options;
+  const { values: valuesFile, yes, defaults, verbose, dryRun, updateCheck } = options;
 
   const {
     phase,
@@ -57,7 +59,7 @@ export default function Install({ args, options }: Props) {
     vaultRoot: process.cwd(),
   });
 
-  const banner = useSelfUpdateBanner({ noUpdateCheck });
+  const banner = useSelfUpdateBanner({ noUpdateCheck: !updateCheck });
 
   // Exhaustive switch: adding a new Phase variant without a case here
   // is a compile error, not a silent render-nothing bug.
