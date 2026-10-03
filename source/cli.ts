@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import Pastel from 'pastel';
 import { installStdinCancellation } from './core/cancellation.js';
+import { enablePositionalOptions, pastelCommander } from './cli-options.js';
 
 // Windows doesn't deliver parent→child SIGINT via child_process.kill() — Node
 // emulates SIGINT/SIGTERM as TerminateProcess, which skips every registered
@@ -18,6 +19,11 @@ installStdinCancellation();
 // `../package.json` resolves to the package root in both dev and published
 // layouts.
 const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
+
+// An option written after a subcommand belongs to it, not to the root
+// command; Pastel never enables this on the Commander program it builds
+// (#147). See source/cli-options.ts.
+enablePositionalOptions(pastelCommander());
 
 const app = new Pastel({
   importMeta: import.meta,
