@@ -340,8 +340,10 @@ describe('DiffView', () => {
       expect(frame).not.toContain('preserve your edits');
       // Accept new replaces a file the shard never owned.
       expect(frame).toContain('Accept new (replace your file)');
-      // No merge ran, so there are no merge stats to show.
+      // No merge ran, so there are no merge stats or merged-file line numbers to show.
       expect(frame).not.toContain('auto-merged');
+      expect(frame).not.toContain('lines 3–7');
+      expect(frame).toContain('user line');
     });
 
     it('says Keep mine and Skip leave the file untracked, and names the flag', () => {
@@ -412,6 +414,10 @@ describe('DiffView', () => {
       const frame = r.lastFrame() ?? '';
       expect(frame).toContain('Conflict in');
       expect(frame).not.toContain('collides');
+      expect(frame).toContain('Keep mine (preserve your edits)');
+      expect(frame).toContain('Accept new (use shard version)');
+      expect(frame).toContain('auto-merged');
+      expect(frame).toContain('lines 3–7');
       r.stdin.write(ARROW_DOWN);
       await tick(30);
       r.stdin.write(ENTER);

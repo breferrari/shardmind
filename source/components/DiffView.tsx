@@ -31,14 +31,14 @@ const SELECT_OPTIONS: Array<{ label: string; value: DiffAction | 'open_editor_di
  * An add-collision's file is the user's own, not an edited shard file
  * (#60): there are no edits to preserve, and Accept new replaces it.
  */
-const PREEXISTING_LABELS: Partial<Record<DiffAction, string>> = {
+const PREEXISTING_LABELS: Partial<Record<(typeof SELECT_OPTIONS)[number]['value'], string>> = {
   accept_new: 'Accept new (replace your file)',
   keep_mine: 'Keep mine (keep your file)',
 };
-const PREEXISTING_OPTIONS = SELECT_OPTIONS.map((o) => {
-  const label = o.value === 'open_editor_disabled' ? undefined : PREEXISTING_LABELS[o.value];
-  return label ? { ...o, label } : o;
-});
+const PREEXISTING_OPTIONS = SELECT_OPTIONS.map((o) => ({
+  ...o,
+  label: PREEXISTING_LABELS[o.value] ?? o.label,
+}));
 
 interface DiffViewProps {
   path: string;
@@ -101,6 +101,7 @@ export default function DiffView({
                 key={`${filePath}-${i}-${region.lineStart}`}
                 region={region}
                 mergedLines={mergedLines}
+                showLineRange={!preexisting}
               />
             ))}
           </Box>
@@ -131,9 +132,12 @@ export default function DiffView({
 function ConflictBlock({
   region,
   mergedLines,
+  showLineRange,
 }: {
   region: ConflictRegion;
   mergedLines: string[];
+  /** Off for an add-collision: the range indexes a merged file that never existed (#60). */
+  showLineRange: boolean;
 }) {
   const beforeStart = Math.max(0, region.lineStart - 1 - CONTEXT_LINES);
   const beforeEnd = region.lineStart - 1;
@@ -147,7 +151,7 @@ function ConflictBlock({
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text dimColor>lines {region.lineStart}–{region.lineEnd}</Text>
+      {showLineRange && <Text dimColor>lines {region.lineStart}–{region.lineEnd}</Text>}
       {before.map((line, i) => (
         <Text key={`b-${i}`} dimColor>  {line}</Text>
       ))}
