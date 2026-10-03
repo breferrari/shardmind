@@ -433,12 +433,13 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
       });
       if (resolution === 'accept_new') {
         if (!ctx.dryRun) {
-          // Copy-origin: copy the bytes; a UTF-8 write mangles binary (#63).
-          if (action.copyFromSourcePath) {
-            await copyFile(ctx.vaultRoot, action.path, action.copyFromSourcePath);
-          } else {
-            await writeFile(ctx.vaultRoot, action.path, action.newContent);
-          }
+          // Copy-origin: writeAction copies the bytes; a UTF-8 write of
+          // `newContent` mangles binary (#63).
+          await writeAction(ctx.vaultRoot, {
+            path: action.path,
+            content: action.newContent,
+            ...(action.copyFromSourcePath ? { copyFromSourcePath: action.copyFromSourcePath } : {}),
+          });
         }
         ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'managed');
         ctx.summary.wroteFiles.push(action.path);
@@ -715,21 +716,6 @@ function reasonOf(err: unknown): string {
 // Low-level file ops
 // ---------------------------------------------------------------------------
 
-/** Byte-for-byte copy of a copy-origin source into the vault. */
-async function copyFile(vaultRoot: string, outputPath: string, sourcePath: string): Promise<void> {
-  const abs = path.join(vaultRoot, outputPath);
-  try {
-    await fsp.mkdir(path.dirname(abs), { recursive: true });
-    await fsp.copyFile(sourcePath, abs);
-  } catch (err) {
-    throw new ShardMindError(
-      `Could not write ${outputPath} during update`,
-      'UPDATE_WRITE_FAILED',
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-}
-
 async function writeFile(vaultRoot: string, outputPath: string, content: string): Promise<void> {
   const abs = path.join(vaultRoot, outputPath);
   try {
@@ -754,10 +740,7 @@ async function writeFile(vaultRoot: string, outputPath: string, content: string)
  */
 async function writeAction(
   vaultRoot: string,
-  action:
-    | Extract<UpdateAction, { kind: 'overwrite' }>
-    | Extract<UpdateAction, { kind: 'add' }>
-    | Extract<UpdateAction, { kind: 'restore_missing' }>,
+  action: { path: string; content: string; copyFromSourcePath?: string },
 ): Promise<void> {
   const abs = path.join(vaultRoot, action.path);
   try {

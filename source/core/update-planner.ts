@@ -300,6 +300,10 @@ export interface RenderedFileEntry {
    * any non-UTF-8 bytes.
    */
   copyFromSourcePath?: string;
+  /** Copy-origin only: the source looks binary (`looksBinary`), measured once here (#63). */
+  binary?: boolean;
+  /** Copy-origin only: the source's size in bytes. */
+  byteLength?: number;
 }
 
 export interface NewFilePlan {
@@ -346,6 +350,8 @@ export async function renderNewShard(
         content: buffer.toString('utf-8'),
         hash: sha256(buffer),
         copyFromSourcePath: entry.sourcePath,
+        binary: looksBinary(buffer),
+        byteLength: buffer.length,
       };
     }),
   ]);
@@ -446,7 +452,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       renderedHash: target.hash,
       templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
       ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
-      ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
+      ...copyFrom(target),
     });
     counts.silent++;
     // Same set as the executor's `summary.replacedFiles` minus accepted conflicts.
@@ -467,7 +473,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       renderedHash: target.hash,
       templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
       ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
-      ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
+      ...copyFrom(target),
     });
     counts.restored++;
   }
@@ -497,9 +503,9 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
         );
       }
 
-      const [actualRead, oldTemplate] = await Promise.all([
+      const [actualRead, oldBytes] = await Promise.all([
         readStringAndByteHash(path.join(vaultRoot, entry.path)),
-        loadOldTemplate(vaultRoot, fileState.template),
+        readCachedTemplate(vaultRoot, fileState.template),
       ]);
       if (actualRead === null) {
         // Drift reported this file as `modified` at scan time, so ENOENT
@@ -519,16 +525,14 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
 
       // A binary copy-origin file never reaches the line merge, which runs on
       // a UTF-8 projection and writes mangled bytes back (#63).
-      if (target.copyFromSourcePath) {
-        const [oldBytes, newBytes] = await Promise.all([
-          readCachedTemplate(vaultRoot, fileState.template),
-          fsp.readFile(target.copyFromSourcePath),
-        ]);
-        if (looksBinary(actualRead.buf) || looksBinary(newBytes) || (oldBytes !== null && looksBinary(oldBytes))) {
-          return planBinary(entry.path, target, actualRead, oldBytes, newBytes, newTempDir);
-        }
+      if (
+        target.copyFromSourcePath &&
+        (target.binary || looksBinary(actualRead.buf) || (oldBytes !== null && looksBinary(oldBytes)))
+      ) {
+        return planBinary(entry.path, target, actualRead, oldBytes, newTempDir);
       }
 
+      const oldTemplate = oldBytes === null ? null : oldBytes.toString('utf-8');
       if (oldTemplate === null) {
         return conflictFromDirect(
           entry.path,
@@ -563,12 +567,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             kind: 'noop',
             path: entry.path,
             reason: mergeAction.reason,
-            rebaseline: {
-              renderedHash: target.hash,
-              templateKey,
-              ...iterator,
-              ownership: theirsHash === target.hash ? 'managed' : 'modified',
-            },
+            rebaseline: rebaselineOf(target, newTempDir, theirsHash === target.hash ? 'managed' : 'modified'),
           };
         case 'overwrite':
           // Shouldn't reach us for ownership='modified' (differ branches on
@@ -597,7 +596,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             theirsHash,
             templateKey,
             ...iterator,
-            ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
+            ...copyFrom(target),
           };
       }
     },
@@ -648,7 +647,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             renderedHash: output.hash,
             templateKey: toTemplateKey(newTempDir, output.entry.sourcePath),
             ...(output.entry.iterator ? { iteratorKey: output.entry.iterator } : {}),
-            ...(output.copyFromSourcePath ? { copyFromSourcePath: output.copyFromSourcePath } : {}),
+            ...copyFrom(output),
           };
         }
         throw err;
@@ -683,7 +682,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
           renderedHash: output.hash,
           templateKey: toTemplateKey(newTempDir, output.entry.sourcePath),
           ...(output.entry.iterator ? { iteratorKey: output.entry.iterator } : {}),
-          ...(output.copyFromSourcePath ? { copyFromSourcePath: output.copyFromSourcePath } : {}),
+          ...copyFrom(output),
         };
       }
       return {
@@ -725,23 +724,16 @@ function planBinary(
   target: RenderedFileEntry,
   actual: { buf: Buffer; hash: string },
   oldBytes: Buffer | null,
-  newBytes: Buffer,
   newTempDir: string,
 ): UpdateAction {
-  const templateKey = toTemplateKey(newTempDir, target.entry.sourcePath);
-  const iterator = target.entry.iterator ? { iteratorKey: target.entry.iterator } : {};
-  const rebaseline = (ownership: 'managed' | 'modified') => ({
-    renderedHash: target.hash,
-    templateKey,
-    ...iterator,
-    ownership,
-  });
   if (actual.hash === target.hash) {
-    return { kind: 'noop', path: filePath, reason: 'already the new version', rebaseline: rebaseline('managed') };
+    return { kind: 'noop', path: filePath, reason: 'already the new version', rebaseline: rebaselineOf(target, newTempDir, 'managed') };
   }
   if (oldBytes !== null && sha256(oldBytes) === target.hash) {
-    return { kind: 'noop', path: filePath, reason: 'no upstream change', rebaseline: rebaseline('modified') };
+    return { kind: 'noop', path: filePath, reason: 'no upstream change', rebaseline: rebaselineOf(target, newTempDir, 'modified') };
   }
+  const templateKey = toTemplateKey(newTempDir, target.entry.sourcePath);
+  const iterator = target.entry.iterator ? { iteratorKey: target.entry.iterator } : {};
   return {
     kind: 'conflict',
     path: filePath,
@@ -749,14 +741,14 @@ function planBinary(
       content: '',
       conflicts: [],
       stats: { linesUnchanged: 0, linesAutoMerged: 0, linesConflicted: 0 },
-      binary: { yours: actual.buf.length, shard: newBytes.length },
+      binary: { yours: actual.buf.length, shard: target.byteLength ?? Buffer.byteLength(target.content) },
     },
     newContent: target.content,
     newContentHash: target.hash,
     theirsHash: actual.hash,
     templateKey,
     ...iterator,
-    ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
+    ...copyFrom(target),
   };
 }
 
@@ -798,7 +790,7 @@ function conflictFromDirect(
     newContentHash: target.hash,
     theirsHash,
     templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
-    ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
+    ...copyFrom(target),
   };
 }
 
@@ -863,12 +855,23 @@ async function readCachedTemplate(
   }
 }
 
-async function loadOldTemplate(
-  vaultRoot: string,
-  templateKey: string | null,
-): Promise<string | null> {
-  const cached = await readCachedTemplate(vaultRoot, templateKey);
-  return cached === null ? null : cached.toString('utf-8');
+/** The state entry a modified file the update leaves in place records: the new render as its baseline. */
+function rebaselineOf(
+  target: RenderedFileEntry,
+  newTempDir: string,
+  ownership: Rebaseline['ownership'],
+): Rebaseline {
+  return {
+    renderedHash: target.hash,
+    templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
+    ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+    ownership,
+  };
+}
+
+/** `{ copyFromSourcePath }` for a copy-origin output, so the executor copies bytes. */
+function copyFrom(output: RenderedFileEntry): { copyFromSourcePath?: string } {
+  return output.copyFromSourcePath ? { copyFromSourcePath: output.copyFromSourcePath } : {};
 }
 
 function toTemplateKey(tempDir: string, sourcePath: string): string {
