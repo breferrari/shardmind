@@ -13,6 +13,7 @@
  */
 
 import fsp from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import type {
   ShardSchema,
@@ -685,16 +686,19 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
           ...copyFrom(output),
         };
       }
-      return {
-        ...(conflictFromDirect(
-          output.outputPath,
-          output,
-          actualRead.content,
-          actualRead.hash,
-          newTempDir,
-        ) as Extract<UpdateAction, { kind: 'conflict' }>),
-        preexisting: true,
-      };
+      // A binary collision gets the whole-file binary prompt, not a text
+      // diff of decoded bytes (#63).
+      const collision =
+        output.copyFromSourcePath && (output.binary || looksBinary(actualRead.buf))
+          ? binaryConflict(output.outputPath, output, actualRead, newTempDir)
+          : (conflictFromDirect(
+              output.outputPath,
+              output,
+              actualRead.content,
+              actualRead.hash,
+              newTempDir,
+            ) as Extract<UpdateAction, { kind: 'conflict' }>);
+      return { ...collision, preexisting: true };
     },
   );
   for (const action of addActions) {
@@ -732,8 +736,16 @@ function planBinary(
   if (oldBytes !== null && sha256(oldBytes) === target.hash) {
     return { kind: 'noop', path: filePath, reason: 'no upstream change', rebaseline: rebaselineOf(target, newTempDir, 'modified') };
   }
-  const templateKey = toTemplateKey(newTempDir, target.entry.sourcePath);
-  const iterator = target.entry.iterator ? { iteratorKey: target.entry.iterator } : {};
+  return binaryConflict(filePath, target, actual, newTempDir);
+}
+
+/** A whole-file conflict for a binary file: byte counts, no text regions (#63). */
+function binaryConflict(
+  filePath: string,
+  target: RenderedFileEntry,
+  actual: { buf: Buffer; hash: string },
+  newTempDir: string,
+): Extract<UpdateAction, { kind: 'conflict' }> {
   return {
     kind: 'conflict',
     path: filePath,
@@ -741,13 +753,13 @@ function planBinary(
       content: '',
       conflicts: [],
       stats: { linesUnchanged: 0, linesAutoMerged: 0, linesConflicted: 0 },
-      binary: { yours: actual.buf.length, shard: target.byteLength ?? Buffer.byteLength(target.content) },
+      binary: { yours: actual.buf.length, shard: target.byteLength ?? statSync(target.copyFromSourcePath ?? target.entry.sourcePath).size },
     },
     newContent: target.content,
     newContentHash: target.hash,
     theirsHash: actual.hash,
-    templateKey,
-    ...iterator,
+    templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
+    ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
     ...copyFrom(target),
   };
 }
