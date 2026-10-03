@@ -156,7 +156,7 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
   }
 
   /** One full update, drift to state write, resolving every conflict as `resolution`. */
-  async function update(shardDir: string, resolution: ConflictResolution = 'keep_mine', dryRun = false) {
+  async function update(shardDir: string, resolution: ConflictResolution = 'keep_mine', dryRun = false, adoptPreexisting = false) {
     const state = (await readState(vault)) as ShardState;
     const values = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
     const manifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
@@ -188,6 +188,7 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       tarballSha256: `sha-${manifest.version}`,
       newTempDir: shardDir,
       dryRun,
+      adoptPreexisting,
     });
     if (dryRun) return { plan, result, hooks: null };
     // The hook phase, as the update machine runs it after the state write.
@@ -879,6 +880,73 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       if (!folds) ctx.skip();
       const { plan } = await update(await withNote('0.2.0'));
       expect(plan.pendingConflicts.map((c) => c.path)).toContain(NOTE);
+    });
+
+    // #61: keeping your own file there left it untracked, so every later
+    // update asked the same question again.
+    describe('kept as yours', () => {
+      const MINE = '# My own note\n\nWritten before the shard shipped one.\n';
+
+      it('stays untracked by default, comes back next update, and is listed as kept untracked', async () => {
+        await install();
+        await write(NOTE, MINE);
+        const first = await update(await withNote('0.2.0'));
+        expect(first.result.summary.keptUntracked).toEqual([NOTE]);
+        expect(((await readState(vault)) as ShardState).files[NOTE]).toBeUndefined();
+
+        const again = await update(await withNote('0.3.0'));
+        expect(again.plan.pendingConflicts.map((c) => c.path)).toContain(NOTE);
+      });
+
+      it('with --adopt-preexisting, is tracked as your modified copy and does not come back', async () => {
+        await install();
+        await write(NOTE, MINE);
+        const first = await update(await withNote('0.2.0'), 'keep_mine', false, true);
+        expect(first.result.summary.keptUntracked).toEqual([]);
+        expect(await recorded(NOTE)).toMatchObject({ ownership: 'modified', rendered_hash: sha256(BODY) });
+        expect(await read(NOTE)).toBe(MINE);
+
+        const again = await update(await withNote('0.3.0'), 'keep_mine', false, true);
+        expect(again.plan.pendingConflicts.map((c) => c.path)).not.toContain(NOTE);
+        expect(await read(NOTE)).toBe(MINE);
+      });
+
+      it('with --adopt-preexisting, a later shard change merges into your copy', async () => {
+        await install();
+        const mine = BODY + '\n- my own line\n';
+        await write(NOTE, mine);
+        await update(await withNote('0.2.0'), 'keep_mine', false, true);
+
+        const { plan } = await update(await withNote('0.3.0', BODY.replace('# New', '# New v3')), 'keep_mine', false, true);
+        expect(actionFor(plan, NOTE)).toBe('auto_merge');
+        const after = await read(NOTE);
+        expect(after).toContain('# New v3');
+        expect(after).toContain('my own line');
+      });
+
+      it('with --adopt-preexisting, skip is tracked like keep mine', async () => {
+        await install();
+        await write(NOTE, MINE);
+        await update(await withNote('0.2.0'), 'skip', false, true);
+        expect((await recorded(NOTE)).ownership).toBe('modified');
+        expect(await read(NOTE)).toBe(MINE);
+      });
+
+      it('with --adopt-preexisting, accept new still writes the shard and records managed', async () => {
+        await install();
+        await write(NOTE, MINE);
+        await update(await withNote('0.2.0'), 'accept_new', false, true);
+        expect(await read(NOTE)).toBe(BODY);
+        expect((await recorded(NOTE)).ownership).toBe('managed');
+      });
+
+      it('a dry run with --adopt-preexisting writes no state', async () => {
+        await install();
+        await write(NOTE, MINE);
+        const before = await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8');
+        await update(await withNote('0.2.0'), 'keep_mine', true, true);
+        expect(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')).toBe(before);
+      });
     });
   });
 
