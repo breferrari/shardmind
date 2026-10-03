@@ -121,7 +121,7 @@ Before you write code, post the approved plan as a comment on the issue, startin
 - **Spec first.** If the spec is silent or wrong on a decision you need, change `docs/SHARD-LAYOUT.md` (or the module spec) in its own commit before the code.
 - **Write the failing test first** for each behavior and each adversarial case. Watch it fail, then make it pass. Merge-engine work (`drift.ts`, `differ.ts`, `renderer.ts`) writes **fixtures first**, under `tests/fixtures/merge/`.
 - **Commit in steps** (`CLAUDE.md §Commit hygiene`): typecheck and the relevant tests green at every commit, conventional prefixes, the issue tag in the first commit.
-- **Open a draft PR early** with `gh pr create --draft`. Copilot skips drafts, so a push costs nothing.
+- **Open a draft PR early** with `gh pr create --draft`, so CI runs on every push before the PR is ready.
 - **A long run** (a soak, a matrix reproduction) needs a comment on its issue when it starts: what runs, where the output goes, and when it ends.
 - **Add no dependency that the spec does not name.** Propose it in the spec first, in its own commit.
 - **If reality contradicts the spec, stop (stop 1).** Say which one you think is wrong, and wait. After the reader answers, change that one in its own commit. If reality contradicts the plan, decide which is wrong. If the plan is wrong, write the deviation and its reason on the issue at that time, then correct the plan comment. Step 6 then compares against the plan as it is now.
@@ -154,7 +154,7 @@ Then prove the result: for a code diff, report `npm run typecheck`, `npm test` (
 
 The PR body follows `.github/PULL_REQUEST_TEMPLATE.md`: every quality-gate box checked or justified, the adversarial cases listed. A user-visible change adds its line to `CHANGELOG.md` under `## [Unreleased]` on the branch. **This skill never releases.** Tagging runs `RELEASE-SMOKE.md` first and is the reader's call (`CLAUDE.md §Release Process`).
 
-Before `gh pr ready`, name the commit each step 6 review read; a later code commit is reviewed first. `gh pr ready` starts the Copilot review. Copilot has a quota, so mark the PR ready once, after the local suite is green and the plan diff is clean.
+Before `gh pr ready`, name the commit each step 6 review read; a later code commit is reviewed first. Mark the PR ready once, after the local suite is green and the plan diff is clean.
 
 ```sh
 t=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -166,16 +166,7 @@ gh run view <id> --json conclusion --jq .conclusion
 
 Watch the run, not `gh pr checks`. List only the runs that started after the ready call. If the list is empty, the run is not in the queue yet: list again. The `headSha` of the run must be the head of the PR. Use `conclusion` as the gate, because `gh run watch` can exit 0 on a failed run. After each fix push, watch the new run the same way. The matrix is three operating systems: a Windows-only failure is a failure.
 
-Then read the Copilot review, which nothing else watches:
-
-```sh
-gh api repos/{owner}/{repo}/pulls/<n>/reviews --jq '.[] | select(.user.login == "copilot-pull-request-reviewer[bot]") | "\(.state)\n\(.body)"'
-gh api repos/{owner}/{repo}/pulls/<n>/comments --jq '.[] | select(.user.login == "Copilot") | "\(.path):\(.line)\n\(.body)\n"'
-```
-
-When the PR becomes ready, Copilot reviews it automatically. A manual request spends a second unit of quota. After the first ready run ends, wait up to fifteen minutes for the review. If none arrives, continue and say so in the report. Reply to every comment: fix it, or reply with the spec section or invariant that the fix breaks. A comment without a reply reads as agreement. Put all fixes in one push. If you must do more than fix review comments, run `gh pr ready <n> --undo` first.
-
-When the latest run is green on the PR head and every comment has a reply, merge with `gh pr merge <n> --squash --delete-branch`. Under a worktree, the local branch delete fails after the merge, so read the PR state before you try again.
+When the latest run is green on the PR head, merge with `gh pr merge <n> --squash --delete-branch`. Under a worktree, the local branch delete fails after the merge, so read the PR state before you try again.
 
 ## 8. Close the loop
 
@@ -193,7 +184,7 @@ Do items 2 and 3 on the branch before step 7, so that they merge with the PR. Do
 
 Then write briefly: the issue that you took, what shipped with numbers, and the next task (named, not started). Add these parts:
 
-- **Review.** What each tool and Copilot found, and what you applied or skipped.
+- **Review.** What each tool found, and what you applied or skipped.
 - **Plan diff.** Every promise delivered, or the deviations.
 - **What the record gave.** The recorded decisions that the work used, or none.
 - **Decisions taken without asking.** One line each: the branch that you took and the branch that you did not take.
