@@ -18,7 +18,7 @@ import type {
   ModuleSelections,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { errnoCode } from '../runtime/errno.js';
+import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { resolveModules } from './modules.js';
 import { createRenderer, renderFile, buildRenderContext } from './renderer.js';
 import {
@@ -84,6 +84,8 @@ export type ProgressEvent =
 export async function backupCollisions(
   collisions: Collision[],
   timestamp: Date = new Date(),
+  /** Called after each rename, so an interrupt mid-loop can undo the moves so far (#55). */
+  onMoved?: (record: BackupRecord) => void,
 ): Promise<BackupRecord[]> {
   const stamp = timestamp.toISOString().replace(/:/g, '-').replace(/\..+$/, '');
   const records: BackupRecord[] = [];
@@ -120,10 +122,36 @@ export async function backupCollisions(
         hint,
       );
     }
-    records.push({ originalPath: collision.absolutePath, backupPath });
+    const record = { originalPath: collision.absolutePath, backupPath };
+    records.push(record);
+    onMoved?.(record);
   }
 
   return records;
+}
+
+/**
+ * Move the `backups/` of an old `.shardmind/` that a reinstall set aside
+ * into the new one, before the old one is deleted (#55). An update's or
+ * an adopt's snapshot can be the only copy of the user's earlier files.
+ * Entries already in the new `backups/` are kept; a name in both keeps
+ * the new one.
+ */
+export async function carryOverBackups(oldStateDir: string, vaultRoot: string): Promise<void> {
+  const from = path.join(oldStateDir, 'backups');
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(from);
+  } catch (err) {
+    if (isEnoent(err)) return;
+    throw err;
+  }
+  const to = path.join(vaultRoot, SHARDMIND_DIR, 'backups');
+  await fsp.mkdir(to, { recursive: true });
+  for (const entry of entries) {
+    if (await pathExists(path.join(to, entry))) continue;
+    await fsp.rename(path.join(from, entry), path.join(to, entry));
+  }
 }
 
 async function uniqueBackupPath(absolutePath: string, stamp: string): Promise<string> {

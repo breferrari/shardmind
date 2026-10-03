@@ -19,7 +19,7 @@ import { ShardMindError, assertNever } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { isComputedDefault } from './schema.js';
 import { resolveModules } from './modules.js';
-import { sha256 } from './fs-utils.js';
+import { sha256, mapConcurrent } from './fs-utils.js';
 
 export interface Collision {
   outputPath: string;
@@ -147,28 +147,30 @@ export async function detectCollisions(
 }
 
 /**
- * The collisions that hold content of the user's own: every one, except a
- * file the previous install wrote whose bytes still match the hash it
- * recorded. On a reinstall those are the engine's untouched files, and
- * replacing them loses nothing of the user's (#55).
+ * Split a reinstall's collisions into the user's own content and the
+ * previous install's untouched files: a file it wrote whose bytes still
+ * match the hash it recorded (#55). Replacing an untouched file loses
+ * nothing of the user's, so it is neither prompted for, backed up, nor
+ * reported. With no previous install, everything is the user's. A file
+ * that cannot be read counts as the user's, so doubt keeps it reported.
  */
-export async function pathsWithOwnContent(
+export async function splitByOwnContent(
   collisions: Collision[],
   previous: ShardState | null,
-): Promise<string[]> {
-  const own: string[] = [];
-  for (const collision of collisions) {
+): Promise<{ own: Collision[]; untouched: Collision[] }> {
+  const isUntouched = await mapConcurrent(collisions, 16, async (collision) => {
     const recorded = previous?.files[collision.outputPath];
-    if (
-      recorded &&
-      collision.kind === 'file' &&
-      sha256(await fsp.readFile(collision.absolutePath)) === recorded.rendered_hash
-    ) {
-      continue;
+    if (!recorded || collision.kind !== 'file') return false;
+    try {
+      return sha256(await fsp.readFile(collision.absolutePath)) === recorded.rendered_hash;
+    } catch {
+      return false;
     }
-    own.push(collision.outputPath);
-  }
-  return own;
+  });
+  return {
+    own: collisions.filter((_, i) => !isUntouched[i]),
+    untouched: collisions.filter((_, i) => isUntouched[i]),
+  };
 }
 
 export function mergePrefill(
