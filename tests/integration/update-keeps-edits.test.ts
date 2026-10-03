@@ -270,6 +270,21 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     expect(await read(COPY)).toContain('My own line.');
   }, 30_000);
 
+  // The sticky label would still route a wrongly recorded auto-merge to the
+  // merge, so the two-update case alone cannot see this writer: pin the hash.
+  it('an auto-merged file records the new render, not the merged bytes, as its baseline', async () => {
+    await install();
+    await write(COPY, (await read(COPY)) + '\n- User-added link\n');
+
+    const v2 = await shardAt('0.2.0', { [COPY]: (s) => s.replace('# Minimal Shard', '# Minimal Shard v2') });
+    const { plan } = await update(v2);
+    expect(actionFor(plan, COPY)).toBe('auto_merge');
+
+    const entry = await recorded(COPY);
+    expect(entry.rendered_hash).toBe(sha256(await fsp.readFile(path.join(v2, COPY))));
+    expect(entry.ownership).toBe('modified');
+  });
+
   it('a hook\'s write to an engine-owned copy file is recorded, and survives the next update', async () => {
     await install();
     // 0.2.0's post-update hook appends a line to the pristine CLAUDE.md.
