@@ -750,16 +750,17 @@ async function readStringAndByteHash(
 
 /**
  * Whether a managed entry's recorded hash is provably NOT the engine's: the
- * target is copy-origin (not iterator-generated), its old source is in the
- * merge-base cache, and the cached bytes hash differently. Without a cached
- * source there is no proof either way, and the answer is `false`.
+ * target is copy-origin, its old source is in the merge-base cache, and the
+ * cached bytes hash differently. Without a cached source there is no proof
+ * either way, and the answer is `false`. (Iterator outputs are always
+ * rendered, so they never reach the comparison.)
  */
 async function recordedHashIsForeign(
   vaultRoot: string,
   fileState: FileState | undefined,
   target: RenderedFileEntry,
 ): Promise<boolean> {
-  if (!fileState?.template || !target.copyFromSourcePath || target.entry.iterator) return false;
+  if (!fileState?.template || !target.copyFromSourcePath) return false;
   try {
     const cached = await fsp.readFile(path.join(vaultRoot, CACHED_TEMPLATES, fileState.template));
     return sha256(cached) !== fileState.rendered_hash;
