@@ -52,20 +52,29 @@ export default function DiffView({ path: filePath, index, total, result, onChoic
         <Text dimColor> ({index} of {total})</Text>
       </Box>
 
-      <Box flexDirection="column">
-        {result.conflicts.map((region, i) => (
-          <ConflictBlock
-            key={`${filePath}-${i}-${region.lineStart}`}
-            region={region}
-            mergedLines={mergedLines}
-          />
-        ))}
-      </Box>
+      {result.binary ? (
+        // #63: no line merge ran; the whole file is the conflict.
+        <Text>
+          Binary file — yours {result.binary.yours} bytes, shard {result.binary.shard} bytes. Choose a whole version.
+        </Text>
+      ) : (
+        <>
+          <Box flexDirection="column">
+            {result.conflicts.map((region, i) => (
+              <ConflictBlock
+                key={`${filePath}-${i}-${region.lineStart}`}
+                region={region}
+                mergedLines={mergedLines}
+              />
+            ))}
+          </Box>
 
-      <Text dimColor>
-        {result.stats.linesUnchanged} unchanged · {result.stats.linesAutoMerged} auto-merged ·{' '}
-        {result.conflicts.length} region{result.conflicts.length === 1 ? '' : 's'} conflicted
-      </Text>
+          <Text dimColor>
+            {result.stats.linesUnchanged} unchanged · {result.stats.linesAutoMerged} auto-merged ·{' '}
+            {result.conflicts.length} region{result.conflicts.length === 1 ? '' : 's'} conflicted
+          </Text>
+        </>
+      )}
 
       <Select
         key={filePath}
