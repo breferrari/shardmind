@@ -137,6 +137,24 @@ describe('findUnsafeVaultPaths (#163)', () => {
     }
   });
 
+  it.skipIf(!canSymlink)("checks a hook's log file inside .shardmind/logs", async () => {
+    await fsp.mkdir(path.join(vault, '.shardmind', 'logs'), { recursive: true });
+    await fsp.symlink(path.join(outside, 'x.log'), path.join(vault, '.shardmind', 'logs', 'bootstrap.log'));
+    const err = await assertSafeVaultPaths(vault, []).catch((e: unknown) => e);
+    expect((err as ShardMindError).message).toContain('bootstrap.log (symlink)');
+  });
+
+  it('reports a folder it cannot list for another reason as COLLISION_CHECK_FAILED', async () => {
+    await fsp.mkdir(path.join(vault, 'busy'));
+    const readdir = vi.spyOn(fsp, 'readdir').mockRejectedValue(Object.assign(new Error('io'), { code: 'EIO' }));
+    try {
+      const err = await findUnsafeVaultPaths(vault, ['busy/Note.md']).catch((e: unknown) => e);
+      expect((err as ShardMindError).code).toBe('COLLISION_CHECK_FAILED');
+    } finally {
+      readdir.mockRestore();
+    }
+  });
+
   it('assertSafeVaultPaths resolves when every path is safe', async () => {
     await expect(assertSafeVaultPaths(vault, ['Home.md'])).resolves.toBeUndefined();
   });

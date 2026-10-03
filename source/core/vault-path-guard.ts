@@ -43,7 +43,12 @@ const ENGINE_WRITE_PATHS: readonly string[] = [
   CACHED_SCHEMA,
   CACHED_TEMPLATES,
   path.join(SHARDMIND_DIR, 'backups'),
+  path.join(SHARDMIND_DIR, 'update-check.json'),
   HOOK_LOGS_DIR,
+  // Every hook slot's full-output log, `.shardmind/logs/<slot>.log`.
+  ...(['bootstrap', 'personalize', 'post-update', 'post-install'] as const).map((slot) =>
+    path.join(HOOK_LOGS_DIR, `${slot}.log`),
+  ),
 ];
 
 /** Paths named in the error message before "and N more". */
@@ -71,20 +76,31 @@ function cached<T>(
 }
 
 /**
- * Whether names under `dir` resolve case-insensitively: its own name with
- * the case swapped reaches the same inode. When that cannot be told (no
- * cased letters, or an error), assume it folds, so the listings are read.
+ * Whether names inside `dir` resolve case-insensitively: an entry of the
+ * vault, its ASCII letters' case swapped, reaches the same inode. Probed
+ * inside the vault, not on its parent, which can be another filesystem
+ * (a mounted USB stick). When it cannot be told (no entry with an ASCII
+ * letter, or an error), assume it folds, so the listings are read.
  */
 async function foldsCaseAt(dir: string): Promise<boolean> {
-  const base = path.basename(dir);
-  const swapped = [...base].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
-  if (swapped === base) return true;
   try {
-    const [a, b] = await Promise.all([fsp.lstat(dir), fsp.lstat(path.join(path.dirname(dir), swapped))]);
+    const name = (await fsp.readdir(dir)).find((n) => /[A-Za-z]/.test(n));
+    if (!name) return true;
+    const swapped = name.replace(/[A-Za-z]/g, (c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()));
+    const [a, b] = await Promise.all([fsp.lstat(path.join(dir, name)), fsp.lstat(path.join(dir, swapped))]);
     return a.ino === b.ino && a.dev === b.dev;
   } catch (err) {
     return !isMissing(err);
   }
+}
+
+/** A path that could not be inspected: reported as one, not as a raw errno. */
+function checkFailed(err: unknown, at: string): ShardMindError {
+  return new ShardMindError(
+    `Could not check vault path: ${at}`,
+    'COLLISION_CHECK_FAILED',
+    err instanceof Error ? err.message : String(err),
+  );
 }
 
 /**
@@ -109,22 +125,18 @@ export async function findUnsafeVaultPaths(
   // null: no such folder. undefined: not listable, so the case check is skipped.
   const list = cached<Set<string> | null | undefined>(
     (dir) => fsp.readdir(dir).then((names) => new Set(names.map((n) => n.normalize('NFC')))),
-    (err) => {
+    (err, dir) => {
       if (isMissing(err)) return null;
       const code = errnoCode(err);
       if (code === 'EACCES' || code === 'EPERM') return undefined;
-      throw err;
+      throw checkFailed(err, dir);
     },
   );
   const lstat = cached<Stats | null>(
     (abs) => fsp.lstat(abs),
     (err, abs) => {
       if (isMissing(err)) return null;
-      throw new ShardMindError(
-        `Could not check vault path: ${abs}`,
-        'COLLISION_CHECK_FAILED',
-        err instanceof Error ? err.message : String(err),
-      );
+      throw checkFailed(err, abs);
     },
   );
 

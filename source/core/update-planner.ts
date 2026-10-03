@@ -677,6 +677,8 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       // ENOENT → free path. EISDIR branch below handles the directory case.
       let stat;
       try {
+        // A link is refused before anything reads through it (#163).
+        if ((await fsp.lstat(abs)).isSymbolicLink()) await assertSafeVaultPaths(vaultRoot, [output.outputPath]);
         stat = await fsp.stat(abs);
       } catch (err) {
         if (isEnoent(err)) {
@@ -693,8 +695,6 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       }
 
       if (stat.isDirectory()) {
-        // A symlink to a folder is a link first: name it as one (#163).
-        await assertSafeVaultPaths(vaultRoot, [output.outputPath]);
         // User has a directory at a path the new shard wants as a file.
         // Reading it as a file below would crash with EISDIR; silently
         // emitting plain `add` would crash the same way on write. Surface
