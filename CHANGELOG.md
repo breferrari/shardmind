@@ -10,7 +10,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Fixed (hook output on failure — #106)
 
-- **A hook that fails no longer loses the output it printed first.** On Linux and macOS, a hook that wrote more than 64 KiB, or wrote under load, and then threw or called `process.exit` could have the end of its output cut off in the summary and in `.shardmind/logs/<slot>.log`. The hook runner now writes its output synchronously, so no exit drops it.
+- **A hook that fails no longer loses the output it printed first.** On Linux and macOS, a hook that wrote more than 64 KiB, or wrote under load, and then threw or called `process.exit` could have the end of its output cut off in the summary and in `.shardmind/logs/<slot>.log`. The hook runner now writes its output synchronously, so an exit should no longer drop it.
 
 ### Fixed (links and case-folded names in the vault — #163)
 

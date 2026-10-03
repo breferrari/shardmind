@@ -381,13 +381,11 @@ describe('executeHook — subprocess runtime', () => {
         }
       `,
     );
-    const started = Date.now();
+    // Waiting on the hook's interval would end in the 20s timeout, which
+    // reports `failed`, not `ran` with exit code 1.
     const result = await executeHook(hookPath, baseCtx(), { timeoutMs: 20_000 });
     if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}: ${result.message}`);
     expect(result.exitCode).toBe(1);
-    // Spawning tsx takes a few seconds under load; waiting on the hook's
-    // interval would take the full 20s timeout.
-    expect(Date.now() - started).toBeLessThan(15_000);
     expect(result.stdout).toContain('before throw');
   }, 30_000);
 

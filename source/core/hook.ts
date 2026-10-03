@@ -109,9 +109,9 @@ export function tailAtUtf8Boundary(s: string, capBytes: number): string {
 /**
  * Grace period between the first termination signal (SIGTERM / Windows
  * TerminateProcess via `child.kill()`) and the hard SIGKILL when a hook
- * times out or the parent aborts. Gives the hook a chance to flush
- * buffered stdout; most platforms surface the buffered bytes before the
- * process exits.
+ * times out or the parent aborts. Gives the hook a chance to run its own
+ * shutdown (a SIGTERM handler) before it is killed. Its output is already
+ * delivered: the runner's stdout and stderr are blocking pipes (#106).
  */
 const KILL_GRACE_MS = 2_000;
 

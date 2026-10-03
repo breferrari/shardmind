@@ -42,20 +42,33 @@ import type { HookContext } from '../runtime/types.js';
  * and then threw, or called `process.exit` itself, lost the rest, and under
  * load even a short line could go. Node already makes pipes blocking on
  * Windows; this does the same here, through the stream handle's
- * `setBlocking` (an internal API, reached by runtime checks). Where it is
- * missing, writes stay as they were. The parent always reads both pipes,
- * so a blocking write never waits on it for long.
+ * `setBlocking` (an internal API, reached by runtime checks, which returns
+ * 0 on success). Returns whether both streams are now blocking; when not,
+ * the throw path falls back to `exitAfterFlush`. The parent always reads
+ * both pipes, so a blocking write never waits on it for long. Best effort:
+ * a Node grandchild sharing the pipe can make it non-blocking again.
  */
-function makeStdioBlocking(): void {
+function makeStdioBlocking(): boolean {
+  let blocking = true;
   for (const stream of [process.stdout, process.stderr]) {
     const handle: unknown = Reflect.get(stream, '_handle');
-    if (typeof handle !== 'object' || handle === null) continue;
-    const setBlocking: unknown = Reflect.get(handle, 'setBlocking');
-    if (typeof setBlocking === 'function') setBlocking.call(handle, true);
+    const setBlocking: unknown =
+      typeof handle === 'object' && handle !== null ? Reflect.get(handle, 'setBlocking') : undefined;
+    let ok = false;
+    if (typeof setBlocking === 'function') {
+      try {
+        ok = setBlocking.call(handle, true) === 0;
+      } catch {
+        ok = false;
+      }
+    }
+    // No handle means a file stream, whose writes are already synchronous.
+    blocking &&= ok || handle === undefined || handle === null;
   }
+  return blocking;
 }
 
-makeStdioBlocking();
+const stdioBlocking = makeStdioBlocking();
 
 async function main(): Promise<void> {
   const [, , hookPath, ctxPath] = process.argv;
@@ -71,8 +84,7 @@ async function main(): Promise<void> {
     const raw = await readFile(ctxPath, 'utf-8');
     ctx = JSON.parse(raw) as HookContext;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`shardmind hook-runner: cannot read ctx (${message})\n`);
+    process.stderr.write(`shardmind hook-runner: cannot read ctx (${describe(err)})\n`);
     process.exit(1);
   }
 
@@ -90,17 +102,44 @@ async function main(): Promise<void> {
   await (fn as (c: HookContext) => Promise<void> | void)(ctx);
 }
 
-/** What a thrown value says, even one `String()` cannot convert. */
+/** What a thrown value says, whatever it is: no part of turning it into text may throw. */
 function describe(err: unknown): string {
-  if (err instanceof Error) return err.stack ?? err.message;
   try {
+    if (err instanceof Error) {
+      const stack: unknown = err.stack;
+      if (typeof stack === 'string' && stack !== '') return stack;
+      return String(err.message);
+    }
     return String(err);
   } catch {
-    return 'a value that cannot be converted to a string';
+    return 'a thrown value that cannot be converted to a string';
   }
+}
+
+/** How long the fallback waits for output to reach the parent before exiting anyway. */
+const FLUSH_TIMEOUT_MS = 2_000;
+
+/**
+ * The fallback when stdio could not be made blocking: exit once zero-length
+ * writes on both streams have flushed, which runs after every earlier
+ * write. `exitCode` is set first so that a loop that empties early still
+ * reports the failure; the ref'd timer keeps a hook's open handles from
+ * holding the exit past `FLUSH_TIMEOUT_MS`.
+ */
+function exitAfterFlush(code: number): void {
+  process.exitCode = code;
+  let pending = 2;
+  const done = (): void => {
+    pending -= 1;
+    if (pending === 0) process.exit(code);
+  };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+  setTimeout(() => process.exit(code), FLUSH_TIMEOUT_MS);
 }
 
 main().catch((err: unknown) => {
   process.stderr.write(`${describe(err)}\n`);
-  process.exit(1);
+  if (stdioBlocking) process.exit(1);
+  else exitAfterFlush(1);
 });
