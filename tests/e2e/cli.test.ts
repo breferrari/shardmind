@@ -775,7 +775,7 @@ describe('shardmind install', () => {
       // keeps the "no partial state in the vault" invariant the test is
       // really about: SIGINT at any phase leaves the vault exactly as the
       // user found it.
-      stub.setTarballDelay(2000);
+      stub.setTarballDelay(4000);
       try {
         vault = await createEmptyVault('install-sigint');
         const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
@@ -784,7 +784,7 @@ describe('shardmind install', () => {
           {
             cwd: vault.root,
             env: { ...envWithStub(), SHARDMIND_DEBUG_CANCEL: '1' },
-            signalAt: { signal: 'SIGINT', afterMs: 500 },
+            signalAt: { signal: 'SIGINT', afterMs: 1500 },
             timeoutMs: 20_000,
           },
         );
@@ -1268,7 +1268,7 @@ describe('shardmind update', () => {
     expect(afterFiles).toEqual(beforeFiles);
   });
 
-  it.skipIf(process.platform === 'win32' && process.env['GITHUB_ACTIONS'] === 'true')(
+  it(
     'exits cleanly and leaves state.json byte-identical on SIGINT mid-update',
     async () => {
       // Same GH-Actions-Windows narrow skip as install-sigint — see that
@@ -1276,15 +1276,18 @@ describe('shardmind update', () => {
       // the stdin-ETX bridge end-to-end.
       vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-sigint' });
       stub.setLatest(SHARD_SLUG, '0.2.0');
-      stub.setTarballDelay(2000);
+      stub.setTarballDelay(4000);
       try {
         const beforeState = await vault.readFile('.shardmind/state.json');
         const result = await spawnCli(['update', '--yes'], {
           cwd: vault.root,
-          env: envWithStub(),
-          signalAt: { signal: 'SIGINT', afterMs: 500 },
+          env: { ...envWithStub(), SHARDMIND_DEBUG_CANCEL: '1' },
+          signalAt: { signal: 'SIGINT', afterMs: 1500 },
           timeoutMs: 20_000,
         });
+        console.log(`[#57 diag update] exitCode=${result.exitCode} signal=${result.signal} duration=${result.duration}ms
+STDERR:
+${result.stderr}`);
         const viaCode = result.exitCode === 130;
         const viaSignal = result.signal === 'SIGINT';
         expect(
