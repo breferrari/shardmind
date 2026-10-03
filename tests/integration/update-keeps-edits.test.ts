@@ -716,6 +716,36 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       expect(actionFor(plan, BIN)).not.toBe('noop');
     });
 
+    it('a non-UTF-8 file with no NUL (a Latin-1 CSV) is not line-merged either', async () => {
+      // 0xE9 = 'é' in Latin-1, invalid as UTF-8; no NUL anywhere.
+      const latin = (row: string) => Buffer.from(`name;city\n${row};Montr\xe9al\n`, 'latin1');
+      await install(await shardWithBin('0.1.0', latin('v1')));
+      const mine = Buffer.concat([latin('v1'), Buffer.from('extra;caf\xe9\n', 'latin1')]);
+      await fsp.writeFile(path.join(vault, BIN), mine);
+
+      const { plan } = await update(await shardWithBin('0.2.0', latin('v2')));
+      expect(actionFor(plan, BIN)).toBe('conflict');
+      expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toBeDefined();
+      expect(await disk()).toEqual(mine);
+    });
+
+    it('binary bytes the user put over a rendered file are not line-merged', async () => {
+      await install();
+      await fsp.writeFile(path.join(vault, HOME), MINE);
+
+      const { plan } = await update(await shardAt('0.2.0', welcome('Welcome, {{ user_name }}! (v2)')), 'accept_new');
+      expect(plan.pendingConflicts.find((c) => c.path === HOME)?.result.binary?.yours).toBe(MINE.length);
+      // Accept new on a rendered target writes the render, as text.
+      expect(await read(HOME)).toContain('Welcome, Alice! (v2)');
+    });
+
+    it('--dry-run --json flags a binary conflict as binary', async () => {
+      await install(await shardWithBin('0.1.0', V1));
+      await fsp.writeFile(path.join(vault, BIN), MINE);
+      const { plan } = await update(await shardWithBin('0.2.0', V2), 'keep_mine', true);
+      expect(updatePlanResult(plan, { dryRun: true }).files.find((f) => f.path === BIN)?.binary).toBe(true);
+    });
+
     it('an untracked binary at a path the new version adds gets the binary prompt', async () => {
       await install();
       await fsp.mkdir(path.join(vault, 'assets'), { recursive: true });

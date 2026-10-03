@@ -13,7 +13,6 @@
  */
 
 import fsp from 'node:fs/promises';
-import { statSync } from 'node:fs';
 import path from 'node:path';
 import type {
   ShardSchema,
@@ -33,7 +32,7 @@ import { isEnoent } from '../runtime/errno.js';
 import { computeMergeAction } from './differ.js';
 import { resolveModules } from './modules.js';
 import { renderFile, createRenderer } from './renderer.js';
-import { looksBinary, sha256, mapConcurrent } from './fs-utils.js';
+import { isBinaryForMerge, sha256, mapConcurrent } from './fs-utils.js';
 import { CACHED_TEMPLATES } from '../runtime/vault-paths.js';
 
 /** Cap fan-out when reading templates + user files during merge planning. */
@@ -301,7 +300,7 @@ export interface RenderedFileEntry {
    * any non-UTF-8 bytes.
    */
   copyFromSourcePath?: string;
-  /** Copy-origin only: the source looks binary (`looksBinary`), measured once here (#63). */
+  /** Copy-origin only: the source must not be line-merged (`isBinaryForMerge`), measured once here (#63). */
   binary?: boolean;
   /** Copy-origin only: the source's size in bytes. */
   byteLength?: number;
@@ -351,7 +350,7 @@ export async function renderNewShard(
         content: buffer.toString('utf-8'),
         hash: sha256(buffer),
         copyFromSourcePath: entry.sourcePath,
-        binary: looksBinary(buffer),
+        binary: isBinaryForMerge(buffer),
         byteLength: buffer.length,
       };
     }),
@@ -451,8 +450,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       path: entry.path,
       content: target.content,
       renderedHash: target.hash,
-      templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
-      ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+      ...targetKeys(target, newTempDir),
       ...copyFrom(target),
     });
     counts.silent++;
@@ -472,8 +470,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       path: entry.path,
       content: target.content,
       renderedHash: target.hash,
-      templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
-      ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+      ...targetKeys(target, newTempDir),
       ...copyFrom(target),
     });
     counts.restored++;
@@ -505,7 +502,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       }
 
       const [actualRead, oldBytes] = await Promise.all([
-        readStringAndByteHash(path.join(vaultRoot, entry.path)),
+        readBytesAndHash(path.join(vaultRoot, entry.path)),
         readCachedTemplate(vaultRoot, fileState.template),
       ]);
       if (actualRead === null) {
@@ -521,17 +518,17 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
           `Vault contents changed during \`shardmind update\`. Re-run — drift detection picks up the current shape and either classifies '${entry.path}' as missing (restored from the shard) or excludes it from the plan.`,
         );
       }
-      const actualContent = actualRead.content;
       const theirsHash = actualRead.hash;
 
-      // A binary copy-origin file never reaches the line merge, which runs on
-      // a UTF-8 projection and writes mangled bytes back (#63).
-      if (
-        target.copyFromSourcePath &&
-        (target.binary || looksBinary(actualRead.buf) || (oldBytes !== null && looksBinary(oldBytes)))
-      ) {
-        return planBinary(entry.path, target, actualRead, oldBytes, newTempDir);
+      // Bytes that must not be line-merged never reach the merge, which runs
+      // on a UTF-8 decoding and writes mangled bytes back (#63). Any side
+      // counts, whatever the target's origin: a user can drop a binary over a
+      // rendered note, and a copy source can become a template.
+      const shard = await shardBytesInfo(target);
+      if (shard.binary || isBinaryForMerge(actualRead.buf) || (oldBytes !== null && isBinaryForMerge(oldBytes))) {
+        return planBinary(entry.path, target, actualRead, oldBytes, shard.byteLength, newTempDir);
       }
+      const actualContent = actualRead.buf.toString('utf-8');
 
       const oldTemplate = oldBytes === null ? null : oldBytes.toString('utf-8');
       if (oldTemplate === null) {
@@ -560,8 +557,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
         literal: target.copyFromSourcePath !== undefined,
       });
 
-      const templateKey = toTemplateKey(newTempDir, target.entry.sourcePath);
-      const iterator = target.entry.iterator ? { iteratorKey: target.entry.iterator } : {};
+      const keys = targetKeys(target, newTempDir);
       switch (mergeAction.type) {
         case 'skip':
           return {
@@ -583,8 +579,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             baselineHash: target.hash,
             ownership: sha256(content) === target.hash ? 'managed' : 'modified',
             stats: mergeAction.stats,
-            templateKey,
-            ...iterator,
+            ...keys,
           };
         }
         case 'conflict':
@@ -595,8 +590,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             newContent: target.content,
             newContentHash: target.hash,
             theirsHash,
-            templateKey,
-            ...iterator,
+            ...keys,
             ...copyFrom(target),
           };
       }
@@ -646,8 +640,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             path: output.outputPath,
             content: output.content,
             renderedHash: output.hash,
-            templateKey: toTemplateKey(newTempDir, output.entry.sourcePath),
-            ...(output.entry.iterator ? { iteratorKey: output.entry.iterator } : {}),
+            ...targetKeys(output, newTempDir),
             ...copyFrom(output),
           };
         }
@@ -674,27 +667,27 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       // file raced out of existence between the stat above and
       // this read, fall back to a plain `add` — there's nothing to
       // collide with anymore.
-      const actualRead = await readStringAndByteHash(abs);
+      const actualRead = await readBytesAndHash(abs);
       if (actualRead === null) {
         return {
           kind: 'add',
           path: output.outputPath,
           content: output.content,
           renderedHash: output.hash,
-          templateKey: toTemplateKey(newTempDir, output.entry.sourcePath),
-          ...(output.entry.iterator ? { iteratorKey: output.entry.iterator } : {}),
+          ...targetKeys(output, newTempDir),
           ...copyFrom(output),
         };
       }
       // A binary collision gets the whole-file binary prompt, not a text
       // diff of decoded bytes (#63).
+      const shard = await shardBytesInfo(output);
       const collision =
-        output.copyFromSourcePath && (output.binary || looksBinary(actualRead.buf))
-          ? binaryConflict(output.outputPath, output, actualRead, newTempDir)
+        shard.binary || isBinaryForMerge(actualRead.buf)
+          ? binaryConflict(output.outputPath, output, actualRead, shard.byteLength, newTempDir)
           : (conflictFromDirect(
               output.outputPath,
               output,
-              actualRead.content,
+              actualRead.buf.toString('utf-8'),
               actualRead.hash,
               newTempDir,
             ) as Extract<UpdateAction, { kind: 'conflict' }>);
@@ -728,6 +721,7 @@ function planBinary(
   target: RenderedFileEntry,
   actual: { buf: Buffer; hash: string },
   oldBytes: Buffer | null,
+  shardByteLength: number,
   newTempDir: string,
 ): UpdateAction {
   if (actual.hash === target.hash) {
@@ -736,7 +730,7 @@ function planBinary(
   if (oldBytes !== null && sha256(oldBytes) === target.hash) {
     return { kind: 'noop', path: filePath, reason: 'no upstream change', rebaseline: rebaselineOf(target, newTempDir, 'modified') };
   }
-  return binaryConflict(filePath, target, actual, newTempDir);
+  return binaryConflict(filePath, target, actual, shardByteLength, newTempDir);
 }
 
 /** A whole-file conflict for a binary file: byte counts, no text regions (#63). */
@@ -744,6 +738,7 @@ function binaryConflict(
   filePath: string,
   target: RenderedFileEntry,
   actual: { buf: Buffer; hash: string },
+  shardByteLength: number,
   newTempDir: string,
 ): Extract<UpdateAction, { kind: 'conflict' }> {
   return {
@@ -753,13 +748,12 @@ function binaryConflict(
       content: '',
       conflicts: [],
       stats: { linesUnchanged: 0, linesAutoMerged: 0, linesConflicted: 0 },
-      binary: { yours: actual.buf.length, shard: target.byteLength ?? statSync(target.copyFromSourcePath ?? target.entry.sourcePath).size },
+      binary: { yours: actual.buf.length, shard: shardByteLength },
     },
     newContent: target.content,
     newContentHash: target.hash,
     theirsHash: actual.hash,
-    templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
-    ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+    ...targetKeys(target, newTempDir),
     ...copyFrom(target),
   };
 }
@@ -801,7 +795,7 @@ function conflictFromDirect(
     newContent: target.content,
     newContentHash: target.hash,
     theirsHash,
-    templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
+    ...targetKeys(target, newTempDir),
     ...copyFrom(target),
   };
 }
@@ -820,12 +814,12 @@ function conflictFromDirect(
  *   - add-collision path: ENOENT between `fsp.stat` and read is a race;
  *     caller degrades to a plain `add` (no collision to report).
  */
-async function readStringAndByteHash(
+async function readBytesAndHash(
   absPath: string,
-): Promise<{ content: string; hash: string; buf: Buffer } | null> {
+): Promise<{ buf: Buffer; hash: string } | null> {
   try {
     const buf = await fsp.readFile(absPath);
-    return { content: buf.toString('utf-8'), hash: sha256(buf), buf };
+    return { buf, hash: sha256(buf) };
   } catch (err) {
     if (isEnoent(err)) return null;
     throw err;
@@ -867,18 +861,36 @@ async function readCachedTemplate(
   }
 }
 
+/** The `templateKey` (and `iteratorKey`, for an iterator output) an action records for `output`. */
+function targetKeys(output: RenderedFileEntry, newTempDir: string): { templateKey: string; iteratorKey?: string } {
+  return {
+    templateKey: toTemplateKey(newTempDir, output.entry.sourcePath),
+    ...(output.entry.iterator ? { iteratorKey: output.entry.iterator } : {}),
+  };
+}
+
 /** The state entry a modified file the update leaves in place records: the new render as its baseline. */
 function rebaselineOf(
   target: RenderedFileEntry,
   newTempDir: string,
   ownership: Rebaseline['ownership'],
 ): Rebaseline {
-  return {
-    renderedHash: target.hash,
-    templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
-    ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
-    ownership,
-  };
+  return { renderedHash: target.hash, ...targetKeys(target, newTempDir), ownership };
+}
+
+/**
+ * Whether the new version's bytes for `output` must not be line-merged, and
+ * how many there are. A rendered output is text by construction; a copy
+ * source was measured in `renderNewShard`, and is read here only for a plan
+ * built elsewhere that did not measure it.
+ */
+async function shardBytesInfo(output: RenderedFileEntry): Promise<{ binary: boolean; byteLength: number }> {
+  if (!output.copyFromSourcePath) return { binary: false, byteLength: Buffer.byteLength(output.content) };
+  if (output.binary !== undefined && output.byteLength !== undefined) {
+    return { binary: output.binary, byteLength: output.byteLength };
+  }
+  const bytes = await fsp.readFile(output.copyFromSourcePath);
+  return { binary: isBinaryForMerge(bytes), byteLength: bytes.length };
 }
 
 /** `{ copyFromSourcePath }` for a copy-origin output, so the executor copies bytes. */

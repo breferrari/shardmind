@@ -1,4 +1,5 @@
 import fsp from 'node:fs/promises';
+import { isUtf8 } from 'node:buffer';
 import crypto from 'node:crypto';
 import path from 'node:path';
 
@@ -49,9 +50,10 @@ export async function mapConcurrent<T, R>(
  * uses (the heuristic predates language-aware detection and is still
  * load-bearing in modern git for the "Binary files differ" message).
  *
- * The 8 KB ceiling caps work for huge files; a buffer that is text for
- * 8 KB and then suddenly contains binary is exotic enough that a wrong
- * answer here just means a noisy 2-way diff, not a correctness issue.
+ * The 8 KB ceiling caps work for huge files. For adopt's 2-way diff a wrong
+ * answer only means a noisy diff. The update planner does not rely on it
+ * alone: a wrong answer there would send bytes through the UTF-8 line merge
+ * and corrupt them, so it uses `isBinaryForMerge` below (#63).
  */
 export function looksBinary(buf: Buffer): boolean {
   const n = Math.min(buf.length, 8192);
@@ -59,4 +61,14 @@ export function looksBinary(buf: Buffer): boolean {
     if (buf[i] === 0) return true;
   }
   return false;
+}
+
+/**
+ * Whether bytes must not go through the line-based merge, which works on a
+ * UTF-8 decoding and writes it back: they look binary (`looksBinary`), or
+ * they are not valid UTF-8 anywhere (a Latin-1 CSV, a PDF with no early
+ * NUL), so the decoding would not round-trip (#63).
+ */
+export function isBinaryForMerge(buf: Buffer): boolean {
+  return looksBinary(buf) || !isUtf8(buf);
 }

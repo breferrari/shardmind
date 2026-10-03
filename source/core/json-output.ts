@@ -197,6 +197,8 @@ export interface UpdatePlanFile {
   readonly reason?: string;
   /** `conflict` only — the shard newly introduces a path the user already has. */
   readonly preexisting?: boolean;
+  /** `conflict` only — a whole-file binary conflict, no text regions (#63). */
+  readonly binary?: boolean;
 }
 
 function updateFile(action: UpdateAction): UpdatePlanFile {
@@ -218,6 +220,7 @@ function updateFile(action: UpdateAction): UpdatePlanFile {
         shardHash: action.newContentHash,
         userHash: action.theirsHash,
         ...(action.preexisting === undefined ? {} : { preexisting: action.preexisting }),
+        ...(action.result.binary ? { binary: true } : {}),
       };
     default:
       // skip_volatile / delete / keep_as_user carry only a path.

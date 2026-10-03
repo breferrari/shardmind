@@ -435,11 +435,7 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         if (!ctx.dryRun) {
           // Copy-origin: writeAction copies the bytes; a UTF-8 write of
           // `newContent` mangles binary (#63).
-          await writeAction(ctx.vaultRoot, {
-            path: action.path,
-            content: action.newContent,
-            ...(action.copyFromSourcePath ? { copyFromSourcePath: action.copyFromSourcePath } : {}),
-          });
+          await writeAction(ctx.vaultRoot, { ...action, content: action.newContent });
         }
         ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'managed');
         ctx.summary.wroteFiles.push(action.path);
