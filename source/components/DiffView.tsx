@@ -20,7 +20,7 @@ const CONTEXT_LINES = 3;
  */
 const DIFF_ACTIONS = new Set<DiffAction>(['accept_new', 'keep_mine', 'skip']);
 
-const SELECT_OPTIONS: Array<{ label: string; value: string }> = [
+const SELECT_OPTIONS: Array<{ label: string; value: DiffAction | 'open_editor_disabled' }> = [
   { label: 'Accept new (use shard version)', value: 'accept_new' },
   { label: 'Keep mine (preserve your edits)', value: 'keep_mine' },
   { label: 'Skip this file', value: 'skip' },

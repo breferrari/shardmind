@@ -319,11 +319,12 @@ describe('DiffView', () => {
       expect(onChoice).toHaveBeenNthCalledWith(2, 'keep_mine');
     });
   });
+
   // #60: an untracked file at a path the new version adds is not an edit
   // of a shard file, and the prompt says which one it is.
   describe('add-collision (preexisting)', () => {
     // The note wraps at the 100-column test width; read it as one line.
-    const flat = (frame: string | undefined) =>
+    const plainText = (frame: string | undefined) =>
       (frame ?? '').replace(/\u001b\[[0-9;]*m/g, '').replace(/\s+/g, ' ');
 
     it('names the collision instead of "Conflict in"', () => {
@@ -343,7 +344,7 @@ describe('DiffView', () => {
       const { lastFrame } = render(
         <DiffView path="a.md" index={1} total={1} result={makeResult()} preexisting onChoice={() => {}} />,
       );
-      const frame = flat(lastFrame());
+      const frame = plainText(lastFrame());
       expect(frame).toContain('keeps your file untracked, so the next update asks again');
       expect(frame).toContain('--adopt-preexisting');
     });
@@ -352,7 +353,7 @@ describe('DiffView', () => {
       const { lastFrame } = render(
         <DiffView path="a.md" index={1} total={1} result={makeResult()} preexisting adoptPreexisting onChoice={() => {}} />,
       );
-      const frame = flat(lastFrame());
+      const frame = plainText(lastFrame());
       expect(frame).toContain('tracks it as your modified copy');
       expect(frame).not.toContain('untracked');
     });
