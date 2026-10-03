@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (identical files at new paths — #62)
+
+- **An update no longer asks about a file you already have exactly.** When a new shard version adds a path where your vault has a file with the same bytes, the update adopts it as managed, with no write and no prompt, instead of offering a choice whose two answers both leave the same file. The summary shows "N adopted", and `update --dry-run --json` counts them in a new `counts.adopted`; they are no longer part of `counts.silent`. A symlink at that path, or a name that matches only when case is ignored, still gets the prompt.
+
 ### Fixed (binary files on update — #63)
 
 - **A binary file you changed is no longer corrupted by an update.** Copy-origin files went through the line-based three-way merge on a UTF-8 view of their bytes, so **Accept new** wrote mangled bytes and a file that already matched the new version could be rewritten with garbage. A file whose bytes would not survive that (a NUL byte in its first 8 KB, git's rule, or bytes that are not valid UTF-8, such as a Latin-1 CSV) now skips the merge, whichever side it is on. It is left alone when the shard did not change it, relabelled when you already have the new bytes, and otherwise offered as a whole-file choice that shows both byte counts; `update --dry-run --json` marks such a conflict `binary: true`. **Accept new** copies the shard's bytes exactly.

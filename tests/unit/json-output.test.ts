@@ -178,6 +178,7 @@ describe('updatePlanResult', () => {
     counts: {
       silent: 1,
       overwritten: 0,
+      adopted: 0,
       autoMerged: 0,
       conflicts: 1,
       volatile: 0,

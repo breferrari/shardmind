@@ -13,7 +13,7 @@ function summary(overrides: Partial<Summary> = {}): Summary {
     fromVersion: '0.1.0',
     toVersion: '0.2.0',
     counts: {
-      silent: 43, overwritten: 0,
+      silent: 43, overwritten: 0, adopted: 0,
       autoMerged: 2,
       conflicts: 1,
       volatile: 0,
@@ -59,7 +59,7 @@ describe('UpdateSummary', () => {
       <UpdateSummary
         summary={summary({
           counts: {
-            silent: 0, overwritten: 0, autoMerged: 0, conflicts: 2,
+            silent: 0, overwritten: 0, adopted: 0, autoMerged: 0, conflicts: 2,
             volatile: 0, added: 0, deleted: 0, keptAsUser: 0, restored: 0,
           },
           conflictsResolved: 2,
@@ -78,7 +78,7 @@ describe('UpdateSummary', () => {
       <UpdateSummary
         summary={summary({
           counts: {
-            silent: 0, overwritten: 0, autoMerged: 0, conflicts: 0,
+            silent: 0, overwritten: 0, adopted: 0, autoMerged: 0, conflicts: 0,
             volatile: 0, added: 0, deleted: 0, keptAsUser: 0, restored: 0,
           },
           conflictsResolved: 0,
@@ -112,7 +112,7 @@ describe('UpdateSummary', () => {
       <UpdateSummary
         summary={summary({
           counts: {
-            silent: 1, overwritten: 0, autoMerged: 0, conflicts: 0,
+            silent: 1, overwritten: 0, adopted: 0, autoMerged: 0, conflicts: 0,
             volatile: 0, added: 0, deleted: 0, keptAsUser: 0, restored: 0,
           },
           conflictsResolved: 0,
@@ -206,7 +206,7 @@ describe('UpdateSummary', () => {
   // was named.
   describe('replaced files', () => {
     const counts = {
-      silent: 43, overwritten: 0, autoMerged: 0, conflicts: 1,
+      silent: 43, overwritten: 0, adopted: 0, autoMerged: 0, conflicts: 1,
       volatile: 0, added: 0, deleted: 0, keptAsUser: 0, restored: 0,
     };
 
@@ -270,6 +270,11 @@ describe('UpdateSummary', () => {
       // Generic, so it keeps whatever flags (--release, …) the user ran with.
       expect(frame).toContain('Full list: add --json to this command');
       expect(frame).not.toContain('Previous copies');
+    });
+
+    it('shows adopted files apart from unchanged ones (#62)', () => {
+      const frame = frameFor({ counts: { ...counts, adopted: 2 }, replacedFiles: [] });
+      expect(frame).toContain('43 unchanged · 2 adopted');
     });
 
     it('omits the section and the replaced count when nothing was replaced', () => {
