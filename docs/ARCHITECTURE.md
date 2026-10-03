@@ -681,6 +681,8 @@ Four commands. Three that write. One that reads.
 
 No `list` (vault-local, one shard per vault, nothing to list). No `doctor` (baked into status). No `init` (v1 shards are authored by hand).
 
+**Option scope.** An option written after a subcommand name belongs to that subcommand; root options (`--verbose`, `--no-update-check` for status) go before it. `shardmind adopt <shard> --verbose` is adopt's `--verbose`, and `shardmind --verbose` is the status command's. Commander binds program-level options anywhere on the line by default, so a root option silently shadowed every subcommand option of the same name, and the subcommand saw its default (#147). Pastel builds the Commander program internally and never calls `enablePositionalOptions()`, so `source/cli-options.ts` enables it on Pastel's own Commander before `app.run()`. A flag a subcommand does not declare is then an `unknown option` error rather than being swallowed by the root.
+
 ### 10.2 `shardmind` — Status
 
 The root command. Shows vault health at a glance. Runs hash comparisons and file existence checks. No network call by default (update check cached for 24 hours).
