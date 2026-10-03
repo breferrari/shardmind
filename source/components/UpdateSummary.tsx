@@ -48,6 +48,7 @@ export default function UpdateSummary({
   const parts: string[] = [];
   if (c.overwritten) parts.push(`${c.overwritten} replaced`);
   if (unchanged) parts.push(`${unchanged} unchanged`);
+  if (c.adopted) parts.push(`${c.adopted} adopted`);
   if (c.autoMerged) parts.push(`${c.autoMerged} auto-merged`);
   if (c.conflicts) parts.push(`${c.conflicts} conflict${c.conflicts === 1 ? '' : 's'}`);
   if (c.added) parts.push(`${c.added} added`);

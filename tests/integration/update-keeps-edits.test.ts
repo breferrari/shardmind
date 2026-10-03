@@ -849,7 +849,36 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       await install();
       await write(NOTE, BODY);
       const { plan } = await update(await withNote('0.2.0'), 'keep_mine', true);
-      expect(updatePlanResult(plan, { dryRun: true }).files.find((f) => f.path === NOTE)?.action).toBe('noop');
+      const json = updatePlanResult(plan, { dryRun: true });
+      expect(json.files.find((f) => f.path === NOTE)?.action).toBe('noop');
+      // Counted as adopted, not as an unchanged managed file.
+      expect(json.counts.adopted).toBe(1);
+    });
+
+    it('still prompts when the path is a symlink, which a later update would write through', async (ctx) => {
+      await install();
+      const outside = path.join(root, 'outside-note.md');
+      await fsp.writeFile(outside, BODY, 'utf-8');
+      await fsp.mkdir(path.dirname(path.join(vault, NOTE)), { recursive: true });
+      try {
+        await fsp.symlink(outside, path.join(vault, NOTE), 'file');
+      } catch {
+        ctx.skip(); // symlinks need privileges on some Windows setups
+      }
+      const { plan } = await update(await withNote('0.2.0'));
+      expect(plan.pendingConflicts.map((c) => c.path)).toContain(NOTE);
+    });
+
+    it('still prompts when the name on disk differs only in case', async (ctx) => {
+      await install();
+      const lower = NOTE.toLowerCase();
+      await fsp.mkdir(path.dirname(path.join(vault, lower)), { recursive: true });
+      await fsp.writeFile(path.join(vault, lower), BODY, 'utf-8');
+      // Only meaningful where the filesystem folds case (macOS, Windows).
+      const folds = await fsp.access(path.join(vault, NOTE)).then(() => true, () => false);
+      if (!folds) ctx.skip();
+      const { plan } = await update(await withNote('0.2.0'));
+      expect(plan.pendingConflicts.map((c) => c.path)).toContain(NOTE);
     });
   });
 

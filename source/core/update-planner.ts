@@ -51,9 +51,10 @@ export type UpdateAction =
       path: string;
       reason: string;
       /**
-       * Set when a modified file's merge left it as it is: the entry the
-       * executor records in its place, with the new render's hash as the
-       * baseline. A noop without it keeps the prior state entry.
+       * The state entry the executor records for the path, with the new
+       * render's hash as the baseline: a modified file the merge left as it
+       * is, or an untracked file identical to a newly added path, adopted
+       * (#62). A noop without it keeps the prior state entry.
        */
       rebaseline?: Rebaseline;
     }
@@ -136,6 +137,8 @@ export interface UpdatePlanCounts {
   silent: number;      // managed overwrites + noops
   /** The managed-overwrite part of `silent`; the rest left files byte-identical (#153). */
   overwritten: number;
+  /** Untracked files identical to a newly added path, adopted as managed (#62); not part of `silent`. */
+  adopted: number;
   autoMerged: number;
   conflicts: number;
   volatile: number;
@@ -385,6 +388,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   const counts: UpdatePlanCounts = {
     silent: 0,
     overwritten: 0,
+    adopted: 0,
     autoMerged: 0,
     conflicts: 0,
     volatile: 0,
@@ -623,8 +627,9 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   }
 
   // New-add actions: for each shard-produced output that isn't tracked
-  // in state.files, decide between a plain `add` (path is free on disk)
-  // and a `conflict` (user has untracked content at the same path).
+  // in state.files, decide between a plain `add` (path is free on disk),
+  // adopting the user's file (it is byte-identical to the new version, #62),
+  // and a `conflict` (user has other untracked content at the same path).
   // Silently overwriting an untracked user file is a data-loss bug on
   // par with the install command's collision handling — route the
   // user's content through DiffView instead.
@@ -688,14 +693,11 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       }
       // The user already has exactly the new version: a prompt here would
       // offer two answers that both leave the same bytes. Adopt the file as
-      // managed, with no write (#62).
-      if (actualRead.hash === output.hash) {
-        return {
-          kind: 'noop',
-          path: output.outputPath,
-          reason: 'identical to the new version',
-          rebaseline: rebaselineOf(output, newTempDir, 'managed'),
-        };
+      // managed, with no write (#62) — but not through a symlink (a later
+      // update would write through it, possibly outside the vault) or under
+      // a name that differs from the one on disk only in case.
+      if (actualRead.hash === output.hash && (await isPlainFileNamedExactly(abs))) {
+        return alreadyNewVersion(output, newTempDir);
       }
       // A binary collision gets the whole-file binary prompt, not a text
       // diff of decoded bytes (#63).
@@ -718,7 +720,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     if (action.kind === 'add') {
       counts.added++;
     } else if (action.kind === 'noop') {
-      counts.silent++;
+      counts.adopted++;
     } else if (action.kind === 'conflict') {
       // Same accounting as a modified-file conflict so the pending-
       // conflicts count in the summary stays coherent.
@@ -747,9 +749,7 @@ function planBinary(
   shardByteLength: number,
   newTempDir: string,
 ): UpdateAction {
-  if (actual.hash === target.hash) {
-    return { kind: 'noop', path: filePath, reason: 'already the new version', rebaseline: rebaselineOf(target, newTempDir, 'managed') };
-  }
+  if (actual.hash === target.hash) return alreadyNewVersion(target, newTempDir);
   if (oldBytes !== null && sha256(oldBytes) === newSourceHash) {
     return { kind: 'noop', path: filePath, reason: 'no upstream change', rebaseline: rebaselineOf(target, newTempDir, 'modified') };
   }
@@ -892,7 +892,7 @@ function targetKeys(output: RenderedFileEntry, newTempDir: string): { templateKe
   };
 }
 
-/** The state entry a modified file the update leaves in place records: the new render as its baseline. */
+/** The state entry a file the update leaves in place records: the new render as its baseline. */
 function rebaselineOf(
   target: RenderedFileEntry,
   newTempDir: string,
@@ -914,6 +914,34 @@ async function shardBytesInfo(output: RenderedFileEntry): Promise<{ binary: bool
   }
   const bytes = await fsp.readFile(output.copyFromSourcePath);
   return { binary: isBinaryForMerge(bytes), byteLength: bytes.length };
+}
+
+/**
+ * The user already has exactly the new version's bytes at `output`'s path:
+ * nothing to write, and the file is the engine's from here on. Shared by a
+ * modified file that matches the new version and an untracked one at a newly
+ * added path (#62), so both read the same in the plan and `--json`.
+ */
+function alreadyNewVersion(output: RenderedFileEntry, newTempDir: string): UpdateAction {
+  return {
+    kind: 'noop',
+    path: output.outputPath,
+    reason: 'already the new version',
+    rebaseline: rebaselineOf(output, newTempDir, 'managed'),
+  };
+}
+
+/**
+ * A regular file (not a symlink) whose name on disk is exactly the one asked
+ * for, which a case-insensitive filesystem would otherwise let differ.
+ */
+async function isPlainFileNamedExactly(abs: string): Promise<boolean> {
+  try {
+    if ((await fsp.lstat(abs)).isSymbolicLink()) return false;
+    return (await fsp.readdir(path.dirname(abs))).includes(path.basename(abs));
+  } catch {
+    return false;
+  }
 }
 
 /** `{ copyFromSourcePath }` for a copy-origin output, so the executor copies bytes. */
