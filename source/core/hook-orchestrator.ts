@@ -209,7 +209,7 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
       // in so a destructive write is flagged too.
       const rehash = await rehashSafe(plan.vaultRoot, state, baseline);
       if (rehash) {
-        if (rebaselinedAny(rehash, state)) stateChanged = true;
+        if (rehash.rebaselined.length > 0) stateChanged = true;
         state = rehash.state;
         // Later slots' writes are measured from here, so bootstrap's are not
         // attributed to them twice.
@@ -249,7 +249,7 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   // made (personalize / post-update writes), then persist if anything moved.
   const finalRehash = hookRanSinceBaseline ? await rehashSafe(plan.vaultRoot, state, baseline) : null;
   if (finalRehash) {
-    if (rebaselinedAny(finalRehash, state)) stateChanged = true;
+    if (finalRehash.rebaselined.length > 0) stateChanged = true;
     state = finalRehash.state;
   }
 
@@ -452,15 +452,6 @@ async function snapshotSafe(
   } catch {
     return null;
   }
-}
-
-/**
- * Whether the re-hash recorded a new hash for any path. `changed` alone is
- * not enough: a hook write to a user-edited file is changed but not
- * re-baselined, and rewriting an unchanged state.json is wasted I/O.
- */
-function rebaselinedAny(rehash: RehashResult, before: ShardState): boolean {
-  return rehash.changed.some((p) => rehash.state.files[p] !== before.files[p]);
 }
 
 /** `null` when there is no baseline (no snapshot taken) or the re-hash threw. */

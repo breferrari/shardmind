@@ -544,7 +544,7 @@ describe('core/state', () => {
     it('returns input untouched on an empty managed-file set', async () => {
       const state = makeShardState({ files: {} });
       const result = await rehashManagedFiles(vault, state, new Map());
-      expect(result).toEqual({ state, changed: [], missing: [], failed: [], current: new Map() });
+      expect(result).toEqual({ state, changed: [], rebaselined: [], missing: [], failed: [], current: new Map() });
     });
 
     it('hashes 50 managed files correctly under the concurrency cap', async () => {

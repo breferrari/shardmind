@@ -414,14 +414,15 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     PLAN_IO_CONCURRENCY,
     async (c) => ({
       ...c,
-      foreign: await recordedHashIsForeign(vaultRoot, currentState.files[c.entry.path], c.target),
+      foreign: await recordedHashIsForeign(vaultRoot, currentState.files[c.entry.path]),
     }),
   );
   const toMerge: DriftEntry[] = [...drift.modified];
   for (const { entry, target, foreign } of baselineChecks) {
     if (foreign) {
-      // The modified path keeps a dropped file (`keep_as_user` unless the
-      // caller decided otherwise) and merges one the shard still produces.
+      // The modified path merges a file the shard still produces, and keeps
+      // a dropped one as unmanaged user content (`keep_as_user`): the
+      // removed-files prompt is built from drift, so it never offers these.
       toMerge.push(entry);
       continue;
     }
@@ -758,27 +759,23 @@ async function readStringAndByteHash(
 
 /**
  * Whether a managed entry's recorded hash is provably NOT the engine's: the
- * file is copy-origin, its old source is in the merge-base cache, and the
- * cached bytes hash differently. Without a cached source there is no proof
- * either way, and the answer is `false`. (Iterator outputs are always
- * rendered, so they never reach the comparison.)
- *
- * Copy-origin is read from `target` when the new shard still produces the
- * path, and from the recorded template key otherwise: a render source always
- * ends in `.njk` (`modules.ts`), a copy source never does.
+ * OLD source was copy-origin, it is in the merge-base cache, and the cached
+ * bytes hash differently. Copy-origin is read from the recorded template key
+ * — a render source always ends in `.njk` (`modules.ts`), a copy source
+ * never does — because the cached bytes are the old source's, whatever the
+ * new shard does with the path. (Iterator outputs are always rendered, so
+ * they never reach the comparison.) No readable cached source means no
+ * proof either way, and the answer is `false`: this check must never be
+ * what fails an update.
  */
-async function recordedHashIsForeign(
-  vaultRoot: string,
-  fileState: FileState | undefined,
-  target: RenderedFileEntry | undefined,
-): Promise<boolean> {
-  if (!fileState?.template) return false;
-  const copyOrigin = target
-    ? target.copyFromSourcePath !== undefined
-    : !fileState.template.endsWith('.njk');
-  if (!copyOrigin) return false;
-  const cached = await readCachedTemplate(vaultRoot, fileState.template);
-  return cached !== null && sha256(cached) !== fileState.rendered_hash;
+async function recordedHashIsForeign(vaultRoot: string, fileState: FileState | undefined): Promise<boolean> {
+  if (!fileState?.template || fileState.template.endsWith('.njk')) return false;
+  try {
+    const cached = await readCachedTemplate(vaultRoot, fileState.template);
+    return cached !== null && sha256(cached) !== fileState.rendered_hash;
+  } catch {
+    return false;
+  }
 }
 
 /** The merge-base cache's bytes for `templateKey`, or `null` when absent. */

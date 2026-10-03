@@ -263,6 +263,8 @@ export interface RehashResult {
   state: ShardState;
   /** Paths whose bytes moved since the baseline snapshot (written by a hook). */
   changed: string[];
+  /** The subset of `changed` whose new hash was recorded (engine-owned at snapshot time). */
+  rebaselined: string[];
   /**
    * Files present at the baseline snapshot and gone now (typically because
    * a buggy hook deleted them). Drift detection will flag them as
@@ -310,6 +312,7 @@ export async function rehashManagedFiles(
   baseline: ReadonlyMap<string, string>,
 ): Promise<RehashResult> {
   const changed: string[] = [];
+  const rebaselined: string[] = [];
   const missing: string[] = [];
   const failed: Array<{ path: string; reason: string }> = [];
   const current = new Map<string, string>();
@@ -327,6 +330,7 @@ export async function rehashManagedFiles(
       const engineOwned = before === undefined || before === prior.rendered_hash;
       if (engineOwned) {
         nextFiles[rel] = { ...prior, rendered_hash: hash };
+        rebaselined.push(rel);
       }
     } catch (err) {
       if (isEnoent(err)) {
@@ -344,6 +348,7 @@ export async function rehashManagedFiles(
   return {
     state: { ...state, files: nextFiles },
     changed,
+    rebaselined,
     missing,
     failed,
     current,

@@ -340,7 +340,8 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
       } else {
         // Auto-merge (#120): write the union-merged bytes. The result is
         // user-customized content (it contains the user's lines), so it is
-        // recorded as `modified` ownership at the shard's hash — exactly like
+        // recorded at the shard's hash, as `modified` unless the union equals
+        // the shard bytes (see above) — exactly like
         // a kept-but-edited managed file. A future `update` three-way-merges
         // it against the cached shard template, which is the proper base.
         if (!dryRun) {

@@ -450,6 +450,29 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       expect(await read(COPY)).toContain('My own line.');
     });
 
+    it('a pristine file whose source switches from rendered to copied is overwritten, not merged', async () => {
+      await install();
+      const v2 = await shardAt('0.2.0');
+      await fsp.rm(path.join(v2, HOME_SRC));
+      await fsp.writeFile(path.join(v2, HOME), '# Home, now a plain copy\n', 'utf-8');
+
+      const { plan } = await update(v2);
+      expect(actionFor(plan, HOME)).toBe('overwrite');
+      expect(await read(HOME)).toBe('# Home, now a plain copy\n');
+    });
+
+    it('an unreadable cached source never fails the update', async () => {
+      await install();
+      const cached = path.join(vault, '.shardmind', 'templates', COPY);
+      await fsp.rm(cached);
+      await fsp.mkdir(cached); // reads fail with EISDIR on every platform
+
+      const v2 = await shardAt('0.2.0');
+      await fsp.rm(path.join(v2, COPY));
+      const { plan } = await update(v2);
+      expect(actionFor(plan, COPY)).toBe('delete');
+    });
+
     // The documented residual (SHARD-LAYOUT §Update semantics): a rendered
     // file's baseline cannot be proven, so a corrupted .njk entry labelled
     // managed is overwritten once more. Pinned so a change here is a
