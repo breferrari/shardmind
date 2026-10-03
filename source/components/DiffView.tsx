@@ -55,7 +55,7 @@ export default function DiffView({ path: filePath, index, total, result, onChoic
       {result.binary ? (
         // #63: no line merge ran; the whole file is the conflict.
         <Text>
-          Binary file — yours {result.binary.yours} bytes, shard {result.binary.shard} bytes. Choose a whole version.
+          Can't merge this file line by line (binary, or not UTF-8) — yours {result.binary.yours} bytes, shard {result.binary.shard} bytes. Choose a whole version.
         </Text>
       ) : (
         <>

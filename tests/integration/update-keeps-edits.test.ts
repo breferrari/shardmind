@@ -627,6 +627,7 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       return dir;
     }
     const disk = () => fsp.readFile(path.join(vault, BIN));
+    const disk2 = (rel: string) => fsp.readFile(path.join(vault, rel));
 
     it('an edited binary whose source changed is a whole-file conflict, not a merge', async () => {
       await install(await shardWithBin('0.1.0', V1));
@@ -737,6 +738,27 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       expect(plan.pendingConflicts.find((c) => c.path === HOME)?.result.binary?.yours).toBe(MINE.length);
       // Accept new on a rendered target writes the render, as text.
       expect(await read(HOME)).toContain('Welcome, Alice! (v2)');
+    });
+
+    it('binary bytes over a rendered file whose template did not change are left alone', async () => {
+      await install();
+      await fsp.writeFile(path.join(vault, HOME), MINE);
+
+      // Same Home.md.njk; its render differs per run (install_date), so only a
+      // source-to-source comparison sees "unchanged".
+      const { plan } = await update(await shardAt('0.2.0'));
+      expect(plan.pendingConflicts.map((c) => c.path)).not.toContain(HOME);
+      expect(await disk2(HOME)).toEqual(MINE);
+      const again = await update(await shardAt('0.3.0'));
+      expect(again.plan.pendingConflicts.map((c) => c.path)).not.toContain(HOME);
+    });
+
+    it('a non-UTF-8 cached old source alone is enough to skip the line merge', async () => {
+      const latinV1 = Buffer.from('v1;caf\xe9\n', 'latin1');
+      await install(await shardWithBin('0.1.0', latinV1));
+      await fsp.writeFile(path.join(vault, BIN), Buffer.from('v1;cafe\nmine\n')); // valid UTF-8
+      const { plan } = await update(await shardWithBin('0.2.0', Buffer.from('v2;cafe\n')));
+      expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toBeDefined();
     });
 
     it('--dry-run --json flags a binary conflict as binary', async () => {

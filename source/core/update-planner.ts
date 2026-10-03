@@ -524,9 +524,17 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       // on a UTF-8 decoding and writes mangled bytes back (#63). Any side
       // counts, whatever the target's origin: a user can drop a binary over a
       // rendered note, and a copy source can become a template.
+      const userOrOldBinary =
+        isBinaryForMerge(actualRead.buf) || (oldBytes !== null && isBinaryForMerge(oldBytes));
       const shard = await shardBytesInfo(target);
-      if (shard.binary || isBinaryForMerge(actualRead.buf) || (oldBytes !== null && isBinaryForMerge(oldBytes))) {
-        return planBinary(entry.path, target, actualRead, oldBytes, shard.byteLength, newTempDir);
+      if (userOrOldBinary || shard.binary) {
+        // "Did the shard change it" compares source with source: the cached
+        // old source against the new one (for a template, its .njk source,
+        // not the render), so an unchanged template is not re-prompted.
+        const newSourceHash = target.copyFromSourcePath
+          ? target.hash
+          : sha256(await fsp.readFile(target.entry.sourcePath));
+        return planBinary(entry.path, target, actualRead, oldBytes, newSourceHash, shard.byteLength, newTempDir);
       }
       const actualContent = actualRead.buf.toString('utf-8');
 
@@ -710,24 +718,26 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
 }
 
 /**
- * Plan a modified binary copy-origin file without the line merge (#63). The
- * user's bytes already equal the new source: nothing to do, and the file is
- * the engine's again. The source did not change: keep the user's bytes. Any
+ * Plan a modified file whose bytes must not be line-merged (#63). The user's
+ * bytes already equal the new version: nothing to do, and the file is the
+ * engine's again. The cached old source equals the new source (`newSourceHash`,
+ * a template's own source for a rendered target): keep the user's bytes. Any
  * other case is a whole-file conflict carrying byte counts; Accept new copies
- * the source's bytes.
+ * a copy source's bytes, or writes a template's render.
  */
 function planBinary(
   filePath: string,
   target: RenderedFileEntry,
   actual: { buf: Buffer; hash: string },
   oldBytes: Buffer | null,
+  newSourceHash: string,
   shardByteLength: number,
   newTempDir: string,
 ): UpdateAction {
   if (actual.hash === target.hash) {
     return { kind: 'noop', path: filePath, reason: 'already the new version', rebaseline: rebaselineOf(target, newTempDir, 'managed') };
   }
-  if (oldBytes !== null && sha256(oldBytes) === target.hash) {
+  if (oldBytes !== null && sha256(oldBytes) === newSourceHash) {
     return { kind: 'noop', path: filePath, reason: 'no upstream change', rebaseline: rebaselineOf(target, newTempDir, 'modified') };
   }
   return binaryConflict(filePath, target, actual, shardByteLength, newTempDir);

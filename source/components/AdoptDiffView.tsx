@@ -90,7 +90,7 @@ export default function AdoptDiffView({
       {isBinary ? (
         <Box flexDirection="column">
           <Text dimColor>
-            Binary file — no preview. Mine: {formatSize(userContent.length)} ·
+            Binary or non-UTF-8 file — no preview. Mine: {formatSize(userContent.length)} ·
             Shard: {formatSize(shardContent.length)}
           </Text>
         </Box>

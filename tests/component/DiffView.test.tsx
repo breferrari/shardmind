@@ -292,7 +292,7 @@ describe('DiffView', () => {
         <DiffView path="assets/logo.png" index={1} total={1} result={binary()} onChoice={() => {}} />,
       );
       const frame = lastFrame() ?? '';
-      expect(frame).toContain('Binary file');
+      expect(frame).toContain("Can't merge this file line by line");
       expect(frame).toContain('yours 1234 bytes');
       expect(frame).toContain('shard 2048 bytes');
       expect(frame).not.toContain('<<<<<<<');
@@ -311,7 +311,7 @@ describe('DiffView', () => {
         <DiffView path="assets/logo.png" index={2} total={2} result={binary()} onChoice={onChoice} />,
       );
       await tick(30);
-      expect(r.lastFrame() ?? '').toContain('Binary file');
+      expect(r.lastFrame() ?? '').toContain("Can't merge this file line by line");
       r.stdin.write(ARROW_DOWN);
       await tick(30);
       r.stdin.write(ENTER);

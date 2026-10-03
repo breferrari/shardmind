@@ -36,7 +36,7 @@ import {
   createRenderer,
   renderFile,
 } from './renderer.js';
-import { looksBinary, mapConcurrent, sha256, toPosix } from './fs-utils.js';
+import { isBinaryForMerge, mapConcurrent, sha256, toPosix } from './fs-utils.js';
 
 /**
  * Cap on parallel `readFile` operations during user-vault hashing. Same
@@ -292,7 +292,7 @@ async function classifyOne(
     shardHash: item.shardHash,
     userContent: userBuf,
     userHash,
-    isBinary: looksBinary(userBuf) || looksBinary(item.shardContent),
+    isBinary: isBinaryForMerge(userBuf) || isBinaryForMerge(item.shardContent),
     ...(item.iteratorKey ? { iteratorKey: item.iteratorKey } : {}),
     volatile: false,
   };
