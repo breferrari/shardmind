@@ -143,6 +143,8 @@ export type Phase =
       hooks: HookOutcome[];
       durationMs: number;
       dryRun: boolean;
+      /** Vault-relative POSIX path of the pre-update snapshot; `null` in a dry run. */
+      backupDir: string | null;
     }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
@@ -624,6 +626,9 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           hooks: hookOutcomes,
           durationMs: Date.now() - start,
           dryRun,
+          backupDir: result.backupDir
+            ? path.relative(vaultRoot, result.backupDir).split(path.sep).join('/')
+            : null,
         });
       } catch (err) {
         writingRef.current = false;

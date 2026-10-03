@@ -47,7 +47,7 @@ describe('UpdateSummary', () => {
     );
     const frame = lastFrame() ?? '';
     expect(frame).toMatch(/Updated 0\.1\.0 → 0\.2\.0/);
-    expect(frame).toContain('43 silent');
+    expect(frame).toContain('43 unchanged');
     expect(frame).toContain('2 auto-merged');
     expect(frame).toContain('1 conflict');
     expect(frame).toContain('3 added');
@@ -200,5 +200,81 @@ describe('UpdateSummary', () => {
       />,
     );
     expect(lastFrame()).toMatch(/Dry run: would update 0\.1\.0 → 0\.2\.0/);
+  });
+
+  // #153: "silent" lumped replaced files with untouched ones, and no path
+  // was named.
+  describe('replaced files', () => {
+    const counts = {
+      silent: 43, autoMerged: 0, conflicts: 1,
+      volatile: 0, added: 0, deleted: 0, keptAsUser: 0, restored: 0,
+    };
+
+    function frameFor(over: Partial<Summary>, props: { dryRun?: boolean; backupDir?: string | null } = {}) {
+      const { lastFrame } = render(
+        <UpdateSummary
+          summary={summary({ counts, ...over })}
+          durationMs={1000}
+          migrationWarnings={[]}
+          hooks={[]}
+          dryRun={props.dryRun}
+          backupDir={props.backupDir ?? null}
+        />,
+      );
+      return lastFrame() ?? '';
+    }
+
+    it('splits silent into replaced and unchanged, not counting accepted conflicts as silent', () => {
+      const frame = frameFor({
+        replacedFiles: ['a.md', 'b.md', 'Home.md'],
+        conflictsResolved: 1, conflictsAcceptedNew: 1, conflictsKeptMine: 0,
+      });
+      expect(frame).toContain('2 replaced · 41 unchanged');
+      expect(frame).not.toContain('silent');
+    });
+
+    it('lists replaced paths sorted under their heading', () => {
+      const frame = frameFor({ replacedFiles: ['z.md', 'brain/North Star.md', 'a.md'] });
+      expect(frame).toContain("Replaced with the shard's version (3):");
+      const at = (p: string) => frame.indexOf(`· ${p}`);
+      expect(at('a.md')).toBeGreaterThan(-1);
+      expect(at('a.md')).toBeLessThan(at('brain/North Star.md'));
+      expect(at('brain/North Star.md')).toBeLessThan(at('z.md'));
+    });
+
+    it('shows exactly 10 paths without an overflow line', () => {
+      const replacedFiles = Array.from({ length: 10 }, (_, i) => `f${String(i).padStart(2, '0')}.md`);
+      const frame = frameFor({ replacedFiles });
+      expect(frame).toContain('· f09.md');
+      expect(frame).not.toContain('more');
+    });
+
+    it('caps the list at 10 with "…and K more"', () => {
+      const replacedFiles = Array.from({ length: 13 }, (_, i) => `f${String(i).padStart(2, '0')}.md`);
+      const frame = frameFor({ replacedFiles });
+      expect(frame).toContain('· f09.md');
+      expect(frame).not.toContain('· f10.md');
+      expect(frame).toContain('…and 3 more');
+    });
+
+    it('points to the backup dir after a real run', () => {
+      const frame = frameFor({ replacedFiles: ['a.md'] }, { backupDir: '.shardmind/backups/update-2026-10-03T17-35-00-000' });
+      expect(frame).toContain('Previous copies: .shardmind/backups/update-2026-10-03T17-35-00-000/');
+    });
+
+    it('says "Would replace" and points to --dry-run --json in a dry run', () => {
+      const frame = frameFor({ replacedFiles: ['a.md'] }, { dryRun: true });
+      expect(frame).toContain("Would replace with the shard's version (1):");
+      expect(frame).toContain('shardmind update --dry-run --json');
+      expect(frame).not.toContain('Previous copies');
+    });
+
+    it('omits the section and the replaced count when nothing was replaced', () => {
+      const frame = frameFor({ replacedFiles: [] }, { backupDir: '.shardmind/backups/update-x' });
+      expect(frame).not.toContain('Replaced');
+      expect(frame).not.toContain('replaced');
+      expect(frame).not.toContain('Previous copies');
+      expect(frame).toContain('43 unchanged');
+    });
   });
 });

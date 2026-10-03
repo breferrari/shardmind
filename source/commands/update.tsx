@@ -194,6 +194,7 @@ export default function Update({ options }: Props) {
             migrationWarnings={phase.migrationWarnings}
             hooks={phase.hooks}
             dryRun={phase.dryRun}
+            backupDir={phase.backupDir}
           />
         </CommandFrame>
       );

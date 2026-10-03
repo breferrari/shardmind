@@ -210,13 +210,43 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
       await waitFor(r.lastFrame, (f) => /Conflict in Home\.md/.test(f), 20_000);
       // ENTER on default (cursor at first option = accept_new).
       r.stdin.write(ENTER);
-      await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.3\.0/.test(f), 20_000);
+      const summaryFrame = await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.3\.0/.test(f), 20_000);
       const updated = await vault.readFile('Home.md');
       // accept_new replaces user content with shard render — user edit
       // line should be gone.
       expect(updated).not.toContain('User edit that will be discarded.');
       // v0.3.0's append should be present.
       expect(updated).toContain('Updated again in v0.3.0.');
+      // #153: the summary names the replaced file and where its old bytes went.
+      const frame = summaryFrame;
+      expect(frame).toContain("Replaced with the shard's version");
+      expect(frame).toContain('· Home.md');
+      expect(frame).toMatch(/Previous copies: \.shardmind\/backups\/update-[^\s/]+\//);
+    } finally {
+      if (vault) await vault.cleanup();
+    }
+  }, 90_000);
+
+  it('15b. a pristine managed file the new version changes is listed as replaced (#153)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    let vault: Vault | null = null;
+    try {
+      vault = await createInstalledVault({
+        stub,
+        shardRef: SHARD_REF,
+        values: DEFAULT_VALUES,
+        prefix: 's15b-replaced',
+      });
+      stub.setVersion(SHARD_SLUG, '0.3.0', fixtures.byVersion['0.3.0']!);
+      stub.setLatest(SHARD_SLUG, '0.3.0');
+
+      const r = mountUpdate({ vaultRoot: vault.root });
+      const frame = await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.3\.0/.test(f), 20_000);
+      expect(frame).toMatch(/\d+ replaced · \d+ unchanged/);
+      expect(frame).toContain('· Home.md');
+      expect(await vault.readFile('Home.md')).toContain('Updated again in v0.3.0.');
     } finally {
       if (vault) await vault.cleanup();
     }
