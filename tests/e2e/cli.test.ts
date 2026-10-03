@@ -164,14 +164,16 @@ describe('CLI bootstrap', () => {
     expect(result.stdout.trim()).not.toBe(PACKAGE_VERSION);
   });
 
-  // …and a root option before a subcommand is refused rather than ignored:
-  // the root (status) command does not run when a subcommand does.
-  it('a root option before a subcommand is refused, naming where it belongs', async () => {
+  // …and a root option before a subcommand reaches the subcommand rather
+  // than the root, which does not run when a subcommand does.
+  it('a root option before a subcommand behaves as if written after it', async () => {
     vault = await createEmptyVault('root-before-sub');
-    const result = await spawnCli(['--verbose', 'update'], { cwd: vault.root, env: envWithStub() });
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("'--verbose' is an option of 'shardmind' itself");
-    expect(result.stderr).toContain('shardmind update --verbose');
+    const before = await spawnCli(['--verbose', 'update'], { cwd: vault.root, env: envWithStub() });
+    const after = await spawnCli(['update', '--verbose'], { cwd: vault.root, env: envWithStub() });
+    expect(before.stderr).not.toContain('is an option of');
+    expect(before.stderr).not.toContain('unknown option');
+    expect(before.exitCode).toBe(after.exitCode);
+    expect(before.stdout).toBe(after.stdout);
   });
 
   it('--help lists install, update, and adopt subcommands', async () => {

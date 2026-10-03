@@ -109,8 +109,10 @@ describe('the patched Commander, directly', () => {
       .configureOutput({ writeErr: (s) => errors.push(s), writeOut: () => {} })
       .option('--verbose')
       .option('--no-update-check');
-    root.command('adopt').exitOverride().option('--verbose').option('--dry-run')
+    root.command('adopt').exitOverride().option('--verbose').option('--no-update-check').option('--dry-run')
       .action((opts) => { adopt = opts; });
+    // A subcommand that takes neither root option, for the refusal path.
+    root.command('bare').exitOverride().action(() => {});
     return { root, errors, adopt: () => adopt };
   }
 
@@ -118,18 +120,24 @@ describe('the patched Commander, directly', () => {
     enablePositionalOptions(pastelCommander());
   });
 
-  it('refuses a root flag written before a subcommand, saying where it belongs', () => {
+  it('passes a root flag written before a subcommand on to it', () => {
     const p = program();
-    expect(() => p.root.parse(['--verbose', 'adopt', '--dry-run'], { from: 'user' })).toThrow();
-    expect(p.errors.join('')).toContain("'--verbose' is an option of");
-    expect(p.errors.join('')).toContain('adopt --verbose');
-    expect(p.adopt()).toBeUndefined();
+    p.root.parse(['--verbose', 'adopt', '--dry-run'], { from: 'user' });
+    expect(p.adopt()).toMatchObject({ verbose: true, dryRun: true });
   });
 
-  it('refuses a negated root flag before a subcommand too', () => {
+  it('passes several root flags on, negated ones included', () => {
     const p = program();
-    expect(() => p.root.parse(['--no-update-check', 'adopt'], { from: 'user' })).toThrow();
-    expect(p.errors.join('')).toContain("'--no-update-check'");
+    p.root.parse(['--no-update-check', '--verbose', 'adopt'], { from: 'user' });
+    expect(p.adopt()).toMatchObject({ verbose: true, updateCheck: false });
+  });
+
+  it('refuses root flags the subcommand does not take, naming all of them', () => {
+    const p = program();
+    expect(() => p.root.parse(['--verbose', '--no-update-check', 'bare'], { from: 'user' })).toThrow();
+    const err = p.errors.join('');
+    expect(err).toContain("'--verbose', '--no-update-check' are options of");
+    expect(err).toContain("'bare' does not take them");
   });
 
   it('gives an unknown flag after a subcommand Commander\'s own error', () => {
@@ -138,10 +146,13 @@ describe('the patched Commander, directly', () => {
     expect(p.errors.join('')).toContain("unknown option '--bogus'");
   });
 
-  it('applies to parseAsync as well as parse', async () => {
+  it('applies to parseAsync as well as parse, forwarding included', async () => {
     const p = program();
     await p.root.parseAsync(['adopt', '--verbose'], { from: 'user' });
     expect(p.adopt()?.['verbose']).toBe(true);
+    const q = program();
+    await q.root.parseAsync(['--verbose', 'adopt'], { from: 'user' });
+    expect(q.adopt()?.['verbose']).toBe(true);
   });
 });
 
@@ -151,6 +162,14 @@ describe('enablePositionalOptions guard', () => {
       parse(): void {}
     }
     expect(() => enablePositionalOptions(NotCommander)).toThrow(/enablePositionalOptions/);
+  });
+
+  it('also refuses one missing the other Commander APIs the patch relies on', () => {
+    class OldCommander {
+      parse(): void {}
+      enablePositionalOptions(): void {}
+    }
+    expect(() => enablePositionalOptions(OldCommander)).toThrow(/hook, getOptionValueSource, getOptionValue, setOptionValueWithSource/);
   });
 });
 
