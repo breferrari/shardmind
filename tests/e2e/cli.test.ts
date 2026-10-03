@@ -153,6 +153,29 @@ describe('CLI bootstrap', () => {
     expect(result.stdout.trim()).toBe(PACKAGE_VERSION);
   });
 
+  // #147: an option after a subcommand belongs to the subcommand. A root-only
+  // option there is now an error instead of being silently taken by the root
+  // — `update --version` used to print the package version.
+  it("a root-only option after a subcommand is an unknown option, not the root's", async () => {
+    vault = await createEmptyVault('positional');
+    const result = await spawnCli(['update', '--version'], { cwd: vault.root, env: envWithStub() });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("unknown option '--version'");
+    expect(result.stdout.trim()).not.toBe(PACKAGE_VERSION);
+  });
+
+  // …and a root option before a subcommand reaches the subcommand rather
+  // than the root, which does not run when a subcommand does.
+  it('a root option before a subcommand behaves as if written after it', async () => {
+    vault = await createEmptyVault('root-before-sub');
+    const before = await spawnCli(['--verbose', 'update'], { cwd: vault.root, env: envWithStub() });
+    const after = await spawnCli(['update', '--verbose'], { cwd: vault.root, env: envWithStub() });
+    expect(before.stderr).not.toContain('is an option of');
+    expect(before.stderr).not.toContain('unknown option');
+    expect(before.exitCode).toBe(after.exitCode);
+    expect(before.stdout).toBe(after.stdout);
+  });
+
   it('--help lists install, update, and adopt subcommands', async () => {
     vault = await createEmptyVault('help');
     const result = await spawnCli(['--help'], { cwd: vault.root, env: envWithStub() });

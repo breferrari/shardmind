@@ -9,7 +9,7 @@
  *
  * Sources of suppression (any one returns `info: null` without firing
  * the network call):
- *   1. `noUpdateCheck === true` — the `--no-update-check` flag.
+ *   1. `updateCheck === false` — the `--no-update-check` flag.
  *   2. `process.env.SHARDMIND_NO_UPDATE_CHECK` non-empty.
  *   3. `process.env.CI` non-empty — standard CI-runner heuristic.
  *   4. `process.stdout.isTTY` falsy AND no
@@ -40,8 +40,8 @@ import { useEffect, useState } from 'react';
 import { checkSelfUpdate } from '../../core/self-update-check.js';
 
 export interface UseSelfUpdateCheckInput {
-  /** The `--no-update-check` flag value from the command's options. */
-  noUpdateCheck: boolean;
+  /** The command's `updateCheck` option: `false` when `--no-update-check` was passed. */
+  updateCheck: boolean;
   /** The CLI's own version string from package.json. */
   currentVersion: string;
 }
@@ -66,8 +66,8 @@ function shouldForceTty(): boolean {
   return v !== undefined && v.length > 0;
 }
 
-function isSuppressed(noUpdateCheck: boolean): boolean {
-  if (noUpdateCheck) return true;
+function isSuppressed(updateCheck: boolean): boolean {
+  if (!updateCheck) return true;
   const noEnv = process.env['SHARDMIND_NO_UPDATE_CHECK'];
   if (noEnv && noEnv.length > 0) return true;
   const ciEnv = process.env['CI'];
@@ -79,11 +79,11 @@ function isSuppressed(noUpdateCheck: boolean): boolean {
 export function useSelfUpdateCheck(
   input: UseSelfUpdateCheckInput,
 ): UseSelfUpdateCheckOutput {
-  const { noUpdateCheck, currentVersion } = input;
+  const { updateCheck, currentVersion } = input;
   const [info, setInfo] = useState<SelfUpdateBannerInfo | null>(null);
 
   useEffect(() => {
-    if (isSuppressed(noUpdateCheck)) return;
+    if (isSuppressed(updateCheck)) return;
 
     let disposed = false;
     const controller = new AbortController();
@@ -115,11 +115,11 @@ export function useSelfUpdateCheck(
       // a TCP connection open until the 3s timeout expires.
       controller.abort();
     };
-    // currentVersion and noUpdateCheck are stable per command instance;
+    // currentVersion and updateCheck are stable per command instance;
     // the dep array is here for lint cleanliness. Closure isolation
     // means a hypothetical re-run still won't leak: the previous run's
     // `disposed` and `controller` are captured locally.
-  }, [noUpdateCheck, currentVersion]);
+  }, [updateCheck, currentVersion]);
 
   return { info };
 }

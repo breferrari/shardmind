@@ -1,6 +1,7 @@
 import { Box, Text, useApp } from 'ink';
 import { useEffect } from 'react';
 import zod from 'zod';
+import { updateCheckOption } from './hooks/update-check-option.js';
 
 import { emitJson, jsonFailure } from '../core/json-output.js';
 
@@ -43,10 +44,7 @@ export const options = zod.object({
     .boolean()
     .default(false)
     .describe('Preview classification + plan without writing'),
-  noUpdateCheck: zod
-    .boolean()
-    .default(false)
-    .describe('Disable the once-per-day npm registry check for newer shardmind versions'),
+  updateCheck: updateCheckOption,
   json: zod
     .boolean()
     .default(false)
@@ -60,7 +58,7 @@ type Props = {
 
 export default function Adopt({ args, options }: Props) {
   const [shardRef] = args;
-  const { values: valuesFile, yes, mode, verbose, dryRun, noUpdateCheck, json } = options;
+  const { values: valuesFile, yes, mode, verbose, dryRun, updateCheck, json } = options;
   const { exit: exitApp } = useApp();
 
   const {
@@ -83,7 +81,7 @@ export default function Adopt({ args, options }: Props) {
 
   // The banner is chrome; suppress it under --json so stdout is exactly one
   // JSON document.
-  const banner = useSelfUpdateBanner({ noUpdateCheck: noUpdateCheck || json });
+  const banner = useSelfUpdateBanner({ updateCheck: updateCheck && !json });
 
   // A --json run must answer with a document on failure too, not a rendered
   // error box (which returns null here) and certainly not a stack trace. The

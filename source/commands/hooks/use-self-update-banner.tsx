@@ -26,9 +26,10 @@ import { resolvePkgVersion } from './cli-version.js';
 
 const cliVersion = resolvePkgVersion(import.meta.url);
 
-export function useSelfUpdateBanner(opts: { noUpdateCheck: boolean }): ReactNode {
+/** `updateCheck` is the command's `--no-update-check` option (false when passed). */
+export function useSelfUpdateBanner(opts: { updateCheck: boolean }): ReactNode {
   const { info } = useSelfUpdateCheck({
-    noUpdateCheck: opts.noUpdateCheck,
+    updateCheck: opts.updateCheck,
     currentVersion: cliVersion,
   });
   return <SelfUpdateBanner info={info} />;

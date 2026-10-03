@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink';
 import { Spinner, StatusMessage, Alert } from '../components/ui.js';
 import zod from 'zod';
+import { updateCheckOption } from './hooks/update-check-option.js';
 
 import { ShardMindError, assertNever } from '../runtime/types.js';
 
@@ -25,10 +26,7 @@ export const options = zod.object({
   defaults: zod.boolean().default(false).describe('Use schema defaults for every value (Invariant 1 mode); skips the wizard. Mutually exclusive with --values.'),
   verbose: zod.boolean().default(false).describe('Show per-file rendering progress'),
   dryRun: zod.boolean().default(false).describe('Preview what would be installed without writing'),
-  noUpdateCheck: zod
-    .boolean()
-    .default(false)
-    .describe('Disable the once-per-day npm registry check for newer shardmind versions'),
+  updateCheck: updateCheckOption,
 });
 
 type Props = {
@@ -38,7 +36,7 @@ type Props = {
 
 export default function Install({ args, options }: Props) {
   const [shardRef] = args;
-  const { values: valuesFile, yes, defaults, verbose, dryRun, noUpdateCheck } = options;
+  const { values: valuesFile, yes, defaults, verbose, dryRun, updateCheck } = options;
 
   const {
     phase,
@@ -57,7 +55,7 @@ export default function Install({ args, options }: Props) {
     vaultRoot: process.cwd(),
   });
 
-  const banner = useSelfUpdateBanner({ noUpdateCheck });
+  const banner = useSelfUpdateBanner({ updateCheck });
 
   // Exhaustive switch: adding a new Phase variant without a case here
   // is a compile error, not a silent render-nothing bug.

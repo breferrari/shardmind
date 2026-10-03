@@ -8,6 +8,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (command-line options — #147)
+
+- **Options after a subcommand now reach it.** `shardmind adopt --verbose`, `update --verbose` and every subcommand's `--no-update-check` were taken by the root command and did nothing. A root-only option after a subcommand (`shardmind update --version`) is now an `unknown option` error instead of being silently taken by the root, and a root option before one (`shardmind --verbose update`) now reaches the subcommand instead of being ignored.
+- **`--no-update-check` now works**, on every command including `shardmind` itself. It never reached any command before.
+
 ### Added (update summary — #153)
 
 - **The update summary names the files it replaced.** "N silent" lumped files replaced with the shard's new version together with files left byte-identical; it is now "N replaced · M unchanged", followed by the replaced paths (sorted, first 10, then "…and K more") and the backup snapshot (`.shardmind/backups/update-<ts>/files/`) that holds their previous bytes. A dry run says "Would replace" and points at `--json` for the full per-file plan.

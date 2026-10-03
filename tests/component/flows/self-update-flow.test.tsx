@@ -198,7 +198,7 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
       });
       const r = mountStatus({
         vaultRoot: vault.root,
-        options: { noUpdateCheck: true },
+        options: { updateCheck: false },
       });
       // Wait long enough that an unblocked banner would have rendered
       // (the hook fires `setTimeout(0)` then awaits the fetch — local

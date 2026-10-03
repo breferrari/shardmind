@@ -27,8 +27,8 @@ An update never replaces a file the user changed, and every install gets its own
 |---|---|---|
 | ✅ | update silently overwrites locally-modified files while reporting "kept mine" (state.json labels user-edited files `managed`) | [#150](https://github.com/breferrari/shardmind/issues/150) |
 | ✅ | List the paths an update replaced in its summary | [#153](https://github.com/breferrari/shardmind/issues/153) |
-| ⬜ | qmd_index not personalized on install — every vault collides on the same QMD store | [#137](https://github.com/breferrari/shardmind/issues/137) |
-| ⬜ | Root-command options silently shadow same-named subcommand options (`adopt --verbose` does nothing) | [#147](https://github.com/breferrari/shardmind/issues/147) |
+| ✅ | qmd_index not personalized on install — every vault collides on the same QMD store | [#137](https://github.com/breferrari/shardmind/issues/137) |
+| ✅ | Root-command options silently shadow same-named subcommand options (`adopt --verbose` does nothing) | [#147](https://github.com/breferrari/shardmind/issues/147) |
 | ⬜ | v0.2: Rename migrations in shard.yaml + shardmind adopt --from-version | [#88](https://github.com/breferrari/shardmind/issues/88) |
 
 ## Phase 2 — collisions and binary files
@@ -101,6 +101,7 @@ Every item on the deferral shelf below has a milestone here, so a milestone-filt
 | ⬜ | Declare & enforce external CLI tool dependencies (e.g. qmd) with version ranges at install/update | [#138](https://github.com/breferrari/shardmind/issues/138) |
 | ⬜ | Agent/headless ergonomics: non-interactive mode, JSON output, per-file plan, value detection | [#139](https://github.com/breferrari/shardmind/issues/139) |
 | ⬜ | Align the RELEASE-SMOKE cancellation rows with the engine | [#155](https://github.com/breferrari/shardmind/issues/155) |
+| ⬜ | Make the test suite independent of FORCE_COLOR | [#159](https://github.com/breferrari/shardmind/issues/159) |
 
 ## Deferral shelf
 
@@ -141,6 +142,7 @@ Items moved out of the build order, each with the phase it moved to and a dated 
 | TUI testing framework — continuing-hardening tracker ([#122](https://github.com/breferrari/shardmind/issues/122)) | tracker restructure, 2026-10-03 | Shelf | Engine polish with no user report behind it. Comes back when one arrives. |
 | Declare & enforce external CLI tool dependencies (e.g. qmd) with version ranges at install/update ([#138](https://github.com/breferrari/shardmind/issues/138)) | tracker restructure, 2026-10-03 | Shelf | Engine polish with no user report behind it. Comes back when one arrives. |
 | Agent/headless ergonomics: non-interactive mode, JSON output, per-file plan, value detection ([#139](https://github.com/breferrari/shardmind/issues/139)) | tracker restructure, 2026-10-03 | Shelf | Engine polish with no user report behind it. Comes back when one arrives. |
+| Make the test suite independent of FORCE_COLOR ([#159](https://github.com/breferrari/shardmind/issues/159)) | #147 pass, 2026-10-03 | Shelf | A defect in the test harness, not a product pass: CI does not set `FORCE_COLOR`, so it stays green; locally `env -u FORCE_COLOR npm test` works around it. |
 | Align the RELEASE-SMOKE cancellation rows with the engine ([#155](https://github.com/breferrari/shardmind/issues/155)) | v0.1.7 release smoke, 2026-10-03 | Shelf | A defect in a gate, not a product pass. Both behaviours predate 0.1.7 and the smoke table records them as deviations; the wizard exit code is a product question to decide first. |
 
 ## Pull-forward log
