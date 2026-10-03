@@ -16,9 +16,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **Hook-personalized files survive updates that do not change their source.** obsidian-mind's `brain/North Star.md` was reset to the template on every update; it now goes through the merge like any edited file.
 
-- **A bootstrap re-run on update no longer reports files you edited as `HOOK_BOOTSTRAP_MANAGED_WRITE`.** The check now compares against a snapshot taken before the hook phase, not against the recorded baseline.
+- **A file you edited is no longer deleted when the shard drops its path.** For state written by the old engine, a copy-origin file whose recorded hash is not the shard's is kept on disk and becomes unmanaged user content, instead of being deleted as an untouched managed file.
 
-- **`update --dry-run --json` reports an auto-merged file's `shardHash` as the new render**, which is what the shard produces (as for a conflict) and what state records, rather than the hash of the merged bytes.
+- **A bootstrap re-run on update no longer reports files you edited as `HOOK_BOOTSTRAP_MANAGED_WRITE`.** The check now compares against a snapshot taken before the hook phase, not against the recorded baseline. A file that could not be read when that snapshot was taken (locked by another program) is left at its recorded baseline rather than re-recorded.
+
+### Changed (`--json` — #150)
+
+- **`update --dry-run --json` reports an auto-merged file's `shardHash` as the new render**, which is what the shard produces (as for a conflict) and what `state.json` records, rather than the hash of the merged bytes. A consumer that compared `shardHash` with the file written by an auto-merge will now see them differ.
 
 ## [0.1.6] - 2026-07-26
 
