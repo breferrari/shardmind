@@ -140,6 +140,15 @@ describe('the patched Commander, directly', () => {
     expect(err).toContain("'bare' does not take them");
   });
 
+  it('treats a root-only flag after a subcommand as the subcommand\'s, so unknown', () => {
+    const p = program();
+    p.root.option('--root-only');
+    expect(() => p.root.parse(['adopt', '--root-only'], { from: 'user' })).toThrow();
+    // Positional mode: the subcommand parses it, and does not know it. Without
+    // it, the root would take the flag and the refusal message would show.
+    expect(p.errors.join('')).toContain("unknown option '--root-only'");
+  });
+
   it('gives an unknown flag after a subcommand Commander\'s own error', () => {
     const p = program();
     expect(() => p.root.parse(['adopt', '--bogus'], { from: 'user' })).toThrow();
