@@ -37,7 +37,7 @@ Delete this section for non-v6 PRs.
 - [ ] Adversarial cases from the section above are all covered by tests
 - [ ] Copilot review requested and every comment addressed (or marked false-positive with justification in the PR thread)
 - [ ] Issue acceptance criteria checked off with evidence below (or in the issue)
-- [ ] ROADMAP.md checkbox updated in this PR
+- [ ] ROADMAP.md row's mark updated in this PR (and a row for every issue this PR filed)
 - [ ] For PRs on #73-#77: manual Invariant 1 proxy run (`git clone <shard>` + `shardmind install --defaults` + `diff -r`) — pending #78's CI test
 - [ ] For PR on #78 and later: Invariant 1 CI test still green
 - [ ] Spec alignment: no divergence from [`docs/SHARD-LAYOUT.md`](../blob/main/docs/SHARD-LAYOUT.md); if the implementation revealed a spec gap, the spec update is in this PR or a predecessor
