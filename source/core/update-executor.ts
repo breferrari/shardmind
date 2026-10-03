@@ -329,6 +329,19 @@ interface DeleteContext {
 async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promise<void> {
   switch (action.kind) {
     case 'noop':
+      // No write. A modified file the merge left alone is re-recorded at
+      // the new render's hash, so its baseline tracks the template the
+      // cache now holds.
+      if (action.rebaseline) {
+        const { renderedHash, templateKey, iteratorKey, ownership } = action.rebaseline;
+        ctx.nextFiles[action.path] = {
+          template: templateKey,
+          rendered_hash: renderedHash,
+          ownership,
+          ...(iteratorKey ? { iterator_key: iteratorKey } : {}),
+        };
+      }
+      return;
     case 'skip_volatile':
       // No write. Planner still recorded these for reporting counts.
       return;
@@ -392,7 +405,15 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
       if (!ctx.dryRun) {
         await writeFile(ctx.vaultRoot, action.path, action.content);
       }
-      ctx.nextFiles[action.path] = buildFileState(action, 'modified');
+      // Record the new render as the baseline, never the merged bytes: they
+      // hold the user's lines, and drift would read them as engine-owned
+      // (#150). A merge that produced exactly the new render is managed.
+      ctx.nextFiles[action.path] = {
+        template: action.templateKey,
+        rendered_hash: action.baselineHash,
+        ownership: action.renderedHash === action.baselineHash ? 'managed' : 'modified',
+        ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
+      };
       ctx.summary.wroteFiles.push(action.path);
       ctx.summary.autoMergeStats.linesUnchanged += action.stats.linesUnchanged;
       ctx.summary.autoMergeStats.linesAutoMerged += action.stats.linesAutoMerged;
@@ -419,19 +440,19 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         ctx.summary.wroteFiles.push(action.path);
         ctx.summary.conflictsAcceptedNew++;
       } else {
-        // keep_mine / skip: leave the user's file on disk. `theirsHash`
-        // was captured at plan time so we don't need to re-read + rehash
-        // here. For a preexisting-untracked add collision, the user's
-        // file stays UNTRACKED — we never silently adopt content they
-        // didn't opt in to manage. For the standard modified-file
-        // conflict, track as modified so next drift picks up their
-        // version.
+        // keep_mine / skip: leave the user's file on disk. For a
+        // preexisting-untracked add collision, the user's file stays
+        // UNTRACKED — we never silently adopt content they didn't opt in
+        // to manage. For the standard modified-file conflict, track as
+        // modified at the NEW RENDER's hash: recording the user's hash
+        // would make the next drift read their bytes as engine-owned and
+        // overwrite them silently (#150).
         if (action.preexisting) {
           delete ctx.nextFiles[action.path];
         } else {
           ctx.nextFiles[action.path] = {
             template: action.templateKey,
-            rendered_hash: action.theirsHash,
+            rendered_hash: action.newContentHash,
             ownership: 'modified',
             ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
           };
@@ -463,9 +484,7 @@ async function applyDeleteAction(action: UpdateAction, ctx: DeleteContext): Prom
 }
 
 function buildFileState(
-  action:
-    | Extract<UpdateAction, { kind: 'overwrite' | 'add' | 'restore_missing' }>
-    | Extract<UpdateAction, { kind: 'auto_merge' }>,
+  action: Extract<UpdateAction, { kind: 'overwrite' | 'add' | 'restore_missing' }>,
   ownership: FileState['ownership'],
 ): FileState {
   return {

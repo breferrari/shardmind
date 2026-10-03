@@ -1,0 +1,236 @@
+/**
+ * #150: an update must never replace a file the user changed.
+ *
+ * Most cases run TWO updates, because the defect only shows on the second:
+ * the first records the user's content as the file's baseline, and the
+ * second reads "on-disk hash equals recorded hash" as "engine-owned,
+ * unmodified" and overwrites it. Each writer of `state.files` that could
+ * record the user's bytes gets a case.
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
+
+import { parseManifest } from '../../source/core/manifest.js';
+import { parseSchema, buildValuesValidator } from '../../source/core/schema.js';
+import { readState } from '../../source/core/state.js';
+import { detectDrift } from '../../source/core/drift.js';
+import { planUpdate, mergeModuleSelections } from '../../source/core/update-planner.js';
+import type { ConflictResolution } from '../../source/core/update-planner.js';
+import { runUpdate } from '../../source/core/update-executor.js';
+import { defaultModuleSelections, resolveComputedDefaults } from '../../source/core/install-planner.js';
+import { runInstall } from '../../source/core/install-executor.js';
+import { buildRenderContext } from '../../source/core/renderer.js';
+import { sha256 } from '../../source/core/fs-utils.js';
+import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MINIMAL_SHARD = path.resolve(__dirname, '../../examples/minimal-shard');
+
+const RESOLVED: ResolvedShard = {
+  namespace: 'shardmind',
+  name: 'minimal',
+  version: '0.1.0',
+  source: 'github:shardmind/minimal',
+  tarballUrl: 'n/a (local fixture)',
+};
+
+const BASE_VALUES = {
+  user_name: 'Alice',
+  org_name: 'Acme Labs',
+  vault_purpose: 'engineering' as const,
+  qmd_enabled: true,
+};
+
+/** Rendered: `Home.md.njk` renders `{{ install_date }}`, so its bytes change every run. */
+const HOME = 'Home.md';
+const HOME_SRC = 'Home.md.njk';
+const WELCOME = 'Welcome to your vault, {{ user_name }}.';
+/** Copy-origin: `CLAUDE.md` is copied verbatim. */
+const COPY = 'CLAUDE.md';
+const COPY_LINE = 'Static agent-config file for the minimal-shard fixture.';
+
+type SourceEdits = Record<string, (source: string) => string>;
+
+describe('update keeps the user\'s edits across updates (#150)', () => {
+  let root: string;
+  let vault: string;
+
+  beforeEach(async () => {
+    root = path.join(os.tmpdir(), `shardmind-150-${crypto.randomUUID()}`);
+    vault = path.join(root, 'vault');
+    await fsp.mkdir(vault, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+
+  async function install(): Promise<void> {
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+    const values = buildValuesValidator(schema).parse(
+      resolveComputedDefaults(schema, BASE_VALUES),
+    ) as Record<string, unknown>;
+    await runInstall({
+      vaultRoot: vault,
+      manifest,
+      schema,
+      tempDir: MINIMAL_SHARD,
+      resolved: { ...RESOLVED, version: manifest.version },
+      tarballSha256: 'sha-0.1.0',
+      values,
+      selections: defaultModuleSelections(schema),
+    });
+  }
+
+  /** A copy of the minimal shard at `version`, with each source file in `edits` rewritten. */
+  async function shardAt(version: string, edits: SourceEdits = {}): Promise<string> {
+    const dir = path.join(root, `shard-${version}`);
+    await fsp.cp(MINIMAL_SHARD, dir, { recursive: true });
+    const manifestPath = path.join(dir, '.shardmind', 'shard.yaml');
+    const manifest = await fsp.readFile(manifestPath, 'utf-8');
+    await fsp.writeFile(manifestPath, manifest.replace(/^version: .+$/m, `version: ${version}`), 'utf-8');
+    for (const [rel, edit] of Object.entries(edits)) {
+      const p = path.join(dir, rel);
+      await fsp.writeFile(p, edit(await fsp.readFile(p, 'utf-8')), 'utf-8');
+    }
+    return dir;
+  }
+
+  const welcome = (line: string): SourceEdits => ({ [HOME_SRC]: (s) => s.replace(WELCOME, line) });
+
+  /** One full update, drift to state write, resolving every conflict as `resolution`. */
+  async function update(shardDir: string, resolution: ConflictResolution = 'keep_mine') {
+    const state = (await readState(vault)) as ShardState;
+    const values = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
+    const manifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(shardDir, '.shardmind', 'shard-schema.yaml'));
+    const selections = mergeModuleSelections(state.modules, schema, {});
+    const drift = await detectDrift(vault, state);
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: values, new: values },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: buildRenderContext(manifest, values, selections),
+      },
+      removedFileDecisions: {},
+    });
+    const conflictResolutions = Object.fromEntries(plan.pendingConflicts.map((c) => [c.path, resolution]));
+    const result = await runUpdate({
+      vaultRoot: vault,
+      plan,
+      conflictResolutions,
+      currentState: state,
+      newManifest: manifest,
+      newSchema: schema,
+      newValues: values,
+      newSelections: selections,
+      resolved: { ...RESOLVED, version: manifest.version },
+      tarballSha256: `sha-${manifest.version}`,
+      newTempDir: shardDir,
+    });
+    return { plan, result };
+  }
+
+  const read = (rel: string) => fsp.readFile(path.join(vault, rel), 'utf-8');
+  const write = (rel: string, content: string) => fsp.writeFile(path.join(vault, rel), content, 'utf-8');
+  const recorded = async (rel: string) => ((await readState(vault)) as ShardState).files[rel]!;
+  const actionFor = (plan: { actions: Array<{ path: string; kind: string }> }, rel: string) =>
+    plan.actions.find((a) => a.path === rel)?.kind;
+
+  async function editFile(rel: string, from: string, to: string): Promise<void> {
+    const current = await read(rel);
+    expect(current).toContain(from);
+    await write(rel, current.replace(from, to));
+  }
+
+  it('a file kept with keep_mine survives the next update that does not change its template', async () => {
+    await install();
+    await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.');
+
+    // 0.2.0 changes the same line: a conflict, resolved keep_mine.
+    const first = await update(await shardAt('0.2.0', welcome('Welcome to your vault, {{ user_name }}! (v2)')));
+    expect(first.plan.pendingConflicts.map((c) => c.path)).toContain(HOME);
+    expect(await read(HOME)).toContain('My own welcome line.');
+
+    // 0.3.0 leaves Home.md.njk exactly as 0.2.0 had it.
+    await update(await shardAt('0.3.0', welcome('Welcome to your vault, {{ user_name }}! (v2)')));
+    expect(await read(HOME)).toContain('My own welcome line.');
+  });
+
+  it('a file kept with skip survives the next update that does not change its template', async () => {
+    await install();
+    await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.');
+
+    const first = await update(await shardAt('0.2.0', welcome('Welcome to your vault, {{ user_name }}! (v2)')), 'skip');
+    expect(first.plan.pendingConflicts.map((c) => c.path)).toContain(HOME);
+
+    await update(await shardAt('0.3.0', welcome('Welcome to your vault, {{ user_name }}! (v2)')), 'skip');
+    expect(await read(HOME)).toContain('My own welcome line.');
+  });
+
+  it('a kept file records the shard\'s render, not the user\'s bytes, as its baseline', async () => {
+    await install();
+    await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.');
+    await update(await shardAt('0.2.0', welcome('Welcome to your vault, {{ user_name }}! (v2)')));
+
+    const entry = await recorded(HOME);
+    expect(entry.rendered_hash).not.toBe(sha256(await fsp.readFile(path.join(vault, HOME))));
+    expect(entry.ownership).toBe('modified');
+  });
+
+  it('a line the user added survives a second update after an auto-merge', async () => {
+    await install();
+    await write(HOME, (await read(HOME)) + '\n- User-added link\n');
+
+    // 0.2.0 changes the welcome line: no overlap, so an auto-merge.
+    const first = await update(await shardAt('0.2.0', welcome('Welcome to your vault, {{ user_name }}! (v2)')));
+    expect(actionFor(first.plan, HOME)).toBe('auto_merge');
+    expect(await read(HOME)).toContain('User-added link');
+
+    // 0.3.0 changes the welcome line again.
+    await update(await shardAt('0.3.0', welcome('Welcome to your vault, {{ user_name }}! (v3)')));
+    const after = await read(HOME);
+    expect(after).toContain('Welcome to your vault, Alice! (v3)');
+    expect(after).toContain('User-added link');
+  });
+
+  it('a modified file the merge leaves alone keeps a modified label and the source\'s hash', async () => {
+    await install();
+    const pristineHash = (await recorded(COPY)).rendered_hash;
+    await editFile(COPY, COPY_LINE, 'My own line.');
+
+    // 0.2.0 changes a different file only: COPY's merge is a skip.
+    const { plan } = await update(await shardAt('0.2.0', welcome('Welcome, {{ user_name }}! (v2)')));
+    expect(actionFor(plan, COPY)).toBe('noop');
+
+    const after = await recorded(COPY);
+    expect(after.ownership).toBe('modified');
+    expect(after.rendered_hash).toBe(pristineHash);
+    expect(await read(COPY)).toContain('My own line.');
+  });
+
+  it('a pristine copy-origin file is still overwritten silently when its source changes', async () => {
+    await install();
+    const { plan } = await update(await shardAt('0.2.0', { [COPY]: (s) => s.replace(COPY_LINE, 'New upstream line.') }));
+    expect(actionFor(plan, COPY)).toBe('overwrite');
+    expect(plan.pendingConflicts).toEqual([]);
+    expect(await read(COPY)).toContain('New upstream line.');
+  });
+
+  it('a pristine rendered file is still overwritten silently when its template changes', async () => {
+    await install();
+    const { plan } = await update(await shardAt('0.2.0', welcome('Welcome, {{ user_name }}! (v2)')));
+    expect(actionFor(plan, HOME)).toBe('overwrite');
+    expect(await read(HOME)).toContain('Welcome, Alice! (v2)');
+  });
+});

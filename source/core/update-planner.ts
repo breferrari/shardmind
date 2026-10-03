@@ -44,17 +44,43 @@ const PLAN_IO_CONCURRENCY = 16;
  * field and the executor writes `content` as UTF-8.
  */
 export type UpdateAction =
-  | { kind: 'noop'; path: string; reason: string }
+  | {
+      kind: 'noop';
+      path: string;
+      reason: string;
+      /**
+       * Set when a modified file's merge left it as it is: the entry the
+       * executor records in its place, with the new render's hash as the
+       * baseline. A noop without it keeps the prior state entry.
+       */
+      rebaseline?: Rebaseline;
+    }
   | { kind: 'overwrite'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string; copyFromSourcePath?: string }
-  | { kind: 'auto_merge'; path: string; content: string; renderedHash: string; stats: MergeStats; templateKey: string | null; iteratorKey?: string }
+  | {
+      kind: 'auto_merge';
+      path: string;
+      content: string;
+      /** sha256 of the merged bytes written to disk (reported by `--json`). */
+      renderedHash: string;
+      /**
+       * sha256 of the new render: what the executor records as
+       * `rendered_hash`. Never the merged bytes, which hold the user's
+       * lines — recorded as the baseline, drift would read them as
+       * engine-owned and the next update would overwrite them (#150).
+       */
+      baselineHash: string;
+      stats: MergeStats;
+      templateKey: string | null;
+      iteratorKey?: string;
+    }
   | {
       kind: 'conflict';
       path: string;
       result: MergeResult;
       newContent: string;
       newContentHash: string;
-      /** sha256 of the user's on-disk content at plan time; lets the
-       * executor avoid re-reading + re-hashing on keep_mine / skip. */
+      /** sha256 of the user's on-disk content at plan time. Reported by
+       * `--json`; never recorded as the baseline (#150). */
       theirsHash: string;
       templateKey: string | null;
       iteratorKey?: string;
@@ -73,6 +99,20 @@ export type UpdateAction =
   | { kind: 'restore_missing'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string; copyFromSourcePath?: string }
   | { kind: 'delete'; path: string }
   | { kind: 'keep_as_user'; path: string };
+
+/**
+ * The state entry recorded for a modified file the update leaves on disk.
+ * `renderedHash` is always the engine's (the new render): per the
+ * baseline rule (`docs/SHARD-LAYOUT.md §Re-hash + state`), the user's
+ * bytes are never recorded there. `ownership` is `managed` only when the
+ * user's bytes already equal the new render.
+ */
+export interface Rebaseline {
+  renderedHash: string;
+  templateKey: string | null;
+  iteratorKey?: string;
+  ownership: 'managed' | 'modified';
+}
 
 export interface PendingConflict {
   path: string;
@@ -457,9 +497,21 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
         literal: target.copyFromSourcePath !== undefined,
       });
 
+      const templateKey = toTemplateKey(newTempDir, target.entry.sourcePath);
+      const iterator = target.entry.iterator ? { iteratorKey: target.entry.iterator } : {};
       switch (mergeAction.type) {
         case 'skip':
-          return { kind: 'noop', path: entry.path, reason: mergeAction.reason };
+          return {
+            kind: 'noop',
+            path: entry.path,
+            reason: mergeAction.reason,
+            rebaseline: {
+              renderedHash: target.hash,
+              templateKey,
+              ...iterator,
+              ownership: theirsHash === target.hash ? 'managed' : 'modified',
+            },
+          };
         case 'overwrite':
           // Shouldn't reach us for ownership='modified' (differ branches on
           // ownership before). Defensive no-op: preserve the user's file.
@@ -471,9 +523,10 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             path: entry.path,
             content,
             renderedHash: sha256(content),
+            baselineHash: target.hash,
             stats: mergeAction.stats,
-            templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
-            ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+            templateKey,
+            ...iterator,
           };
         }
         case 'conflict':
@@ -484,8 +537,8 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             newContent: target.content,
             newContentHash: target.hash,
             theirsHash,
-            templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
-            ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+            templateKey,
+            ...iterator,
           };
       }
     },
@@ -644,8 +697,8 @@ function conflictFromDirect(
 
 /**
  * Read a user file and produce both its string view (for the three-way
- * merge, which is line-oriented) and its bytewise hash (for `theirsHash`
- * which is recorded in state.files on `keep_mine`/`skip` resolutions).
+ * merge, which is line-oriented) and its bytewise hash (`theirsHash`, which
+ * decides whether the user's bytes already equal the new render).
  * Always hashes bytes — install-executor hashes copy-origin files this
  * way, so a bytewise hash here stays consistent across install/update
  * cycles even for content that isn't valid UTF-8.
