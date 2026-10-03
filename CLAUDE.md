@@ -394,6 +394,51 @@ These are documented fully in `docs/ARCHITECTURE.md`. Quick reference:
 | Dependencies | Vendored in v0.1 | Shard authors bundle deps. Validated, not fetched. |
 | Hook contract | Non-fatal | Hooks enhance but can't break install. Helm pattern. |
 
+## Where design decisions live
+
+The specs in `docs/` hold the contract. The reasoning behind it, earlier designs and lessons from other projects live outside this repo, reachable through the **`vigil` MCP server**. This repo declares its identity as `shardmind` in `.om-project`, which is what scopes `recall`, `remember` and `record_work` to this project.
+
+### Reading
+
+| Tool | Use it for |
+|---|---|
+| **`search`** | The full written record: why the ownership model is hash-based, why values and modules are separate, which layouts came before v6 and why they were dropped. **Start here.** |
+| **`expand`** | Once you have a specific note, see what it links to and what links back. Cheaper and more exact than searching again. |
+| **`recall`** | Short durable lessons scoped to this project. Pass `explain: true` when something you expected is missing: it tells "scoped away" from "never existed". |
+| **`reason`** | A judgement that needs several notes weighed against each other, such as "is this change consistent with what was decided". It spawns a second session, so it is slower and costs more. Use it only when `search` returned the notes but not the answer. |
+| **`health`** | When something that should be there cannot be found. Every failure in this layer looks the same from outside (no results), and this is what tells them apart. |
+| Resources | Notes are also exposed as `vault://note/<path>` and can be read directly when the title already answers the question. |
+
+**`recall` is empty until sessions put things in it.** For this project's first sessions it returns little or nothing, and that is *not* evidence the record is missing. Use `search`, and cite the note path you used.
+
+Consult the record before changing:
+
+- the ownership model and `state.json` (what `managed` / `modified` mean, what a recorded hash is the baseline of)
+- the merge engine (`drift.ts`, `differ.ts`, the three-way merge base)
+- the shard contract in `docs/SHARD-LAYOUT.md` (the invariants, file disposition tiers, hook boundaries)
+- the CLI surface (commands, flags, `--json` shapes, exit codes)
+
+If the record and this repo disagree, the repo's specs hold the *contract* and the record holds the *why*. A disagreement means one of them is stale: find out which and reconcile before changing behaviour, then fix the stale side in the same pass (the spec by its own commit, the vault by `record_work`).
+
+### Writing
+
+Two tools, and picking the wrong one is the common mistake. **The test is whether it helps someone working on a different project.**
+
+**`remember`** stores a durable **lesson**: a constraint you discovered, a gotcha that cost time, a rule that generalises. Not status, not a task summary.
+
+- `confidence` is `verified` | `inferred` | `unverified`. Supply `verification` whenever you claim `verified`: the test you ran or the source you read.
+- `scope` decides who sees the memory again:
+  - **`project`**: true because of how ShardMind is built. `projects: ["shardmind"]`. "A recorded hash is the merge base, so recording user bytes as it makes them engine-owned" is this.
+  - **`platform`**: true for anyone on the same technology. A Node, npm, Ink or Windows-filesystem fact is `platform` (`platforms: ["node"]`, `["windows"]`), not `general`.
+  - **`general`**: true with no platform at all, such as test shapes, review process, git workflow. It reaches every project the vault serves. If the lesson names a library, runtime or environment variable, it is almost certainly `platform`.
+- `links` connects it to existing notes by title. `supersedes` corrects an earlier memory. `dry_run: true` previews first.
+
+**`record_work`** files what happened **here**. Use it at the end of a real piece of work, written for a session that will not have your context: `summary`, `changes` (one line per file), `decisions` (especially rejected alternatives), `learned`, `open`, `verification` (tests run and their result, failures stated honestly). `kind: "decision"` files it as a decision record. `informed_by` credits the notes you actually read.
+
+Rule of thumb: **a `node-diff3` or Windows rename trap any Node project can hit is a `remember`** with `scope: "platform"`. **"Fixed #150 and here is what it cost" is a `record_work`.** Do both when both are true.
+
+Never move commercial reasoning (positioning, competitors, launch planning) into this repo. Architectural rationale belongs in the specs; strategic conclusions go to `remember`.
+
 ## Runtime Module
 
 `shardmind/runtime` is a separately bundled entry point for hook scripts. It has zero dependency on Ink, React, Pastel, or CLI code. ~30KB.
