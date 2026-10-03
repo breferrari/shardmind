@@ -943,6 +943,35 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
         expect((await recorded(NOTE)).ownership).toBe('managed');
       });
 
+      it('with --adopt-preexisting and nothing in the way, the new file is added as managed', async () => {
+        await install();
+        const { result } = await adopting(await withNote('0.2.0'));
+        expect(result.summary.keptUntracked).toEqual([]);
+        expect(await read(NOTE)).toBe(BODY);
+        expect((await recorded(NOTE)).ownership).toBe('managed');
+      });
+
+      it('with --adopt-preexisting, a kept binary is tracked and later changes skip the line merge (#63)', async () => {
+        const BIN = 'assets/new.bin';
+        const MINE_BIN = Buffer.from([0x89, 0x50, 0x00, 0xc3, 0x28, 0x01]);
+        const shardWith = async (version: string, bytes: Buffer) => {
+          const dir = await shardAt(version);
+          await fsp.mkdir(path.join(dir, 'assets'), { recursive: true });
+          await fsp.writeFile(path.join(dir, BIN), bytes);
+          return dir;
+        };
+        await install();
+        await fsp.mkdir(path.join(vault, 'assets'), { recursive: true });
+        await fsp.writeFile(path.join(vault, BIN), MINE_BIN);
+
+        await adopting(await shardWith('0.2.0', Buffer.from([0x89, 0x50, 0x00, 0x02])));
+        expect((await recorded(BIN)).ownership).toBe('modified');
+
+        const { plan } = await adopting(await shardWith('0.3.0', Buffer.from([0x89, 0x50, 0x00, 0x03])));
+        expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toBeDefined();
+        expect(await fsp.readFile(path.join(vault, BIN))).toEqual(MINE_BIN);
+      });
+
       it('a dry run with --adopt-preexisting writes no state', async () => {
         await install();
         await write(NOTE, MINE);
