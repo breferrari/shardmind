@@ -69,7 +69,6 @@ Every PR for a v6 issue must demonstrate in its description:
 - [ ] `npm test` passes (all scopes).
 - [ ] New behavior has new tests (§2) — no code without tests.
 - [ ] Adversarial cases from §3 are enumerated and covered.
-- [ ] Copilot review requested and addressed (or each flag explicitly justified as false-positive in PR conversation).
 - [ ] Once [#78](https://github.com/breferrari/shardmind/issues/78) lands: Invariant 1 E2E test still green.
 - [ ] Issue's acceptance criteria checked off with evidence.
 - [ ] Roadmap row's mark updated in the same PR.

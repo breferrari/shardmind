@@ -6,12 +6,12 @@ The reader invoked `/take-next unattended-loop`. That invocation is plan approva
 
 - **Step 3 does not wait, and skips plan mode.** Write the plan as usual and post it on the issue, headed "Plan (pre-approved by the reader for this run)". Then build. This replaces "Step 3 is a real stop".
 - **The four stops stop the item, not the loop.** A contradiction with the spec, a task that is two tasks, a destructive action outside the branch, or a decline or narrowing of what the reader asked for: do not build past it. If a draft PR is open, leave it open with the question at the top of its body. Record the question for the final report and take the next item. A new dependency or a contract change in `docs/SHARD-LAYOUT.md` is the reader's, and goes to the report the same way.
-- **A wait does not block.** After `gh pr ready`, start the next pass in a new worktree while CI and the Copilot review run. While review agents run, apply each report as it arrives, then build. Merging still waits for its green run.
+- **A wait does not block.** After `gh pr ready`, start the next pass in a new worktree while CI runs. While review agents run, apply each report as it arrives, then build. Merging still waits for its green run.
 - **Nothing releases.** The loop merges; tagging stays with the reader after `RELEASE-SMOKE.md`.
 
 ## Merging
 
-- Merge a PR when the `CI` run on its **head** is green and step 7's Copilot comments each have a reply. Then remove its worktree and local branch in the same step.
+- Merge a PR when the `CI` run on its **head** is green. Then remove its worktree and local branch in the same step.
 - A red run stops merging. Fix it before the next pass starts.
 - When `main` moves under an open PR, rebase it. On a `ROADMAP.md` or `CHANGELOG.md` conflict, keep both sides' rows. Then rerun `npm run typecheck && npm test`.
 
