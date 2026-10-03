@@ -768,6 +768,18 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       expect(updatePlanResult(plan, { dryRun: true }).files.find((f) => f.path === BIN)?.binary).toBe(true);
     });
 
+    it('an untracked binary identical to a newly added path is adopted without a prompt (#62)', async () => {
+      await install();
+      await fsp.mkdir(path.join(vault, 'assets'), { recursive: true });
+      await fsp.writeFile(path.join(vault, BIN), V2);
+
+      const { plan } = await update(await shardWithBin('0.2.0', V2));
+      expect(plan.pendingConflicts.map((c) => c.path)).not.toContain(BIN);
+      expect(actionFor(plan, BIN)).toBe('noop');
+      expect((await recorded(BIN)).ownership).toBe('managed');
+      expect(await disk()).toEqual(V2);
+    });
+
     it('an untracked binary at a path the new version adds gets the binary prompt', async () => {
       await install();
       await fsp.mkdir(path.join(vault, 'assets'), { recursive: true });
@@ -785,6 +797,59 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       const { plan } = await update(await shardWithBin('0.2.0', V2));
       expect(actionFor(plan, BIN)).toBe('overwrite');
       expect(await disk()).toEqual(V2);
+    });
+  });
+
+  // #62: a prompt whose two answers both leave the same bytes is noise.
+  describe('an untracked file at a path the new version adds', () => {
+    const NOTE = 'brain/New Note.md';
+    const BODY = '# New\n\nShipped in 0.2.0.\n';
+    const withNote = (version: string, body = BODY) => shardAt(version, { [NOTE]: () => body });
+
+    it('is adopted as managed without a prompt when it is identical', async () => {
+      await install();
+      await write(NOTE, BODY);
+
+      const { plan, result } = await update(await withNote('0.2.0'));
+      expect(plan.pendingConflicts.map((c) => c.path)).not.toContain(NOTE);
+      expect(actionFor(plan, NOTE)).toBe('noop');
+      expect(await recorded(NOTE)).toMatchObject({ ownership: 'managed', rendered_hash: sha256(BODY) });
+      expect(await read(NOTE)).toBe(BODY);
+      // Not newly written by the engine, so not a post-update hook's newFiles.
+      expect(result.summary.addedFiles).not.toContain(NOTE);
+    });
+
+    it('still prompts when it differs', async () => {
+      await install();
+      await write(NOTE, '# My own note\n');
+
+      const { plan } = await update(await withNote('0.2.0'));
+      expect(plan.pendingConflicts.map((c) => c.path)).toContain(NOTE);
+    });
+
+    it('still prompts when only the line endings differ (equality is byte-exact)', async () => {
+      await install();
+      await write(NOTE, BODY.replace(/\n/g, '\r\n'));
+
+      const { plan } = await update(await withNote('0.2.0'));
+      expect(plan.pendingConflicts.map((c) => c.path)).toContain(NOTE);
+    });
+
+    it('behaves as a normal managed file on the next update', async () => {
+      await install();
+      await write(NOTE, BODY);
+      await update(await withNote('0.2.0'));
+
+      const { plan } = await update(await withNote('0.3.0', '# New\n\nChanged in 0.3.0.\n'));
+      expect(actionFor(plan, NOTE)).toBe('overwrite');
+      expect(await read(NOTE)).toContain('Changed in 0.3.0.');
+    });
+
+    it('shows as a noop in the --dry-run --json plan', async () => {
+      await install();
+      await write(NOTE, BODY);
+      const { plan } = await update(await withNote('0.2.0'), 'keep_mine', true);
+      expect(updatePlanResult(plan, { dryRun: true }).files.find((f) => f.path === NOTE)?.action).toBe('noop');
     });
   });
 

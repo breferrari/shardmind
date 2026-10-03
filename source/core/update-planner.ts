@@ -686,6 +686,17 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
           ...copyFrom(output),
         };
       }
+      // The user already has exactly the new version: a prompt here would
+      // offer two answers that both leave the same bytes. Adopt the file as
+      // managed, with no write (#62).
+      if (actualRead.hash === output.hash) {
+        return {
+          kind: 'noop',
+          path: output.outputPath,
+          reason: 'identical to the new version',
+          rebaseline: rebaselineOf(output, newTempDir, 'managed'),
+        };
+      }
       // A binary collision gets the whole-file binary prompt, not a text
       // diff of decoded bytes (#63).
       const shard = await shardBytesInfo(output);
@@ -706,6 +717,8 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     actions.push(action);
     if (action.kind === 'add') {
       counts.added++;
+    } else if (action.kind === 'noop') {
+      counts.silent++;
     } else if (action.kind === 'conflict') {
       // Same accounting as a modified-file conflict so the pending-
       // conflicts count in the summary stays coherent.
