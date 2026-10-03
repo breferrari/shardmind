@@ -24,6 +24,7 @@ const baseProps = {
   fileCount: 23,
   durationMs: 1234,
   backups: [] as BackupRecord[],
+  replaced: [] as string[],
   hooks: [],
 };
 

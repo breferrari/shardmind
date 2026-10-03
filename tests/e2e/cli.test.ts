@@ -666,8 +666,13 @@ describe('shardmind install', () => {
 
   it('--yes --force reinstalls over an existing install without a TTY', async () => {
     vault = await installed('install-force-reinstall');
+    await vault.writeFile('brain/North Star.md', 'my own north star\n');
     const result = await installForce({ ...DEFAULT_VALUES, user_name: 'Bob' });
     expect(result.exitCode).toBe(0);
+    // Only the file the user edited held content of theirs; the old
+    // install's untouched files are not listed as lost.
+    expect(result.stdout).toMatch(/Replaced 1 existing file \(no backup\)/);
+    expect(result.stdout).toMatch(/North Star\.md/);
     expect(result.stdout).not.toMatch(/INSTALL_GATE_NON_INTERACTIVE/);
     expect(await vault.readFile('shard-values.yaml')).toContain('Bob');
     expect(await vault.readFile('Home.md')).toContain('Bob');
@@ -696,15 +701,42 @@ describe('shardmind install', () => {
     expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);
   });
 
-  it('--force --dry-run over an existing install refuses and changes nothing', async () => {
+  it('--force --dry-run over an existing install previews the reinstall and changes nothing', async () => {
     vault = await installed('install-force-dry-reinstall');
     const stateBefore = await vault.readFile('.shardmind/state.json');
+    const valuesBefore = await vault.readFile('shard-values.yaml');
     const result = await spawnCli(['install', SHARD_REF, '--dry-run', '--yes', '--force'], {
       cwd: vault.root,
       env: envWithStub(),
     });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/cannot run under --dry-run/);
+    expect(result.stdout).toMatch(/Dry run complete/);
+    expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+    expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);
+    await expectNoBackup();
+  });
+
+  it('--force --values reinstalls without a TTY and without --yes', async () => {
+    vault = await installed('install-force-headless-values');
+    const valuesPath = await writeValuesFile(vault, { ...DEFAULT_VALUES, user_name: 'Bob' });
+    const result = await spawnCli(['install', SHARD_REF, '--force', '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(await vault.readFile('shard-values.yaml')).toContain('Bob');
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+  });
+
+  it('--force without a TTY and without values refuses and keeps the existing install', async () => {
+    vault = await installed('install-force-headless-novalues');
+    const stateBefore = await vault.readFile('.shardmind/state.json');
+    const result = await spawnCli(['install', SHARD_REF, '--force'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/INSTALL_NON_INTERACTIVE_WITHOUT_VALUES/);
     expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
   });
 

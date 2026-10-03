@@ -10,7 +10,6 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import fsp from 'node:fs/promises';
-import path from 'node:path';
 import { useApp, useStdin } from 'ink';
 import { loadValuesYaml } from '../../core/values-io.js';
 
@@ -35,6 +34,7 @@ import {
   resolveComputedDefaults,
   missingValueKeys,
   defaultModuleSelections,
+  pathsWithOwnContent,
   type Collision,
 } from '../../core/install-planner.js';
 import {
@@ -83,6 +83,16 @@ export type Phase =
   | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; fileCount: number; durationMs: number; backups: BackupRecord[]; replaced: string[]; hooks: HookOutcome[]; dryRun: boolean }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
+
+/** Where an install's collisions went before it wrote (#55). */
+interface PlacedCollisions {
+  /** Kept as `<path>.shardmind-backup-<timestamp>` and reported. */
+  backups: BackupRecord[];
+  /** Replaced with no backup and holding the user's own content; reported. */
+  replaced: string[];
+  /** Moved aside to restore on failure, deleted once the install succeeds. */
+  setAside: BackupRecord[];
+}
 
 export interface UseInstallMachineInput {
   shardRef: string;
@@ -143,6 +153,11 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   const writtenPathsRef = useRef<string[]>([]);
   const backupsRef = useRef<BackupRecord[]>([]);
   const installingRef = useRef(false);
+  // The install a reinstall replaces (gate Reinstall or `--force`, #55),
+  // read before anything moves: its state and values are set aside with
+  // the collisions, and its recorded hashes tell its untouched files from
+  // the user's own content.
+  const previousInstallRef = useRef<ShardState | null>(null);
   // AbortController that owns the currently-executing post-install hook.
   // Null when no hook is in flight. Ctrl+C in the running-hook phase
   // aborts the subprocess but does NOT roll back the install (we're
@@ -212,7 +227,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           throw new ShardMindError(
             `Vault already shardmind-managed (${existing.shard}@${existing.version}); --defaults refuses to overwrite`,
             'INSTALL_DEFAULTS_OVER_EXISTING',
-            'Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.',
+            'Run `shardmind update` to upgrade the existing install in place, or add --force to reinstall from scratch.',
           );
         }
 
@@ -255,10 +270,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           alwaysIncludedFileCount,
         };
 
+        if (disposed) return;
         if (existing) {
-          if (disposed) return;
           if (force) {
-            await reinstall(ctx);
+            await reinstall(ctx, existing);
             return;
           }
           // The gate is a prompt, and `--yes` does not answer it — overwriting
@@ -268,37 +283,13 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
             throw new ShardMindError(
               `Vault already shardmind-managed (${existing.shard}@${existing.version}); cannot prompt for a choice without an interactive terminal`,
               'INSTALL_GATE_NON_INTERACTIVE',
-              'Run `shardmind update` to upgrade in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch.',
+              'Run `shardmind update` to upgrade in place, or add --force to reinstall from scratch.',
             );
           }
           setPhase({ kind: 'gate', state: existing, ctx });
           return;
         }
-
-        if (disposed) return;
-        if (nonInteractive) {
-          await runNonInteractive(ctx);
-        } else if (!isRawModeSupported) {
-          // `--values` is a *prefill* for the wizard, not a skip — which is
-          // right with a terminal and impossible without one. When every
-          // answer is already on disk there is nothing left to prompt for, so
-          // take the non-interactive path rather than failing on a wizard the
-          // caller never needed.
-          if (valuesFile !== undefined) {
-            await runNonInteractive(ctx);
-          } else {
-            // No terminal and no answers. Refusing beats installing schema
-            // defaults nobody chose: a silently-defaulted vault records
-            // `user_name: ""` as if the user had picked it (#139).
-            throw new ShardMindError(
-              'No interactive terminal, and no values were supplied',
-              'INSTALL_NON_INTERACTIVE_WITHOUT_VALUES',
-              'Pass --values <file> to supply answers, or --yes / --defaults to accept schema defaults deliberately.',
-            );
-          }
-        } else {
-          setPhase({ kind: 'wizard', ctx });
-        }
+        await collectAnswers(ctx);
       } catch (err) {
         if (disposed) return;
         finish({ kind: 'error', error: err as Error });
@@ -314,13 +305,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shardRef, valuesFile, yes, defaults, force, isRawModeSupported]);
 
-  /**
-   * The answers a run with no wizard installs: prefill over schema
-   * defaults, validated. Throws before anything is written, so a caller
-   * about to remove an existing install can check them first (#55).
-   */
-  const resolveNonInteractive = useCallback(
-    (ctx: PreparedContext): WizardResult => {
+  const runNonInteractive = useCallback(
+    async (ctx: PreparedContext) => {
       const merged = mergePrefill(ctx.schema, ctx.prefillValues);
       const missing = missingValueKeys(ctx.schema, merged);
       if (missing.length > 0) {
@@ -340,56 +326,72 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       const validated = validator.parse(
         resolveComputedDefaults(ctx.schema, merged),
       ) as Record<string, unknown>;
-      return { values: validated, selections: defaultModuleSelections(ctx.schema) };
+      await handleWizardCompleteRef.current(
+        { values: validated, selections: defaultModuleSelections(ctx.schema) },
+        ctx,
+      );
     },
     [yes],
   );
 
-  const runNonInteractive = useCallback(
-    async (ctx: PreparedContext) => {
-      await handleWizardCompleteRef.current(resolveNonInteractive(ctx), ctx);
-    },
-    [resolveNonInteractive],
-  );
-
   /**
-   * Reinstall from scratch over an existing install: the gate's Reinstall
-   * choice, or `--force` (#55). A non-interactive run validates its values
-   * before removing anything, so a bad `--values` file fails with the
-   * existing install intact. An interactive one removes it, then runs the
-   * wizard, as the gate always has.
+   * Get the install's answers: without a wizard when the flags or a
+   * headless `--values` run supply them, else from the wizard. Shared by a
+   * fresh install and a reinstall, so `--force` without a terminal follows
+   * the same rules as any install (#55).
    */
-  const reinstall = useCallback(
+  const collectAnswers = useCallback(
     async (ctx: PreparedContext) => {
-      if (dryRun) {
-        finish({
-          kind: 'cancelled',
-          reason: 'Reinstall is destructive and cannot run under --dry-run. Drop --dry-run to reinstall.',
-        });
-        return;
-      }
-      const answers = nonInteractive ? resolveNonInteractive(ctx) : null;
-      await Promise.all([
-        fsp.rm(path.join(vaultRoot, SHARDMIND_DIR), { recursive: true, force: true }),
-        fsp.rm(path.join(vaultRoot, VALUES_FILE), { force: true }),
-      ]);
-      if (answers) {
-        await handleWizardCompleteRef.current(answers, ctx);
+      if (nonInteractive) {
+        await runNonInteractive(ctx);
+      } else if (!isRawModeSupported) {
+        // `--values` is a *prefill* for the wizard, not a skip — which is
+        // right with a terminal and impossible without one. When every
+        // answer is already on disk there is nothing left to prompt for, so
+        // take the non-interactive path rather than failing on a wizard the
+        // caller never needed.
+        if (valuesFile !== undefined) {
+          await runNonInteractive(ctx);
+        } else {
+          // No terminal and no answers. Refusing beats installing schema
+          // defaults nobody chose: a silently-defaulted vault records
+          // `user_name: ""` as if the user had picked it (#139).
+          throw new ShardMindError(
+            'No interactive terminal, and no values were supplied',
+            'INSTALL_NON_INTERACTIVE_WITHOUT_VALUES',
+            'Pass --values <file> to supply answers, or --yes / --defaults to accept schema defaults deliberately.',
+          );
+        }
       } else {
         setPhase({ kind: 'wizard', ctx });
       }
     },
-    [dryRun, nonInteractive, resolveNonInteractive, vaultRoot, finish],
+    [nonInteractive, isRawModeSupported, valuesFile, runNonInteractive],
+  );
+
+  /**
+   * Reinstall from scratch over an existing install: the gate's Reinstall
+   * choice, or `--force` (#55). Nothing is removed here: the old install
+   * is set aside only once the answers are in (`placeCollisions`), so a
+   * cancelled wizard or a bad `--values` file leaves it as it was.
+   */
+  const reinstall = useCallback(
+    async (ctx: PreparedContext, previous: ShardState) => {
+      previousInstallRef.current = previous;
+      await collectAnswers(ctx);
+    },
+    [collectAnswers],
   );
 
   const executeInstall = useCallback(
-    async (ctx: PreparedContext, result: WizardResult, backups: BackupRecord[], replaced: string[] = []) => {
+    async (ctx: PreparedContext, result: WizardResult, placed: PlacedCollisions) => {
+      const { backups, replaced, setAside } = placed;
       const start = Date.now();
       const history: string[] = [];
 
-      // Register backups + reset writtenPaths so the SIGINT handler sees
-      // live state from the first byte written.
-      backupsRef.current = backups;
+      // Register everything moved aside + reset writtenPaths so the SIGINT
+      // handler sees live state from the first byte written.
+      backupsRef.current = [...backups, ...setAside];
       writtenPathsRef.current = [];
       installingRef.current = true;
 
@@ -453,6 +455,12 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         // remaining work (hook subprocess) is non-fatal per spec §9.3.
         installingRef.current = false;
 
+        // What was set aside only to be restored on failure goes now: a
+        // replaced file and an old install's state leave no backup (#55).
+        await Promise.all(
+          setAside.map((m) => fsp.rm(m.backupPath, { recursive: true, force: true }).catch(() => {})),
+        );
+
         // The hook orchestrator owns slot selection (bootstrap → personalize,
         // legacy post-install once), per-slot context, write-boundary checks,
         // the post-hook re-hash, and fingerprint persistence. A fresh
@@ -501,7 +509,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         });
       } catch (err) {
         if (!dryRun) {
-          await rollbackInstall(vaultRoot, written, backups).catch(() => {});
+          await rollbackInstall(vaultRoot, written, [...backups, ...setAside]).catch(() => {});
         }
         installingRef.current = false;
         finish({
@@ -515,22 +523,39 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   );
 
   /**
-   * Remove each colliding path, with no backup, and install over it: the
-   * interactive Overwrite choice, or `--force` (#55). The user authorized
-   * the loss. A directory at a planned file path goes too, so `writeFile`
-   * doesn't hit EISDIR; a symlink is removed, not its target. A dry run
-   * removes nothing and reports what it would replace.
+   * Move each colliding path out of the way and install. `backup` keeps
+   * what it moved as `<path>.shardmind-backup-<timestamp>`; `overwrite`
+   * (the Overwrite choice, or `--force`, #55) sets it aside, restores it
+   * if the install fails, and deletes it once the new state is written. On
+   * a reinstall the old `.shardmind/` and `shard-values.yaml` are set aside
+   * the same way. A directory at a planned file path moves too, so
+   * `writeFile` doesn't hit EISDIR; a symlink moves, not its target. A dry
+   * run moves nothing.
    */
-  const overwriteCollisions = useCallback(
-    async (ctx: PreparedContext, result: WizardResult, collisions: Collision[]) => {
-      if (!dryRun) {
-        await Promise.all(
-          collisions.map((c) => fsp.rm(c.absolutePath, { recursive: true, force: true })),
-        );
+  const placeCollisions = useCallback(
+    async (
+      ctx: PreparedContext,
+      result: WizardResult,
+      collisions: Collision[],
+      policy: 'backup' | 'overwrite',
+    ) => {
+      const previous = previousInstallRef.current;
+      const replaced =
+        policy === 'overwrite' ? await pathsWithOwnContent(collisions, previous) : [];
+      if (dryRun) {
+        await executeInstall(ctx, result, { backups: [], replaced, setAside: [] });
+        return;
       }
-      await executeInstall(ctx, result, [], collisions.map((c) => c.outputPath));
+      const oldInstall = previous ? await detectCollisions(vaultRoot, [SHARDMIND_DIR, VALUES_FILE]) : [];
+      const moved = await backupCollisions([...oldInstall, ...collisions]);
+      const kept = new Set(policy === 'backup' ? collisions.map((c) => c.absolutePath) : []);
+      await executeInstall(ctx, result, {
+        backups: moved.filter((m) => kept.has(m.originalPath)),
+        replaced,
+        setAside: moved.filter((m) => !kept.has(m.originalPath)),
+      });
     },
-    [dryRun, executeInstall],
+    [dryRun, vaultRoot, executeInstall],
   );
 
   const handleWizardComplete = useCallback(
@@ -543,30 +568,22 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         const { outputs } = await planOutputs(ctx.schema, ctx.tempDir, validatedResult.selections);
         const collisions = await detectCollisions(vaultRoot, outputs.map((o) => o.outputPath));
 
-        if (collisions.length > 0) {
-          if (force) {
-            await overwriteCollisions(ctx, validatedResult, collisions);
-          } else if (nonInteractive) {
-            // Non-interactive policy: auto-backup. Dry-run must skip the
-            // disk action. Applies to both `--yes` and `--defaults`; the
-            // collision UI requires interactive input neither mode can
-            // provide. (Under `--defaults` an existing managed install is
-            // already rejected pre-flight, but unmanaged user content at a
-            // planned-write path is still a legitimate collision case.)
-            const backups = dryRun ? [] : await backupCollisions(collisions);
-            await executeInstall(ctx, validatedResult, backups);
-          } else {
-            setPhase({ kind: 'collision', collisions, result: validatedResult, ctx });
-          }
-          return;
+        if (collisions.length > 0 && force) {
+          await placeCollisions(ctx, validatedResult, collisions, 'overwrite');
+        } else if (collisions.length > 0 && !nonInteractive) {
+          setPhase({ kind: 'collision', collisions, result: validatedResult, ctx });
+        } else {
+          // Non-interactive policy: auto-backup. Applies to both `--yes` and
+          // `--defaults`; the collision UI requires interactive input neither
+          // mode can provide. With no collisions this only sets a
+          // reinstall's old state aside.
+          await placeCollisions(ctx, validatedResult, collisions, 'backup');
         }
-
-        await executeInstall(ctx, validatedResult, []);
       } catch (err) {
         finish({ kind: 'error', error: err as Error });
       }
     },
-    [force, nonInteractive, dryRun, vaultRoot, executeInstall, overwriteCollisions, finish],
+    [force, nonInteractive, vaultRoot, placeCollisions, finish],
   );
 
   useEffect(() => {
@@ -583,17 +600,12 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       }
 
       try {
-        if (action === 'backup') {
-          const backups = await backupCollisions(collisions);
-          await executeInstall(ctx, result, backups);
-          return;
-        }
-        await overwriteCollisions(ctx, result, collisions);
+        await placeCollisions(ctx, result, collisions, action);
       } catch (err) {
         finish({ kind: 'error', error: err as Error });
       }
     },
-    [phase, finish, executeInstall, overwriteCollisions],
+    [phase, finish, placeCollisions],
   );
 
   const onGateChoice = useCallback(
@@ -611,7 +623,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         return;
       }
       if (choice === 'reinstall') {
-        reinstall(phase.ctx).catch((err: unknown) => {
+        reinstall(phase.ctx, phase.state).catch((err: unknown) => {
           finish({ kind: 'error', error: err as Error });
         });
       }

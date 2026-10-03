@@ -43,6 +43,7 @@ const SLUG_NUMBER_TYPE = 'acme/number-range';
 const SLUG_COMPUTED = 'acme/computed-default';
 const SLUG_MULTISELECT = 'acme/multiselect';
 const SLUG_VERSION_MISMATCH = 'acme/future-engine';
+const SLUG_BROKEN = 'acme/broken-render';
 
 describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10)', () => {
   const getCtx = setupFlowSuite({
@@ -68,6 +69,10 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         latest: '0.1.0',
       },
       [SLUG_VERSION_MISMATCH]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
+      [SLUG_BROKEN]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
@@ -661,8 +666,10 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
       r.stdin.write(ENTER);
       const frame = await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
-      // The old install's files are collisions now, replaced with no backup.
-      expect(frame).toContain('(no backup)');
+      // The old install's files were untouched, so nothing of the user's was lost.
+      expect(frame).not.toContain('(no backup)');
+      const entries = await fs.readdir(vault.root);
+      expect(entries.filter((e) => e.includes('shardmind-backup-'))).toEqual([]);
       expect(await vault.readFile('shard-values.yaml')).toContain('Bob');
     } finally {
       await vault.cleanup();
@@ -686,4 +693,79 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await cleanupVault(vault);
     }
   }, 45_000);
+  // ───── Scenario 16: --force → wizard → Cancel keeps the existing install (#55) ─────
+
+  it('16. --force over an existing install → wizard → Cancel → existing install intact (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's16-force-cancel',
+    });
+    try {
+      const stateBefore = await vault.readFile('.shardmind/state.json');
+      const valuesBefore = await vault.readFile('shard-values.yaml');
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root, options: { force: true } });
+      await driveMinimalWizard(r, 'Bob');
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      // Confirm options: [install, back, cancel].
+      r.stdin.write(ARROW_DOWN);
+      r.stdin.write(ARROW_DOWN);
+      await tick(40);
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => /cancelled/i.test(f), 15_000);
+      expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+      expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
+
+  // ───── Scenario 17: a --force reinstall that fails puts everything back (#55) ─────
+
+  it('17. --yes --force reinstall whose render fails → old install and edits restored, nothing left aside (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's17-force-rollback',
+    });
+    try {
+      await vault.writeFile('Home.md', 'my edited home\n');
+      const stateBefore = await vault.readFile('.shardmind/state.json');
+      const valuesBefore = await vault.readFile('shard-values.yaml');
+      const tarPath = await buildCustomTarball({
+        version: '0.1.0',
+        prefix: 'broken-render-0.1.0',
+        manifestOverrides: { hooks: {}, name: 'minimal', namespace: 'shardmind' },
+        outDir: vault.root,
+        mutate: async (work) => {
+          await fs.writeFile(path.join(work, 'zz-broken.md.njk'), '{{ not_a_function() }}\n');
+        },
+      });
+      stub.setRef(SLUG_BROKEN, 'v0.1.0', STUB_SHA, tarPath);
+      const r = mountInstall({
+        shardRef: `github:${SLUG_BROKEN}#v0.1.0`,
+        vaultRoot: vault.root,
+        options: { yes: true, force: true },
+      });
+      // An error exits ~100 ms after rendering, which clears lastFrame; read the history.
+      await waitFor(() => r.frames.join('\n'), (f) => /RENDER_TEMPLATE_ERROR/.test(f), 30_000);
+      await tick(200);
+      expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+      expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);
+      expect(await vault.readFile('Home.md')).toBe('my edited home\n');
+      const entries = await fs.readdir(vault.root);
+      expect(entries.filter((e) => e.includes('shardmind-backup-'))).toEqual([]);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
 });

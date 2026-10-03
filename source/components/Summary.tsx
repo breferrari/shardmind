@@ -27,7 +27,7 @@ interface SummaryProps {
   durationMs: number;
   backups: BackupRecord[];
   /** Vault-relative paths replaced with no backup: Overwrite or `--force` (#55). */
-  replaced?: string[];
+  replaced: string[];
   hooks: HookOutcome[];
   dryRun?: boolean;
 }
@@ -38,7 +38,7 @@ export default function Summary({
   fileCount,
   durationMs,
   backups,
-  replaced = [],
+  replaced,
   hooks,
   dryRun,
 }: SummaryProps) {
