@@ -333,6 +333,25 @@ describe('executeHook — subprocess runtime', () => {
     expect(result.stderr).toContain('boom');
   }, 30_000);
 
+  // The flush in #106 must not turn into waiting for the hook's own handles:
+  // a hook that throws with a timer still running exits 1, not on timeout.
+  it('still exits 1 promptly when a hook throws with a timer left running (#106)', async () => {
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          setInterval(() => {}, 1000);
+          console.log('before throw');
+          throw new Error('boom');
+        }
+      `,
+    );
+    const result = await executeHook(hookPath, baseCtx(), { timeoutMs: 20_000 });
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}: ${result.message}`);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain('before throw');
+  }, 30_000);
+
   it('surfaces a syntax-error hook as ran + exitCode 1 with the parse error captured', async () => {
     const hookPath = await writeHook(
       'hook.ts',
