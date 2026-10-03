@@ -20,15 +20,17 @@ const CONTEXT_LINES = 3;
  */
 const DIFF_ACTIONS = new Set<DiffAction>(['accept_new', 'keep_mine', 'skip']);
 
-const SELECT_OPTIONS = [
+const SELECT_OPTIONS: Array<{ label: string; value: string }> = [
   { label: 'Accept new (use shard version)', value: 'accept_new' },
   { label: 'Keep mine (preserve your edits)', value: 'keep_mine' },
   { label: 'Skip this file', value: 'skip' },
   { label: '(Open in editor · v0.2)', value: 'open_editor_disabled' },
-] as const;
+];
 
 /** An add-collision has no edits to preserve: the file is the user's own (#60). */
-const PREEXISTING_KEEP_LABEL = 'Keep mine (keep your file)';
+const PREEXISTING_OPTIONS = SELECT_OPTIONS.map((o) =>
+  o.value === 'keep_mine' ? { ...o, label: 'Keep mine (keep your file)' } : o,
+);
 
 interface DiffViewProps {
   path: string;
@@ -104,10 +106,7 @@ export default function DiffView({
 
       <Select
         key={filePath}
-        options={SELECT_OPTIONS.map((o) => ({
-          label: preexisting && o.value === 'keep_mine' ? PREEXISTING_KEEP_LABEL : o.label,
-          value: o.value,
-        }))}
+        options={preexisting ? PREEXISTING_OPTIONS : SELECT_OPTIONS}
         onChange={(choice) => {
           if (!DIFF_ACTIONS.has(choice as DiffAction)) return;
           if (!tryFire()) return;

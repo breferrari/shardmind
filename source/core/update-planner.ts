@@ -729,7 +729,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     } else if (action.kind === 'conflict') {
       // Same accounting as a modified-file conflict so the pending-
       // conflicts count in the summary stays coherent.
-      pendingConflicts.push({ path: action.path, result: action.result, preexisting: true });
+      pendingConflicts.push({ path: action.path, result: action.result, preexisting: action.preexisting });
       counts.conflicts++;
     }
   }

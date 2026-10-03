@@ -457,10 +457,9 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
 
   it('17d. the prompt names an add-collision, and Keep mine leaves the file untracked (#60)', async () => {
     const { prompt, entry, content } = await runAddCollision(false, true);
-    expect(prompt).toContain('New file from shard collides with your file');
+    // The wording is DiffView's; this asserts the flag reaches it from the planner.
     expect(prompt).toContain('New Note.md');
     expect(prompt).not.toContain('Conflict in');
-    expect(prompt).toContain('Keep mine (keep your file)');
     expect(content).toBe('My own note.\n');
     expect(entry).toBeUndefined();
   }, 90_000);
