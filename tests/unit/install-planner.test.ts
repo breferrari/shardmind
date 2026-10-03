@@ -10,7 +10,10 @@ import {
   missingValueKeys,
   defaultModuleSelections,
   hashValues,
+  pathsWithOwnContent,
 } from '../../source/core/install-planner.js';
+import { sha256 } from '../../source/core/fs-utils.js';
+import { makeShardState } from '../helpers/shard-state.js';
 import {
   backupCollisions,
   restoreBackups,
@@ -87,6 +90,47 @@ describe('resolveComputedDefaults', () => {
 
     const result = resolveComputedDefaults(s, { name: 'alice' });
     expect(result).toEqual({ name: 'alice' });
+  });
+});
+
+describe('pathsWithOwnContent', () => {
+  let vault: string;
+
+  beforeEach(async () => {
+    vault = path.join(os.tmpdir(), `shardmind-own-${crypto.randomUUID()}`);
+    await fsp.mkdir(vault, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsp.rm(vault, { recursive: true, force: true });
+  });
+
+  const fileState = (content: string) => ({
+    template: null,
+    rendered_hash: sha256(content),
+    ownership: 'managed' as const,
+  });
+
+  it('lists every collision when there is no previous install', async () => {
+    await fsp.writeFile(path.join(vault, 'a.md'), 'mine');
+    const collisions = await detectCollisions(vault, ['a.md']);
+    expect(await pathsWithOwnContent(collisions, null)).toEqual(['a.md']);
+  });
+
+  it("leaves out a previous install's file whose bytes still match its recorded hash (#55)", async () => {
+    await fsp.writeFile(path.join(vault, 'engine.md'), 'rendered');
+    await fsp.writeFile(path.join(vault, 'edited.md'), 'my edit');
+    await fsp.writeFile(path.join(vault, 'stranger.md'), 'not tracked');
+    await fsp.mkdir(path.join(vault, 'dir.md'));
+    const collisions = await detectCollisions(vault, ['engine.md', 'edited.md', 'stranger.md', 'dir.md']);
+    const previous = makeShardState({
+      files: {
+        'engine.md': fileState('rendered'),
+        'edited.md': fileState('the original render'),
+        'dir.md': fileState('was a file'),
+      },
+    });
+    expect(await pathsWithOwnContent(collisions, previous)).toEqual(['edited.md', 'stranger.md', 'dir.md']);
   });
 });
 

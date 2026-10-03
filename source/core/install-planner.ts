@@ -11,6 +11,7 @@ import path from 'node:path';
 import nunjucks from 'nunjucks';
 import type {
   ShardSchema,
+  ShardState,
   ValueDefinition,
   ModuleSelections,
 } from '../runtime/types.js';
@@ -143,6 +144,31 @@ export async function detectCollisions(
   }
 
   return collisions;
+}
+
+/**
+ * The collisions that hold content of the user's own: every one, except a
+ * file the previous install wrote whose bytes still match the hash it
+ * recorded. On a reinstall those are the engine's untouched files, and
+ * replacing them loses nothing of the user's (#55).
+ */
+export async function pathsWithOwnContent(
+  collisions: Collision[],
+  previous: ShardState | null,
+): Promise<string[]> {
+  const own: string[] = [];
+  for (const collision of collisions) {
+    const recorded = previous?.files[collision.outputPath];
+    if (
+      recorded &&
+      collision.kind === 'file' &&
+      sha256(await fsp.readFile(collision.absolutePath)) === recorded.rendered_hash
+    ) {
+      continue;
+    }
+    own.push(collision.outputPath);
+  }
+  return own;
 }
 
 export function mergePrefill(
