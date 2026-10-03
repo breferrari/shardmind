@@ -44,7 +44,7 @@ Pre-existing files and binary files get a deliberate path through install and up
 | ✅ | --yes policy for preexisting add-collisions churns every update | [#61](https://github.com/breferrari/shardmind/issues/61) |
 | ✅ | DiffView: distinguish preexisting add-collision from modified-file conflict | [#60](https://github.com/breferrari/shardmind/issues/60) |
 | ✅ | --force flag on install for scripted collision overwrite without backup | [#55](https://github.com/breferrari/shardmind/issues/55) |
-| ⬜ | Refuse to write through symlinks and hard links at vault paths | [#163](https://github.com/breferrari/shardmind/issues/163) |
+| ✅ | Refuse to write through symlinks and hard links at vault paths | [#163](https://github.com/breferrari/shardmind/issues/163) |
 
 ## Phase 3 — tests that do not flake
 
