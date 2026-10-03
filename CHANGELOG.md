@@ -10,12 +10,12 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Added (scripted reinstall — #55)
 
-- **`install --force` reinstalls and overwrites without asking.** It answers both destructive install prompts. Over an existing install it reinstalls from scratch instead of showing the gate, or refusing without a terminal or under `--defaults`. Files of yours at paths the shard writes are removed with no backup instead of being renamed to `.shardmind-backup-<timestamp>`. Pair it with `--yes`, `--values` or `--defaults` for a fully non-interactive run. The summary lists every file replaced without a backup, including by the interactive Overwrite choice.
+- **`install --force` reinstalls and overwrites without asking.** It answers both destructive install prompts. Over an existing install it reinstalls from scratch instead of showing the gate, or refusing without a terminal or under `--defaults`. Files of yours at paths the shard writes are replaced with no backup instead of being renamed to `.shardmind-backup-<timestamp>`; on a reinstall that includes your edits to the old install's files. Pair it with `--yes`, `--values` or `--defaults` for a fully non-interactive run. If the install fails, everything it moved is put back. The summary lists each replaced file that held your own content, including by the interactive Overwrite choice.
 
 ### Fixed (install reinstall and dry run — #55)
 
-- **A non-interactive reinstall no longer deletes the existing install before checking its values.** An invalid `--values` file now fails with `.shardmind/` and `shard-values.yaml` intact.
-- **Choosing Overwrite at collision review under `--dry-run` no longer deletes your files.**
+- **A reinstall no longer deletes the existing install before it has its answers.** Cancelling the wizard, or an invalid `--values` file, now leaves `.shardmind/` and `shard-values.yaml` intact, and a failed reinstall puts them back. `install --dry-run` previews a reinstall instead of refusing it.
+- **Choosing Overwrite or Back up at collision review under `--dry-run` no longer touches your files**, and an Overwrite whose install fails puts them back.
 
 ### Changed (the conflict prompt names a new-path collision — #60)
 
