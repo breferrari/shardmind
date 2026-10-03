@@ -125,6 +125,8 @@ export interface Rebaseline {
 export interface PendingConflict {
   path: string;
   result: MergeResult;
+  /** Copied from the `conflict` action: DiffView names an add-collision as one (#60). */
+  preexisting?: boolean;
 }
 
 export interface UpdatePlan {
@@ -727,7 +729,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     } else if (action.kind === 'conflict') {
       // Same accounting as a modified-file conflict so the pending-
       // conflicts count in the summary stays coherent.
-      pendingConflicts.push({ path: action.path, result: action.result });
+      pendingConflicts.push({ path: action.path, result: action.result, preexisting: true });
       counts.conflicts++;
     }
   }

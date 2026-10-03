@@ -554,6 +554,8 @@ describe('planUpdate', () => {
     expect(plan.counts.conflicts).toBe(1);
     expect(plan.pendingConflicts).toHaveLength(1);
     expect(plan.pendingConflicts[0]!.path).toBe('brain/Index.md');
+    // An edited shard file, not an add-collision: DiffView keeps "Conflict in" (#60).
+    expect(plan.pendingConflicts[0]!.preexisting).toBeUndefined();
   });
 
   it('adds a new file introduced by the new shard', async () => {
@@ -891,6 +893,8 @@ describe('planUpdate', () => {
     expect(conflict.path).toBe('brain/Backlog.md');
     expect(conflict.preexisting).toBe(true);
     expect(plan.pendingConflicts).toHaveLength(1);
+    // DiffView reads the flag from the pending conflict to name the collision (#60).
+    expect(plan.pendingConflicts[0]!.preexisting).toBe(true);
     expect(plan.counts.conflicts).toBe(1);
     expect(plan.counts.added).toBe(0);
   });
@@ -947,6 +951,7 @@ describe('planUpdate', () => {
     // theirsHash must be the raw byte hash, not the hash of the
     // U+FFFD-polluted utf-8 decode.
     expect(conflict.theirsHash).toBe(sha256(bytes));
+    expect(plan.pendingConflicts[0]!.preexisting).toBe(true);
   });
 
   it('emits a plain `add` when the new-shard path is free on disk', async () => {
