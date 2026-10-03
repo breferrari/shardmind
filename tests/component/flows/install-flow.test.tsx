@@ -803,4 +803,51 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await vault.cleanup();
     }
   }, 60_000);
+  // ───── Scenario 19: a file edited while the collision prompt is open is the user's (#55) ─────
+
+  it('19. reinstall → collision review → a file edited meanwhile → Back up keeps it too (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's19-recheck',
+    });
+    try {
+      await vault.writeFile('Home.md', 'my edited home\n');
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root, options: { force: true } });
+      await driveMinimalWizard(r, 'Bob');
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
+      // --force overwrites; a second, interactive reinstall gets the prompt.
+      await vault.writeFile('Home.md', 'edited again\n');
+      cleanup();
+      const r2 = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root });
+      await waitFor(r2.lastFrame, (f) => f.includes('Reinstall from scratch'), 30_000);
+      r2.stdin.write(ARROW_DOWN);
+      await tick(40);
+      r2.stdin.write(ENTER);
+      await waitFor(r2.lastFrame, (f) => f.includes('Type REINSTALL to proceed'));
+      await typeText(r2.stdin, 'REINSTALL');
+      r2.stdin.write(ENTER);
+      await driveMinimalWizard(r2, 'Cy');
+      r2.stdin.write(ENTER);
+      await waitFor(r2.lastFrame, (f) => f.includes('Ready to install'));
+      r2.stdin.write(ENTER);
+      await waitFor(r2.lastFrame, (f) => f.includes('Overwrite'), 15_000);
+      // Edited while the prompt is open: untouched when it was classified.
+      await vault.writeFile('brain/North Star.md', 'edited during the prompt\n');
+      r2.stdin.write(ENTER); // Back up
+      const frame = await waitFor(r2.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
+      expect(frame).toContain('Backed up 2 existing files');
+      const left = await leftoverBackups(vault.root);
+      expect(left.some((p) => /North Star\.md\.shardmind-backup-/.test(p))).toBe(true);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 90_000);
 });

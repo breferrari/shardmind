@@ -9,8 +9,6 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import fsp from 'node:fs/promises';
-import path from 'node:path';
 import { useApp, useStdin } from 'ink';
 import { loadValuesYaml } from '../../core/values-io.js';
 
@@ -40,7 +38,7 @@ import {
 } from '../../core/install-planner.js';
 import {
   backupCollisions,
-  carryOverBackups,
+  discardSetAside,
   runInstall,
   rollbackInstall,
   type BackupRecord,
@@ -100,6 +98,8 @@ interface PlacedCollisions {
   replaced: string[];
   /** Moved aside to restore on failure, deleted once the install succeeds. */
   setAside: BackupRecord[];
+  /** The record in `setAside` for a reinstall's old `.shardmind/`. */
+  oldState?: BackupRecord;
 }
 
 export interface UseInstallMachineInput {
@@ -161,6 +161,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   const writtenPathsRef = useRef<string[]>([]);
   const backupsRef = useRef<BackupRecord[]>([]);
   const installingRef = useRef(false);
+  // Set by the first Ctrl+C: stops the set-aside loop before its next move,
+  // so the rollback restores every move made (#55).
+  const interruptedRef = useRef(false);
   // AbortController that owns the currently-executing post-install hook.
   // Null when no hook is in flight. Ctrl+C in the running-hook phase
   // aborts the subprocess but does NOT roll back the install (we're
@@ -195,7 +198,11 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   // the shard tempdir regardless of phase — without it, cancelling at
   // the wizard or collision screens leaks the extracted shard on disk.
   useSigintRollback({
-    isActive: () => !dryRun && installingRef.current,
+    isActive: () => {
+      // Read once, on Ctrl+C: stop moving files before the rollback starts.
+      interruptedRef.current = true;
+      return !dryRun && installingRef.current;
+    },
     rollback: () => rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current),
     cleanup: async () => {
       // Abort any in-flight post-install hook subprocess. Intentionally
@@ -377,14 +384,13 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
   const executeInstall = useCallback(
     async (ctx: PreparedContext, result: WizardResult, placed: PlacedCollisions) => {
-      const { backups, replaced, setAside } = placed;
+      const { backups, replaced, setAside, oldState } = placed;
       const start = Date.now();
       const history: string[] = [];
 
-      // What a failure restores: everything moved aside, until the set-aside
-      // part is deleted on success. Registered for the SIGINT handler too.
-      let restorable = [...backups, ...setAside];
-      backupsRef.current = restorable;
+      // What a failure restores: everything moved aside. Registered for the
+      // SIGINT handler too.
+      backupsRef.current = [...backups, ...setAside];
       writtenPathsRef.current = [];
       installingRef.current = true;
 
@@ -400,6 +406,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       });
 
       let written: string[] = [];
+      // Once state.json is written the install stands: a later failure is
+      // reported, never rolled back, or it would take the new install with it
+      // after the old one is gone.
+      let committed = false;
       try {
         const runResult = await runInstall({
           vaultRoot,
@@ -447,18 +457,14 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         // during hook execution can't walk the install back. The only
         // remaining work (hook subprocess) is non-fatal per spec §9.3.
         installingRef.current = false;
+        committed = true;
+        backupsRef.current = backups;
 
         // What was set aside only to be restored on failure goes now: a
         // replaced file and an old install's state leave no backup (#55).
-        // The old state's own backups (update and adopt snapshots) move
-        // into the new one first; they can be the only copy of a file.
-        restorable = backups;
-        backupsRef.current = backups;
-        const oldState = setAside.find((m) => m.originalPath === path.join(vaultRoot, SHARDMIND_DIR));
-        if (oldState) await carryOverBackups(oldState.backupPath, vaultRoot);
-        await Promise.all(
-          setAside.map((m) => fsp.rm(m.backupPath, { recursive: true, force: true }).catch(() => {})),
-        );
+        // The old state's own backups (update and adopt snapshots) move into
+        // the new one first; they can be the only copy of a file.
+        await discardSetAside(setAside, oldState, vaultRoot);
 
         // The hook orchestrator owns slot selection (bootstrap → personalize,
         // legacy post-install once), per-slot context, write-boundary checks,
@@ -507,14 +513,15 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           dryRun: Boolean(dryRun),
         });
       } catch (err) {
-        if (!dryRun) {
-          await rollbackInstall(vaultRoot, written, restorable).catch(() => {});
+        const rollBack = !dryRun && !committed;
+        if (rollBack) {
+          await rollbackInstall(vaultRoot, written, [...backups, ...setAside]).catch(() => {});
         }
         installingRef.current = false;
         finish({
           kind: 'error',
           error: err as Error,
-          detail: dryRun ? undefined : 'Rolled back partial install (including any pre-install backups).',
+          detail: rollBack ? 'Rolled back partial install (including any pre-install backups).' : undefined,
         });
       }
     },
@@ -540,7 +547,11 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       untouched: Collision[],
       policy: 'backup' | 'overwrite',
     ) => {
-      const replaced = policy === 'overwrite' ? own.map((c) => c.outputPath) : [];
+      // Classified before a prompt that may have stayed open: a file edited
+      // since is the user's now, so check the untouched ones again.
+      const recheck = await splitByOwnContent(untouched, ctx.previous ?? null);
+      const ownNow = [...own, ...recheck.own];
+      const replaced = policy === 'overwrite' ? ownNow.map((c) => c.outputPath) : [];
       if (dryRun) {
         await executeInstall(ctx, result, { backups: [], replaced, setAside: [] });
         return;
@@ -548,25 +559,43 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       const oldInstall = ctx.previous
         ? await detectCollisions(vaultRoot, [SHARDMIND_DIR, VALUES_FILE])
         : [];
-      // Registered move by move; the first one turns rollback on. Before it,
-      // a Ctrl+C has nothing to undo, and rollback would delete `.shardmind/`.
+      // Registered move by move in the array the SIGINT rollback walks; the
+      // first move turns rollback on. Before it a Ctrl+C has nothing to
+      // undo, and rollback would delete the old `.shardmind/`.
+      const moved: BackupRecord[] = [];
       writtenPathsRef.current = [];
-      backupsRef.current = [];
-      const moved = await backupCollisions([...oldInstall, ...untouched, ...own], undefined, (record) => {
-        backupsRef.current = [...backupsRef.current, record];
-        installingRef.current = true;
-      });
-      const kept = new Set(policy === 'backup' ? own.map((c) => c.absolutePath) : []);
+      backupsRef.current = moved;
+      try {
+        await backupCollisions(
+          [...oldInstall, ...recheck.untouched, ...ownNow],
+          undefined,
+          (record) => {
+            moved.push(record);
+            installingRef.current = true;
+          },
+          () => interruptedRef.current,
+        );
+      } catch (err) {
+        // backupCollisions put its moves back; there is nothing to roll back.
+        installingRef.current = false;
+        backupsRef.current = [];
+        throw err;
+      }
+      // Interrupted mid-way: the SIGINT handler restores `moved` and exits.
+      if (interruptedRef.current) return;
+      const kept = new Set(policy === 'backup' ? ownNow.map((c) => c.absolutePath) : []);
+      const oldStatePath = oldInstall.find((c) => c.outputPath === SHARDMIND_DIR)?.absolutePath;
       await executeInstall(ctx, result, {
         backups: moved.filter((m) => kept.has(m.originalPath)),
         replaced,
         setAside: moved.filter((m) => !kept.has(m.originalPath)),
+        oldState: moved.find((m) => m.originalPath === oldStatePath),
       });
     },
     [dryRun, vaultRoot, executeInstall],
   );
 
-    const handleWizardComplete = useCallback(
+  const handleWizardComplete = useCallback(
     async (result: WizardResult, ctx: PreparedContext) => {
       try {
         const validator = buildValuesValidator(ctx.schema);
