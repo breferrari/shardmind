@@ -10,7 +10,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Fixed (identical files at new paths — #62)
 
-- **An update no longer asks about a file you already have exactly.** When a new shard version adds a path where your vault has a file with the same bytes, the update adopts it as managed silently, with no write, instead of offering a choice whose two answers both leave the same file.
+- **An update no longer asks about a file you already have exactly.** When a new shard version adds a path where your vault has a file with the same bytes, the update adopts it as managed, with no write and no prompt, instead of offering a choice whose two answers both leave the same file. The summary shows "N adopted", and `update --dry-run --json` counts them in a new `counts.adopted`; they are no longer part of `counts.silent`. A symlink at that path, or a name that matches only when case is ignored, still gets the prompt.
 
 ### Fixed (binary files on update — #63)
 
