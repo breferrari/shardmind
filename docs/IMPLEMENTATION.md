@@ -639,6 +639,8 @@ interface RenderedFile {
 
 **Purpose**: Read and write `.shardmind/state.json`. Create `.shardmind/` directory structure.
 
+**Baseline rule** (binding on every writer of `state.files`, see `docs/SHARD-LAYOUT.md §Re-hash + state`): `rendered_hash` is the hash of bytes the engine produced for the file (a render or a copy), or of bytes a hook wrote over a file the engine owned. It is never the hash of bytes the user authored. Drift (§4.8) reads "disk equals `rendered_hash`" as "engine-owned and unchanged", so a user hash recorded there turns their edit into a silent overwrite on the next update (#150).
+
 **Inputs/Outputs**:
 ```typescript
 readState(vaultRoot: string): Promise<ShardState | null>
@@ -709,7 +711,7 @@ interface DriftEntry {
    a. If `FileState.ownership === 'user'` (volatile at install time) → `DriftEntry` with `ownership: 'volatile'` → add to `volatile`. Never hashed; content may diverge by design.
    b. Read file from disk as `Buffer` (not UTF-8). If ENOENT → add to `missing` (propagate state ownership).
    c. Compute `sha256(buffer)` over raw bytes. This is load-bearing: `install-executor` hashes copy-origin files (images, PDFs, binary assets) as bytes too, so a bytewise hash here stays consistent across install/update cycles. A UTF-8 decode-then-hash would replace invalid sequences with `U+FFFD` and mis-classify every binary asset as `modified` on first status check.
-   d. Compare against `state.files[path].rendered_hash`. Equal → `managed`. Different → `modified`.
+   d. Compare against `state.files[path].rendered_hash`. Different → `modified`. Equal → `managed`, **unless** the recorded `ownership` is `modified` → `modified` (sticky). The sticky label repairs state recorded before #150, when `keep_mine` / `auto_merge` / adopt stored the user's hash under a `modified` label; it is safe because the modified path always merges, and a merge whose result equals the new render records `managed` again.
 2. Orphan scan (runs in parallel with the classification): union of parent directories of every tracked path is the set of tracked directories. For each tracked directory, `readdir` non-recursively and report files not in `state.files` as orphans. Excludes engine-reserved files (`VALUES_FILE`) and never-scanned directories (`.shardmind`, `.git`, `.obsidian`). Subdirectories of a tracked directory are not auto-scanned — they only count if they themselves contain a tracked file.
 3. Return classified report.
 
@@ -867,14 +869,14 @@ interface PlanUpdateInput {
 3. For each `drift.managed` entry:
    - Not produced by the new shard → emit `delete`.
    - Produced with the same rendered hash → emit `noop`.
-   - Produced with a different hash → emit `overwrite` with new content.
+   - Produced with a different hash → if the target is copy-origin, its old source is cached, and `sha256(cached bytes) !== rendered_hash`, the recorded hash is not the engine's (a pre-#150 re-hash recorded the user's bytes, or a hook personalized the file): handle the entry exactly as a `drift.modified` entry (step 5). Otherwise emit `overwrite` with new content. Rendered `.njk` files get no such check: their render depends on per-run context (`install_date`, `year`, `shard.version`), so re-rendering cannot prove a baseline.
 4. For each `drift.missing` entry:
    - Not in new shard → emit `delete` (state cleanup).
    - In new shard → emit `restore_missing` with new content.
 5. For each `drift.modified` entry (run in parallel with bounded concurrency of 16):
    - Not in new shard → respect `removedFileDecisions[path]` (default `'keep'`). Emit `keep_as_user` or `delete`.
    - Cached old template missing → fall back to `conflictFromDirect` (single-region full-file conflict).
-   - Otherwise → call `computeMergeAction`. Translate its four outcomes to `noop`/`overwrite`/`auto_merge`/`conflict` actions. Record `theirsHash` on conflict so the executor can skip re-hashing.
+   - Otherwise → call `computeMergeAction`. Translate its four outcomes to `noop`/`overwrite`/`auto_merge`/`conflict` actions. A `skip` becomes a `noop` carrying `rebaseline` (the new render's hash + template key; ownership `managed` when the user's bytes equal the new render, else `modified`). `auto_merge` carries `baselineHash` = the new render's hash, which is what the executor records (its `renderedHash` stays the merged bytes' hash for reporting). Record `theirsHash` on conflict for reporting; the executor records `newContentHash` for every resolution.
 6. For every file in the new-shard plan not in `state.files` → emit `add`.
 7. Return `{ actions, pendingConflicts, counts }`. `pendingConflicts` is the subset of `conflict` actions the state machine will drive through DiffView.
 
@@ -1106,13 +1108,16 @@ type HookResult =
 **Post-hook re-hash** (`source/core/state.ts::rehashManagedFiles`):
 
 ```typescript
+snapshotTrackedHashes(vaultRoot: string, state: ShardState): Promise<Map<string, string>>
+
 rehashManagedFiles(
   vaultRoot: string,
   state: ShardState,
-): Promise<{ state: ShardState; changed: string[]; missing: string[]; failed: Array<{ path: string; reason: string }> }>
+  baseline: ReadonlyMap<string, string>,
+): Promise<{ state: ShardState; changed: string[]; missing: string[]; failed: Array<{ path: string; reason: string }>; current: Map<string, string> }>
 ```
 
-Called by the orchestrator (§4.16a) once after the hook phase returns — success OR failure. Reads each managed file under `mapConcurrent(REHASH_CONCURRENCY = 16)`, recomputes sha256, and returns a new `ShardState` with updated `rendered_hash` for changed entries. Per-file ENOENT and other I/O errors are tolerated (entry stays at the prior hash, surfaces on `missing` / `failed`); the function never throws. The orchestrator writes the resulting state via `writeState` only when at least one path changed / went missing / failed (or the bootstrap fingerprint advanced) — a fully-clean re-hash skips the redundant write. The whole call is wrapped in a defensive try/catch so a `writeState` failure can't propagate past the install/update boundary.
+The orchestrator (§4.16a) takes the `baseline` snapshot before the first slot runs and calls `rehashManagedFiles` once after the hook phase returns — success OR failure (and once after bootstrap, re-baselining on `current`). Reads each tracked non-volatile file under `mapConcurrent(REHASH_CONCURRENCY = 16)` and recomputes sha256. `changed` = paths whose hash moved since `baseline`. A changed path gets its new hash recorded only when it was engine-owned at snapshot time (`baseline` hash equals `rendered_hash`, or the path was absent from `baseline`); a file the user had edited is never re-baselined (the baseline rule, §4.7). When no slot runs, the orchestrator skips both the snapshot and the re-hash. Per-file ENOENT and other I/O errors are tolerated (entry stays at the prior hash, surfaces on `missing` / `failed`); the function never throws. The orchestrator writes the resulting state via `writeState` only when at least one path changed / went missing / failed (or the bootstrap fingerprint advanced) — a fully-clean re-hash skips the redundant write. The whole call is wrapped in a defensive try/catch so a `writeState` failure can't propagate past the install/update boundary.
 
 This is what makes Invariant 2's claim observable: a hook that legitimately edited a managed file produces zero spurious drift on the next `shardmind` status run, because state.json's hash already reflects the post-hook bytes. The `changed[]` it returns is also the input to bootstrap's boundary check (§4.16b).
 
@@ -1159,7 +1164,7 @@ detectUnmanagedCreates(after, before, state): HookViolation | null             /
 interface HookViolation { slot: HookSlot; kind: 'managed-write' | 'unmanaged-create'; paths: string[]; }
 ```
 
-- **bootstrap → managed-write**: the bounded managed set's pre-hook hashes come free from `state.files`; after bootstrap the orchestrator runs `rehashManagedFiles` and passes the union of its `changed` (modified) and `missing` (deleted) paths to `detectManagedWrites`. Any managed path bootstrap touched — modified or removed — is the violation. No extra disk read beyond the re-hash the orchestrator runs anyway.
+- **bootstrap → managed-write**: the pre-hook hashes come from the orchestrator's snapshot (not from `state.files`, whose hash for a user-edited file is the engine's baseline, not the bytes on disk); after bootstrap the orchestrator runs `rehashManagedFiles` against that snapshot and passes the union of its `changed` (modified) and `missing` (deleted) paths to `detectManagedWrites`. Any tracked path bootstrap touched — modified or removed — is the violation. One extra hash pass (the snapshot) per hook phase.
 - **personalize → unmanaged-create**: the only case needing a vault walk. Path-only (no content hashing), ignore-filtered + Tier-1-filtered so bootstrap's own `.qmd/` artifacts and `.obsidian/workspace.json` churn don't register. Runs install/adopt only — never on the recurring update path — so the twice-walk happens at most once per vault per shard.
 - Violations are returned, not thrown; the orchestrator maps them onto `HookOutcome.summary.violation` and the UI renders a non-fatal warning (`HOOK_BOOTSTRAP_MANAGED_WRITE` / `HOOK_PERSONALIZE_UNMANAGED_CREATE`). The detector returns the offending paths (and, for managed-write, the pre-hook bytes are recoverable from the merge-base cache) so a future detect-and-revert mode is a localized follow-on.
 
@@ -1261,7 +1266,8 @@ rollbackAdopt(vaultRoot: string, backupDir: string, addedPaths: string[])
 4. Apply per classification (writes pass; deletes are not part of adopt by design — user-only files are never enumerated):
    - `matches` → record managed FileState; no disk write. `onFileTouched(path, false)`.
    - `shard-only` → `writeFile(buffer)`; record managed FileState; track in `addedPaths`. `onFileTouched(path, true)`.
-   - `differs+keep_mine` → record `ownership: 'modified'` with `rendered_hash = userHash`. Mirrors update-executor's keep_mine-modified path so the next update's drift compares against the user's adopt-time bytes.
+   - `differs+keep_mine` → record `ownership: 'modified'` with `rendered_hash = shardHash`. No write. Recording the user's hash would make the next update's drift read their bytes as engine-owned and overwrite them (#150); the shard's hash makes them an edit, three-way merged against the adopt-time cache.
+   - `differs+merged` → `writeFile(union bytes)`; record `ownership: 'modified'` with `rendered_hash = shardHash`, for the same reason.
    - `differs+use_shard` → `writeFile(shardContent)`; record `ownership: 'managed'` with `rendered_hash = shardHash`.
 5. `initShardDir`, `cacheTemplates(tempDir)`, `cacheManifest(manifest, schema)`, `writeValuesFile(values, { flag: 'wx' })`, `writeState(state)`. The `wx` flag is a belt-and-braces second defense against a values file appearing between guard and write.
 6. Any throw between (3) and (5) lands in the catch and runs `rollbackAdopt(vaultRoot, backupDir!, addedPaths)`. Best-effort; rollback failures are collected (not swallowed) so the command layer can surface them.
@@ -1270,8 +1276,7 @@ rollbackAdopt(vaultRoot: string, backupDir: string, addedPaths: string[])
 ```typescript
 buildFileState(c, hash, ownership) = {
   template: c.templateKey,             // POSIX-shape relpath into shard tempdir
-  rendered_hash: hash,                 // shard hash (matches / use_shard / shard-only)
-                                       // OR user hash (keep_mine)
+  rendered_hash: hash,                 // always the shard hash (every resolution; #150)
   ownership,                           // 'managed' or 'modified'
   iterator_key?: c.iteratorKey,        // present only for iterator-derived outputs
 }
