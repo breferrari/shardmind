@@ -41,14 +41,13 @@ export default function UpdateSummary({
 }: UpdateSummaryProps) {
   const seconds = (durationMs / 1000).toFixed(1);
   const c = summary.counts;
-  // `silent` counts managed overwrites and noops together. Split it: an
-  // accepted conflict is in `replacedFiles` but counted as a conflict.
+  // `silent` counts managed overwrites and noops together; the planner
+  // counts the overwrite part separately so the line can say which is which.
   const replaced = [...summary.replacedFiles].sort();
-  const silentReplaced = replaced.length - summary.conflictsAcceptedNew;
-  const unchanged = c.silent - silentReplaced;
+  const unchanged = c.silent - c.overwritten;
   const parts: string[] = [];
-  if (silentReplaced > 0) parts.push(`${silentReplaced} replaced`);
-  if (unchanged > 0) parts.push(`${unchanged} unchanged`);
+  if (c.overwritten) parts.push(`${c.overwritten} replaced`);
+  if (unchanged) parts.push(`${unchanged} unchanged`);
   if (c.autoMerged) parts.push(`${c.autoMerged} auto-merged`);
   if (c.conflicts) parts.push(`${c.conflicts} conflict${c.conflicts === 1 ? '' : 's'}`);
   if (c.added) parts.push(`${c.added} added`);

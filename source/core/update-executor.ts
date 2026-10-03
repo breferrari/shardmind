@@ -435,6 +435,7 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         if (!ctx.dryRun) await writeFile(ctx.vaultRoot, action.path, action.newContent);
         ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'managed');
         ctx.summary.wroteFiles.push(action.path);
+        // The other replacement besides `overwrite`; see `UpdateSummary.replacedFiles`.
         ctx.summary.replacedFiles.push(action.path);
         ctx.summary.conflictsAcceptedNew++;
       } else {

@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import path from 'node:path';
 import { useApp } from 'ink';
 import { loadValuesYaml } from '../../core/values-io.js';
+import { toPosix } from '../../core/fs-utils.js';
 import type {
   ShardManifest,
   ShardSchema,
@@ -626,9 +627,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           hooks: hookOutcomes,
           durationMs: Date.now() - start,
           dryRun,
-          backupDir: result.backupDir
-            ? path.relative(vaultRoot, result.backupDir).split(path.sep).join('/')
-            : null,
+          backupDir: result.backupDir ? toPosix(vaultRoot, result.backupDir) : null,
         });
       } catch (err) {
         writingRef.current = false;
