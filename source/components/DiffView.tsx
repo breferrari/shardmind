@@ -27,15 +27,30 @@ const SELECT_OPTIONS = [
   { label: '(Open in editor · v0.2)', value: 'open_editor_disabled' },
 ] as const;
 
+/** An add-collision has no edits to preserve: the file is the user's own (#60). */
+const PREEXISTING_KEEP_LABEL = 'Keep mine (keep your file)';
+
 interface DiffViewProps {
   path: string;
   index: number;
   total: number;
   result: MergeResult;
+  /** An untracked file at a path the new version adds, not an edited shard file (#60). */
+  preexisting?: boolean;
+  /** The run's `--adopt-preexisting` (#61): Keep mine / Skip track a preexisting file. */
+  adoptPreexisting?: boolean;
   onChoice: (action: DiffAction) => void;
 }
 
-export default function DiffView({ path: filePath, index, total, result, onChoice }: DiffViewProps) {
+export default function DiffView({
+  path: filePath,
+  index,
+  total,
+  result,
+  preexisting = false,
+  adoptPreexisting = false,
+  onChoice,
+}: DiffViewProps) {
   const mergedLines = useMemo(() => result.content.split(LINE_SPLIT), [result.content]);
   // `update.tsx` advances `phase.currentIndex` without remounting this
   // component, so the dedup ref must be scoped to the per-file key.
@@ -46,10 +61,21 @@ export default function DiffView({ path: filePath, index, total, result, onChoic
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Box>
-        <Text bold color="yellow">Conflict in </Text>
-        <Text bold>{filePath}</Text>
-        <Text dimColor> ({index} of {total})</Text>
+      <Box flexDirection="column">
+        <Box>
+          <Text bold color="yellow">
+            {preexisting ? 'New file from shard collides with your file ' : 'Conflict in '}
+          </Text>
+          <Text bold>{filePath}</Text>
+          <Text dimColor> ({index} of {total})</Text>
+        </Box>
+        {preexisting && (
+          <Text dimColor>
+            {adoptPreexisting
+              ? 'The new version adds this path. Keep mine or Skip keeps your file and tracks it as your modified copy.'
+              : 'The new version adds this path. Keep mine or Skip keeps your file untracked, so the next update asks again (--adopt-preexisting tracks it).'}
+          </Text>
+        )}
       </Box>
 
       {result.binary ? (
@@ -78,7 +104,10 @@ export default function DiffView({ path: filePath, index, total, result, onChoic
 
       <Select
         key={filePath}
-        options={SELECT_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
+        options={SELECT_OPTIONS.map((o) => ({
+          label: preexisting && o.value === 'keep_mine' ? PREEXISTING_KEEP_LABEL : o.label,
+          value: o.value,
+        }))}
         onChange={(choice) => {
           if (!DIFF_ACTIONS.has(choice as DiffAction)) return;
           if (!tryFire()) return;
