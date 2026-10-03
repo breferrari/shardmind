@@ -55,7 +55,7 @@ The suite fails only on real defects, on all three operating systems.
 | | Task | Issue |
 |---|---|---|
 | ✅ | Flaky test: merge-adversarial 10K-lines tokenize times out under parallel pressure | [#114](https://github.com/breferrari/shardmind/issues/114) |
-| ⬜ | Flake: hook-runner pre-throw stdout dropped under parallel CPU pressure | [#106](https://github.com/breferrari/shardmind/issues/106) |
+| ✅ | Flake: hook-runner pre-throw stdout dropped under parallel CPU pressure | [#106](https://github.com/breferrari/shardmind/issues/106) |
 | ⬜ | E2E: bridge SIGINT delivery reliably on GH Actions Windows runner | [#57](https://github.com/breferrari/shardmind/issues/57) |
 
 ## Shelf

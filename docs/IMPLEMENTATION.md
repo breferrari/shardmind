@@ -1088,6 +1088,7 @@ type HookResult =
 - Hook-runner not resolvable in either prod or dev paths → `failed`. Indicates a broken install OR a running-from-source configuration neither path recognizes.
 - ctx tempfile write ENOSPC / permission denied → `failed` with the OS message.
 - Hook throws → runner catches, writes stack to stderr, exits 1 → `ran` with exitCode 1. Treated identically to a non-zero `process.exit` from the UI's perspective.
+- Output on exit (#106): `process.exit` drops output still queued on a POSIX pipe, so the runner makes its stdout and stderr pipes blocking at startup, through the stream handle's internal `setBlocking`, as Node already does on Windows. Every exit path then keeps what the hook wrote: a throw, the hook's own `process.exit`, and the runner's early exits. If `setBlocking` is missing or fails, the throw path instead waits for zero-length writes on both streams to flush (2 s at most) before it exits. Best effort: a Node grandchild sharing the pipe can make it non-blocking again.
 - Hook hangs past `timeoutMs` → `failed / "timed out after Ns"` with any captured output so far preserved.
 - Parent SIGINT (via caller's AbortSignal) → `failed / "cancelled"`.
 

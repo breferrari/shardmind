@@ -310,6 +310,106 @@ describe('executeHook — subprocess runtime', () => {
     expect(result.stderr).toContain('boom');
   }, 30_000);
 
+  // #106: `process.exit` drops stdout still queued on a POSIX pipe. Small
+  // output only lost the race under load; more than a pipe buffer (64 KiB)
+  // loses it every time on Linux. Windows pipes are already blocking, so
+  // these pass there with or without the fix: only Linux and macOS CI
+  // guard it.
+  it('keeps every byte a hook wrote to stdout before it threw (#106)', async () => {
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          const line = 'x'.repeat(1023) + '\\n';
+          for (let i = 0; i < 200; i++) process.stdout.write(line);
+          process.stdout.write('END-OF-OUTPUT\\n');
+          throw new Error('boom');
+        }
+      `,
+    );
+    const result = await executeHook(hookPath, baseCtx());
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}`);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout.length).toBe(200 * 1024 + 'END-OF-OUTPUT\n'.length);
+    expect(result.stdout).toContain('END-OF-OUTPUT');
+    expect(result.stderr).toContain('boom');
+  }, 30_000);
+
+  it("keeps every byte a hook wrote before it called process.exit itself (#106)", async () => {
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          const line = 'x'.repeat(1023) + '\\n';
+          for (let i = 0; i < 200; i++) process.stdout.write(line);
+          process.stdout.write('END-OF-OUTPUT\\n');
+          process.exit(3);
+        }
+      `,
+    );
+    const result = await executeHook(hookPath, baseCtx());
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}`);
+    expect(result.exitCode).toBe(3);
+    expect(result.stdout.length).toBe(200 * 1024 + 'END-OF-OUTPUT\n'.length);
+  }, 30_000);
+
+  it('describes a thrown value that cannot be converted to a string', async () => {
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          throw Object.create(null);
+        }
+      `,
+    );
+    const result = await executeHook(hookPath, baseCtx());
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}`);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('cannot be converted to a string');
+  }, 30_000);
+
+  it('describes an error whose stack getter throws, instead of crashing the runner', async () => {
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          // On the instance: V8 gives each Error its own stack, which would
+          // shadow a getter on a subclass.
+          const err = new Error('boom');
+          Object.defineProperty(err, 'stack', {
+            get() { throw new Error('no stack for you'); },
+          });
+          throw err;
+        }
+      `,
+    );
+    const result = await executeHook(hookPath, baseCtx());
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}`);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('cannot be converted to a string');
+  }, 30_000);
+
+  // Exiting on a throw must not wait on the hook's own handles:
+  // a hook that throws with a timer still running exits 1, not on timeout.
+  it('still exits 1 promptly when a hook throws with a timer left running (#106)', async () => {
+    const hookPath = await writeHook(
+      'hook.ts',
+      `
+        export default async function () {
+          setInterval(() => {}, 1000);
+          console.log('before throw');
+          throw new Error('boom');
+        }
+      `,
+    );
+    // Waiting on the hook's interval would end in the 20s timeout, which
+    // reports `failed`, not `ran` with exit code 1.
+    const result = await executeHook(hookPath, baseCtx(), { timeoutMs: 20_000 });
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}: ${result.message}`);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain('before throw');
+  }, 30_000);
+
   it('surfaces a syntax-error hook as ran + exitCode 1 with the parse error captured', async () => {
     const hookPath = await writeHook(
       'hook.ts',

@@ -459,7 +459,7 @@ hooks:
   timeout_ms: 60000    # 60 seconds; valid range: 1_000..600_000; applies to every slot
 ```
 
-A hook that exceeds its budget is sent `SIGTERM` (Windows: `TerminateProcess`), given a 2-second grace period to flush buffered output, then hard-killed with `SIGKILL`. The install / update itself still completes — a timed-out hook is a warning, not a rollback trigger.
+A hook that exceeds its budget is sent `SIGTERM` (Windows: `TerminateProcess`), given a 2-second grace period to exit on its own, then hard-killed with `SIGKILL`. Output written before the signal has already reached the engine: the hook's stdout and stderr are blocking pipes. The install / update itself still completes — a timed-out hook is a warning, not a rollback trigger.
 
 ### Output limits
 

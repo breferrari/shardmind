@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (hook output on failure — #106)
+
+- **A hook that fails no longer loses the output it printed first.** On Linux and macOS, a hook that wrote more than 64 KiB, or wrote under load, and then threw or called `process.exit` could have the end of its output cut off in the summary and in `.shardmind/logs/<slot>.log`. The hook runner now writes its output synchronously, so an exit should no longer drop it.
+
 ### Fixed (links and case-folded names in the vault — #163)
 
 - **Install, update and adopt no longer write through a symlink, a hard link or a case-folded name.** Before any prompt or write they check every vault path they will touch. If one is a symlink (dangling or not), sits under a symlinked folder, is a file with another hard link, or exists only under a different case on macOS or Windows, the run stops with `VAULT_PATH_UNSAFE`, naming each path and why. Dry runs and `--json` plans stop too. Before this, a write could land outside the vault, change another copy of a file, or be recorded under a name that is not the one on disk.
