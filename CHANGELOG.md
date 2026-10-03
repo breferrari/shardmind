@@ -10,7 +10,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Fixed (command-line options — #147)
 
-- **Options after a subcommand now reach it.** `shardmind adopt --verbose`, `update --verbose` and every subcommand's `--no-update-check` were taken by the root command and did nothing. Root options go before the subcommand; a root-only option after one (`shardmind update --version`) is now an `unknown option` error instead of being silently taken by the root.
+- **Options after a subcommand now reach it.** `shardmind adopt --verbose`, `update --verbose` and every subcommand's `--no-update-check` were taken by the root command and did nothing. A root-only option after a subcommand (`shardmind update --version`) is now an `unknown option` error instead of being silently taken by the root, and a root option before one (`shardmind --verbose update`) is refused with where to put it instead of being ignored.
 - **`--no-update-check` now works**, on every command including `shardmind` itself. It never reached any command before.
 
 ### Added (update summary — #153)

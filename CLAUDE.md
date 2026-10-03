@@ -119,7 +119,8 @@ Every PR for a v6 issue must demonstrate in its description:
 ```
 shardmind/
 ├── source/                           # Pastel convention (not src/)
-│   ├── cli.ts                        # Pastel entry point (3 lines)
+│   ├── cli.ts                        # Pastel entry point
+│   ├── cli-options.ts                # Positional options on Pastel's Commander (#147)
 │   ├── commands/
 │   │   ├── index.tsx                  # Status display (root command)
 │   │   ├── install.tsx                # shardmind install <shard>
@@ -133,6 +134,7 @@ shardmind/
 │   │       ├── use-self-update-check.ts # Async npm-registry check + suppression rules (#113)
 │   │       ├── use-self-update-banner.tsx # Composed hook: pkg.version + check + <SelfUpdateBanner /> (#113)
 │   │       ├── cli-version.ts         # Bundle-aware shardmind pkg.version resolver (#113)
+│   │       ├── update-check-option.ts # Shared --no-update-check option, named for the positive (#147)
 │   │       └── shared.ts              # summarizeHook, useSigintRollback
 │   ├── components/
 │   │   ├── CommandFrame.tsx           # Dry-run banner + keyboard legend
