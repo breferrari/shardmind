@@ -7,8 +7,9 @@ import type { HookOutcome } from '../core/hook-orchestrator.js';
 /**
  * Final update report.
  *
- * Shows the version delta, per-category counts, conflict-resolution
- * breakdown, migration warnings, and the post-update hook outcome.
+ * Shows the version delta, per-category counts, the files the update
+ * replaced (by path, #153), conflict-resolution breakdown, migration
+ * warnings, and the post-update hook outcome.
  *
  * The hook section is delegated to `HookSummarySection` — the same
  * component `Summary.tsx` uses — so the four-branch rendering
@@ -23,7 +24,12 @@ interface UpdateSummaryProps {
   migrationWarnings: string[];
   hooks: HookOutcome[];
   dryRun?: boolean;
+  /** Vault-relative snapshot dir (previous bytes under its `files/`); `null` in a dry run. */
+  backupDir?: string | null;
 }
+
+/** Paths shown before the "…and K more" line, as for install's backup list. */
+const REPLACED_VISIBLE = 10;
 
 export default function UpdateSummary({
   summary,
@@ -31,11 +37,17 @@ export default function UpdateSummary({
   migrationWarnings,
   hooks,
   dryRun,
+  backupDir,
 }: UpdateSummaryProps) {
   const seconds = (durationMs / 1000).toFixed(1);
   const c = summary.counts;
+  // `silent` counts managed overwrites and noops together; the planner
+  // counts the overwrite part separately so the line can say which is which.
+  const replaced = [...summary.replacedFiles].sort();
+  const unchanged = c.silent - c.overwritten;
   const parts: string[] = [];
-  if (c.silent) parts.push(`${c.silent} silent`);
+  if (c.overwritten) parts.push(`${c.overwritten} replaced`);
+  if (unchanged) parts.push(`${unchanged} unchanged`);
   if (c.autoMerged) parts.push(`${c.autoMerged} auto-merged`);
   if (c.conflicts) parts.push(`${c.conflicts} conflict${c.conflicts === 1 ? '' : 's'}`);
   if (c.added) parts.push(`${c.added} added`);
@@ -56,6 +68,25 @@ export default function UpdateSummary({
         <Text dimColor>Changes:</Text>
         <Text>  {parts.length === 0 ? '(nothing changed)' : parts.join(' · ')}</Text>
       </Box>
+
+      {replaced.length > 0 && (
+        <Box flexDirection="column">
+          <Text dimColor>
+            {dryRun ? 'Would replace' : 'Replaced'} with the shard's version:
+          </Text>
+          {replaced.slice(0, REPLACED_VISIBLE).map((p) => (
+            <Text key={p}>  · {p}</Text>
+          ))}
+          {replaced.length > REPLACED_VISIBLE && (
+            <Text dimColor>  …and {replaced.length - REPLACED_VISIBLE} more</Text>
+          )}
+          {dryRun ? (
+            <Text dimColor>Full list: add --json to this command</Text>
+          ) : (
+            backupDir && <Text dimColor>Previous copies: {backupDir}/files/</Text>
+          )}
+        </Box>
+      )}
 
       {summary.conflictsResolved > 0 && (
         <Box flexDirection="column">

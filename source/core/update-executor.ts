@@ -111,6 +111,15 @@ export interface UpdateSummary {
    * additive-principle invariant the hook ctx encodes.
    */
   addedFiles: string[];
+  /**
+   * Paths whose existing bytes were swapped wholesale for the shard's: an
+   * `overwrite` of an engine-owned file, or a conflict resolved
+   * `accept_new`. Not `auto_merge` (merged), `restore_missing` (the file
+   * was absent) or `add`. The update summary lists these by path, since a
+   * count cannot tell "replaced" from "left byte-identical" (#153).
+   * Populated in dry run too.
+   */
+  replacedFiles: string[];
 }
 
 /**
@@ -182,6 +191,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       wroteFiles: [],
       deletedFiles: [],
       addedFiles: [],
+      replacedFiles: [],
     };
 
     // Two-pass: writes first, deletes second. Writes use mkdir -p so they
@@ -385,6 +395,8 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
       // not apply to those paths.
       if (action.kind === 'add') {
         ctx.summary.addedFiles.push(action.path);
+      } else if (action.kind === 'overwrite') {
+        ctx.summary.replacedFiles.push(action.path);
       }
       return;
     }
@@ -423,6 +435,8 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         if (!ctx.dryRun) await writeFile(ctx.vaultRoot, action.path, action.newContent);
         ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'managed');
         ctx.summary.wroteFiles.push(action.path);
+        // The other replacement besides `overwrite`; see `UpdateSummary.replacedFiles`.
+        ctx.summary.replacedFiles.push(action.path);
         ctx.summary.conflictsAcceptedNew++;
       } else {
         // keep_mine / skip: leave the user's file on disk. For a

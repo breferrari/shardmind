@@ -129,6 +129,8 @@ export interface UpdatePlan {
 
 export interface UpdatePlanCounts {
   silent: number;      // managed overwrites + noops
+  /** The managed-overwrite part of `silent`; the rest left files byte-identical (#153). */
+  overwritten: number;
   autoMerged: number;
   conflicts: number;
   volatile: number;
@@ -371,6 +373,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   const pendingConflicts: PendingConflict[] = [];
   const counts: UpdatePlanCounts = {
     silent: 0,
+    overwritten: 0,
     autoMerged: 0,
     conflicts: 0,
     volatile: 0,
@@ -441,6 +444,8 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
     });
     counts.silent++;
+    // Same set as the executor's `summary.replacedFiles` minus accepted conflicts.
+    counts.overwritten++;
   }
 
   for (const entry of drift.missing) {

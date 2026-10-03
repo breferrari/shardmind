@@ -177,6 +177,7 @@ describe('updatePlanResult', () => {
     pendingConflicts: [],
     counts: {
       silent: 1,
+      overwritten: 0,
       autoMerged: 0,
       conflicts: 1,
       volatile: 0,

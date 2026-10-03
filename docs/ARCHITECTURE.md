@@ -835,6 +835,24 @@ Then the diff review:
 
 After resolution: the executor snapshots every path it will touch to `.shardmind/backups/update-<timestamp>/`, applies writes and deletes in two passes (writes first so a delete can't clobber a new file at the same path), re-caches the manifest + schema + templates, writes new `state.json`, then runs the non-fatal post-update hook. Any failure between snapshot and state-write walks the snapshot back and leaves the vault indistinguishable from pre-update.
 
+The final summary names what the update replaced, because a count alone cannot tell "rewritten with the shard's new version" from "left byte-identical" (#153):
+
+```
+  ✔ Updated 3.5.0 → 4.0.0 in 2.1s
+
+  Changes:
+    12 replaced · 131 unchanged · 2 auto-merged · 3 added
+
+  Replaced with the shard's version:
+    · .claude/commands/standup.md
+    · CLAUDE.md
+    · …
+    …and 3 more
+  Previous copies: .shardmind/backups/update-2026-10-03T17-35-00-000/files/
+```
+
+"Replaced" is every file on disk whose bytes the update swapped wholesale for the shard's: a silent overwrite of an engine-owned file, or a conflict the user resolved with **Accept new** — including a collision with an untracked file at a path the new shard adds. The list includes both kinds; the Changes split counts only the silent ones, as accepted conflicts are already counted as conflicts, so the list header carries no count of its own to disagree with. Auto-merged, added and restored files are not replacements and stay counts. The list is sorted and shows at most 10 paths. The backup line points at the snapshot's `files/` tree, which mirrors the vault layout and holds every replaced file's previous bytes; a dry run says "Would replace" and points at `--json` (added to the same command, so `--release` and friends carry over) for the uncapped per-file plan instead.
+
 Flags:
 - `--yes` — skip every prompt; opt into every new optional module and auto-keep every conflict (useful for unattended CI upgrades).
 - `--verbose` — show per-file action history during the write phase.
