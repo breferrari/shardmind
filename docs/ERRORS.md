@@ -229,6 +229,17 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 
 **Remedy:** Run your script from inside a ShardMind vault. Run `shardmind install` to create one if needed.
 
+### `VAULT_PATH_UNSAFE`
+
+**Meaning:** A path that `install`, `update` or `adopt` would write or delete is not a plain file or folder inside the vault, so writing through it could change something outside the vault or somewhere other than the path recorded (#163). The engine checks every path before it touches any, and refuses the whole run, dry runs included. The message lists each path with its reason:
+
+- `symlink`: the path is a symbolic link, dangling or not. Writing would follow it.
+- `symlinked-folder`: a folder on the way to the path is a symbolic link, so the write would land wherever it points.
+- `hard-link`: the file has another hard link, so rewriting it in place would change the other copy too.
+- `case-mismatch`: on a case-folding filesystem (macOS, Windows), a folder or file exists only under a different case, so the write would land in it while the engine recorded the shard's casing.
+
+**Remedy:** Replace the link with a regular file or folder (copy its content in), remove it, or rename the folder to the shard's casing, then run the command again.
+
 ---
 
 ## Values (`shard-values.yaml`)
@@ -301,9 +312,9 @@ Thrown by `source/core/install-planner.ts` and `source/core/install-executor.ts`
 
 ### `COLLISION_CHECK_FAILED`
 
-**Meaning:** `fsp.stat` on a planned output path threw something other than ENOENT.
+**Meaning:** A vault path the command would touch could not be inspected: `fsp.stat` on a planned install output, or the `lstat` / folder listing the vault path guard runs before install, update and adopt (#163), threw something other than "not found". A folder that cannot be listed only skips the case check; this code is for a path that cannot be looked at at all.
 
-**Remedy:** Usually permissions. Check the file referenced in the error.
+**Remedy:** Usually permissions, or a file held by another program (antivirus, a sync client). Check the path in the error, then run the command again.
 
 ### `BACKUP_FAILED`
 
@@ -557,4 +568,4 @@ If you're an end user, the most common ones you'll see are:
 - `VALUES_MISSING`, `VALUES_FILE_COLLISION`
 - `VAULT_NOT_FOUND` (if running a hook script outside a vault)
 
-Engine-internal codes (`STATE_*`, `BACKUP_FAILED`, `COLLISION_CHECK_FAILED`) shouldn't happen in normal use; open an issue if you hit one.
+Engine-internal codes (`STATE_*`, `BACKUP_FAILED`) shouldn't happen in normal use; open an issue if you hit one. `COLLISION_CHECK_FAILED` usually means a permissions problem on the path it names.

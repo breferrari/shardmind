@@ -15,6 +15,7 @@
 export type ErrorCode =
   // Vault resolution
   | 'VAULT_NOT_FOUND'
+  | 'VAULT_PATH_UNSAFE'
 
   // Shard manifest (shard.yaml)
   | 'MANIFEST_NOT_FOUND'

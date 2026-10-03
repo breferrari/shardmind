@@ -856,7 +856,9 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       expect(json.counts.adopted).toBe(1);
     });
 
-    it('still prompts when the path is a symlink, which a later update would write through', async (ctx) => {
+    // #62 kept these paths out of its silent adoption; #163 refuses the
+    // whole update, since any answer would write through or record them.
+    it('refuses the update when the path is a symlink, which it would write through (#163)', async (ctx) => {
       await install();
       const outside = path.join(root, 'outside-note.md');
       await fsp.writeFile(outside, BODY, 'utf-8');
@@ -866,11 +868,28 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       } catch {
         ctx.skip(); // symlinks need privileges on some Windows setups
       }
-      const { plan } = await update(await withNote('0.2.0'));
-      expect(plan.pendingConflicts.map((c) => c.path)).toContain(NOTE);
+      await expect(update(await withNote('0.2.0'))).rejects.toMatchObject({ code: 'VAULT_PATH_UNSAFE' });
+      expect((await fsp.lstat(path.join(vault, NOTE))).isSymbolicLink()).toBe(true);
+      expect(await fsp.readFile(outside, 'utf-8')).toBe(BODY);
     });
 
-    it('still prompts when the name on disk differs only in case', async (ctx) => {
+    it('refuses the update with --adopt-preexisting too, rather than tracking the link (#163)', async (ctx) => {
+      await install();
+      const outside = path.join(root, 'outside-note.md');
+      await fsp.writeFile(outside, '# Mine\n', 'utf-8');
+      await fsp.mkdir(path.dirname(path.join(vault, NOTE)), { recursive: true });
+      try {
+        await fsp.symlink(outside, path.join(vault, NOTE), 'file');
+      } catch {
+        ctx.skip();
+      }
+      await expect(update(await withNote('0.2.0'), 'keep_mine', false, true)).rejects.toMatchObject({
+        code: 'VAULT_PATH_UNSAFE',
+      });
+      expect(await fsp.readFile(outside, 'utf-8')).toBe('# Mine\n');
+    });
+
+    it('refuses the update when the name on disk differs only in case (#163)', async (ctx) => {
       await install();
       const lower = NOTE.toLowerCase();
       await fsp.mkdir(path.dirname(path.join(vault, lower)), { recursive: true });
@@ -878,8 +897,8 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       // Only meaningful where the filesystem folds case (macOS, Windows).
       const folds = await fsp.access(path.join(vault, NOTE)).then(() => true, () => false);
       if (!folds) ctx.skip();
-      const { plan } = await update(await withNote('0.2.0'));
-      expect(plan.pendingConflicts.map((c) => c.path)).toContain(NOTE);
+      await expect(update(await withNote('0.2.0'))).rejects.toMatchObject({ code: 'VAULT_PATH_UNSAFE' });
+      expect(await recorded(NOTE)).toBeUndefined();
     });
 
     // #61: keeping your own file there left it untracked, so every later

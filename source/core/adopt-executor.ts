@@ -43,6 +43,7 @@ import {
   VALUES_FILE,
 } from '../runtime/vault-paths.js';
 import { mapConcurrent, pathExists } from './fs-utils.js';
+import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { hashValues } from './install-planner.js';
 import {
   initShardDir,
@@ -225,6 +226,8 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
   } = opts;
 
   await assertAdoptable(vaultRoot);
+  // Every path adopt writes or starts tracking, before any of them (#163).
+  await assertSafeVaultPaths(vaultRoot, [...plan.matches, ...plan.shardOnly, ...plan.differs].map((c) => c.path));
 
   // Build the writeable-action list once so we know `total` upfront for
   // progress emission. Order: matches → shard-only → differs (the differs

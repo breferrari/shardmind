@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (links and case-folded names in the vault — #163)
+
+- **Install, update and adopt no longer write through a symlink, a hard link or a case-folded name.** Before any prompt or write they check every vault path they will touch. If one is a symlink (dangling or not), sits under a symlinked folder, is a file with another hard link, or exists only under a different case on macOS or Windows, the run stops with `VAULT_PATH_UNSAFE`, naming each path and why. Dry runs and `--json` plans stop too. Before this, a write could land outside the vault, change another copy of a file, or be recorded under a name that is not the one on disk.
+
 ### Added (scripted reinstall — #55)
 
 - **`install --force` reinstalls and overwrites without asking.** It answers both destructive install prompts. Over an existing install it reinstalls from scratch instead of showing the gate, or refusing without a terminal or under `--defaults`. Files of yours at paths the shard writes are replaced with no backup instead of being renamed to `.shardmind-backup-<timestamp>`; on a reinstall that includes your edits to the old install's files. Pair it with `--yes`, `--values` or `--defaults` for a fully non-interactive run. If the install fails, everything it moved is put back. The summary lists each replaced file that held your own content, including by the interactive Overwrite choice.

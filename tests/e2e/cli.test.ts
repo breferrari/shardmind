@@ -635,7 +635,7 @@ describe('shardmind install', () => {
   });
 
   it.skipIf(process.platform === 'win32')(
-    '--yes --force removes a symlink at a planned path and leaves its target alone',
+    '--yes --force refuses a symlink at a planned path, in the run and the preview, and leaves it alone (#163)',
     async () => {
       vault = await createEmptyVault('install-force-symlink');
       const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'force-target-'));
@@ -643,12 +643,14 @@ describe('shardmind install', () => {
         const target = path.join(outside, 'precious.md');
         await fs.writeFile(target, 'outside the vault\n');
         await fs.symlink(target, path.join(vault.root, 'Home.md'));
-        const result = await installForce(DEFAULT_VALUES);
-        expect(result.exitCode).toBe(0);
-        expect(await fs.readFile(target, 'utf-8')).toBe('outside the vault\n');
-        const stat = await fs.lstat(path.join(vault.root, 'Home.md'));
-        expect(stat.isSymbolicLink()).toBe(false);
-        expect(await vault.readFile('Home.md')).toContain('Alice');
+        for (const extra of [['--dry-run'], []]) {
+          const result = await installForce(DEFAULT_VALUES, extra);
+          expect(result.exitCode).toBe(1);
+          expect(result.stdout).toMatch(/VAULT_PATH_UNSAFE/);
+          expect((await fs.lstat(path.join(vault.root, 'Home.md'))).isSymbolicLink()).toBe(true);
+          expect(await fs.readFile(target, 'utf-8')).toBe('outside the vault\n');
+        }
+        await expectNoBackup();
       } finally {
         await fs.rm(outside, { recursive: true, force: true });
       }
