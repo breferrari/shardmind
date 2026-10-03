@@ -21,6 +21,7 @@
 
 import { Box, Text } from 'ink';
 import zod from 'zod';
+import { updateCheckOption } from './hooks/update-check-option.js';
 
 import { Spinner, StatusMessage } from '../components/ui.js';
 import StatusView from '../components/StatusView.js';
@@ -34,12 +35,7 @@ export const options = zod.object({
     .boolean()
     .default(false)
     .describe('Show full diagnostics (values, modules, files, frontmatter, environment)'),
-  // Named for the positive so Pastel emits `--no-update-check` and Commander
-  // stores it here: a `noUpdateCheck` option never reached the command (#147).
-  updateCheck: zod
-    .boolean()
-    .default(true)
-    .describe('Disable the once-per-day npm registry check for newer shardmind versions'),
+  updateCheck: updateCheckOption,
 });
 
 type Props = {
@@ -49,7 +45,7 @@ type Props = {
 export default function Index({ options }: Props) {
   const { verbose, updateCheck } = options;
   const { phase } = useStatusReport({ vaultRoot: process.cwd(), verbose });
-  const banner = useSelfUpdateBanner({ noUpdateCheck: !updateCheck });
+  const banner = useSelfUpdateBanner({ updateCheck });
 
   // Hoist phase rendering into a single expression so the self-update
   // banner can sit above every status variant without each switch arm

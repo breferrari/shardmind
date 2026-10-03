@@ -13,6 +13,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import Pastel from 'pastel';
 import { enablePositionalOptions, pastelCommander } from '../../source/cli-options.js';
+import { waitFor } from '../component/helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_ENTRY = pathToFileURL(path.resolve(__dirname, '../fixtures/cli-options/cli.js')).href;
@@ -31,7 +32,7 @@ async function run(...args: string[]): Promise<Seen> {
   };
   const app = new Pastel({ importMeta: { url: FIXTURE_ENTRY } as ImportMeta, name: 'fixture' });
   await app.run(['node', 'fixture', ...args]);
-  for (let i = 0; i < 50 && !seen; i++) await new Promise((r) => setTimeout(r, 10));
+  await waitFor(() => (seen ? 'seen' : ''), (f) => f === 'seen');
   if (!seen) throw new Error(`no command rendered for: ${args.join(' ')}`);
   return seen;
 }

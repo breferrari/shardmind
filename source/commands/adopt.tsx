@@ -1,6 +1,7 @@
 import { Box, Text, useApp } from 'ink';
 import { useEffect } from 'react';
 import zod from 'zod';
+import { updateCheckOption } from './hooks/update-check-option.js';
 
 import { emitJson, jsonFailure } from '../core/json-output.js';
 
@@ -43,12 +44,7 @@ export const options = zod.object({
     .boolean()
     .default(false)
     .describe('Preview classification + plan without writing'),
-  // Named for the positive so Pastel emits `--no-update-check` and Commander
-  // stores it here: a `noUpdateCheck` option never reached the command (#147).
-  updateCheck: zod
-    .boolean()
-    .default(true)
-    .describe('Disable the once-per-day npm registry check for newer shardmind versions'),
+  updateCheck: updateCheckOption,
   json: zod
     .boolean()
     .default(false)
@@ -85,7 +81,7 @@ export default function Adopt({ args, options }: Props) {
 
   // The banner is chrome; suppress it under --json so stdout is exactly one
   // JSON document.
-  const banner = useSelfUpdateBanner({ noUpdateCheck: !updateCheck || json });
+  const banner = useSelfUpdateBanner({ updateCheck: updateCheck && !json });
 
   // A --json run must answer with a document on failure too, not a rendered
   // error box (which returns null here) and certainly not a stack trace. The

@@ -15,6 +15,9 @@
  * options then go before the subcommand, and a flag a subcommand does not
  * declare is Commander's `unknown option` error instead of being swallowed.
  *
+ * Remove this module once Pastel enables positional options itself, or
+ * exposes the program so the caller can.
+ *
  * Spec: docs/ARCHITECTURE.md §10.1 (Option scope).
  */
 
@@ -22,7 +25,8 @@ import { createRequire } from 'node:module';
 
 interface CommandLike {
   parse(...args: unknown[]): unknown;
-  enablePositionalOptions?: (positional?: boolean) => unknown;
+  parseAsync(...args: unknown[]): unknown;
+  enablePositionalOptions(positional?: boolean): unknown;
   parent?: unknown;
 }
 
@@ -48,16 +52,21 @@ export function pastelCommander(): CommandCtor {
  * silently bringing #147 back.
  */
 export function enablePositionalOptions(Command: CommandCtor): void {
-  const proto = Command.prototype as CommandLike & { [PATCHED]?: true };
+  const proto = Command.prototype as Partial<CommandLike> & { [PATCHED]?: true };
   if (typeof proto.enablePositionalOptions !== 'function') {
     throw new Error('Commander has no enablePositionalOptions(); the #147 option-scope fix needs it.');
   }
   if (proto[PATCHED]) return;
-  const parse = proto.parse;
-  proto.parse = function patchedParse(this: CommandLike, ...args: unknown[]) {
-    // Only the program (no parent) decides where its options may appear.
-    if (!this.parent) this.enablePositionalOptions?.();
-    return parse.apply(this, args);
-  };
+  // Pastel calls `parse`; `parseAsync` is covered too so a Pastel switch to
+  // it does not silently bring #147 back.
+  for (const method of ['parse', 'parseAsync'] as const) {
+    const original = proto[method];
+    if (typeof original !== 'function') continue;
+    proto[method] = function patched(this: CommandLike, ...args: unknown[]) {
+      // Only the program (no parent) decides where its options may appear.
+      if (!this.parent) this.enablePositionalOptions();
+      return original.apply(this, args);
+    };
+  }
   proto[PATCHED] = true;
 }
