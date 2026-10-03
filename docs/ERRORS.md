@@ -229,6 +229,17 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 
 **Remedy:** Run your script from inside a ShardMind vault. Run `shardmind install` to create one if needed.
 
+### `VAULT_PATH_UNSAFE`
+
+**Meaning:** A path that `install`, `update` or `adopt` would write or delete is not a plain file or folder inside the vault, so writing through it could change something outside the vault or somewhere other than the path recorded (#163). The engine checks every path before it touches any, and refuses the whole run, dry runs included. The message lists each path with its reason:
+
+- `symlink`: the path is a symbolic link, dangling or not. Writing would follow it.
+- `symlinked-folder`: a folder on the way to the path is a symbolic link, so the write would land wherever it points.
+- `hard-link`: the file has another hard link, so rewriting it in place would change the other copy too.
+- `case-mismatch`: on a case-folding filesystem (macOS, Windows), a folder or file exists only under a different case, so the write would land in it while the engine recorded the shard's casing.
+
+**Remedy:** Replace the link with a regular file or folder (copy its content in), remove it, or rename the folder to the shard's casing, then run the command again.
+
 ---
 
 ## Values (`shard-values.yaml`)
