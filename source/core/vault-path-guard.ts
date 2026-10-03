@@ -17,9 +17,7 @@ import path from 'node:path';
 import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
 import { STATE_FILE, VALUES_FILE } from '../runtime/vault-paths.js';
-
-/** The engine's own files every install, update and adopt writes. */
-export const ENGINE_WRITE_PATHS: readonly string[] = [VALUES_FILE, STATE_FILE];
+import { mapConcurrent } from './fs-utils.js';
 
 export type UnsafeVaultPathReason = 'symlink' | 'symlinked-folder' | 'hard-link' | 'case-mismatch';
 
@@ -29,62 +27,57 @@ export interface UnsafeVaultPath {
   reason: UnsafeVaultPathReason;
 }
 
+/** The engine's own files, which every install, update and adopt writes. */
+const ENGINE_WRITE_PATHS: readonly string[] = [VALUES_FILE, STATE_FILE];
+
 /** Paths named in the error message before "and N more". */
-const LISTED = 10;
+const MAX_LISTED_PATHS = 10;
 
-/**
- * The given vault-relative paths (either separator) that are unsafe to
- * write or delete, walking each component from the vault root. A path
- * whose parent does not exist yet is safe: nothing on its way is a link.
- * The vault root itself is not checked. Directory listings and `lstat`
- * results are cached across paths.
- */
-export async function findUnsafeVaultPaths(
-  vaultRoot: string,
-  relPaths: readonly string[],
-): Promise<UnsafeVaultPath[]> {
-  const listings = new Map<string, Promise<Set<string> | null>>();
-  const stats = new Map<string, Promise<Stats | null>>();
-
-  const list = (dir: string) => {
-    let entry = listings.get(dir);
+/** A cached async lookup that maps "not there" (ENOENT, ENOTDIR) to null. */
+function cachedOrNull<T>(lookup: (key: string) => Promise<T>): (key: string) => Promise<T | null> {
+  const cache = new Map<string, Promise<T | null>>();
+  return (key) => {
+    let entry = cache.get(key);
     if (!entry) {
-      entry = fsp.readdir(dir).then(
-        (names) => new Set(names.map((n) => n.normalize('NFC'))),
-        (err: unknown) => {
-          const code = errnoCode(err);
-          if (code === 'ENOENT' || code === 'ENOTDIR') return null;
-          throw err;
-        },
-      );
-      listings.set(dir, entry);
-    }
-    return entry;
-  };
-  const lstat = (abs: string) => {
-    let entry = stats.get(abs);
-    if (!entry) {
-      entry = fsp.lstat(abs).catch((err: unknown) => {
+      entry = lookup(key).catch((err: unknown) => {
         const code = errnoCode(err);
         if (code === 'ENOENT' || code === 'ENOTDIR') return null;
         throw err;
       });
-      stats.set(abs, entry);
+      cache.set(key, entry);
     }
     return entry;
   };
+}
 
-  const check = async (rel: string): Promise<UnsafeVaultPathReason | null> => {
+/**
+ * The given vault-relative paths (either separator) that are unsafe to
+ * touch, walking each component from the vault root. `writes` are checked
+ * in full. `deletes` only need their folders checked: unlinking a symlink
+ * or a hard-linked file harms nothing else, but deleting through a
+ * symlinked folder deletes outside the vault. A path whose parent does
+ * not exist yet is safe: nothing on its way is a link. The vault root
+ * itself is not checked. Listings and `lstat` results are cached.
+ */
+export async function findUnsafeVaultPaths(
+  vaultRoot: string,
+  writes: readonly string[],
+  deletes: readonly string[] = [],
+): Promise<UnsafeVaultPath[]> {
+  const list = cachedOrNull((dir) =>
+    fsp.readdir(dir).then((names) => new Set(names.map((n) => n.normalize('NFC')))),
+  );
+  const lstat = cachedOrNull((abs): Promise<Stats> => fsp.lstat(abs));
+
+  const check = async (rel: string, foldersOnly: boolean): Promise<UnsafeVaultPathReason | null> => {
     const segments = rel.split(/[\\/]/).filter((s) => s !== '' && s !== '.');
+    const checked = foldersOnly ? segments.slice(0, -1) : segments;
     let dir = vaultRoot;
-    for (let i = 0; i < segments.length; i++) {
-      const name = segments[i]!;
+    for (const [i, name] of checked.entries()) {
       const last = i === segments.length - 1;
       const abs = path.join(dir, name);
-      const names = await list(dir);
-      if (names === null) return null;
-      const st = await lstat(abs);
-      if (!st) return null;
+      const [names, st] = await Promise.all([list(dir), lstat(abs)]);
+      if (names === null || st === null) return null;
       if (!names.has(name.normalize('NFC'))) {
         // It resolves, but not under this name: the filesystem folded case
         // (a normalization-only difference is the same name, and passes).
@@ -98,20 +91,28 @@ export async function findUnsafeVaultPaths(
     return null;
   };
 
-  const unsafe: UnsafeVaultPath[] = [];
-  for (const rel of relPaths) {
-    const reason = await check(rel);
-    if (reason) unsafe.push({ path: rel, reason });
-  }
-  return unsafe;
+  const all = [
+    ...writes.map((rel) => ({ rel, foldersOnly: false })),
+    ...deletes.map((rel) => ({ rel, foldersOnly: true })),
+  ];
+  const reasons = await mapConcurrent(all, 16, ({ rel, foldersOnly }) => check(rel, foldersOnly));
+  return all.flatMap(({ rel }, i) => (reasons[i] ? [{ path: rel, reason: reasons[i]! }] : []));
 }
 
-/** Throw `VAULT_PATH_UNSAFE` naming each unsafe path, or resolve. */
-export async function assertSafeVaultPaths(vaultRoot: string, relPaths: readonly string[]): Promise<void> {
-  const unsafe = await findUnsafeVaultPaths(vaultRoot, relPaths);
+/**
+ * Throw `VAULT_PATH_UNSAFE` naming each unsafe path, or resolve. The
+ * engine's own files (`shard-values.yaml`, `.shardmind/state.json`) are
+ * always checked as writes.
+ */
+export async function assertSafeVaultPaths(
+  vaultRoot: string,
+  writes: readonly string[],
+  deletes: readonly string[] = [],
+): Promise<void> {
+  const unsafe = await findUnsafeVaultPaths(vaultRoot, [...writes, ...ENGINE_WRITE_PATHS], deletes);
   if (unsafe.length === 0) return;
-  const listed = unsafe.slice(0, LISTED).map((u) => `${u.path} (${u.reason})`).join(', ');
-  const more = unsafe.length > LISTED ? `, and ${unsafe.length - LISTED} more` : '';
+  const listed = unsafe.slice(0, MAX_LISTED_PATHS).map((u) => `${u.path} (${u.reason})`).join(', ');
+  const more = unsafe.length > MAX_LISTED_PATHS ? `, and ${unsafe.length - MAX_LISTED_PATHS} more` : '';
   throw new ShardMindError(
     `Refusing to write through ${unsafe.length} unsafe vault path${unsafe.length === 1 ? '' : 's'}: ${listed}${more}`,
     'VAULT_PATH_UNSAFE',

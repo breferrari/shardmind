@@ -27,6 +27,7 @@ import { classifyAdoption } from '../../source/core/adopt-planner.js';
 import { runAdopt } from '../../source/core/adopt-executor.js';
 import { buildRenderContext } from '../../source/core/renderer.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
+import { symlinksWork } from '../helpers/fs-capabilities.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MINIMAL_SHARD = path.resolve(__dirname, '../../examples/minimal-shard');
@@ -46,17 +47,6 @@ const VALUES = {
   qmd_enabled: true,
 };
 
-async function symlinksWork(): Promise<boolean> {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'shardmind-symprobe-'));
-  try {
-    await fsp.symlink(path.join(dir, 'target'), path.join(dir, 'link'));
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await fsp.rm(dir, { recursive: true, force: true });
-  }
-}
 const canSymlink = await symlinksWork();
 
 async function loadShard(dir: string) {
@@ -67,9 +57,10 @@ async function loadShard(dir: string) {
   return { manifest, schema, selections, values };
 }
 
-async function install(vault: string, shardDir = MINIMAL_SHARD) {
+async function install(vault: string, shardDir = MINIMAL_SHARD, dryRun = false) {
   const { manifest, schema, selections, values } = await loadShard(shardDir);
   return runInstall({
+    dryRun,
     vaultRoot: vault,
     manifest,
     schema,
@@ -105,6 +96,13 @@ describe.skipIf(!canSymlink)('install, update and adopt refuse a linked vault pa
     await expect(fsp.stat(target)).rejects.toThrow();
     expect(await readState(vault)).toBeNull();
     expect(await fsp.readdir(vault)).toEqual(['Home.md']);
+  });
+
+  it('a dry-run install refuses too, so the preview matches the run', async () => {
+    const target = path.join(outside, 'created-outside.md');
+    await fsp.symlink(target, path.join(vault, 'Home.md'));
+    await expect(install(vault, MINIMAL_SHARD, true)).rejects.toMatchObject({ code: 'VAULT_PATH_UNSAFE' });
+    await expect(fsp.stat(target)).rejects.toThrow();
   });
 
   // Installs 0.1.0, then plans 0.2.0 (Home.md changed). `linkHome` runs

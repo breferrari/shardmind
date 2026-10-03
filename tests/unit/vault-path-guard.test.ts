@@ -8,36 +8,10 @@ import {
   assertSafeVaultPaths,
 } from '../../source/core/vault-path-guard.js';
 import { ShardMindError } from '../../source/runtime/types.js';
-
-// Creating a symlink needs a privilege on Windows that CI runners and most
-// dev boxes lack; probe once and skip the symlink cases where it fails.
-async function symlinksWork(): Promise<boolean> {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'shardmind-symprobe-'));
-  try {
-    await fsp.symlink(path.join(dir, 'target'), path.join(dir, 'link'));
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await fsp.rm(dir, { recursive: true, force: true });
-  }
-}
-
-// True when the filesystem under tmpdir resolves names case-insensitively.
-async function foldsCase(): Promise<boolean> {
-  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'shardmind-caseprobe-'));
-  try {
-    await fsp.writeFile(path.join(dir, 'probe'), '');
-    await fsp.lstat(path.join(dir, 'PROBE'));
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await fsp.rm(dir, { recursive: true, force: true });
-  }
-}
+import { symlinksWork, hardLinksWork, foldsCase } from '../helpers/fs-capabilities.js';
 
 const canSymlink = await symlinksWork();
+const canHardLink = await hardLinksWork();
 const caseFolds = await foldsCase();
 
 describe('findUnsafeVaultPaths (#163)', () => {
@@ -87,10 +61,24 @@ describe('findUnsafeVaultPaths (#163)', () => {
     ]);
   });
 
-  it('flags a file with another hard link', async () => {
+  it.skipIf(!canHardLink)('flags a file with another hard link', async () => {
     await fsp.writeFile(path.join(outside, 'shared.md'), 'shared');
     await fsp.link(path.join(outside, 'shared.md'), path.join(vault, 'Home.md'));
     expect(await findUnsafeVaultPaths(vault, ['Home.md'])).toEqual([{ path: 'Home.md', reason: 'hard-link' }]);
+  });
+
+  it.skipIf(!canSymlink)('checks only the folders of a path to delete: unlinking a link harms nothing (#163)', async () => {
+    await fsp.symlink(path.join(outside, 'x.md'), path.join(vault, 'Old.md'));
+    await fsp.symlink(outside, path.join(vault, 'linked'), 'dir');
+    expect(await findUnsafeVaultPaths(vault, [], ['Old.md', 'linked/Gone.md'])).toEqual([
+      { path: 'linked/Gone.md', reason: 'symlinked-folder' },
+    ]);
+  });
+
+  it.skipIf(!canHardLink)('does not flag a hard-linked file that is only deleted', async () => {
+    await fsp.writeFile(path.join(outside, 'shared.md'), 'shared');
+    await fsp.link(path.join(outside, 'shared.md'), path.join(vault, 'Old.md'));
+    expect(await findUnsafeVaultPaths(vault, [], ['Old.md'])).toEqual([]);
   });
 
   it.skipIf(!caseFolds)('flags a folder that exists only under a different case', async () => {
@@ -105,7 +93,7 @@ describe('findUnsafeVaultPaths (#163)', () => {
     expect(await findUnsafeVaultPaths(vault, ['Home.md'])).toEqual([{ path: 'Home.md', reason: 'case-mismatch' }]);
   });
 
-  it('assertSafeVaultPaths throws VAULT_PATH_UNSAFE naming each path and reason', async () => {
+  it.skipIf(!canHardLink)('assertSafeVaultPaths throws VAULT_PATH_UNSAFE naming each path and reason', async () => {
     await fsp.writeFile(path.join(outside, 'shared.md'), 'shared');
     await fsp.link(path.join(outside, 'shared.md'), path.join(vault, 'Home.md'));
     const err = await assertSafeVaultPaths(vault, ['Home.md', 'Other.md']).catch((e: unknown) => e);

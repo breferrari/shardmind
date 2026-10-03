@@ -873,6 +873,22 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       expect(await fsp.readFile(outside, 'utf-8')).toBe(BODY);
     });
 
+    it('refuses the update with --adopt-preexisting too, rather than tracking the link (#163)', async (ctx) => {
+      await install();
+      const outside = path.join(root, 'outside-note.md');
+      await fsp.writeFile(outside, '# Mine\n', 'utf-8');
+      await fsp.mkdir(path.dirname(path.join(vault, NOTE)), { recursive: true });
+      try {
+        await fsp.symlink(outside, path.join(vault, NOTE), 'file');
+      } catch {
+        ctx.skip();
+      }
+      await expect(update(await withNote('0.2.0'), 'keep_mine', false, true)).rejects.toMatchObject({
+        code: 'VAULT_PATH_UNSAFE',
+      });
+      expect(await fsp.readFile(outside, 'utf-8')).toBe('# Mine\n');
+    });
+
     it('refuses the update when the name on disk differs only in case (#163)', async (ctx) => {
       await install();
       const lower = NOTE.toLowerCase();

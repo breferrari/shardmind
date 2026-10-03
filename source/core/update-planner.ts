@@ -30,7 +30,7 @@ import type {
 import { ShardMindError } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { computeMergeAction } from './differ.js';
-import { assertSafeVaultPaths, ENGINE_WRITE_PATHS } from './vault-path-guard.js';
+import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { resolveModules } from './modules.js';
 import { renderFile, createRenderer } from './renderer.js';
 import { isBinaryForMerge, sha256, mapConcurrent } from './fs-utils.js';
@@ -365,26 +365,35 @@ export async function renderNewShard(
   return { outputs: [...renderedPairs.flat(), ...copiedPairs] };
 }
 
-/**
- * Build the full UpdatePlan. Reads the on-disk content of `modified`
- * entries and the cached old-template content for three-way merges, but
- * never writes.
- */
-/** Actions that write, delete, or record a path the next update may write. */
-const GUARDED_ACTIONS = new Set<UpdateAction['kind']>([
+/** Actions that write, or record a path the next update may write. */
+const WRITE_ACTIONS = new Set<UpdateAction['kind']>([
   'overwrite',
   'auto_merge',
   'conflict',
   'add',
   'restore_missing',
-  'delete',
 ]);
 
-/** The vault paths an update plan writes, deletes or keeps tracking (#163). */
-export function pathsTheUpdateTouches(actions: readonly UpdateAction[]): string[] {
-  return actions.filter((a) => GUARDED_ACTIONS.has(a.kind)).map((a) => a.path);
+/**
+ * The vault paths an update plan touches (#163): `writes` it writes or
+ * starts tracking — including an untracked file adopted because it is
+ * already the new version (#62) — and `deletes` it removes.
+ */
+export function pathsTheUpdateTouches(actions: readonly UpdateAction[]): { writes: string[]; deletes: string[] } {
+  const writes = actions.filter(
+    (a) => WRITE_ACTIONS.has(a.kind) || (a.kind === 'noop' && a.reason === 'already the new version'),
+  );
+  return {
+    writes: writes.map((a) => a.path),
+    deletes: actions.filter((a) => a.kind === 'delete').map((a) => a.path),
+  };
 }
 
+/**
+ * Build the full UpdatePlan. Reads the on-disk content of `modified`
+ * entries and the cached old-template content for three-way merges, but
+ * never writes.
+ */
 export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   const { vault, values, newShard, removedFileDecisions } = input;
   const { root: vaultRoot, state: currentState, drift } = vault;
@@ -655,7 +664,6 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   const addCandidates = newPlan.outputs.filter(o => !trackedPaths.has(o.outputPath));
   // One directory listing per folder for the exact-name check below, however
   // many identical files a folder holds.
-  const listings = new Map<string, Promise<string[]>>();
   const addActions = await mapConcurrent<typeof addCandidates[number], UpdateAction>(
     addCandidates,
     PLAN_IO_CONCURRENCY,
@@ -714,10 +722,9 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       }
       // The user already has exactly the new version: a prompt here would
       // offer two answers that both leave the same bytes. Adopt the file as
-      // managed, with no write (#62) — but not through a symlink (a later
-      // update would write through it, possibly outside the vault) or under
-      // a name that differs from the one on disk only in case.
-      if (actualRead.hash === output.hash && (await isPlainFileNamedExactly(abs, listings))) {
+      // managed, with no write (#62). A symlink or a case-folded name here
+      // refuses the whole update below (#163).
+      if (actualRead.hash === output.hash) {
         return alreadyNewVersion(output, newTempDir);
       }
       // A binary collision gets the whole-file binary prompt, not a text
@@ -752,7 +759,8 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
 
   // Refuse before any prompt or `--json` plan, so a dry run reports what
   // the run would do (#163). The executor checks again before it writes.
-  await assertSafeVaultPaths(vaultRoot, [...pathsTheUpdateTouches(actions), ...ENGINE_WRITE_PATHS]);
+  const touched = pathsTheUpdateTouches(actions);
+  await assertSafeVaultPaths(vaultRoot, touched.writes, touched.deletes);
 
   return { actions, pendingConflicts, counts };
 }
@@ -954,25 +962,6 @@ function alreadyNewVersion(output: RenderedFileEntry, newTempDir: string): Updat
     reason: 'already the new version',
     rebaseline: rebaselineOf(output, newTempDir, 'managed'),
   };
-}
-
-/**
- * A regular file (not a symlink) whose name on disk is exactly the one asked
- * for, which a case-insensitive filesystem would otherwise let differ.
- */
-async function isPlainFileNamedExactly(abs: string, listings: Map<string, Promise<string[]>>): Promise<boolean> {
-  try {
-    if ((await fsp.lstat(abs)).isSymbolicLink()) return false;
-    const dir = path.dirname(abs);
-    let listing = listings.get(dir);
-    if (!listing) {
-      listing = fsp.readdir(dir);
-      listings.set(dir, listing);
-    }
-    return (await listing).includes(path.basename(abs));
-  } catch {
-    return false;
-  }
 }
 
 /** `{ copyFromSourcePath }` for a copy-origin output, so the executor copies bytes. */
