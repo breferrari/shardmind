@@ -124,7 +124,13 @@ async function classifyFile(
 
 function classifyByHash(relPath: string, file: FileState, content: Buffer): Classified {
   const actualHash = sha256(content);
-  const ownership = actualHash === file.rendered_hash ? 'managed' : 'modified';
+  // A recorded `modified` label is sticky: before #150, keep_mine,
+  // auto_merge and adopt recorded the user's hash under that label, so a
+  // hash match there means "the user's bytes, unchanged", not
+  // "engine-owned". The modified bucket always merges, so honouring the
+  // label is safe; a merge that ends at the new render relabels it managed.
+  const ownership =
+    actualHash === file.rendered_hash && file.ownership !== 'modified' ? 'managed' : 'modified';
   return {
     bucket: ownership,
     entry: {

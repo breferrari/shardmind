@@ -80,9 +80,9 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     await fsp.rm(root, { recursive: true, force: true });
   });
 
-  async function install(): Promise<void> {
-    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+  async function install(shardDir = MINIMAL_SHARD): Promise<void> {
+    const manifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(shardDir, '.shardmind', 'shard-schema.yaml'));
     const values = buildValuesValidator(schema).parse(
       resolveComputedDefaults(schema, BASE_VALUES),
     ) as Record<string, unknown>;
@@ -90,7 +90,7 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       vaultRoot: vault,
       manifest,
       schema,
-      tempDir: MINIMAL_SHARD,
+      tempDir: shardDir,
       resolved: { ...RESOLVED, version: manifest.version },
       tarballSha256: 'sha-0.1.0',
       values,
@@ -324,6 +324,115 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     expect(after).toContain('# Minimal Shard v2');
     expect(after).toContain('My own line.');
     expect(after).toContain('merged-in line');
+  });
+
+  // Vaults hit before the fix hold state written under the old rule: the
+  // user's hash recorded as the baseline. Fixing the writers does not
+  // repair those entries, so the update must recognise them.
+  describe('state recorded before the fix', () => {
+    /** Rewrite COPY's state entry as a pre-fix writer left it: the user's hash under `ownership`. */
+    async function corrupt(rel: string, ownership: 'managed' | 'modified'): Promise<void> {
+      const statePath = path.join(vault, '.shardmind', 'state.json');
+      const state = JSON.parse(await fsp.readFile(statePath, 'utf-8')) as ShardState;
+      state.files[rel] = {
+        ...state.files[rel]!,
+        rendered_hash: sha256(await fsp.readFile(path.join(vault, rel))),
+        ownership,
+      };
+      await fsp.writeFile(statePath, JSON.stringify(state, null, 2), 'utf-8');
+    }
+
+    it('an entry labelled modified with the user\'s hash is merged, not overwritten', async () => {
+      await install();
+      await editFile(COPY, COPY_LINE, 'My own line.');
+      await corrupt(COPY, 'modified'); // what keep_mine / auto_merge / adopt wrote
+
+      const { plan } = await update(await shardAt('0.2.0'));
+      expect(actionFor(plan, COPY)).toBe('noop');
+      expect(await read(COPY)).toContain('My own line.');
+    });
+
+    it('a copy-origin entry labelled managed with the user\'s hash is merged, not overwritten', async () => {
+      await install();
+      await editFile(COPY, COPY_LINE, 'My own line.');
+      await corrupt(COPY, 'managed'); // what the post-hook re-hash wrote
+
+      const { plan } = await update(await shardAt('0.2.0'));
+      expect(actionFor(plan, COPY)).toBe('noop');
+      expect(await read(COPY)).toContain('My own line.');
+    });
+
+    it('a corrupted entry whose source changed three-way merges instead of overwriting', async () => {
+      await install();
+      await editFile(COPY, COPY_LINE, 'My own line.');
+      await corrupt(COPY, 'managed');
+
+      const { plan } = await update(await shardAt('0.2.0', { [COPY]: (s) => s.replace('# Minimal Shard', '# Minimal Shard v2') }));
+      expect(actionFor(plan, COPY)).toBe('auto_merge');
+      const after = await read(COPY);
+      expect(after).toContain('# Minimal Shard v2');
+      expect(after).toContain('My own line.');
+    });
+
+    it('one update repairs the entry, so status then reports the file as modified', async () => {
+      await install();
+      await editFile(COPY, COPY_LINE, 'My own line.');
+      await corrupt(COPY, 'managed');
+      // Before any update, status cannot tell: disk equals the recorded hash.
+      expect((await detectDrift(vault, (await readState(vault)) as ShardState)).managed.map((e) => e.path)).toContain(COPY);
+
+      await update(await shardAt('0.2.0'));
+      const drift = await detectDrift(vault, (await readState(vault)) as ShardState);
+      expect(drift.modified.map((e) => e.path)).toContain(COPY);
+      expect((await recorded(COPY)).rendered_hash).toBe(sha256(await fsp.readFile(path.join(MINIMAL_SHARD, COPY))));
+    });
+
+    it('a corrupted binary copy-origin entry is caught by its bytes', async () => {
+      const BIN = 'assets/logo.bin';
+      const pristineBytes = Buffer.from([0x89, 0x50, 0xff, 0xfe, 0x00, 0x0a, 0xc3]);
+      const v1 = await shardAt('0.1.0');
+      await fsp.mkdir(path.join(v1, 'assets'), { recursive: true });
+      await fsp.writeFile(path.join(v1, BIN), pristineBytes);
+      await install(v1);
+      await fsp.writeFile(path.join(vault, BIN), Buffer.from([0x89, 0x50, 0xff, 0x00]));
+      await corrupt(BIN, 'managed');
+
+      const v2 = await shardAt('0.2.0');
+      await fsp.mkdir(path.join(v2, 'assets'), { recursive: true });
+      await fsp.writeFile(path.join(v2, BIN), pristineBytes);
+      const { plan } = await update(v2);
+      expect(actionFor(plan, BIN)).not.toBe('overwrite');
+      expect(await fsp.readFile(path.join(vault, BIN))).toEqual(Buffer.from([0x89, 0x50, 0xff, 0x00]));
+    });
+
+    it('a pristine file is not rerouted: its recorded hash equals the cached source', async () => {
+      await install();
+      const { plan } = await update(await shardAt('0.2.0', { [COPY]: (s) => s.replace(COPY_LINE, 'New upstream line.') }));
+      expect(actionFor(plan, COPY)).toBe('overwrite');
+    });
+
+    it('without a cached source, a modified-labelled entry still goes to a conflict, never an overwrite', async () => {
+      await install();
+      await editFile(COPY, COPY_LINE, 'My own line.');
+      await corrupt(COPY, 'modified');
+      await fsp.rm(path.join(vault, '.shardmind', 'templates', COPY));
+
+      const { plan } = await update(await shardAt('0.2.0'));
+      expect(actionFor(plan, COPY)).toBe('conflict');
+      expect(await read(COPY)).toContain('My own line.');
+    });
+  });
+
+  it('a user who reverts their edit is relabelled managed by the next update', async () => {
+    await install();
+    const pristine = await read(COPY);
+    await editFile(COPY, COPY_LINE, 'My own line.');
+    await update(await shardAt('0.2.0'));
+    expect((await recorded(COPY)).ownership).toBe('modified');
+
+    await write(COPY, pristine);
+    await update(await shardAt('0.3.0'));
+    expect((await recorded(COPY)).ownership).toBe('managed');
   });
 
   it('a pristine copy-origin file is still overwritten silently when its source changes', async () => {

@@ -71,6 +71,25 @@ describe('detectDrift', () => {
     expect(report.managed).toHaveLength(0);
   });
 
+  // #150: before the fix, keep_mine / auto_merge / adopt recorded the user's
+  // hash under a `modified` label, so a hash match there is the user's bytes.
+  it('keeps a modified-labelled file modified even when its hash matches', async () => {
+    const content = '# The user edit\n';
+    await writeFile('notes/c.md', content);
+    const state = makeShardState({ files: {
+      'notes/c.md': {
+        template: 't.njk',
+        rendered_hash: sha256(content),
+        ownership: 'modified',
+      },
+    } });
+
+    const report = await detectDrift(vaultRoot, state);
+
+    expect(report.modified.map((e) => e.path)).toEqual(['notes/c.md']);
+    expect(report.managed).toHaveLength(0);
+  });
+
   it('maps state ownership=user onto the volatile bucket', async () => {
     // Content intentionally doesn't match the recorded hash — the whole point
     // of volatile is that drift never hashes it.

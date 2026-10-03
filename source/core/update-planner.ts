@@ -18,6 +18,8 @@ import type {
   ShardSchema,
   ShardState,
   DriftReport,
+  DriftEntry,
+  FileState,
   ModuleSelections,
   ModuleDefinition,
   MergeStats,
@@ -383,6 +385,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     counts.volatile++;
   }
 
+  const overwriteCandidates: Array<{ entry: DriftEntry; target: RenderedFileEntry }> = [];
   for (const entry of drift.managed) {
     const target = newByPath.get(entry.path);
     if (!target) {
@@ -393,6 +396,30 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     if (target.hash === entry.renderedHash) {
       actions.push({ kind: 'noop', path: entry.path, reason: 'identical' });
       counts.silent++;
+      continue;
+    }
+    overwriteCandidates.push({ entry, target });
+  }
+
+  // Before overwriting, prove the recorded hash is the engine's. For a
+  // copy-origin file the cached old source IS what the engine wrote, so a
+  // recorded hash that differs from it was not the engine's: state written
+  // before #150 recorded the user's bytes there, or a hook personalized the
+  // file. Either way the bytes on disk are not the engine's to replace, so
+  // the entry takes the modified (merge) path. Rendered files get no such
+  // check — a render depends on per-run context and cannot prove a baseline.
+  const baselineChecks = await mapConcurrent(
+    overwriteCandidates,
+    PLAN_IO_CONCURRENCY,
+    async (c) => ({
+      ...c,
+      foreign: await recordedHashIsForeign(vaultRoot, currentState.files[c.entry.path], c.target),
+    }),
+  );
+  const toMerge: DriftEntry[] = [...drift.modified];
+  for (const { entry, target, foreign } of baselineChecks) {
+    if (foreign) {
+      toMerge.push(entry);
       continue;
     }
     actions.push({
@@ -430,8 +457,8 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   // `computeMergeAction` is CPU-bound (diff3 + sha256), but each entry
   // also does three file reads, so fanning out with bounded concurrency
   // saves real wall-clock time on vaults with many modified files.
-  const modifiedActions = await mapConcurrent<typeof drift.modified[number], UpdateAction>(
-    drift.modified,
+  const modifiedActions = await mapConcurrent<DriftEntry, UpdateAction>(
+    toMerge,
     PLAN_IO_CONCURRENCY,
     async (entry) => {
       const target = newByPath.get(entry.path);
@@ -717,6 +744,27 @@ async function readStringAndByteHash(
     return { content: buf.toString('utf-8'), hash: sha256(buf) };
   } catch (err) {
     if (isEnoent(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * Whether a managed entry's recorded hash is provably NOT the engine's: the
+ * target is copy-origin (not iterator-generated), its old source is in the
+ * merge-base cache, and the cached bytes hash differently. Without a cached
+ * source there is no proof either way, and the answer is `false`.
+ */
+async function recordedHashIsForeign(
+  vaultRoot: string,
+  fileState: FileState | undefined,
+  target: RenderedFileEntry,
+): Promise<boolean> {
+  if (!fileState?.template || !target.copyFromSourcePath || target.entry.iterator) return false;
+  try {
+    const cached = await fsp.readFile(path.join(vaultRoot, CACHED_TEMPLATES, fileState.template));
+    return sha256(cached) !== fileState.rendered_hash;
+  } catch (err) {
+    if (isEnoent(err)) return false;
     throw err;
   }
 }

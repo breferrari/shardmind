@@ -272,6 +272,53 @@ describe('planUpdate', () => {
     expect(plan.pendingConflicts).toEqual([]);
   });
 
+  // #150: a recorded hash that differs from the cached copy-origin source was
+  // not the engine's (the pre-fix re-hash recorded the user's bytes there).
+  it('routes a copy-origin managed entry whose recorded hash is not the cached source through the merge', async () => {
+    const schema = baseSchema();
+    const selections: ModuleSelections = { brain: 'included' };
+    const values = { user_name: 'brenno' };
+    const source = '# Notes\n\nShard line.\n';
+    const mine = '# Notes\n\nMy line.\n';
+
+    const vault = await buildVault({
+      vaultFiles: { 'brain/Notes.md': mine },
+      cachedTemplates: { 'brain/Notes.md': source },
+    });
+    const shardDir = await buildShardTempDir({ 'brain/Notes.md': source });
+
+    const state = makeShardState({
+      version: '1.0.0',
+      modules: selections,
+      files: {
+        'brain/Notes.md': makeFileState({ template: 'brain/Notes.md', rendered_hash: sha256(mine), ownership: 'managed' }),
+      },
+    });
+    const drift: DriftReport = {
+      managed: [{ path: 'brain/Notes.md', template: 'brain/Notes.md', renderedHash: sha256(mine), actualHash: sha256(mine), ownership: 'managed' }],
+      modified: [],
+      volatile: [],
+      missing: [],
+      orphaned: [],
+    };
+
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: values, new: values },
+      newShard: { schema, selections, tempDir: shardDir, renderContext: renderCtx(values) },
+      removedFileDecisions: {},
+    });
+
+    expect(plan.actions).toEqual([
+      {
+        kind: 'noop',
+        path: 'brain/Notes.md',
+        reason: 'no upstream change',
+        rebaseline: { renderedHash: sha256(source), templateKey: 'brain/Notes.md', ownership: 'modified' },
+      },
+    ]);
+  });
+
   it('no-ops on a managed file that is identical to the new render', async () => {
     const schema = baseSchema();
     const selections: ModuleSelections = { brain: 'included' };
