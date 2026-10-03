@@ -205,10 +205,13 @@ function updateFile(action: UpdateAction): UpdatePlanFile {
     case 'noop':
       return { ...base, reason: action.reason };
     case 'overwrite':
-    case 'auto_merge':
     case 'add':
     case 'restore_missing':
       return { ...base, shardHash: action.renderedHash };
+    case 'auto_merge':
+      // The new render — what the shard produces and state records — not the
+      // merged bytes, which hold the user's lines (#150).
+      return { ...base, shardHash: action.baselineHash };
     case 'conflict':
       return {
         ...base,

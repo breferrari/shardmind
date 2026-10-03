@@ -8,6 +8,22 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (update keeps your edits — #150)
+
+- **`shardmind update` no longer overwrites files you edited.** A file kept with "keep mine" or "skip", a file auto-merged, a file adopted as "keep mine" or "merged", and any edited file present while a hook ran all had **your** bytes recorded as their baseline in `.shardmind/state.json`. The next update read "disk equals the record" as "engine-owned and unchanged" and replaced the file silently, while the summary said "kept mine", and then labelled it `managed` so later overwrites were quieter still. The recorded hash is now always the engine's (the shard's render or copy, or what a hook wrote over a file the engine owned), so an edit always reaches the three-way merge.
+
+- **Vaults already hit are repaired on the first update after upgrading.** A file still labelled `modified` is merged even when its hash matches, and a copy-origin file whose recorded hash differs from the cached shard source is merged instead of overwritten; that covers every file in obsidian-mind, which ships no `.njk`. One case is not covered: a rendered `.njk` file whose record the old post-hook re-hash corrupted is overwritten once more, then recorded correctly. Its render depends on per-run context (`install_date`, `year`, `shard.version`), so the engine cannot prove its baseline. `shardmind` (status) reports such files correctly only after that first update.
+
+- **Hook-personalized files survive updates that do not change their source.** obsidian-mind's `brain/North Star.md` was reset to the template on every update; it now goes through the merge like any edited file.
+
+- **A file you edited is no longer deleted when the shard drops its path.** For state written by the old engine, a copy-origin file whose recorded hash is not the shard's is kept on disk and becomes unmanaged user content, instead of being deleted as an untouched managed file.
+
+- **A bootstrap re-run on update no longer reports files you edited as `HOOK_BOOTSTRAP_MANAGED_WRITE`.** The check now compares against a snapshot taken before the hook phase, not against the recorded baseline. A file that could not be read when that snapshot was taken (locked by another program) is left at its recorded baseline rather than re-recorded.
+
+### Changed (`--json` — #150)
+
+- **`update --dry-run --json` reports an auto-merged file's `shardHash` as the new render**, which is what the shard produces (as for a conflict) and what `state.json` records, rather than the hash of the merged bytes. A consumer that compared `shardHash` with the file written by an auto-merge will now see them differ.
+
 ## [0.1.6] - 2026-07-26
 
 Agent ergonomics. Both changes come from [#139](https://github.com/breferrari/shardmind/issues/139), filed after driving shardmind from an AI agent; the issue stays open for the findings not covered here.

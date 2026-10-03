@@ -194,7 +194,10 @@ export async function assertAdoptable(vaultRoot: string): Promise<void> {
  *                             so SIGINT rollback can erase only what
  *                             this run introduced.
  *        - `differs` + `keep_mine`  → record `ownership: 'modified'`
- *                             with `rendered_hash = userHash`. No write.
+ *                             with `rendered_hash = shardHash`. No write.
+ *        - `differs` + `merged`     → write the union bytes; record
+ *                             `ownership: 'modified'` with
+ *                             `rendered_hash = shardHash`.
  *        - `differs` + `use_shard`  → overwrite user file with shard
  *                             bytes; record `ownership: 'managed'`.
  *   4. `initShardDir`, `cacheTemplates`, `cacheManifest`,
@@ -316,27 +319,34 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         outputPath: c.path,
         action,
       });
+      // Every resolution records the SHARD's hash. Drift reads "disk equals
+      // rendered_hash" as engine-owned and unchanged, so recording the
+      // user's (or merged) bytes would make the first update overwrite them
+      // silently (#150). The shard's hash makes them an edit, three-way
+      // merged against the adopt-time cache.
+      // A merge whose union is exactly the shard's bytes holds no user line.
+      const managed =
+        resolution === 'use_shard' || (resolution !== 'keep_mine' && resolution.hash === c.shardHash);
+      fileStates[c.path] = buildFileState(c, c.shardHash, managed ? 'managed' : 'modified');
       if (resolution === 'keep_mine') {
-        fileStates[c.path] = buildFileState(c, c.userHash, 'modified');
         onFileTouched?.(c.path, false);
         summary.adoptedMine.push(c.path);
       } else if (resolution === 'use_shard') {
         if (!dryRun) {
           await writeVaultFileBuffer(vaultRoot, c.path, c.shardContent);
         }
-        fileStates[c.path] = buildFileState(c, c.shardHash, 'managed');
         onFileTouched?.(c.path, false);
         summary.adoptedShard.push(c.path);
       } else {
         // Auto-merge (#120): write the union-merged bytes. The result is
         // user-customized content (it contains the user's lines), so it is
-        // recorded as `modified` ownership at the merged hash — exactly like
+        // recorded at the shard's hash, as `modified` unless the union equals
+        // the shard bytes (see above) — exactly like
         // a kept-but-edited managed file. A future `update` three-way-merges
         // it against the cached shard template, which is the proper base.
         if (!dryRun) {
           await writeVaultFileBuffer(vaultRoot, c.path, resolution.content);
         }
-        fileStates[c.path] = buildFileState(c, resolution.hash, 'modified');
         onFileTouched?.(c.path, false);
         summary.adoptedMerged.push(c.path);
       }

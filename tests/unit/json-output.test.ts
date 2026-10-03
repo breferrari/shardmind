@@ -214,4 +214,23 @@ describe('updatePlanResult', () => {
   it('passes the planner counts through unchanged', () => {
     expect(updatePlanResult(plan, { dryRun: true }).counts).toEqual(plan.counts);
   });
+
+  // #150: an auto-merge records the new render as its baseline, so the
+  // document reports that hash — what the shard produces, as for a conflict —
+  // not the merged bytes, which hold the user's lines.
+  it('reports an auto-merge\'s shard hash as the new render, the hash state records', () => {
+    const merged: UpdatePlan = {
+      ...plan,
+      actions: [{
+        kind: 'auto_merge',
+        path: 'e.md',
+        content: 'merged bytes',
+        baselineHash: 'render-e',
+        ownership: 'modified',
+        stats: { linesUnchanged: 1, linesAutoMerged: 1 },
+        templateKey: 'e.md',
+      }],
+    };
+    expect(updatePlanResult(merged, { dryRun: true }).files[0]!.shardHash).toBe('render-e');
+  });
 });

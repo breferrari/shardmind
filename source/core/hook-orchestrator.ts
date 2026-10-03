@@ -45,7 +45,7 @@ import {
   snapshotUnmanaged,
   type HookViolation,
 } from './hook-boundary.js';
-import { rehashManagedFiles, writeState } from './state.js';
+import { rehashManagedFiles, snapshotTrackedHashes, writeState, type RehashResult } from './state.js';
 import { loadShardmindignore, parseShardmindignore, type IgnoreFilter } from './shardmindignore.js';
 import { valuesAreDefaults } from './values-defaults.js';
 
@@ -145,6 +145,15 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   // Lazily loaded once and reused across a slot's before/after snapshots so
   // the vault `.shardmindignore` is parsed at most once per run.
   let ignore: IgnoreFilter | undefined;
+  // Tracked-file hashes before any slot runs. The re-hash compares against
+  // this, not against `rendered_hash`: a file the user edited before the
+  // hook phase differs from its recorded baseline without any hook touching
+  // it, and must neither be re-baselined nor read as a bootstrap write
+  // (#150). No slot runs ⇒ nothing to attribute ⇒ no snapshot, no re-hash.
+  let baseline = runnableCount > 0 ? await snapshotSafe(plan.vaultRoot, state) : null;
+  // Whether a hook ran since `baseline` was taken. Bootstrap's re-hash
+  // clears it, so a run where nothing follows bootstrap skips the final pass.
+  let hookRanSinceBaseline = false;
 
   for (const job of jobs) {
     if (job.relPath === undefined) continue;
@@ -183,6 +192,7 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
       unmanagedBefore = await snapshotUnmanaged(plan.vaultRoot, ignore);
     }
 
+    hookRanSinceBaseline = true;
     const result = await runHook(plan.tempDir, job.relPath, job.makeCtx(), {
       timeoutMs,
       onStdout: ui.onStdout,
@@ -197,10 +207,14 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
       // attributable to it. Reuses the post-hook re-hash machinery. A managed
       // file bootstrap *deleted* lands in `missing`, not `changed` — fold both
       // in so a destructive write is flagged too.
-      const rehash = await rehashSafe(plan.vaultRoot, state);
+      const rehash = await rehashSafe(plan.vaultRoot, state, baseline);
       if (rehash) {
+        if (rehash.rebaselined.length > 0) stateChanged = true;
         state = rehash.state;
-        if (rehash.changed.length > 0) stateChanged = true;
+        // Later slots' writes are measured from here, so bootstrap's are not
+        // attributed to them twice.
+        baseline = rehash.current;
+        hookRanSinceBaseline = false;
         // `changed` (modified) + `missing` (deleted) only. `rehash.failed`
         // (EACCES/EIO) is deliberately NOT folded in: a transient I/O error is
         // not necessarily a hook write, and flagging it would be a false
@@ -233,10 +247,10 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
 
   // Final re-hash so state.json reflects any managed-file edits the last hook
   // made (personalize / post-update writes), then persist if anything moved.
-  const finalRehash = await rehashSafe(plan.vaultRoot, state);
+  const finalRehash = hookRanSinceBaseline ? await rehashSafe(plan.vaultRoot, state, baseline) : null;
   if (finalRehash) {
+    if (finalRehash.rebaselined.length > 0) stateChanged = true;
     state = finalRehash.state;
-    if (finalRehash.changed.length > 0) stateChanged = true;
   }
 
   if (stateChanged) {
@@ -429,13 +443,26 @@ async function loadIgnoreSafe(vaultRoot: string): Promise<IgnoreFilter> {
   }
 }
 
+async function snapshotSafe(
+  vaultRoot: string,
+  state: ShardState,
+): Promise<Map<string, string> | null> {
+  try {
+    return await snapshotTrackedHashes(vaultRoot, state);
+  } catch {
+    return null;
+  }
+}
+
+/** `null` when there is no baseline (no snapshot taken) or the re-hash threw. */
 async function rehashSafe(
   vaultRoot: string,
   state: ShardState,
-): Promise<{ state: ShardState; changed: string[]; missing: string[] } | null> {
+  baseline: ReadonlyMap<string, string> | null,
+): Promise<RehashResult | null> {
+  if (!baseline) return null;
   try {
-    const r = await rehashManagedFiles(vaultRoot, state);
-    return { state: r.state, changed: r.changed, missing: r.missing };
+    return await rehashManagedFiles(vaultRoot, state, baseline);
   } catch {
     return null;
   }

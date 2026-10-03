@@ -11,8 +11,9 @@
  *
  *  - `bootstrap` may write only unmanaged paths. A managed file it changed is
  *    detected via the post-hook re-hash (`rehashManagedFiles().changed`) — see
- *    `detectManagedWrites`. No extra disk read: the managed set's pre-hook
- *    hashes come free from `state.files`, the post-hook hashes from the re-hash.
+ *    `detectManagedWrites`. The pre-hook hashes come from the orchestrator's
+ *    snapshot, not `state.files`: a file the user edited before the hook
+ *    phase differs from its recorded hash without any hook writing it (#150).
  *  - `personalize` may write only managed files. An unmanaged file it created is
  *    detected via a path-only vault walk before and after the hook — see
  *    `snapshotUnmanaged` + `detectUnmanagedCreates`. Install/adopt only (the
@@ -92,10 +93,11 @@ async function walkPaths(
 
 /**
  * `bootstrap` boundary check. `touched` is the union of `rehashManagedFiles()`'s
- * `changed` (managed files whose bytes diverged) and `missing` (managed files
- * deleted), computed immediately after `bootstrap` ran. Since only `bootstrap`
- * has run at that point, any managed file it modified OR removed is a boundary
- * crossing — bootstrap may write unmanaged paths only.
+ * `changed` (tracked files whose bytes moved since the pre-hook snapshot) and
+ * `missing` (tracked files deleted since then), computed immediately after
+ * `bootstrap` ran. Since only `bootstrap` has run at that point, any managed
+ * file it modified OR removed is a boundary crossing — bootstrap may write
+ * unmanaged paths only.
  */
 export function detectManagedWrites(touched: readonly string[]): HookViolation | null {
   if (touched.length === 0) return null;

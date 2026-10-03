@@ -18,6 +18,8 @@ import type {
   ShardSchema,
   ShardState,
   DriftReport,
+  DriftEntry,
+  FileState,
   ModuleSelections,
   ModuleDefinition,
   MergeStats,
@@ -44,17 +46,43 @@ const PLAN_IO_CONCURRENCY = 16;
  * field and the executor writes `content` as UTF-8.
  */
 export type UpdateAction =
-  | { kind: 'noop'; path: string; reason: string }
+  | {
+      kind: 'noop';
+      path: string;
+      reason: string;
+      /**
+       * Set when a modified file's merge left it as it is: the entry the
+       * executor records in its place, with the new render's hash as the
+       * baseline. A noop without it keeps the prior state entry.
+       */
+      rebaseline?: Rebaseline;
+    }
   | { kind: 'overwrite'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string; copyFromSourcePath?: string }
-  | { kind: 'auto_merge'; path: string; content: string; renderedHash: string; stats: MergeStats; templateKey: string | null; iteratorKey?: string }
+  | {
+      kind: 'auto_merge';
+      path: string;
+      content: string;
+      /**
+       * sha256 of the new render: what the executor records as
+       * `rendered_hash` and `--json` reports. Never the merged bytes, which hold the user's
+       * lines — recorded as the baseline, drift would read them as
+       * engine-owned and the next update would overwrite them (#150).
+       */
+      baselineHash: string;
+      /** `managed` only when the merge produced exactly the new render. */
+      ownership: 'managed' | 'modified';
+      stats: MergeStats;
+      templateKey: string | null;
+      iteratorKey?: string;
+    }
   | {
       kind: 'conflict';
       path: string;
       result: MergeResult;
       newContent: string;
       newContentHash: string;
-      /** sha256 of the user's on-disk content at plan time; lets the
-       * executor avoid re-reading + re-hashing on keep_mine / skip. */
+      /** sha256 of the user's on-disk content at plan time. Reported by
+       * `--json`; never recorded as the baseline (#150). */
       theirsHash: string;
       templateKey: string | null;
       iteratorKey?: string;
@@ -73,6 +101,20 @@ export type UpdateAction =
   | { kind: 'restore_missing'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string; copyFromSourcePath?: string }
   | { kind: 'delete'; path: string }
   | { kind: 'keep_as_user'; path: string };
+
+/**
+ * The state entry recorded for a modified file the update leaves on disk.
+ * `renderedHash` is always the engine's (the new render): per the
+ * baseline rule (`docs/SHARD-LAYOUT.md §Re-hash + state`), the user's
+ * bytes are never recorded there. `ownership` is `managed` only when the
+ * user's bytes already equal the new render.
+ */
+export interface Rebaseline {
+  renderedHash: string;
+  templateKey: string | null;
+  iteratorKey?: string;
+  ownership: 'managed' | 'modified';
+}
 
 export interface PendingConflict {
   path: string;
@@ -343,16 +385,50 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     counts.volatile++;
   }
 
+  // A managed entry is about to be replaced (`target`) or deleted (no
+  // target). Both need the baseline proven first, below.
+  const overwriteCandidates: Array<{ entry: DriftEntry; target: RenderedFileEntry | undefined }> = [];
   for (const entry of drift.managed) {
     const target = newByPath.get(entry.path);
     if (!target) {
-      actions.push({ kind: 'delete', path: entry.path });
-      counts.deleted++;
+      overwriteCandidates.push({ entry, target });
       continue;
     }
     if (target.hash === entry.renderedHash) {
       actions.push({ kind: 'noop', path: entry.path, reason: 'identical' });
       counts.silent++;
+      continue;
+    }
+    overwriteCandidates.push({ entry, target });
+  }
+
+  // Before overwriting or deleting, prove the recorded hash is the engine's. For a
+  // copy-origin file the cached old source IS what the engine wrote, so a
+  // recorded hash that differs from it was not the engine's: state written
+  // before #150 recorded the user's bytes there, or a hook personalized the
+  // file. Either way the bytes on disk are not the engine's to replace, so
+  // the entry takes the modified (merge) path. Rendered files get no such
+  // check — a render depends on per-run context and cannot prove a baseline.
+  const baselineChecks = await mapConcurrent(
+    overwriteCandidates,
+    PLAN_IO_CONCURRENCY,
+    async (c) => ({
+      ...c,
+      foreign: await recordedHashIsForeign(vaultRoot, currentState.files[c.entry.path]),
+    }),
+  );
+  const toMerge: DriftEntry[] = [...drift.modified];
+  for (const { entry, target, foreign } of baselineChecks) {
+    if (foreign) {
+      // The modified path merges a file the shard still produces, and keeps
+      // a dropped one as unmanaged user content (`keep_as_user`): the
+      // removed-files prompt is built from drift, so it never offers these.
+      toMerge.push(entry);
+      continue;
+    }
+    if (!target) {
+      actions.push({ kind: 'delete', path: entry.path });
+      counts.deleted++;
       continue;
     }
     actions.push({
@@ -390,8 +466,8 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   // `computeMergeAction` is CPU-bound (diff3 + sha256), but each entry
   // also does three file reads, so fanning out with bounded concurrency
   // saves real wall-clock time on vaults with many modified files.
-  const modifiedActions = await mapConcurrent<typeof drift.modified[number], UpdateAction>(
-    drift.modified,
+  const modifiedActions = await mapConcurrent<DriftEntry, UpdateAction>(
+    toMerge,
     PLAN_IO_CONCURRENCY,
     async (entry) => {
       const target = newByPath.get(entry.path);
@@ -457,9 +533,21 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
         literal: target.copyFromSourcePath !== undefined,
       });
 
+      const templateKey = toTemplateKey(newTempDir, target.entry.sourcePath);
+      const iterator = target.entry.iterator ? { iteratorKey: target.entry.iterator } : {};
       switch (mergeAction.type) {
         case 'skip':
-          return { kind: 'noop', path: entry.path, reason: mergeAction.reason };
+          return {
+            kind: 'noop',
+            path: entry.path,
+            reason: mergeAction.reason,
+            rebaseline: {
+              renderedHash: target.hash,
+              templateKey,
+              ...iterator,
+              ownership: theirsHash === target.hash ? 'managed' : 'modified',
+            },
+          };
         case 'overwrite':
           // Shouldn't reach us for ownership='modified' (differ branches on
           // ownership before). Defensive no-op: preserve the user's file.
@@ -470,10 +558,11 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             kind: 'auto_merge',
             path: entry.path,
             content,
-            renderedHash: sha256(content),
+            baselineHash: target.hash,
+            ownership: sha256(content) === target.hash ? 'managed' : 'modified',
             stats: mergeAction.stats,
-            templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
-            ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+            templateKey,
+            ...iterator,
           };
         }
         case 'conflict':
@@ -484,8 +573,8 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             newContent: target.content,
             newContentHash: target.hash,
             theirsHash,
-            templateKey: toTemplateKey(newTempDir, target.entry.sourcePath),
-            ...(target.entry.iterator ? { iteratorKey: target.entry.iterator } : {}),
+            templateKey,
+            ...iterator,
           };
       }
     },
@@ -644,8 +733,8 @@ function conflictFromDirect(
 
 /**
  * Read a user file and produce both its string view (for the three-way
- * merge, which is line-oriented) and its bytewise hash (for `theirsHash`
- * which is recorded in state.files on `keep_mine`/`skip` resolutions).
+ * merge, which is line-oriented) and its bytewise hash (`theirsHash`, which
+ * decides whether the user's bytes already equal the new render).
  * Always hashes bytes — install-executor hashes copy-origin files this
  * way, so a bytewise hash here stays consistent across install/update
  * cycles even for content that isn't valid UTF-8.
@@ -668,18 +757,47 @@ async function readStringAndByteHash(
   }
 }
 
-async function loadOldTemplate(
+/**
+ * Whether a managed entry's recorded hash is provably NOT the engine's: the
+ * OLD source was copy-origin, it is in the merge-base cache, and the cached
+ * bytes hash differently. Copy-origin is read from the recorded template key
+ * — a render source always ends in `.njk` (`modules.ts`), a copy source
+ * never does — because the cached bytes are the old source's, whatever the
+ * new shard does with the path. (Iterator outputs are always rendered, so
+ * they never reach the comparison.) No readable cached source means no
+ * proof either way, and the answer is `false`: this check must never be
+ * what fails an update.
+ */
+async function recordedHashIsForeign(vaultRoot: string, fileState: FileState | undefined): Promise<boolean> {
+  if (!fileState?.template || fileState.template.endsWith('.njk')) return false;
+  try {
+    const cached = await readCachedTemplate(vaultRoot, fileState.template);
+    return cached !== null && sha256(cached) !== fileState.rendered_hash;
+  } catch {
+    return false;
+  }
+}
+
+/** The merge-base cache's bytes for `templateKey`, or `null` when absent. */
+async function readCachedTemplate(
   vaultRoot: string,
   templateKey: string | null,
-): Promise<string | null> {
+): Promise<Buffer | null> {
   if (!templateKey) return null;
-  const abs = path.join(vaultRoot, CACHED_TEMPLATES, templateKey);
   try {
-    return await fsp.readFile(abs, 'utf-8');
+    return await fsp.readFile(path.join(vaultRoot, CACHED_TEMPLATES, templateKey));
   } catch (err) {
     if (isEnoent(err)) return null;
     throw err;
   }
+}
+
+async function loadOldTemplate(
+  vaultRoot: string,
+  templateKey: string | null,
+): Promise<string | null> {
+  const cached = await readCachedTemplate(vaultRoot, templateKey);
+  return cached === null ? null : cached.toString('utf-8');
 }
 
 function toTemplateKey(tempDir: string, sourcePath: string): string {
