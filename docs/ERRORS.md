@@ -312,9 +312,9 @@ Thrown by `source/core/install-planner.ts` and `source/core/install-executor.ts`
 
 ### `COLLISION_CHECK_FAILED`
 
-**Meaning:** `fsp.stat` on a planned output path threw something other than ENOENT.
+**Meaning:** A vault path the command would touch could not be inspected: `fsp.stat` on a planned install output, or the `lstat` / folder listing the vault path guard runs before install, update and adopt (#163), threw something other than "not found". A folder that cannot be listed only skips the case check; this code is for a path that cannot be looked at at all.
 
-**Remedy:** Usually permissions. Check the file referenced in the error.
+**Remedy:** Usually permissions, or a file held by another program (antivirus, a sync client). Check the path in the error, then run the command again.
 
 ### `BACKUP_FAILED`
 
@@ -568,4 +568,4 @@ If you're an end user, the most common ones you'll see are:
 - `VALUES_MISSING`, `VALUES_FILE_COLLISION`
 - `VAULT_NOT_FOUND` (if running a hook script outside a vault)
 
-Engine-internal codes (`STATE_*`, `BACKUP_FAILED`, `COLLISION_CHECK_FAILED`) shouldn't happen in normal use; open an issue if you hit one.
+Engine-internal codes (`STATE_*`, `BACKUP_FAILED`) shouldn't happen in normal use; open an issue if you hit one. `COLLISION_CHECK_FAILED` usually means a permissions problem on the path it names.
