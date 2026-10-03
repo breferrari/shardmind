@@ -333,13 +333,8 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
       // the new render's hash, so its baseline tracks the template the
       // cache now holds.
       if (action.rebaseline) {
-        const { renderedHash, templateKey, iteratorKey, ownership } = action.rebaseline;
-        ctx.nextFiles[action.path] = {
-          template: templateKey,
-          rendered_hash: renderedHash,
-          ownership,
-          ...(iteratorKey ? { iterator_key: iteratorKey } : {}),
-        };
+        const { renderedHash, ownership } = action.rebaseline;
+        ctx.nextFiles[action.path] = buildFileState(action.rebaseline, renderedHash, ownership);
       }
       return;
     case 'skip_volatile':
@@ -380,7 +375,7 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         if (introduced) ctx.addedPaths.push(action.path);
         ctx.onFileTouched?.(action.path, introduced);
       }
-      ctx.nextFiles[action.path] = buildFileState(action, 'managed');
+      ctx.nextFiles[action.path] = buildFileState(action, action.renderedHash, 'managed');
       ctx.summary.wroteFiles.push(action.path);
       // Per the spec's "newly added in the new version" semantics, only
       // genuine `add` actions count toward `HookContext.newFiles`.
@@ -408,12 +403,11 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
       // Record the new render as the baseline, never the merged bytes: they
       // hold the user's lines, and drift would read them as engine-owned
       // (#150). A merge that produced exactly the new render is managed.
-      ctx.nextFiles[action.path] = {
-        template: action.templateKey,
-        rendered_hash: action.baselineHash,
-        ownership: action.renderedHash === action.baselineHash ? 'managed' : 'modified',
-        ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
-      };
+      ctx.nextFiles[action.path] = buildFileState(
+        action,
+        action.baselineHash,
+        action.renderedHash === action.baselineHash ? 'managed' : 'modified',
+      );
       ctx.summary.wroteFiles.push(action.path);
       ctx.summary.autoMergeStats.linesUnchanged += action.stats.linesUnchanged;
       ctx.summary.autoMergeStats.linesAutoMerged += action.stats.linesAutoMerged;
@@ -431,12 +425,7 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
       });
       if (resolution === 'accept_new') {
         if (!ctx.dryRun) await writeFile(ctx.vaultRoot, action.path, action.newContent);
-        ctx.nextFiles[action.path] = {
-          template: action.templateKey,
-          rendered_hash: action.newContentHash,
-          ownership: 'managed',
-          ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
-        };
+        ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'managed');
         ctx.summary.wroteFiles.push(action.path);
         ctx.summary.conflictsAcceptedNew++;
       } else {
@@ -450,12 +439,7 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         if (action.preexisting) {
           delete ctx.nextFiles[action.path];
         } else {
-          ctx.nextFiles[action.path] = {
-            template: action.templateKey,
-            rendered_hash: action.newContentHash,
-            ownership: 'modified',
-            ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
-          };
+          ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'modified');
         }
         if (resolution === 'keep_mine') ctx.summary.conflictsKeptMine++;
         else ctx.summary.conflictsSkipped++;
@@ -483,15 +467,21 @@ async function applyDeleteAction(action: UpdateAction, ctx: DeleteContext): Prom
   ctx.summary.deletedFiles.push(action.path);
 }
 
+/**
+ * The state entry for a file the update tracks. `renderedHash` is the
+ * engine's baseline (`docs/SHARD-LAYOUT.md §Re-hash + state`): the bytes
+ * the engine produced, never the user's.
+ */
 function buildFileState(
-  action: Extract<UpdateAction, { kind: 'overwrite' | 'add' | 'restore_missing' }>,
+  source: { templateKey: string | null; iteratorKey?: string },
+  renderedHash: string,
   ownership: FileState['ownership'],
 ): FileState {
   return {
-    template: action.templateKey,
-    rendered_hash: action.renderedHash,
+    template: source.templateKey,
+    rendered_hash: renderedHash,
     ownership,
-    ...(action.iteratorKey ? { iterator_key: action.iteratorKey } : {}),
+    ...(source.iteratorKey ? { iterator_key: source.iteratorKey } : {}),
   };
 }
 

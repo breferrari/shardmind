@@ -760,12 +760,21 @@ async function recordedHashIsForeign(
   fileState: FileState | undefined,
   target: RenderedFileEntry,
 ): Promise<boolean> {
-  if (!fileState?.template || !target.copyFromSourcePath) return false;
+  if (!target.copyFromSourcePath) return false;
+  const cached = await readCachedTemplate(vaultRoot, fileState?.template ?? null);
+  return cached !== null && sha256(cached) !== fileState!.rendered_hash;
+}
+
+/** The merge-base cache's bytes for `templateKey`, or `null` when absent. */
+async function readCachedTemplate(
+  vaultRoot: string,
+  templateKey: string | null,
+): Promise<Buffer | null> {
+  if (!templateKey) return null;
   try {
-    const cached = await fsp.readFile(path.join(vaultRoot, CACHED_TEMPLATES, fileState.template));
-    return sha256(cached) !== fileState.rendered_hash;
+    return await fsp.readFile(path.join(vaultRoot, CACHED_TEMPLATES, templateKey));
   } catch (err) {
-    if (isEnoent(err)) return false;
+    if (isEnoent(err)) return null;
     throw err;
   }
 }
@@ -774,14 +783,8 @@ async function loadOldTemplate(
   vaultRoot: string,
   templateKey: string | null,
 ): Promise<string | null> {
-  if (!templateKey) return null;
-  const abs = path.join(vaultRoot, CACHED_TEMPLATES, templateKey);
-  try {
-    return await fsp.readFile(abs, 'utf-8');
-  } catch (err) {
-    if (isEnoent(err)) return null;
-    throw err;
-  }
+  const cached = await readCachedTemplate(vaultRoot, templateKey);
+  return cached === null ? null : cached.toString('utf-8');
 }
 
 function toTemplateKey(tempDir: string, sourcePath: string): string {

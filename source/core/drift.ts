@@ -130,7 +130,7 @@ function classifyByHash(relPath: string, file: FileState, content: Buffer): Clas
   // "engine-owned". The modified bucket always merges, so honouring the
   // label is safe; a merge that ends at the new render relabels it managed.
   const ownership =
-    actualHash === file.rendered_hash && file.ownership !== 'modified' ? 'managed' : 'modified';
+    file.ownership === 'modified' || actualHash !== file.rendered_hash ? 'modified' : 'managed';
   return {
     bucket: ownership,
     entry: {

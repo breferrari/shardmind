@@ -315,7 +315,7 @@ export async function rehashManagedFiles(
       if (hash === before) return;
       changed.push(rel);
       const engineOwned = before === undefined || before === prior.rendered_hash;
-      if (engineOwned && hash !== prior.rendered_hash) {
+      if (engineOwned) {
         nextFiles[rel] = { ...prior, rendered_hash: hash };
       }
     } catch (err) {
