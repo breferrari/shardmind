@@ -26,7 +26,7 @@ An update never replaces a file the user changed, and every install gets its own
 | | Task | Issue |
 |---|---|---|
 | ✅ | update silently overwrites locally-modified files while reporting "kept mine" (state.json labels user-edited files `managed`) | [#150](https://github.com/breferrari/shardmind/issues/150) |
-| ⬜ | update summary should list the paths it overwrote | [#153](https://github.com/breferrari/shardmind/issues/153) |
+| ✅ | update summary should list the paths it overwrote | [#153](https://github.com/breferrari/shardmind/issues/153) |
 | ⬜ | qmd_index not personalized on install — every vault collides on the same QMD store | [#137](https://github.com/breferrari/shardmind/issues/137) |
 | ⬜ | Root-command options silently shadow same-named subcommand options (`adopt --verbose` does nothing) | [#147](https://github.com/breferrari/shardmind/issues/147) |
 | ⬜ | v0.2: Rename migrations in shard.yaml + shardmind adopt --from-version | [#88](https://github.com/breferrari/shardmind/issues/88) |
@@ -100,6 +100,7 @@ Every item on the deferral shelf below has a milestone here, so a milestone-filt
 | ⬜ | TUI testing framework — continuing-hardening tracker | [#122](https://github.com/breferrari/shardmind/issues/122) |
 | ⬜ | Declare & enforce external CLI tool dependencies (e.g. qmd) with version ranges at install/update | [#138](https://github.com/breferrari/shardmind/issues/138) |
 | ⬜ | Agent/headless ergonomics: non-interactive mode, JSON output, per-file plan, value detection | [#139](https://github.com/breferrari/shardmind/issues/139) |
+| ⬜ | RELEASE-SMOKE cancellation rows disagree with the engine (wizard Ctrl+C exits 0; hook Ctrl+C keeps the install) | [#155](https://github.com/breferrari/shardmind/issues/155) |
 
 ## Deferral shelf
 
@@ -140,6 +141,7 @@ Items moved out of the build order, each with the phase it moved to and a dated 
 | TUI testing framework — continuing-hardening tracker ([#122](https://github.com/breferrari/shardmind/issues/122)) | tracker restructure, 2026-10-03 | Shelf | Engine polish with no user report behind it. Comes back when one arrives. |
 | Declare & enforce external CLI tool dependencies (e.g. qmd) with version ranges at install/update ([#138](https://github.com/breferrari/shardmind/issues/138)) | tracker restructure, 2026-10-03 | Shelf | Engine polish with no user report behind it. Comes back when one arrives. |
 | Agent/headless ergonomics: non-interactive mode, JSON output, per-file plan, value detection ([#139](https://github.com/breferrari/shardmind/issues/139)) | tracker restructure, 2026-10-03 | Shelf | Engine polish with no user report behind it. Comes back when one arrives. |
+| RELEASE-SMOKE cancellation rows disagree with the engine ([#155](https://github.com/breferrari/shardmind/issues/155)) | v0.1.7 release smoke, 2026-10-03 | Shelf | A defect in a gate, not a product pass. Both behaviours predate 0.1.7 and the smoke table records them as deviations; the wizard exit code is a product question to decide first. |
 
 ## Pull-forward log
 

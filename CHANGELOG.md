@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (update summary — #153)
+
+- **The update summary names the files it replaced.** "N silent" lumped files replaced with the shard's new version together with files left byte-identical; it is now "N replaced · M unchanged", followed by the replaced paths (sorted, first 10, then "…and K more") and the backup snapshot that holds their previous bytes. A dry run says "Would replace" and points at `shardmind update --dry-run --json` for the full per-file plan.
+
 ## [0.1.7] - 2026-10-03
 
 Hotfix. `shardmind update` overwrote files you had edited while reporting them as kept ([#150](https://github.com/breferrari/shardmind/issues/150), reported with a full root-cause analysis by @YoshimasaNegishi).
