@@ -30,6 +30,7 @@ import { classifyAdoption } from '../../source/core/adopt-planner.js';
 import { runAdopt, type AdoptResolutions } from '../../source/core/adopt-executor.js';
 import { buildRenderContext } from '../../source/core/renderer.js';
 import { sha256 } from '../../source/core/fs-utils.js';
+import { updatePlanResult } from '../../source/core/json-output.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -359,6 +360,8 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
 
       const { plan } = await update(await shardAt('0.2.0'));
       expect(actionFor(plan, COPY)).toBe('noop');
+      // `--dry-run --json` prints this plan, so the preview no longer shows an overwrite either.
+      expect(updatePlanResult(plan, { dryRun: true }).files.find((f) => f.path === COPY)?.action).toBe('noop');
       expect(await read(COPY)).toContain('My own line.');
     });
 
