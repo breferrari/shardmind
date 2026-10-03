@@ -86,11 +86,14 @@ export async function backupCollisions(
   timestamp: Date = new Date(),
   /** Called after each rename, so an interrupt mid-loop can undo the moves so far (#55). */
   onMoved?: (record: BackupRecord) => void,
+  /** Checked before each rename: true stops the loop with the moves made so far (#55). */
+  shouldStop?: () => boolean,
 ): Promise<BackupRecord[]> {
   const stamp = timestamp.toISOString().replace(/:/g, '-').replace(/\..+$/, '');
   const records: BackupRecord[] = [];
 
   for (const collision of collisions) {
+    if (shouldStop?.()) break;
     const backupPath = await uniqueBackupPath(collision.absolutePath, stamp);
     try {
       await fsp.rename(collision.absolutePath, backupPath);
@@ -134,8 +137,8 @@ export async function backupCollisions(
  * Move the `backups/` of an old `.shardmind/` that a reinstall set aside
  * into the new one, before the old one is deleted (#55). An update's or
  * an adopt's snapshot can be the only copy of the user's earlier files.
- * Entries already in the new `backups/` are kept; a name in both keeps
- * the new one.
+ * Entries already in the new `backups/` are kept; an old entry whose
+ * name is taken moves under `<name>-<n>`, so nothing is dropped.
  */
 export async function carryOverBackups(oldStateDir: string, vaultRoot: string): Promise<void> {
   const from = path.join(oldStateDir, 'backups');
@@ -149,8 +152,33 @@ export async function carryOverBackups(oldStateDir: string, vaultRoot: string): 
   const to = path.join(vaultRoot, SHARDMIND_DIR, 'backups');
   await fsp.mkdir(to, { recursive: true });
   for (const entry of entries) {
-    if (await pathExists(path.join(to, entry))) continue;
-    await fsp.rename(path.join(from, entry), path.join(to, entry));
+    let target = path.join(to, entry);
+    for (let n = 1; await pathExists(target); n++) target = path.join(to, `${entry}-${n}`);
+    await fsp.rename(path.join(from, entry), target);
+  }
+}
+
+/**
+ * Delete what an install set aside only to restore on failure, once it
+ * has succeeded (#55). The old `.shardmind/` (`oldState`) first hands its
+ * `backups/` to the new one; if that fails it stays set aside, so nothing
+ * is lost. Best effort: it never throws, because the install it follows
+ * is already committed.
+ */
+export async function discardSetAside(
+  setAside: BackupRecord[],
+  oldState: BackupRecord | undefined,
+  vaultRoot: string,
+): Promise<void> {
+  for (const record of setAside) {
+    if (record === oldState) {
+      try {
+        await carryOverBackups(record.backupPath, vaultRoot);
+      } catch {
+        continue;
+      }
+    }
+    await fsp.rm(record.backupPath, { recursive: true, force: true }).catch(() => {});
   }
 }
 
