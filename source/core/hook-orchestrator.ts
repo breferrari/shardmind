@@ -209,12 +209,12 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
       // in so a destructive write is flagged too.
       const rehash = await rehashSafe(plan.vaultRoot, state, baseline);
       if (rehash) {
+        if (rebaselinedAny(rehash, state)) stateChanged = true;
         state = rehash.state;
         // Later slots' writes are measured from here, so bootstrap's are not
         // attributed to them twice.
         baseline = rehash.current;
         hookRanSinceBaseline = false;
-        if (rehash.changed.length > 0) stateChanged = true;
         // `changed` (modified) + `missing` (deleted) only. `rehash.failed`
         // (EACCES/EIO) is deliberately NOT folded in: a transient I/O error is
         // not necessarily a hook write, and flagging it would be a false
@@ -249,8 +249,8 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   // made (personalize / post-update writes), then persist if anything moved.
   const finalRehash = hookRanSinceBaseline ? await rehashSafe(plan.vaultRoot, state, baseline) : null;
   if (finalRehash) {
+    if (rebaselinedAny(finalRehash, state)) stateChanged = true;
     state = finalRehash.state;
-    if (finalRehash.changed.length > 0) stateChanged = true;
   }
 
   if (stateChanged) {
@@ -452,6 +452,15 @@ async function snapshotSafe(
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether the re-hash recorded a new hash for any path. `changed` alone is
+ * not enough: a hook write to a user-edited file is changed but not
+ * re-baselined, and rewriting an unchanged state.json is wasted I/O.
+ */
+function rebaselinedAny(rehash: RehashResult, before: ShardState): boolean {
+  return rehash.changed.some((p) => rehash.state.files[p] !== before.files[p]);
 }
 
 /** `null` when there is no baseline (no snapshot taken) or the re-hash threw. */

@@ -601,6 +601,25 @@ describe('core/state', () => {
       expect(result.state.files['mine.md']!.rendered_hash).toBe(engineHash);
     });
 
+    // A path that could not be READ at snapshot time (EBUSY, EACCES, a
+    // directory in the way) is not a path that was absent: it may hold the
+    // user's edit, so it is never re-baselined. Simulated with a directory,
+    // which fails the read on every platform.
+    it('does not re-baseline a file that was unreadable at snapshot time', async () => {
+      const engineHash = sha256('engine render');
+      await fsp.mkdir(path.join(vault, 'locked.md'));
+      const state = makeShardState({
+        files: { 'locked.md': makeFileState({ rendered_hash: engineHash, ownership: 'modified' }) },
+      });
+      const baseline = await snapshotTrackedHashes(vault, state);
+      await fsp.rmdir(path.join(vault, 'locked.md'));
+      await writeManagedFile('locked.md', 'the user edit');
+
+      const result = await rehashManagedFiles(vault, state, baseline);
+      expect(result.changed).toEqual([]);
+      expect(result.state.files['locked.md']!.rendered_hash).toBe(engineHash);
+    });
+
     // Permission-denied / EACCES — POSIX only. Windows lacks meaningful
     // chmod for read-bit removal, and the unprivileged tests run as root
     // on some CI images (which can read 000 files anyway). This test is

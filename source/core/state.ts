@@ -229,11 +229,19 @@ function rehashablePaths(state: ShardState): string[] {
 }
 
 /**
+ * Snapshot value for a path that exists but could not be read (EBUSY,
+ * EACCES, …). Never a sha256, so it equals no recorded hash. Kept distinct
+ * from an absent path: an unreadable file may hold the user's edit, and
+ * must never be re-baselined as though a hook had created it.
+ */
+const UNREADABLE = '';
+
+/**
  * Hash every tracked non-volatile file as it is on disk right now. The
  * hook orchestrator takes this snapshot before the first hook slot runs,
  * and `rehashManagedFiles` compares against it: a file whose bytes moved
- * since the snapshot was written by a hook. Paths that cannot be read
- * (ENOENT, EACCES, …) are left out of the map.
+ * since the snapshot was written by a hook. Absent paths (ENOENT) are left
+ * out of the map; unreadable ones map to `UNREADABLE`.
  */
 export async function snapshotTrackedHashes(
   vaultRoot: string,
@@ -243,8 +251,9 @@ export async function snapshotTrackedHashes(
   await mapConcurrent(rehashablePaths(state), REHASH_CONCURRENCY, async (rel) => {
     try {
       hashes.set(rel, sha256(await fsp.readFile(path.join(vaultRoot, rel))));
-    } catch {
-      // Unreadable now; a hook that creates it reads as a change.
+    } catch (err) {
+      // Absent: a hook that creates it reads as a change.
+      if (!isEnoent(err)) hashes.set(rel, UNREADABLE);
     }
   });
   return hashes;
@@ -264,7 +273,7 @@ export interface RehashResult {
   missing: string[];
   /** I/O failures other than ENOENT (permission, EBUSY, …). */
   failed: Array<{ path: string; reason: string }>;
-  /** Every readable path's hash now: the baseline for a later re-hash. */
+  /** Every path's hash now (`UNREADABLE` for failed reads): the baseline for a later re-hash. */
   current: Map<string, string>;
 }
 
@@ -312,7 +321,8 @@ export async function rehashManagedFiles(
     try {
       const hash = sha256(await fsp.readFile(path.join(vaultRoot, rel)));
       current.set(rel, hash);
-      if (hash === before) return;
+      // Unreadable at snapshot time: who wrote what since is unknowable.
+      if (hash === before || before === UNREADABLE) return;
       changed.push(rel);
       const engineOwned = before === undefined || before === prior.rendered_hash;
       if (engineOwned) {
@@ -323,6 +333,7 @@ export async function rehashManagedFiles(
         if (before !== undefined) missing.push(rel);
         return;
       }
+      current.set(rel, UNREADABLE);
       failed.push({
         path: rel,
         reason: err instanceof Error ? err.message : String(err),

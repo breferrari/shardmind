@@ -324,7 +324,10 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
       // user's (or merged) bytes would make the first update overwrite them
       // silently (#150). The shard's hash makes them an edit, three-way
       // merged against the adopt-time cache.
-      fileStates[c.path] = buildFileState(c, c.shardHash, resolution === 'use_shard' ? 'managed' : 'modified');
+      // A merge whose union is exactly the shard's bytes holds no user line.
+      const managed =
+        resolution === 'use_shard' || (resolution !== 'keep_mine' && resolution.hash === c.shardHash);
+      fileStates[c.path] = buildFileState(c, c.shardHash, managed ? 'managed' : 'modified');
       if (resolution === 'keep_mine') {
         onFileTouched?.(c.path, false);
         summary.adoptedMine.push(c.path);

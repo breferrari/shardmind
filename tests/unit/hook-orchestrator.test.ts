@@ -649,6 +649,8 @@ describe('runHooks — user edits made before the hook phase (#150)', () => {
     );
     expect(await fsp.readFile(path.join(vault, 'mine.md'), 'utf-8')).toContain('personalized');
     expect(result.finalState.files['mine.md']!.rendered_hash).toBe(sha256('engine render\n'));
+    // Nothing was re-baselined, so state.json is not rewritten.
+    expect(result.stateChanged).toBe(false);
   }, 30_000);
 
   it('runs no re-hash when no slot runs', async () => {

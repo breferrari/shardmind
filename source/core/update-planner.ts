@@ -62,11 +62,9 @@ export type UpdateAction =
       kind: 'auto_merge';
       path: string;
       content: string;
-      /** sha256 of the merged bytes written to disk (reported by `--json`). */
-      mergedHash: string;
       /**
        * sha256 of the new render: what the executor records as
-       * `rendered_hash`. Never the merged bytes, which hold the user's
+       * `rendered_hash` and `--json` reports. Never the merged bytes, which hold the user's
        * lines — recorded as the baseline, drift would read them as
        * engine-owned and the next update would overwrite them (#150).
        */
@@ -387,12 +385,13 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     counts.volatile++;
   }
 
-  const overwriteCandidates: Array<{ entry: DriftEntry; target: RenderedFileEntry }> = [];
+  // A managed entry is about to be replaced (`target`) or deleted (no
+  // target). Both need the baseline proven first, below.
+  const overwriteCandidates: Array<{ entry: DriftEntry; target: RenderedFileEntry | undefined }> = [];
   for (const entry of drift.managed) {
     const target = newByPath.get(entry.path);
     if (!target) {
-      actions.push({ kind: 'delete', path: entry.path });
-      counts.deleted++;
+      overwriteCandidates.push({ entry, target });
       continue;
     }
     if (target.hash === entry.renderedHash) {
@@ -403,7 +402,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     overwriteCandidates.push({ entry, target });
   }
 
-  // Before overwriting, prove the recorded hash is the engine's. For a
+  // Before overwriting or deleting, prove the recorded hash is the engine's. For a
   // copy-origin file the cached old source IS what the engine wrote, so a
   // recorded hash that differs from it was not the engine's: state written
   // before #150 recorded the user's bytes there, or a hook personalized the
@@ -421,7 +420,14 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   const toMerge: DriftEntry[] = [...drift.modified];
   for (const { entry, target, foreign } of baselineChecks) {
     if (foreign) {
+      // The modified path keeps a dropped file (`keep_as_user` unless the
+      // caller decided otherwise) and merges one the shard still produces.
       toMerge.push(entry);
+      continue;
+    }
+    if (!target) {
+      actions.push({ kind: 'delete', path: entry.path });
+      counts.deleted++;
       continue;
     }
     actions.push({
@@ -551,7 +557,6 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             kind: 'auto_merge',
             path: entry.path,
             content,
-            mergedHash: sha256(content),
             baselineHash: target.hash,
             ownership: sha256(content) === target.hash ? 'managed' : 'modified',
             stats: mergeAction.stats,
@@ -753,17 +758,25 @@ async function readStringAndByteHash(
 
 /**
  * Whether a managed entry's recorded hash is provably NOT the engine's: the
- * target is copy-origin, its old source is in the merge-base cache, and the
+ * file is copy-origin, its old source is in the merge-base cache, and the
  * cached bytes hash differently. Without a cached source there is no proof
  * either way, and the answer is `false`. (Iterator outputs are always
  * rendered, so they never reach the comparison.)
+ *
+ * Copy-origin is read from `target` when the new shard still produces the
+ * path, and from the recorded template key otherwise: a render source always
+ * ends in `.njk` (`modules.ts`), a copy source never does.
  */
 async function recordedHashIsForeign(
   vaultRoot: string,
   fileState: FileState | undefined,
-  target: RenderedFileEntry,
+  target: RenderedFileEntry | undefined,
 ): Promise<boolean> {
-  if (!fileState || !target.copyFromSourcePath) return false;
+  if (!fileState?.template) return false;
+  const copyOrigin = target
+    ? target.copyFromSourcePath !== undefined
+    : !fileState.template.endsWith('.njk');
+  if (!copyOrigin) return false;
   const cached = await readCachedTemplate(vaultRoot, fileState.template);
   return cached !== null && sha256(cached) !== fileState.rendered_hash;
 }

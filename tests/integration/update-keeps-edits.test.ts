@@ -350,6 +350,14 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     expect(await read(COPY)).toContain('My own line.');
   });
 
+  it('a file adopted as merged whose union equals the shard is recorded managed', async () => {
+    const pristine = await fsp.readFile(path.join(MINIMAL_SHARD, COPY));
+    await adoptEdited({ [COPY]: pristine.toString('utf-8').replace(COPY_LINE, 'My own line.') }, (rel) =>
+      rel === COPY ? { kind: 'merged', content: pristine, hash: sha256(pristine) } : 'keep_mine',
+    );
+    expect((await recorded(COPY)).ownership).toBe('managed');
+  });
+
   it('a file adopted as merged keeps its merged lines through the first template change', async () => {
     const pristine = await fsp.readFile(path.join(MINIMAL_SHARD, COPY), 'utf-8');
     const mine = pristine.replace(COPY_LINE, 'My own line.');
@@ -428,6 +436,18 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       const drift = await detectDrift(vault, (await readState(vault)) as ShardState);
       expect(drift.modified.map((e) => e.path)).toContain(COPY);
       expect((await recorded(COPY)).rendered_hash).toBe(sha256(await fsp.readFile(path.join(MINIMAL_SHARD, COPY))));
+    });
+
+    it('a corrupted copy-origin entry whose path the new shard drops is kept, not deleted', async () => {
+      await install();
+      await editFile(COPY, COPY_LINE, 'My own line.');
+      await corrupt(COPY, 'managed');
+
+      const v2 = await shardAt('0.2.0');
+      await fsp.rm(path.join(v2, COPY));
+      const { plan } = await update(v2);
+      expect(actionFor(plan, COPY)).toBe('keep_as_user');
+      expect(await read(COPY)).toContain('My own line.');
     });
 
     // The documented residual (SHARD-LAYOUT §Update semantics): a rendered
