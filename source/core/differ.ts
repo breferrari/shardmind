@@ -144,25 +144,6 @@ function runMerge(base: string, theirs: string, ours: string, path: string): Thr
 }
 
 /**
- * `diff3MergeRegions(a, o, b)`, except that three identical inputs return
- * one stable `o` region without running diff3 (#114). node-diff3's LCS
- * slows toward cubic time on inputs with many repeated lines: a 10K-line
- * file of 100 distinct lines took seconds to merge with itself. When all
- * three are the same there is nothing to align, and diff3 returns the
- * same single region. Trimming the shared prefix and suffix in general
- * was tried and rejected: with repeated lines it changes which alignment
- * diff3 picks, and turned a clean merge into a conflict
- * (`tests/unit/differ-identical.test.ts`). Exported for that test.
- */
-export function mergeRegions(a: string[], o: string[], b: string[]): IRegion<string>[] {
-  const identical =
-    a.length === o.length && b.length === o.length && o.every((line, i) => a[i] === line && b[i] === line);
-  if (!identical) return diff3MergeRegions(a, o, b);
-  if (o.length === 0) return []; // diff3 returns no region for empty inputs
-  return [{ stable: true, buffer: 'o', bufferStart: 0, bufferLength: o.length, bufferContent: o }];
-}
-
-/**
  * Line-based three-way merge. `a` is theirs (user on disk), `o` is base
  * (rendered from old template + old values), `b` is ours (rendered from
  * new template + new values). Convention matches diff3MergeRegions and
@@ -184,7 +165,7 @@ export function threeWayMerge(
   // newline-as-document-property is preserved through diff3 — we keep it in
   // the merge itself and correct for it in stats after the loop.
   const interner = new LineInterner();
-  const regions: IRegion<string>[] = mergeRegions(
+  const regions: IRegion<string>[] = diff3MergeRegions(
     interner.tokenize(theirs.split(LINE_SPLIT)),
     interner.tokenize(base.split(LINE_SPLIT)),
     interner.tokenize(ours.split(LINE_SPLIT)),
