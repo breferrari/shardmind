@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-03
+
+Hotfix. `shardmind update` overwrote files you had edited while reporting them as kept ([#150](https://github.com/breferrari/shardmind/issues/150), reported with a full root-cause analysis by @YoshimasaNegishi).
+
 ### Fixed (update keeps your edits — #150)
 
 - **`shardmind update` no longer overwrites files you edited.** A file kept with "keep mine" or "skip", a file auto-merged, a file adopted as "keep mine" or "merged", and any edited file present while a hook ran all had **your** bytes recorded as their baseline in `.shardmind/state.json`. The next update read "disk equals the record" as "engine-owned and unchanged" and replaced the file silently, while the summary said "kept mine", and then labelled it `managed` so later overwrites were quieter still. The recorded hash is now always the engine's (the shard's render or copy, or what a hook wrote over a file the engine owned), so an edit always reaches the three-way merge.
