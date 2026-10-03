@@ -327,7 +327,7 @@ Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-fl
 
 **Meaning:** `shardmind install --defaults` was invoked in a directory that already contains `.shardmind/state.json`. `--defaults` is the deterministic CI / non-TTY mode; the existing-install gate requires interactive input it can't provide, so the engine errors before any network call.
 
-**Remedy:** Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch. To reinstall from a script, add `--force`: it answers the gate with Reinstall, and overwrites colliding files without a backup (#55).
+**Remedy:** Run `shardmind update` to upgrade the existing install in place, or add `--force` to reinstall from scratch (#55). `--force` answers the gate with Reinstall and replaces your files at the shard's paths without a backup; the old install is kept until the new one succeeds, and restored if it fails.
 
 ### `JSON_REQUIRES_DRY_RUN`
 
@@ -355,7 +355,7 @@ The engine refuses rather than falling back to schema defaults, because a silent
 
 **Meaning:** The target directory is already shardmind-managed, so the install needs an answer from the existing-install gate, and there is no interactive terminal to ask for one. `--yes` does **not** answer this gate — overwriting a managed vault is not a default the engine assumes on your behalf.
 
-**Remedy:** Run `shardmind update` to upgrade the existing install in place, or remove `.shardmind/` and `shard-values.yaml` to reinstall from scratch. To reinstall from a script, add `--force`: it answers the gate with Reinstall, and overwrites colliding files without a backup (#55).
+**Remedy:** Run `shardmind update` to upgrade the existing install in place, or add `--force` to reinstall from scratch (#55). `--force` answers the gate with Reinstall and replaces your files at the shard's paths without a backup; the old install is kept until the new one succeeds, and restored if it fails.
 
 ---
 
