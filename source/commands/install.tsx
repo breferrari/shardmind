@@ -26,6 +26,7 @@ export const options = zod.object({
   defaults: zod.boolean().default(false).describe('Use schema defaults for every value (Invariant 1 mode); skips the wizard. Mutually exclusive with --values.'),
   verbose: zod.boolean().default(false).describe('Show per-file rendering progress'),
   dryRun: zod.boolean().default(false).describe('Preview what would be installed without writing'),
+  force: zod.boolean().default(false).describe('Reinstall over an existing install, and overwrite colliding files without a backup'),
   updateCheck: updateCheckOption,
 });
 
@@ -36,7 +37,7 @@ type Props = {
 
 export default function Install({ args, options }: Props) {
   const [shardRef] = args;
-  const { values: valuesFile, yes, defaults, verbose, dryRun, updateCheck } = options;
+  const { values: valuesFile, yes, defaults, force, verbose, dryRun, updateCheck } = options;
 
   const {
     phase,
@@ -50,6 +51,7 @@ export default function Install({ args, options }: Props) {
     valuesFile,
     yes,
     defaults,
+    force,
     verbose,
     dryRun,
     vaultRoot: process.cwd(),
@@ -132,6 +134,7 @@ export default function Install({ args, options }: Props) {
             fileCount={phase.fileCount}
             durationMs={phase.durationMs}
             backups={phase.backups}
+            replaced={phase.replaced}
             hooks={phase.hooks}
             dryRun={phase.dryRun}
           />

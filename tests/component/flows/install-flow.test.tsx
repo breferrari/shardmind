@@ -31,7 +31,9 @@ import {
   SHARD_SLUG,
   SHARD_REF,
   STUB_SHA,
+  DEFAULT_VALUES,
 } from './helpers.js';
+import { createInstalledVault } from '../../e2e/helpers/vault.js';
 import { tick, waitFor, ENTER, ESC, ARROW_DOWN, SPACE, typeText } from '../helpers.js';
 
 // Custom-tarball slugs for scenarios that need a shape minimal-shard
@@ -602,4 +604,63 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await cleanupVault(vault);
     }
   }, 45_000);
+  // ───── Scenario 13: collision review → Overwrite → summary lists what was replaced (#55) ─────
+
+  it('13. collision review → Overwrite → summary lists the replaced file, no backup (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s13-overwrite');
+    try {
+      await fs.writeFile(path.join(vault, 'Home.md'), 'my own home\n');
+      const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault });
+      await driveMinimalWizard(r, 'Dana');
+      r.stdin.write(ENTER); // modules → confirm
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Overwrite'), 15_000);
+      r.stdin.write(ARROW_DOWN); // backup → overwrite
+      await tick(40);
+      r.stdin.write(ENTER);
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f) && /no backup/.test(f),
+        15_000,
+      );
+      expect(frame).toContain('Replaced 1 existing file (no backup):');
+      expect(frame).toContain('Home.md');
+      const entries = await fs.readdir(vault);
+      expect(entries.some((e) => e.includes('shardmind-backup-'))).toBe(false);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
+
+  // ───── Scenario 14: --force over an existing install skips the gate (#55) ─────
+
+  it('14. --force over an existing install → no gate → wizard → reinstalled (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's14-force-reinstall',
+    });
+    try {
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root, options: { force: true } });
+      const wizard = await waitFor(r.lastFrame, (f) => /4 questions to answer/.test(f), 30_000);
+      expect(wizard).not.toContain('Reinstall from scratch');
+      await driveMinimalWizard(r, 'Bob');
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER);
+      const frame = await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
+      // The old install's files are collisions now, replaced with no backup.
+      expect(frame).toContain('(no backup)');
+      expect(await vault.readFile('shard-values.yaml')).toContain('Bob');
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
 });

@@ -595,6 +595,149 @@ describe('shardmind install', () => {
     expect(backup).toBeUndefined();
   });
 
+  // ───── --force (#55): answer both destructive install prompts ─────
+
+  it('--yes --force overwrites pre-existing content with no backup and lists it', async () => {
+    vault = await createEmptyVault('install-force-collision');
+    await vault.writeFile('Home.md', 'hand-crafted user content\n');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(['install', SHARD_REF, '--yes', '--force', '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(await vault.readFile('Home.md')).toContain('Alice');
+    const files = await vault.listFiles();
+    expect(files.find((f) => f.includes('shardmind-backup-'))).toBeUndefined();
+    expect(result.stdout).toMatch(/Replaced 1 existing file \(no backup\)/);
+    expect(result.stdout).toMatch(/Home\.md/);
+  });
+
+  it('--yes --force replaces a directory sitting at a planned file path', async () => {
+    vault = await createEmptyVault('install-force-dir');
+    await vault.writeFile('Home.md/inner.md', 'a file inside a directory named Home.md\n');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(['install', SHARD_REF, '--yes', '--force', '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(await vault.readFile('Home.md')).toContain('Alice');
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    '--yes --force removes a symlink at a planned path and leaves its target alone',
+    async () => {
+      vault = await createEmptyVault('install-force-symlink');
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'force-target-'));
+      try {
+        const target = path.join(outside, 'precious.md');
+        await fs.writeFile(target, 'outside the vault\n');
+        await fs.symlink(target, path.join(vault.root, 'Home.md'));
+        const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+        const result = await spawnCli(['install', SHARD_REF, '--yes', '--force', '--values', valuesPath], {
+          cwd: vault.root,
+          env: envWithStub(),
+        });
+        expect(result.exitCode).toBe(0);
+        expect(await fs.readFile(target, 'utf-8')).toBe('outside the vault\n');
+        const stat = await fs.lstat(path.join(vault.root, 'Home.md'));
+        expect(stat.isSymbolicLink()).toBe(false);
+        expect(await vault.readFile('Home.md')).toContain('Alice');
+      } finally {
+        await fs.rm(outside, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('--force --dry-run over pre-existing content removes nothing and backs up nothing', async () => {
+    vault = await createEmptyVault('install-force-dry-collision');
+    await vault.writeFile('Home.md', 'untouched user content\n');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['install', SHARD_REF, '--dry-run', '--yes', '--force', '--values', valuesPath],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(await vault.readFile('Home.md')).toBe('untouched user content\n');
+    const files = await vault.listFiles();
+    expect(files.find((f) => f.includes('shardmind-backup-'))).toBeUndefined();
+    expect(result.stdout).toMatch(/Would replace 1 existing file \(no backup\)/);
+  });
+
+  it('--yes --force reinstalls over an existing install without a TTY', async () => {
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'install-force-reinstall',
+    });
+    const valuesPath = await writeValuesFile(vault, { ...DEFAULT_VALUES, user_name: 'Bob' });
+    const result = await spawnCli(['install', SHARD_REF, '--yes', '--force', '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/INSTALL_GATE_NON_INTERACTIVE/);
+    expect(await vault.readFile('shard-values.yaml')).toContain('Bob');
+    expect(await vault.readFile('Home.md')).toContain('Bob');
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+    const files = await vault.listFiles();
+    expect(files.find((f) => f.includes('shardmind-backup-'))).toBeUndefined();
+  });
+
+  it('--defaults --force reinstalls over an existing install', async () => {
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'install-force-defaults',
+    });
+    const result = await spawnCli(['install', SHARD_REF, '--defaults', '--force'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/INSTALL_DEFAULTS_OVER_EXISTING/);
+    expect(await vault.readFile('shard-values.yaml')).not.toContain('Alice');
+  });
+
+  it('--yes --force with invalid values fails before removing the existing install', async () => {
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'install-force-bad-values',
+    });
+    const stateBefore = await vault.readFile('.shardmind/state.json');
+    const valuesBefore = await vault.readFile('shard-values.yaml');
+    const valuesPath = await writeValuesFile(vault, { ...DEFAULT_VALUES, vault_purpose: 'not-an-option' });
+    const result = await spawnCli(['install', SHARD_REF, '--yes', '--force', '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+    expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);
+  });
+
+  it('--force --dry-run over an existing install refuses and changes nothing', async () => {
+    vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 'install-force-dry-reinstall',
+    });
+    const stateBefore = await vault.readFile('.shardmind/state.json');
+    const result = await spawnCli(['install', SHARD_REF, '--dry-run', '--yes', '--force'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/cannot run under --dry-run/);
+    expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+  });
+
   it.skipIf(process.platform === 'win32' && process.env['GITHUB_ACTIONS'] === 'true')(
     'exits cleanly and leaves no partial state on SIGINT mid-install',
     async () => {
