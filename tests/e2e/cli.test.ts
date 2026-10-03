@@ -751,7 +751,7 @@ describe('shardmind install', () => {
     expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
   });
 
-  it.skipIf(process.platform === 'win32' && process.env['GITHUB_ACTIONS'] === 'true')(
+  it(
     'exits cleanly and leaves no partial state on SIGINT mid-install',
     async () => {
       // POSIX sends a real SIGINT via `child.kill`. Windows uses the
@@ -783,11 +783,16 @@ describe('shardmind install', () => {
           ['install', SHARD_REF, '--yes', '--values', valuesPath],
           {
             cwd: vault.root,
-            env: envWithStub(),
+            env: { ...envWithStub(), SHARDMIND_DEBUG_CANCEL: '1' },
             signalAt: { signal: 'SIGINT', afterMs: 500 },
             timeoutMs: 20_000,
           },
         );
+        console.log(`[#57 diag] exitCode=${result.exitCode} signal=${result.signal} duration=${result.duration}ms timedOut=${result.timedOut}
+STDERR:
+${result.stderr}
+STDOUT:
+${result.stdout.slice(-2000)}`);
         const viaCode = result.exitCode === 130;
         const viaSignal = result.signal === 'SIGINT';
         expect(
