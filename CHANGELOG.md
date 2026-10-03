@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (keep your file at a new path — #61)
+
+- **`update --adopt-preexisting` tracks a file you keep where the new version adds one.** Without it, keeping your own file at a newly added path (the `--yes` default) leaves it untracked, so every later update asks about it again. With the flag, the kept file is recorded as your modified copy: it is never overwritten, and later shard changes to it merge like any other edit. Without the flag, the summary now says how many files stayed untracked and points to the flag.
+
 ### Fixed (identical files at new paths — #62)
 
 - **An update no longer asks about a file you already have exactly.** When a new shard version adds a path where your vault has a file with the same bytes, the update adopts it as managed, with no write and no prompt, instead of offering a choice whose two answers both leave the same file. The summary shows "N adopted", and `update --dry-run --json` counts them in a new `counts.adopted`; they are no longer part of `counts.silent`. A symlink at that path, or a name that matches only when case is ignored, still gets the prompt.
