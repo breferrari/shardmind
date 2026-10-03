@@ -403,11 +403,7 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
       // Record the new render as the baseline, never the merged bytes: they
       // hold the user's lines, and drift would read them as engine-owned
       // (#150). A merge that produced exactly the new render is managed.
-      ctx.nextFiles[action.path] = buildFileState(
-        action,
-        action.baselineHash,
-        action.renderedHash === action.baselineHash ? 'managed' : 'modified',
-      );
+      ctx.nextFiles[action.path] = buildFileState(action, action.baselineHash, action.ownership);
       ctx.summary.wroteFiles.push(action.path);
       ctx.summary.autoMergeStats.linesUnchanged += action.stats.linesUnchanged;
       ctx.summary.autoMergeStats.linesAutoMerged += action.stats.linesAutoMerged;

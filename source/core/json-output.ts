@@ -205,10 +205,11 @@ function updateFile(action: UpdateAction): UpdatePlanFile {
     case 'noop':
       return { ...base, reason: action.reason };
     case 'overwrite':
-    case 'auto_merge':
     case 'add':
     case 'restore_missing':
       return { ...base, shardHash: action.renderedHash };
+    case 'auto_merge':
+      return { ...base, shardHash: action.mergedHash };
     case 'conflict':
       return {
         ...base,

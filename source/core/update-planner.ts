@@ -63,7 +63,7 @@ export type UpdateAction =
       path: string;
       content: string;
       /** sha256 of the merged bytes written to disk (reported by `--json`). */
-      renderedHash: string;
+      mergedHash: string;
       /**
        * sha256 of the new render: what the executor records as
        * `rendered_hash`. Never the merged bytes, which hold the user's
@@ -71,6 +71,8 @@ export type UpdateAction =
        * engine-owned and the next update would overwrite them (#150).
        */
       baselineHash: string;
+      /** `managed` only when the merge produced exactly the new render. */
+      ownership: 'managed' | 'modified';
       stats: MergeStats;
       templateKey: string | null;
       iteratorKey?: string;
@@ -549,8 +551,9 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
             kind: 'auto_merge',
             path: entry.path,
             content,
-            renderedHash: sha256(content),
+            mergedHash: sha256(content),
             baselineHash: target.hash,
+            ownership: sha256(content) === target.hash ? 'managed' : 'modified',
             stats: mergeAction.stats,
             templateKey,
             ...iterator,
@@ -760,9 +763,9 @@ async function recordedHashIsForeign(
   fileState: FileState | undefined,
   target: RenderedFileEntry,
 ): Promise<boolean> {
-  if (!target.copyFromSourcePath) return false;
-  const cached = await readCachedTemplate(vaultRoot, fileState?.template ?? null);
-  return cached !== null && sha256(cached) !== fileState!.rendered_hash;
+  if (!fileState || !target.copyFromSourcePath) return false;
+  const cached = await readCachedTemplate(vaultRoot, fileState.template);
+  return cached !== null && sha256(cached) !== fileState.rendered_hash;
 }
 
 /** The merge-base cache's bytes for `templateKey`, or `null` when absent. */

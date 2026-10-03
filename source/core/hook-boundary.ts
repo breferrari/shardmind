@@ -95,9 +95,9 @@ async function walkPaths(
  * `bootstrap` boundary check. `touched` is the union of `rehashManagedFiles()`'s
  * `changed` (tracked files whose bytes moved since the pre-hook snapshot) and
  * `missing` (tracked files deleted since then), computed immediately after
- * `bootstrap` ran. Since only `bootstrap`
- * has run at that point, any managed file it modified OR removed is a boundary
- * crossing — bootstrap may write unmanaged paths only.
+ * `bootstrap` ran. Since only `bootstrap` has run at that point, any managed
+ * file it modified OR removed is a boundary crossing — bootstrap may write
+ * unmanaged paths only.
  */
 export function detectManagedWrites(touched: readonly string[]): HookViolation | null {
   if (touched.length === 0) return null;

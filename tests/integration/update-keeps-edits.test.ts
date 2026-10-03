@@ -270,6 +270,31 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     expect(await read(COPY)).toContain('My own line.');
   }, 30_000);
 
+  it('a hook\'s write to an engine-owned copy file is recorded, and survives the next update', async () => {
+    await install();
+    // 0.2.0's post-update hook appends a line to the pristine CLAUDE.md.
+    const appendOnce: SourceEdits = {
+      ...IDLE_POST_UPDATE,
+      '.shardmind/hooks/post-update.ts': () => [
+        "import { readFile, appendFile } from 'node:fs/promises';",
+        "import { join } from 'node:path';",
+        'export default async function (ctx) {',
+        `  const p = join(ctx.vaultRoot, '${COPY}');`,
+        "  if (!(await readFile(p, 'utf-8')).includes('hook line')) await appendFile(p, 'hook line\\n');",
+        '}',
+        '',
+      ].join('\n'),
+    };
+    await update(await shardAt('0.2.0', appendOnce));
+    const hooked = await fsp.readFile(path.join(vault, COPY));
+    expect(hooked.toString('utf-8')).toContain('hook line');
+    expect((await recorded(COPY)).rendered_hash).toBe(sha256(hooked));
+
+    // 0.3.0 leaves CLAUDE.md's source alone and runs no hook.
+    await update(await shardAt('0.3.0'));
+    expect(await read(COPY)).toContain('hook line');
+  }, 30_000);
+
   it('a line the user added survives a second update after an auto-merge', async () => {
     await install();
     await write(HOME, (await read(HOME)) + '\n- User-added link\n');
@@ -388,6 +413,19 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       const drift = await detectDrift(vault, (await readState(vault)) as ShardState);
       expect(drift.modified.map((e) => e.path)).toContain(COPY);
       expect((await recorded(COPY)).rendered_hash).toBe(sha256(await fsp.readFile(path.join(MINIMAL_SHARD, COPY))));
+    });
+
+    // The documented residual (SHARD-LAYOUT §Update semantics): a rendered
+    // file's baseline cannot be proven, so a corrupted .njk entry labelled
+    // managed is overwritten once more. Pinned so a change here is a
+    // decision, not an accident.
+    it('a corrupted rendered entry labelled managed is still overwritten (documented residual)', async () => {
+      await install();
+      await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.');
+      await corrupt(HOME, 'managed');
+
+      const { plan } = await update(await shardAt('0.2.0'));
+      expect(actionFor(plan, HOME)).toBe('overwrite');
     });
 
     it('a corrupted binary copy-origin entry is caught by its bytes', async () => {
