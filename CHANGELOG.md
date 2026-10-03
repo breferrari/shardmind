@@ -8,6 +8,15 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (scripted reinstall — #55)
+
+- **`install --force` reinstalls and overwrites without asking.** It answers both destructive install prompts. Over an existing install it reinstalls from scratch instead of showing the gate, or refusing without a terminal or under `--defaults`. Files of yours at paths the shard writes are removed with no backup instead of being renamed to `.shardmind-backup-<timestamp>`. Pair it with `--yes`, `--values` or `--defaults` for a fully non-interactive run. The summary lists every file replaced without a backup, including by the interactive Overwrite choice.
+
+### Fixed (install reinstall and dry run — #55)
+
+- **A non-interactive reinstall no longer deletes the existing install before checking its values.** An invalid `--values` file now fails with `.shardmind/` and `shard-values.yaml` intact.
+- **Choosing Overwrite at collision review under `--dry-run` no longer deletes your files.**
+
 ### Changed (the conflict prompt names a new-path collision — #60)
 
 - **The update conflict prompt says when the file is yours and the path is new.** When a new shard version adds a path where you already have your own untracked file, the prompt reads "New file from shard collides with your file" instead of "Conflict in", says that Keep mine and Skip leave the file untracked (or, with `--adopt-preexisting`, track it as your modified copy), labels Keep mine "keep your file" and Accept new "replace your file", and leaves out the merge stats, since no merge ran. A conflict in a shard file you edited looks as before.
