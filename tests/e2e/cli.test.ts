@@ -680,6 +680,14 @@ describe('shardmind install', () => {
     await expectNoBackup();
   });
 
+  it("--yes --force keeps the old install's update and adopt backups", async () => {
+    vault = await installed('install-force-keeps-backups');
+    await vault.writeFile('.shardmind/backups/update-2026-01-01/files/note.md', 'only copy\n');
+    const result = await installForce(DEFAULT_VALUES);
+    expect(result.exitCode).toBe(0);
+    expect(await vault.readFile('.shardmind/backups/update-2026-01-01/files/note.md')).toBe('only copy\n');
+  });
+
   it('--defaults --force reinstalls over an existing install', async () => {
     vault = await installed('install-force-defaults');
     const result = await spawnCli(['install', SHARD_REF, '--defaults', '--force'], {

@@ -10,6 +10,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { useApp, useStdin } from 'ink';
 import { loadValuesYaml } from '../../core/values-io.js';
 
@@ -34,11 +35,12 @@ import {
   resolveComputedDefaults,
   missingValueKeys,
   defaultModuleSelections,
-  pathsWithOwnContent,
+  splitByOwnContent,
   type Collision,
 } from '../../core/install-planner.js';
 import {
   backupCollisions,
+  carryOverBackups,
   runInstall,
   rollbackInstall,
   type BackupRecord,
@@ -65,6 +67,12 @@ export interface PreparedContext {
   prefillValues: Record<string, unknown>;
   moduleFileCounts: Record<string, number>;
   alwaysIncludedFileCount: number;
+  /**
+   * The install a reinstall replaces (gate Reinstall or `--force`, #55).
+   * Its state and values are set aside with the collisions, and its
+   * recorded hashes tell its untouched files from the user's own content.
+   */
+  previous?: ShardState;
 }
 
 export type Phase =
@@ -72,7 +80,7 @@ export type Phase =
   | { kind: 'loading'; message: string }
   | { kind: 'gate'; state: ShardState; ctx: PreparedContext }
   | { kind: 'wizard'; ctx: PreparedContext }
-  | { kind: 'collision'; collisions: Collision[]; result: WizardResult; ctx: PreparedContext }
+  | { kind: 'collision'; collisions: Collision[]; untouched: Collision[]; result: WizardResult; ctx: PreparedContext }
   | { kind: 'installing'; total: number; current: number; label: string; history: string[]; ctx: PreparedContext; result: WizardResult; backups: BackupRecord[] }
   | RunningHookPhase // a lifecycle hook (bootstrap / personalize / legacy
       // post-install) is streaming output. We are already past the
@@ -153,11 +161,6 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   const writtenPathsRef = useRef<string[]>([]);
   const backupsRef = useRef<BackupRecord[]>([]);
   const installingRef = useRef(false);
-  // The install a reinstall replaces (gate Reinstall or `--force`, #55),
-  // read before anything moves: its state and values are set aside with
-  // the collisions, and its recorded hashes tell its untouched files from
-  // the user's own content.
-  const previousInstallRef = useRef<ShardState | null>(null);
   // AbortController that owns the currently-executing post-install hook.
   // Null when no hook is in flight. Ctrl+C in the running-hook phase
   // aborts the subprocess but does NOT roll back the install (we're
@@ -273,7 +276,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         if (disposed) return;
         if (existing) {
           if (force) {
-            await reinstall(ctx, existing);
+            await collectAnswers({ ...ctx, previous: existing });
             return;
           }
           // The gate is a prompt, and `--yes` does not answer it — overwriting
@@ -338,7 +341,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
    * Get the install's answers: without a wizard when the flags or a
    * headless `--values` run supply them, else from the wizard. Shared by a
    * fresh install and a reinstall, so `--force` without a terminal follows
-   * the same rules as any install (#55).
+   * the same rules as any install (#55). A reinstall carries the old state
+   * on `ctx.previous` and removes nothing here: the old install is set
+   * aside only once the answers are in (`placeCollisions`), so a cancelled
+   * wizard or a bad `--values` file leaves it as it was.
    */
   const collectAnswers = useCallback(
     async (ctx: PreparedContext) => {
@@ -369,29 +375,16 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     [nonInteractive, isRawModeSupported, valuesFile, runNonInteractive],
   );
 
-  /**
-   * Reinstall from scratch over an existing install: the gate's Reinstall
-   * choice, or `--force` (#55). Nothing is removed here: the old install
-   * is set aside only once the answers are in (`placeCollisions`), so a
-   * cancelled wizard or a bad `--values` file leaves it as it was.
-   */
-  const reinstall = useCallback(
-    async (ctx: PreparedContext, previous: ShardState) => {
-      previousInstallRef.current = previous;
-      await collectAnswers(ctx);
-    },
-    [collectAnswers],
-  );
-
   const executeInstall = useCallback(
     async (ctx: PreparedContext, result: WizardResult, placed: PlacedCollisions) => {
       const { backups, replaced, setAside } = placed;
       const start = Date.now();
       const history: string[] = [];
 
-      // Register everything moved aside + reset writtenPaths so the SIGINT
-      // handler sees live state from the first byte written.
-      backupsRef.current = [...backups, ...setAside];
+      // What a failure restores: everything moved aside, until the set-aside
+      // part is deleted on success. Registered for the SIGINT handler too.
+      let restorable = [...backups, ...setAside];
+      backupsRef.current = restorable;
       writtenPathsRef.current = [];
       installingRef.current = true;
 
@@ -457,6 +450,12 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
         // What was set aside only to be restored on failure goes now: a
         // replaced file and an old install's state leave no backup (#55).
+        // The old state's own backups (update and adopt snapshots) move
+        // into the new one first; they can be the only copy of a file.
+        restorable = backups;
+        backupsRef.current = backups;
+        const oldState = setAside.find((m) => m.originalPath === path.join(vaultRoot, SHARDMIND_DIR));
+        if (oldState) await carryOverBackups(oldState.backupPath, vaultRoot);
         await Promise.all(
           setAside.map((m) => fsp.rm(m.backupPath, { recursive: true, force: true }).catch(() => {})),
         );
@@ -509,7 +508,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         });
       } catch (err) {
         if (!dryRun) {
-          await rollbackInstall(vaultRoot, written, [...backups, ...setAside]).catch(() => {});
+          await rollbackInstall(vaultRoot, written, restorable).catch(() => {});
         }
         installingRef.current = false;
         finish({
@@ -523,32 +522,41 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   );
 
   /**
-   * Move each colliding path out of the way and install. `backup` keeps
-   * what it moved as `<path>.shardmind-backup-<timestamp>`; `overwrite`
-   * (the Overwrite choice, or `--force`, #55) sets it aside, restores it
-   * if the install fails, and deletes it once the new state is written. On
-   * a reinstall the old `.shardmind/` and `shard-values.yaml` are set aside
-   * the same way. A directory at a planned file path moves too, so
-   * `writeFile` doesn't hit EISDIR; a symlink moves, not its target. A dry
-   * run moves nothing.
+   * Move each colliding path out of the way and install. `own` holds the
+   * user's content: `backup` keeps it as `<path>.shardmind-backup-<timestamp>`;
+   * `overwrite` (the Overwrite choice, or `--force`, #55) sets it aside,
+   * restores it if the install fails, and deletes it once the new state is
+   * written. A reinstall's old `.shardmind/`, `shard-values.yaml` and
+   * untouched files are always set aside that way. A directory at a planned
+   * file path moves too, so `writeFile` doesn't hit EISDIR; a symlink
+   * moves, not its target. Each move is registered as it happens, so a
+   * Ctrl+C mid-way puts them back. A dry run moves nothing.
    */
   const placeCollisions = useCallback(
     async (
       ctx: PreparedContext,
       result: WizardResult,
-      collisions: Collision[],
+      own: Collision[],
+      untouched: Collision[],
       policy: 'backup' | 'overwrite',
     ) => {
-      const previous = previousInstallRef.current;
-      const replaced =
-        policy === 'overwrite' ? await pathsWithOwnContent(collisions, previous) : [];
+      const replaced = policy === 'overwrite' ? own.map((c) => c.outputPath) : [];
       if (dryRun) {
         await executeInstall(ctx, result, { backups: [], replaced, setAside: [] });
         return;
       }
-      const oldInstall = previous ? await detectCollisions(vaultRoot, [SHARDMIND_DIR, VALUES_FILE]) : [];
-      const moved = await backupCollisions([...oldInstall, ...collisions]);
-      const kept = new Set(policy === 'backup' ? collisions.map((c) => c.absolutePath) : []);
+      const oldInstall = ctx.previous
+        ? await detectCollisions(vaultRoot, [SHARDMIND_DIR, VALUES_FILE])
+        : [];
+      // Registered move by move; the first one turns rollback on. Before it,
+      // a Ctrl+C has nothing to undo, and rollback would delete `.shardmind/`.
+      writtenPathsRef.current = [];
+      backupsRef.current = [];
+      const moved = await backupCollisions([...oldInstall, ...untouched, ...own], undefined, (record) => {
+        backupsRef.current = [...backupsRef.current, record];
+        installingRef.current = true;
+      });
+      const kept = new Set(policy === 'backup' ? own.map((c) => c.absolutePath) : []);
       await executeInstall(ctx, result, {
         backups: moved.filter((m) => kept.has(m.originalPath)),
         replaced,
@@ -558,7 +566,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     [dryRun, vaultRoot, executeInstall],
   );
 
-  const handleWizardComplete = useCallback(
+    const handleWizardComplete = useCallback(
     async (result: WizardResult, ctx: PreparedContext) => {
       try {
         const validator = buildValuesValidator(ctx.schema);
@@ -568,16 +576,19 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         const { outputs } = await planOutputs(ctx.schema, ctx.tempDir, validatedResult.selections);
         const collisions = await detectCollisions(vaultRoot, outputs.map((o) => o.outputPath));
 
-        if (collisions.length > 0 && force) {
-          await placeCollisions(ctx, validatedResult, collisions, 'overwrite');
-        } else if (collisions.length > 0 && !nonInteractive) {
-          setPhase({ kind: 'collision', collisions, result: validatedResult, ctx });
+        // Only the user's own content is prompted for, backed up or
+        // reported; a reinstall's untouched files are simply replaced.
+        const { own, untouched } = await splitByOwnContent(collisions, ctx.previous ?? null);
+        if (own.length > 0 && force) {
+          await placeCollisions(ctx, validatedResult, own, untouched, 'overwrite');
+        } else if (own.length > 0 && !nonInteractive) {
+          setPhase({ kind: 'collision', collisions: own, untouched, result: validatedResult, ctx });
         } else {
           // Non-interactive policy: auto-backup. Applies to both `--yes` and
           // `--defaults`; the collision UI requires interactive input neither
-          // mode can provide. With no collisions this only sets a
-          // reinstall's old state aside.
-          await placeCollisions(ctx, validatedResult, collisions, 'backup');
+          // mode can provide. With nothing of the user's in the way this only
+          // sets a reinstall's old install aside.
+          await placeCollisions(ctx, validatedResult, own, untouched, 'backup');
         }
       } catch (err) {
         finish({ kind: 'error', error: err as Error });
@@ -593,14 +604,14 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   const onCollisionChoice = useCallback(
     async (action: CollisionAction) => {
       if (phase.kind !== 'collision') return;
-      const { collisions, result, ctx } = phase;
+      const { collisions, untouched, result, ctx } = phase;
       if (action === 'cancel') {
         finish({ kind: 'cancelled', reason: 'User cancelled at collision review.' });
         return;
       }
 
       try {
-        await placeCollisions(ctx, result, collisions, action);
+        await placeCollisions(ctx, result, collisions, untouched, action);
       } catch (err) {
         finish({ kind: 'error', error: err as Error });
       }
@@ -623,12 +634,12 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         return;
       }
       if (choice === 'reinstall') {
-        reinstall(phase.ctx, phase.state).catch((err: unknown) => {
+        collectAnswers({ ...phase.ctx, previous: phase.state }).catch((err: unknown) => {
           finish({ kind: 'error', error: err as Error });
         });
       }
     },
-    [phase, finish, reinstall],
+    [phase, finish, collectAnswers],
   );
 
   const onWizardComplete = useCallback(

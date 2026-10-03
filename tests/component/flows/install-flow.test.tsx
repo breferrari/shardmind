@@ -609,6 +609,12 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await cleanupVault(vault);
     }
   }, 45_000);
+  // Every `.shardmind-backup-*` path anywhere under the vault.
+  async function leftoverBackups(root: string): Promise<string[]> {
+    const entries = await fs.readdir(root, { recursive: true });
+    return entries.map(String).filter((e) => e.includes('shardmind-backup-'));
+  }
+
   // Wizard → confirm → collision review → Overwrite (the second option).
   async function driveToOverwrite(r: ReturnType<typeof mountInstall>) {
     await driveMinimalWizard(r, 'Dana');
@@ -668,8 +674,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       const frame = await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
       // The old install's files were untouched, so nothing of the user's was lost.
       expect(frame).not.toContain('(no backup)');
-      const entries = await fs.readdir(vault.root);
-      expect(entries.filter((e) => e.includes('shardmind-backup-'))).toEqual([]);
+      expect(await leftoverBackups(vault.root)).toEqual([]);
       expect(await vault.readFile('shard-values.yaml')).toContain('Bob');
     } finally {
       await vault.cleanup();
@@ -762,8 +767,38 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
       expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);
       expect(await vault.readFile('Home.md')).toBe('my edited home\n');
-      const entries = await fs.readdir(vault.root);
-      expect(entries.filter((e) => e.includes('shardmind-backup-'))).toEqual([]);
+      expect(await leftoverBackups(vault.root)).toEqual([]);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
+  // ───── Scenario 18: gate → Reinstall with --yes backs up only the user's own content (#55) ─────
+
+  it("18. gate → Reinstall with --yes → only the edited file is backed up, the old install's untouched files are not (#55)", async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's18-gate-reinstall-yes',
+    });
+    try {
+      await vault.writeFile('Home.md', 'my edited home\n');
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root, options: { yes: true } });
+      await waitFor(r.lastFrame, (f) => f.includes('Reinstall from scratch'), 30_000);
+      r.stdin.write(ARROW_DOWN); // keep → reinstall
+      await tick(40);
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Type REINSTALL to proceed'));
+      await typeText(r.stdin, 'REINSTALL');
+      r.stdin.write(ENTER);
+      const frame = await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
+      expect(frame).toContain('Backed up 1 existing file');
+      const left = await leftoverBackups(vault.root);
+      expect(left).toHaveLength(1);
+      expect(left[0]).toMatch(/^Home\.md\.shardmind-backup-/);
     } finally {
       await vault.cleanup();
     }
