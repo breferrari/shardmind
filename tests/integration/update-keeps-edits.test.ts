@@ -26,6 +26,8 @@ import type { ConflictResolution } from '../../source/core/update-planner.js';
 import { runUpdate } from '../../source/core/update-executor.js';
 import { defaultModuleSelections, resolveComputedDefaults } from '../../source/core/install-planner.js';
 import { runInstall } from '../../source/core/install-executor.js';
+import { classifyAdoption } from '../../source/core/adopt-planner.js';
+import { runAdopt, type AdoptResolutions } from '../../source/core/adopt-executor.js';
 import { buildRenderContext } from '../../source/core/renderer.js';
 import { sha256 } from '../../source/core/fs-utils.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
@@ -113,6 +115,44 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
   }
 
   const welcome = (line: string): SourceEdits => ({ [HOME_SRC]: (s) => s.replace(WELCOME, line) });
+
+  /**
+   * A clone the user edited before adopting: install, drop the engine
+   * metadata, apply `edits`, then adopt with `resolve` choosing per path.
+   */
+  async function adoptEdited(
+    edits: Record<string, string>,
+    resolve: (rel: string, userBytes: Buffer) => AdoptResolutions[string],
+  ): Promise<void> {
+    await install();
+    await fsp.rm(path.join(vault, '.shardmind'), { recursive: true, force: true });
+    await fsp.rm(path.join(vault, 'shard-values.yaml'), { force: true });
+    for (const [rel, content] of Object.entries(edits)) await write(rel, content);
+
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+    const selections = defaultModuleSelections(schema);
+    const values = buildValuesValidator(schema).parse(
+      resolveComputedDefaults(schema, BASE_VALUES),
+    ) as Record<string, unknown>;
+    const plan = await classifyAdoption({ vaultRoot: vault, schema, manifest, tempDir: MINIMAL_SHARD, values, selections });
+    const resolutions: AdoptResolutions = {};
+    for (const c of plan.differs) {
+      resolutions[c.path] = resolve(c.path, await fsp.readFile(path.join(vault, c.path)));
+    }
+    await runAdopt({
+      vaultRoot: vault,
+      manifest,
+      schema,
+      tempDir: MINIMAL_SHARD,
+      resolved: { ...RESOLVED, version: manifest.version },
+      tarballSha256: 'sha-0.1.0',
+      values,
+      selections,
+      plan,
+      resolutions,
+    });
+  }
 
   /** One full update, drift to state write, resolving every conflict as `resolution`. */
   async function update(shardDir: string, resolution: ConflictResolution = 'keep_mine') {
@@ -258,6 +298,32 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     expect(after.ownership).toBe('modified');
     expect(after.rendered_hash).toBe(pristineHash);
     expect(await read(COPY)).toContain('My own line.');
+  });
+
+  it('a file adopted with keep_mine survives the first update', async () => {
+    const pristine = await fsp.readFile(path.join(MINIMAL_SHARD, COPY), 'utf-8');
+    await adoptEdited({ [COPY]: pristine.replace(COPY_LINE, 'My own line.') }, () => 'keep_mine');
+    expect((await recorded(COPY)).rendered_hash).toBe(sha256(pristine));
+
+    await update(await shardAt('0.2.0'));
+    expect(await read(COPY)).toContain('My own line.');
+  });
+
+  it('a file adopted as merged keeps its merged lines through the first template change', async () => {
+    const pristine = await fsp.readFile(path.join(MINIMAL_SHARD, COPY), 'utf-8');
+    const mine = pristine.replace(COPY_LINE, 'My own line.');
+    await adoptEdited({ [COPY]: mine }, (rel, userBytes) => {
+      if (rel !== COPY) return 'keep_mine';
+      const content = Buffer.concat([userBytes, Buffer.from('\n- merged-in line\n')]);
+      return { kind: 'merged', content, hash: sha256(content) };
+    });
+
+    // 0.2.0 changes the title line, which neither the user nor the merge touched.
+    await update(await shardAt('0.2.0', { [COPY]: (s) => s.replace('# Minimal Shard', '# Minimal Shard v2') }));
+    const after = await read(COPY);
+    expect(after).toContain('# Minimal Shard v2');
+    expect(after).toContain('My own line.');
+    expect(after).toContain('merged-in line');
   });
 
   it('a pristine copy-origin file is still overwritten silently when its source changes', async () => {

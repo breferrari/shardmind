@@ -288,7 +288,12 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
 
     const state = (await readState(vault)) as ShardState;
     expect(state.files['CLAUDE.md']?.ownership).toBe('modified');
+    // The shard's hash, never the user's: recorded as the baseline, the
+    // user's bytes would read as engine-owned on the first update (#150).
     expect(state.files['CLAUDE.md']?.rendered_hash).toBe(
+      sha256(await fsp.readFile(path.join(MINIMAL_SHARD, 'CLAUDE.md'))),
+    );
+    expect(state.files['CLAUDE.md']?.rendered_hash).not.toBe(
       sha256(Buffer.from(myCustomBytes, 'utf-8')),
     );
     expect(state.files['Home.md']?.ownership).toBe('managed');
@@ -336,16 +341,23 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     for (const c of adoptPlan.differs) resolutions[c.path] = 'keep_mine';
     resolutions['Home.md'] = { kind: 'merged', content: mergedBytes, hash: mergedHash };
 
-    const { result } = await adopt(vault, resolutions);
+    const { plan: appliedPlan, result } = await adopt(vault, resolutions);
 
     // Merged bytes are on disk.
     const homeDisk = await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8');
     expect(homeDisk).toBe('# Home — union of mine + shard\n');
 
-    // Recorded as user-customized (modified) at the merged hash.
+    // Recorded as user-customized (modified) at the shard's hash: the merged
+    // bytes hold the user's lines, so recording them would read as
+    // engine-owned on the first update (#150).
     const state = (await readState(vault)) as ShardState;
     expect(state.files['Home.md']?.ownership).toBe('modified');
-    expect(state.files['Home.md']?.rendered_hash).toBe(mergedHash);
+    expect(state.files['Home.md']?.rendered_hash).toBe(
+      // The plan runAdopt applied: Home.md renders `install_date`, so a
+      // separately classified plan carries a different shard hash.
+      appliedPlan.differs.find((c) => c.path === 'Home.md')!.shardHash,
+    );
+    expect(state.files['Home.md']?.rendered_hash).not.toBe(mergedHash);
 
     expect(result.summary.adoptedMerged).toContain('Home.md');
     expect(result.summary.adoptedMine).not.toContain('Home.md');
