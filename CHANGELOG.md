@@ -16,6 +16,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **A reinstall no longer deletes the existing install before it has its answers.** Cancelling the wizard, or an invalid `--values` file, now leaves `.shardmind/` and `shard-values.yaml` intact, and a failed reinstall puts them back. `install --dry-run` previews a reinstall instead of refusing it.
 - **Choosing Overwrite or Back up at collision review under `--dry-run` no longer touches your files**, and an Overwrite whose install fails puts them back.
+- **A reinstall no longer backs up or asks about the old install's untouched files.** Only files holding your own content are prompted for, backed up or listed, and the old install's `.shardmind/backups/` snapshots are kept.
 
 ### Changed (the conflict prompt names a new-path collision — #60)
 
