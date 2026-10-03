@@ -372,11 +372,14 @@ describe('executeHook — subprocess runtime', () => {
     const hookPath = await writeHook(
       'hook.ts',
       `
-        class Weird extends Error {
-          get stack(): string { throw new Error('no stack for you'); }
-        }
         export default async function () {
-          throw new Weird('boom');
+          // On the instance: V8 gives each Error its own stack, which would
+          // shadow a getter on a subclass.
+          const err = new Error('boom');
+          Object.defineProperty(err, 'stack', {
+            get() { throw new Error('no stack for you'); },
+          });
+          throw err;
         }
       `,
     );
