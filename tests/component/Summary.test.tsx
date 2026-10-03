@@ -24,6 +24,7 @@ const baseProps = {
   fileCount: 23,
   durationMs: 1234,
   backups: [] as BackupRecord[],
+  replaced: [] as string[],
   hooks: [],
 };
 
@@ -55,6 +56,27 @@ describe('Summary', () => {
     expect(frame).toContain('Backed up 13 existing files');
     expect(frame).toContain('File0.md.shardmind-backup-xyz');
     expect(frame).toContain('…and 3 more');
+  });
+
+  it('lists files replaced without a backup, truncated above 10 (#55)', () => {
+    const replaced = Array.from({ length: 12 }, (_, i) => `notes/n${i}.md`);
+    const { lastFrame } = render(<Summary {...baseProps} replaced={replaced} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Replaced 12 existing files (no backup):');
+    expect(frame).toContain('notes/n0.md');
+    expect(frame).toContain('notes/n9.md');
+    expect(frame).not.toContain('notes/n10.md');
+    expect(frame).toContain('…and 2 more');
+  });
+
+  it('says "would replace" in a dry run (#55)', () => {
+    const { lastFrame } = render(<Summary {...baseProps} dryRun replaced={['Home.md']} />);
+    expect(lastFrame() ?? '').toContain('Would replace 1 existing file (no backup):');
+  });
+
+  it('shows no replaced list when nothing was replaced (#55)', () => {
+    const { lastFrame } = render(<Summary {...baseProps} />);
+    expect(lastFrame() ?? '').not.toContain('no backup');
   });
 
   it('renders a "skipped" note when a hook is deferred (dry run)', () => {

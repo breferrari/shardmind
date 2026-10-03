@@ -8,6 +8,16 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (scripted reinstall — #55)
+
+- **`install --force` reinstalls and overwrites without asking.** It answers both destructive install prompts. Over an existing install it reinstalls from scratch instead of showing the gate, or refusing without a terminal or under `--defaults`. Files of yours at paths the shard writes are replaced with no backup instead of being renamed to `.shardmind-backup-<timestamp>`; on a reinstall that includes your edits to the old install's files. Pair it with `--yes`, `--values` or `--defaults` for a fully non-interactive run. If the install fails, everything it moved is put back. The summary lists each replaced file that held your own content, including by the interactive Overwrite choice.
+
+### Fixed (install reinstall and dry run — #55)
+
+- **A reinstall no longer deletes the existing install before it has its answers.** Cancelling the wizard, or an invalid `--values` file, now leaves `.shardmind/` and `shard-values.yaml` intact, and a failed reinstall puts them back. `install --dry-run` previews a reinstall instead of refusing it.
+- **Choosing Overwrite or Back up at collision review under `--dry-run` no longer touches your files**, and an Overwrite whose install fails puts them back.
+- **A reinstall no longer backs up or asks about the old install's untouched files.** Only files holding your own content are prompted for, backed up or listed, and the old install's `.shardmind/backups/` snapshots are kept.
+
 ### Changed (the conflict prompt names a new-path collision — #60)
 
 - **The update conflict prompt says when the file is yours and the path is new.** When a new shard version adds a path where you already have your own untracked file, the prompt reads "New file from shard collides with your file" instead of "Conflict in", says that Keep mine and Skip leave the file untracked (or, with `--adopt-preexisting`, track it as your modified copy), labels Keep mine "keep your file" and Accept new "replace your file", and leaves out the merge stats, since no merge ran. A conflict in a shard file you edited looks as before.

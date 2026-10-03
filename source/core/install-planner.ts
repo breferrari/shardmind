@@ -11,6 +11,7 @@ import path from 'node:path';
 import nunjucks from 'nunjucks';
 import type {
   ShardSchema,
+  ShardState,
   ValueDefinition,
   ModuleSelections,
 } from '../runtime/types.js';
@@ -18,7 +19,7 @@ import { ShardMindError, assertNever } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { isComputedDefault } from './schema.js';
 import { resolveModules } from './modules.js';
-import { sha256 } from './fs-utils.js';
+import { sha256, mapConcurrent } from './fs-utils.js';
 
 export interface Collision {
   outputPath: string;
@@ -143,6 +144,33 @@ export async function detectCollisions(
   }
 
   return collisions;
+}
+
+/**
+ * Split a reinstall's collisions into the user's own content and the
+ * previous install's untouched files: a file it wrote whose bytes still
+ * match the hash it recorded (#55). Replacing an untouched file loses
+ * nothing of the user's, so it is neither prompted for, backed up, nor
+ * reported. With no previous install, everything is the user's. A file
+ * that cannot be read counts as the user's, so doubt keeps it reported.
+ */
+export async function splitByOwnContent(
+  collisions: Collision[],
+  previous: ShardState | null,
+): Promise<{ own: Collision[]; untouched: Collision[] }> {
+  const isUntouched = await mapConcurrent(collisions, 16, async (collision) => {
+    const recorded = previous?.files[collision.outputPath];
+    if (!recorded || collision.kind !== 'file') return false;
+    try {
+      return sha256(await fsp.readFile(collision.absolutePath)) === recorded.rendered_hash;
+    } catch {
+      return false;
+    }
+  });
+  return {
+    own: collisions.filter((_, i) => !isUntouched[i]),
+    untouched: collisions.filter((_, i) => isUntouched[i]),
+  };
 }
 
 export function mergePrefill(

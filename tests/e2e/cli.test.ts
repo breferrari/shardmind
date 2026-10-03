@@ -38,6 +38,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -593,6 +594,159 @@ describe('shardmind install', () => {
     const files = await vault.listFiles();
     const backup = files.find((f) => f.includes('shardmind-backup-'));
     expect(backup).toBeUndefined();
+  });
+
+  // ───── --force (#55): answer both destructive install prompts ─────
+
+  // An install run with --yes --force and these values, in the test's vault.
+  async function installForce(values: Record<string, unknown>, extra: string[] = []) {
+    const valuesPath = await writeValuesFile(vault, values);
+    return spawnCli(['install', SHARD_REF, '--yes', '--force', '--values', valuesPath, ...extra], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+  }
+
+  async function expectNoBackup() {
+    const files = await vault.listFiles();
+    expect(files.find((f) => f.includes('shardmind-backup-'))).toBeUndefined();
+  }
+
+  const installed = (prefix: string) =>
+    createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix });
+
+  it('--yes --force overwrites pre-existing content with no backup and lists it', async () => {
+    vault = await createEmptyVault('install-force-collision');
+    await vault.writeFile('Home.md', 'hand-crafted user content\n');
+    const result = await installForce(DEFAULT_VALUES);
+    expect(result.exitCode).toBe(0);
+    expect(await vault.readFile('Home.md')).toContain('Alice');
+    await expectNoBackup();
+    expect(result.stdout).toMatch(/Replaced 1 existing file \(no backup\)/);
+    expect(result.stdout).toMatch(/Home\.md/);
+  });
+
+  it('--yes --force replaces a directory sitting at a planned file path', async () => {
+    vault = await createEmptyVault('install-force-dir');
+    await vault.writeFile('Home.md/inner.md', 'a file inside a directory named Home.md\n');
+    const result = await installForce(DEFAULT_VALUES);
+    expect(result.exitCode).toBe(0);
+    expect(await vault.readFile('Home.md')).toContain('Alice');
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    '--yes --force removes a symlink at a planned path and leaves its target alone',
+    async () => {
+      vault = await createEmptyVault('install-force-symlink');
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'force-target-'));
+      try {
+        const target = path.join(outside, 'precious.md');
+        await fs.writeFile(target, 'outside the vault\n');
+        await fs.symlink(target, path.join(vault.root, 'Home.md'));
+        const result = await installForce(DEFAULT_VALUES);
+        expect(result.exitCode).toBe(0);
+        expect(await fs.readFile(target, 'utf-8')).toBe('outside the vault\n');
+        const stat = await fs.lstat(path.join(vault.root, 'Home.md'));
+        expect(stat.isSymbolicLink()).toBe(false);
+        expect(await vault.readFile('Home.md')).toContain('Alice');
+      } finally {
+        await fs.rm(outside, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('--force --dry-run over pre-existing content removes nothing and backs up nothing', async () => {
+    vault = await createEmptyVault('install-force-dry-collision');
+    await vault.writeFile('Home.md', 'untouched user content\n');
+    const result = await installForce(DEFAULT_VALUES, ['--dry-run']);
+    expect(result.exitCode).toBe(0);
+    expect(await vault.readFile('Home.md')).toBe('untouched user content\n');
+    await expectNoBackup();
+    expect(result.stdout).toMatch(/Would replace 1 existing file \(no backup\)/);
+  });
+
+  it('--yes --force reinstalls over an existing install without a TTY', async () => {
+    vault = await installed('install-force-reinstall');
+    await vault.writeFile('brain/North Star.md', 'my own north star\n');
+    const result = await installForce({ ...DEFAULT_VALUES, user_name: 'Bob' });
+    expect(result.exitCode).toBe(0);
+    // Only the file the user edited held content of theirs; the old
+    // install's untouched files are not listed as lost.
+    expect(result.stdout).toMatch(/Replaced 1 existing file \(no backup\)/);
+    expect(result.stdout).toMatch(/North Star\.md/);
+    expect(result.stdout).not.toMatch(/INSTALL_GATE_NON_INTERACTIVE/);
+    expect(await vault.readFile('shard-values.yaml')).toContain('Bob');
+    expect(await vault.readFile('Home.md')).toContain('Bob');
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+    await expectNoBackup();
+  });
+
+  it("--yes --force keeps the old install's update and adopt backups", async () => {
+    vault = await installed('install-force-keeps-backups');
+    await vault.writeFile('.shardmind/backups/update-2026-01-01/files/note.md', 'only copy\n');
+    const result = await installForce(DEFAULT_VALUES);
+    expect(result.exitCode).toBe(0);
+    expect(await vault.readFile('.shardmind/backups/update-2026-01-01/files/note.md')).toBe('only copy\n');
+  });
+
+  it('--defaults --force reinstalls over an existing install', async () => {
+    vault = await installed('install-force-defaults');
+    const result = await spawnCli(['install', SHARD_REF, '--defaults', '--force'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/INSTALL_DEFAULTS_OVER_EXISTING/);
+    expect(await vault.readFile('shard-values.yaml')).not.toContain('Alice');
+  });
+
+  it('--yes --force with invalid values fails before removing the existing install', async () => {
+    vault = await installed('install-force-bad-values');
+    const stateBefore = await vault.readFile('.shardmind/state.json');
+    const valuesBefore = await vault.readFile('shard-values.yaml');
+    const result = await installForce({ ...DEFAULT_VALUES, vault_purpose: 'not-an-option' });
+    expect(result.exitCode).toBe(1);
+    expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+    expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);
+  });
+
+  it('--force --dry-run over an existing install previews the reinstall and changes nothing', async () => {
+    vault = await installed('install-force-dry-reinstall');
+    const stateBefore = await vault.readFile('.shardmind/state.json');
+    const valuesBefore = await vault.readFile('shard-values.yaml');
+    const result = await spawnCli(['install', SHARD_REF, '--dry-run', '--yes', '--force'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/Dry run complete/);
+    expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+    expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);
+    await expectNoBackup();
+  });
+
+  it('--force --values reinstalls without a TTY and without --yes', async () => {
+    vault = await installed('install-force-headless-values');
+    const valuesPath = await writeValuesFile(vault, { ...DEFAULT_VALUES, user_name: 'Bob' });
+    const result = await spawnCli(['install', SHARD_REF, '--force', '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(await vault.readFile('shard-values.yaml')).toContain('Bob');
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
+  });
+
+  it('--force without a TTY and without values refuses and keeps the existing install', async () => {
+    vault = await installed('install-force-headless-novalues');
+    const stateBefore = await vault.readFile('.shardmind/state.json');
+    const result = await spawnCli(['install', SHARD_REF, '--force'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/INSTALL_NON_INTERACTIVE_WITHOUT_VALUES/);
+    expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
   });
 
   it.skipIf(process.platform === 'win32' && process.env['GITHUB_ACTIONS'] === 'true')(

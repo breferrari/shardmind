@@ -199,6 +199,7 @@ export interface InstallOptions {
   values?: string;
   yes?: boolean;
   defaults?: boolean;
+  force?: boolean;
   verbose?: boolean;
   dryRun?: boolean;
   updateCheck?: boolean;
@@ -216,6 +217,7 @@ export function mountInstall(opts: {
       options={{
         yes: false,
         defaults: false,
+        force: false,
         verbose: false,
         dryRun: false,
         updateCheck: true,

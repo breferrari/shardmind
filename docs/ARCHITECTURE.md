@@ -801,6 +801,14 @@ Defaults: all included. User deselects what doesn't fit. Most press Enter.
 
 After confirm: render → write → state.json → hooks (orchestrator: bootstrap → personalize) → summary.
 
+Two prompts can destroy content before any of that: the **existing-install gate** (the directory is already shardmind-managed: keep it, reinstall from scratch, or cancel) and **collision review** (files of yours sit at paths the shard writes: back them up, overwrite, or cancel). `--yes` and `--defaults` answer neither: a collision is backed up to `<path>.shardmind-backup-<timestamp>`, and an existing install is refused without a terminal (`INSTALL_GATE_NON_INTERACTIVE`) or under `--defaults` (`INSTALL_DEFAULTS_OVER_EXISTING`).
+
+- `--force` answers both, in any mode (#55): an existing install is reinstalled without the gate, and colliding paths are replaced with no backup, as the interactive Overwrite choice does. It answers nothing else: values still come from the wizard, `--values`, `--yes` or `--defaults`, and without a terminal and without values it is refused (`INSTALL_NON_INTERACTIVE_WITHOUT_VALUES`) as any install is.
+
+A reinstall, from `--force` or the gate, keeps the old install until the new one has its answers: `.shardmind/` and `shard-values.yaml` are set aside only when the wizard is submitted (or the values are resolved without one), so cancelling the wizard or a bad `--values` file leaves the existing install as it was. The old install's files then collide like any other, and the user's edits to them are lost when they are replaced. Replacing is transactional: the old state, the values file and each replaced path are moved aside, restored if the install fails or is interrupted, and deleted once the new state is written, so no `.shardmind-backup-*` is left behind. Under `--dry-run` nothing moves, and a reinstall is previewed rather than refused.
+
+The summary lists the paths replaced without a backup that held content of the user's own: a file the old install wrote and the user never edited (its bytes still match the hash in the old `state.json`) is not listed.
+
 ### 10.5 `shardmind update` — Upgrade Flow
 
 ```

@@ -121,6 +121,7 @@ shardmind install <shard>
   --yes                                    # Accept defaults for every prompt
   --dry-run                                # Show plan, write nothing
   --verbose                                # Per-file rendering progress
+  --force                                  # Reinstall over an existing install; overwrite colliding files, no backup
 
 # Upgrade the installed shard
 shardmind update

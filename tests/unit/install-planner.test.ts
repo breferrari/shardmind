@@ -10,10 +10,15 @@ import {
   missingValueKeys,
   defaultModuleSelections,
   hashValues,
+  splitByOwnContent,
 } from '../../source/core/install-planner.js';
+import { sha256 } from '../../source/core/fs-utils.js';
+import { makeShardState } from '../helpers/shard-state.js';
 import {
   backupCollisions,
   restoreBackups,
+  carryOverBackups,
+  discardSetAside,
 } from '../../source/core/install-executor.js';
 import { ShardMindError, type ShardSchema } from '../../source/runtime/types.js';
 
@@ -90,6 +95,61 @@ describe('resolveComputedDefaults', () => {
   });
 });
 
+describe('splitByOwnContent', () => {
+  let vault: string;
+
+  beforeEach(async () => {
+    vault = path.join(os.tmpdir(), `shardmind-own-${crypto.randomUUID()}`);
+    await fsp.mkdir(vault, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsp.rm(vault, { recursive: true, force: true });
+  });
+
+  const fileState = (content: string) => ({
+    template: null,
+    rendered_hash: sha256(content),
+    ownership: 'managed' as const,
+  });
+  const paths = (cs: Array<{ outputPath: string }>) => cs.map((c) => c.outputPath);
+
+  it('counts every collision as own content when there is no previous install', async () => {
+    await fsp.writeFile(path.join(vault, 'a.md'), 'mine');
+    const collisions = await detectCollisions(vault, ['a.md']);
+    const { own, untouched } = await splitByOwnContent(collisions, null);
+    expect(paths(own)).toEqual(['a.md']);
+    expect(untouched).toEqual([]);
+  });
+
+  it("separates a previous install's untouched files from the user's own content (#55)", async () => {
+    await fsp.writeFile(path.join(vault, 'engine.md'), 'rendered');
+    await fsp.writeFile(path.join(vault, 'edited.md'), 'my edit');
+    await fsp.writeFile(path.join(vault, 'stranger.md'), 'not tracked');
+    await fsp.mkdir(path.join(vault, 'dir.md'));
+    const collisions = await detectCollisions(vault, ['engine.md', 'edited.md', 'stranger.md', 'dir.md']);
+    const previous = makeShardState({
+      files: {
+        'engine.md': fileState('rendered'),
+        'edited.md': fileState('the original render'),
+        'dir.md': fileState('was a file'),
+      },
+    });
+    const { own, untouched } = await splitByOwnContent(collisions, previous);
+    expect(paths(own)).toEqual(['edited.md', 'stranger.md', 'dir.md']);
+    expect(paths(untouched)).toEqual(['engine.md']);
+  });
+
+  it('counts a file it cannot read as own content rather than failing', async () => {
+    await fsp.writeFile(path.join(vault, 'gone.md'), 'rendered');
+    const collisions = await detectCollisions(vault, ['gone.md']);
+    await fsp.rm(path.join(vault, 'gone.md'));
+    const previous = makeShardState({ files: { 'gone.md': fileState('rendered') } });
+    const { own } = await splitByOwnContent(collisions, previous);
+    expect(paths(own)).toEqual(['gone.md']);
+  });
+});
+
 describe('detectCollisions', () => {
   let vault: string;
 
@@ -126,6 +186,83 @@ describe('detectCollisions', () => {
   });
 });
 
+describe('carryOverBackups', () => {
+  let vault: string;
+
+  beforeEach(async () => {
+    vault = path.join(os.tmpdir(), `shardmind-carry-${crypto.randomUUID()}`);
+    await fsp.mkdir(vault, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsp.rm(vault, { recursive: true, force: true });
+  });
+
+  it("moves an old state dir's backups into the new one, merging with any there (#55)", async () => {
+    const old = path.join(vault, 'old-state');
+    await fsp.mkdir(path.join(old, 'backups', 'update-1', 'files'), { recursive: true });
+    await fsp.writeFile(path.join(old, 'backups', 'update-1', 'files', 'note.md'), 'only copy');
+    await fsp.mkdir(path.join(vault, '.shardmind', 'backups', 'adopt-2'), { recursive: true });
+    await carryOverBackups(old, vault);
+    expect(await fsp.readFile(path.join(vault, '.shardmind', 'backups', 'update-1', 'files', 'note.md'), 'utf-8')).toBe('only copy');
+    expect((await fsp.stat(path.join(vault, '.shardmind', 'backups', 'adopt-2'))).isDirectory()).toBe(true);
+  });
+
+  it('keeps an old backup whose name is taken under a new name, not dropping it', async () => {
+    const old = path.join(vault, 'old-state');
+    await fsp.mkdir(path.join(old, 'backups', 'update-1'), { recursive: true });
+    await fsp.writeFile(path.join(old, 'backups', 'update-1', 'old.md'), 'old copy');
+    await fsp.mkdir(path.join(vault, '.shardmind', 'backups', 'update-1'), { recursive: true });
+    await carryOverBackups(old, vault);
+    const names = await fsp.readdir(path.join(vault, '.shardmind', 'backups'));
+    expect(names.sort()).toEqual(['update-1', 'update-1-1']);
+    expect(await fsp.readFile(path.join(vault, '.shardmind', 'backups', 'update-1-1', 'old.md'), 'utf-8')).toBe('old copy');
+  });
+
+  it('does nothing when the old state dir has no backups', async () => {
+    const old = path.join(vault, 'old-state');
+    await fsp.mkdir(old, { recursive: true });
+    await carryOverBackups(old, vault);
+    await expect(fsp.stat(path.join(vault, '.shardmind', 'backups'))).rejects.toThrow();
+  });
+});
+
+describe('discardSetAside', () => {
+  let vault: string;
+
+  beforeEach(async () => {
+    vault = path.join(os.tmpdir(), `shardmind-discard-${crypto.randomUUID()}`);
+    await fsp.mkdir(vault, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsp.rm(vault, { recursive: true, force: true });
+  });
+
+  it("deletes what was set aside after carrying the old state's backups over (#55)", async () => {
+    const oldState = path.join(vault, '.shardmind.shardmind-backup-x');
+    await fsp.mkdir(path.join(oldState, 'backups', 'adopt-1'), { recursive: true });
+    const note = path.join(vault, 'Home.md.shardmind-backup-x');
+    await fsp.writeFile(note, 'replaced');
+    const stateRecord = { originalPath: path.join(vault, '.shardmind'), backupPath: oldState };
+    await discardSetAside([stateRecord, { originalPath: path.join(vault, 'Home.md'), backupPath: note }], stateRecord, vault);
+    await expect(fsp.stat(oldState)).rejects.toThrow();
+    await expect(fsp.stat(note)).rejects.toThrow();
+    expect((await fsp.stat(path.join(vault, '.shardmind', 'backups', 'adopt-1'))).isDirectory()).toBe(true);
+  });
+
+  it('keeps the old state aside when its backups cannot be carried over, and never throws', async () => {
+    const oldState = path.join(vault, '.shardmind.shardmind-backup-x');
+    await fsp.mkdir(path.join(oldState, 'backups', 'adopt-1'), { recursive: true });
+    // A file where the new backups/ dir must go makes the carry-over fail.
+    await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind', 'backups'), 'in the way');
+    const stateRecord = { originalPath: path.join(vault, '.shardmind'), backupPath: oldState };
+    await discardSetAside([stateRecord], stateRecord, vault);
+    expect((await fsp.stat(path.join(oldState, 'backups', 'adopt-1'))).isDirectory()).toBe(true);
+  });
+});
+
 describe('backupCollisions', () => {
   let vault: string;
 
@@ -136,6 +273,43 @@ describe('backupCollisions', () => {
 
   afterEach(async () => {
     await fsp.rm(vault, { recursive: true, force: true });
+  });
+
+  it('reports each move as it happens, so an interrupt can undo it (#55)', async () => {
+    const a = path.join(vault, 'a.md');
+    const b = path.join(vault, 'b.md');
+    await fsp.writeFile(a, 'a');
+    await fsp.writeFile(b, 'b');
+    const seen: string[] = [];
+    const records = await backupCollisions(
+      [
+        { outputPath: 'a.md', absolutePath: a, size: 1, mtime: new Date(), kind: 'file' },
+        { outputPath: 'b.md', absolutePath: b, size: 1, mtime: new Date(), kind: 'file' },
+      ],
+      new Date(),
+      (r) => seen.push(r.originalPath),
+    );
+    expect(seen).toEqual([a, b]);
+    expect(records.map((r) => r.originalPath)).toEqual(seen);
+  });
+
+  it('stops before the next move once asked to (#55)', async () => {
+    const a = path.join(vault, 'a.md');
+    const b = path.join(vault, 'b.md');
+    await fsp.writeFile(a, 'a');
+    await fsp.writeFile(b, 'b');
+    let stop = false;
+    const records = await backupCollisions(
+      [
+        { outputPath: 'a.md', absolutePath: a, size: 1, mtime: new Date(), kind: 'file' },
+        { outputPath: 'b.md', absolutePath: b, size: 1, mtime: new Date(), kind: 'file' },
+      ],
+      new Date(),
+      () => { stop = true; },
+      () => stop,
+    );
+    expect(records.map((r) => r.originalPath)).toEqual([a]);
+    expect(await fsp.readFile(b, 'utf-8')).toBe('b');
   });
 
   it('renames each colliding file with a timestamped backup suffix', async () => {

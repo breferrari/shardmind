@@ -31,7 +31,9 @@ import {
   SHARD_SLUG,
   SHARD_REF,
   STUB_SHA,
+  DEFAULT_VALUES,
 } from './helpers.js';
+import { createInstalledVault } from '../../e2e/helpers/vault.js';
 import { tick, waitFor, ENTER, ESC, ARROW_DOWN, SPACE, typeText } from '../helpers.js';
 
 // Custom-tarball slugs for scenarios that need a shape minimal-shard
@@ -41,6 +43,7 @@ const SLUG_NUMBER_TYPE = 'acme/number-range';
 const SLUG_COMPUTED = 'acme/computed-default';
 const SLUG_MULTISELECT = 'acme/multiselect';
 const SLUG_VERSION_MISMATCH = 'acme/future-engine';
+const SLUG_BROKEN = 'acme/broken-render';
 
 describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10)', () => {
   const getCtx = setupFlowSuite({
@@ -66,6 +69,10 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         latest: '0.1.0',
       },
       [SLUG_VERSION_MISMATCH]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
+      [SLUG_BROKEN]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
@@ -602,4 +609,245 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await cleanupVault(vault);
     }
   }, 45_000);
+  // Every `.shardmind-backup-*` path anywhere under the vault.
+  async function leftoverBackups(root: string): Promise<string[]> {
+    const entries = await fs.readdir(root, { recursive: true });
+    return entries.map(String).filter((e) => e.includes('shardmind-backup-'));
+  }
+
+  // Wizard → confirm → collision review → Overwrite (the second option).
+  async function driveToOverwrite(r: ReturnType<typeof mountInstall>) {
+    await driveMinimalWizard(r, 'Dana');
+    r.stdin.write(ENTER); // modules → confirm
+    await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+    r.stdin.write(ENTER);
+    await waitFor(r.lastFrame, (f) => f.includes('Overwrite'), 15_000);
+    r.stdin.write(ARROW_DOWN); // backup → overwrite
+    await tick(40);
+    r.stdin.write(ENTER);
+  }
+
+  // ───── Scenario 13: collision review → Overwrite → summary lists what was replaced (#55) ─────
+
+  it('13. collision review → Overwrite → summary lists the replaced file, no backup (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s13-overwrite');
+    try {
+      await fs.writeFile(path.join(vault, 'Home.md'), 'my own home\n');
+      const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault });
+      await driveToOverwrite(r);
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f) && /no backup/.test(f),
+        15_000,
+      );
+      expect(frame).toContain('Replaced 1 existing file (no backup):');
+      expect(frame).toContain('Home.md');
+      const entries = await fs.readdir(vault);
+      expect(entries.some((e) => e.includes('shardmind-backup-'))).toBe(false);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
+
+  // ───── Scenario 14: --force over an existing install skips the gate (#55) ─────
+
+  it('14. --force over an existing install → no gate → wizard → reinstalled (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's14-force-reinstall',
+    });
+    try {
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root, options: { force: true } });
+      const wizard = await waitFor(r.lastFrame, (f) => /4 questions to answer/.test(f), 30_000);
+      expect(wizard).not.toContain('Reinstall from scratch');
+      await driveMinimalWizard(r, 'Bob');
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER);
+      const frame = await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
+      // The old install's files were untouched, so nothing of the user's was lost.
+      expect(frame).not.toContain('(no backup)');
+      expect(await leftoverBackups(vault.root)).toEqual([]);
+      expect(await vault.readFile('shard-values.yaml')).toContain('Bob');
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
+
+  // ───── Scenario 15: dry run → Overwrite removes nothing (#55) ─────
+
+  it('15. --dry-run → collision review → Overwrite leaves the file alone (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s15-dry-overwrite');
+    try {
+      await fs.writeFile(path.join(vault, 'Home.md'), 'my own home\n');
+      const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault, options: { dryRun: true } });
+      await driveToOverwrite(r);
+      const frame = await waitFor(r.lastFrame, (f) => /Dry run complete/.test(f), 15_000);
+      expect(frame).toContain('Would replace 1 existing file (no backup):');
+      expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('my own home\n');
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
+  // ───── Scenario 16: --force → wizard → Cancel keeps the existing install (#55) ─────
+
+  it('16. --force over an existing install → wizard → Cancel → existing install intact (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's16-force-cancel',
+    });
+    try {
+      const stateBefore = await vault.readFile('.shardmind/state.json');
+      const valuesBefore = await vault.readFile('shard-values.yaml');
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root, options: { force: true } });
+      await driveMinimalWizard(r, 'Bob');
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      // Confirm options: [install, back, cancel].
+      r.stdin.write(ARROW_DOWN);
+      r.stdin.write(ARROW_DOWN);
+      await tick(40);
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => /cancelled/i.test(f), 15_000);
+      expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+      expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
+
+  // ───── Scenario 17: a --force reinstall that fails puts everything back (#55) ─────
+
+  it('17. --yes --force reinstall whose render fails → old install and edits restored, nothing left aside (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's17-force-rollback',
+    });
+    try {
+      await vault.writeFile('Home.md', 'my edited home\n');
+      const stateBefore = await vault.readFile('.shardmind/state.json');
+      const valuesBefore = await vault.readFile('shard-values.yaml');
+      const tarPath = await buildCustomTarball({
+        version: '0.1.0',
+        prefix: 'broken-render-0.1.0',
+        manifestOverrides: { hooks: {}, name: 'minimal', namespace: 'shardmind' },
+        outDir: vault.root,
+        mutate: async (work) => {
+          await fs.writeFile(path.join(work, 'zz-broken.md.njk'), '{{ not_a_function() }}\n');
+        },
+      });
+      stub.setRef(SLUG_BROKEN, 'v0.1.0', STUB_SHA, tarPath);
+      const r = mountInstall({
+        shardRef: `github:${SLUG_BROKEN}#v0.1.0`,
+        vaultRoot: vault.root,
+        options: { yes: true, force: true },
+      });
+      // An error exits ~100 ms after rendering, which clears lastFrame; read the history.
+      await waitFor(() => r.frames.join('\n'), (f) => /RENDER_TEMPLATE_ERROR/.test(f), 30_000);
+      await tick(200);
+      expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+      expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);
+      expect(await vault.readFile('Home.md')).toBe('my edited home\n');
+      expect(await leftoverBackups(vault.root)).toEqual([]);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
+  // ───── Scenario 18: gate → Reinstall with --yes backs up only the user's own content (#55) ─────
+
+  it("18. gate → Reinstall with --yes → only the edited file is backed up, the old install's untouched files are not (#55)", async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's18-gate-reinstall-yes',
+    });
+    try {
+      await vault.writeFile('Home.md', 'my edited home\n');
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root, options: { yes: true } });
+      await waitFor(r.lastFrame, (f) => f.includes('Reinstall from scratch'), 30_000);
+      r.stdin.write(ARROW_DOWN); // keep → reinstall
+      await tick(40);
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Type REINSTALL to proceed'));
+      await typeText(r.stdin, 'REINSTALL');
+      r.stdin.write(ENTER);
+      const frame = await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
+      expect(frame).toContain('Backed up 1 existing file');
+      const left = await leftoverBackups(vault.root);
+      expect(left).toHaveLength(1);
+      expect(left[0]).toMatch(/^Home\.md\.shardmind-backup-/);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
+  // ───── Scenario 19: a file edited while the collision prompt is open is the user's (#55) ─────
+
+  it('19. reinstall → collision review → a file edited meanwhile → Back up keeps it too (#55)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's19-recheck',
+    });
+    try {
+      await vault.writeFile('Home.md', 'my edited home\n');
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root, options: { force: true } });
+      await driveMinimalWizard(r, 'Bob');
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
+      // --force overwrites; a second, interactive reinstall gets the prompt.
+      await vault.writeFile('Home.md', 'edited again\n');
+      cleanup();
+      const r2 = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root });
+      await waitFor(r2.lastFrame, (f) => f.includes('Reinstall from scratch'), 30_000);
+      r2.stdin.write(ARROW_DOWN);
+      await tick(40);
+      r2.stdin.write(ENTER);
+      await waitFor(r2.lastFrame, (f) => f.includes('Type REINSTALL to proceed'));
+      await typeText(r2.stdin, 'REINSTALL');
+      r2.stdin.write(ENTER);
+      await driveMinimalWizard(r2, 'Cy');
+      r2.stdin.write(ENTER);
+      await waitFor(r2.lastFrame, (f) => f.includes('Ready to install'));
+      r2.stdin.write(ENTER);
+      await waitFor(r2.lastFrame, (f) => f.includes('Overwrite'), 15_000);
+      // Edited while the prompt is open: untouched when it was classified.
+      await vault.writeFile('brain/North Star.md', 'edited during the prompt\n');
+      r2.stdin.write(ENTER); // Back up
+      const frame = await waitFor(r2.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
+      expect(frame).toContain('Backed up 2 existing files');
+      const left = await leftoverBackups(vault.root);
+      expect(left.some((p) => /North Star\.md\.shardmind-backup-/.test(p))).toBe(true);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 90_000);
 });
