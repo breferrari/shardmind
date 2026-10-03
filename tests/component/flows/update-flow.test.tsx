@@ -389,7 +389,8 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
 
   // ───── Scenario 17b: --yes keeps an add-collision file; --adopt-preexisting tracks it (#61) ─────
 
-  it('17b. a kept file at a path the new version adds stays untracked unless --adopt-preexisting (#61)', async () => {
+  // A user file at a path v0.2.0 adds; --yes keeps it (#61).
+  async function runAddCollision(adoptPreexisting: boolean) {
     const { stub } = getCtx();
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'addc-'));
     const NOTE = 'New Note.md';
@@ -404,43 +405,46 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
           await fs.writeFile(path.join(work, NOTE), 'The shard note.\n');
         },
       });
+      stub.setVersion(ADD_COLLISION_SLUG, '0.1.0', v01);
+      stub.setLatest(ADD_COLLISION_SLUG, '0.1.0');
+      const vault = await createInstalledVault({
+        stub,
+        shardRef: ADD_COLLISION_REF,
+        values: DEFAULT_VALUES,
+        prefix: `s17b-add-collision-${adoptPreexisting}`,
+      });
+      try {
+        await vault.writeFile(NOTE, 'My own note.\n');
+        stub.setVersion(ADD_COLLISION_SLUG, '0.2.0', v02);
+        stub.setLatest(ADD_COLLISION_SLUG, '0.2.0');
 
-      for (const adoptPreexisting of [false, true]) {
-        stub.setVersion(ADD_COLLISION_SLUG, '0.1.0', v01);
-        stub.setLatest(ADD_COLLISION_SLUG, '0.1.0');
-        const vault = await createInstalledVault({
-          stub,
-          shardRef: ADD_COLLISION_REF,
-          values: DEFAULT_VALUES,
-          prefix: `s17b-add-collision-${adoptPreexisting}`,
-        });
-        try {
-          await vault.writeFile(NOTE, 'My own note.\n');
-          stub.setVersion(ADD_COLLISION_SLUG, '0.2.0', v02);
-          stub.setLatest(ADD_COLLISION_SLUG, '0.2.0');
-
-          const r = mountUpdate({ vaultRoot: vault.root, options: { yes: true, adoptPreexisting } });
-          const frame = await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.2\.0/.test(f), 30_000);
-          expect(await vault.readFile(NOTE)).toBe('My own note.\n');
-          const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
-            files: Record<string, { ownership: string }>;
-          };
-          if (adoptPreexisting) {
-            expect(state.files[NOTE]?.ownership).toBe('modified');
-            expect(frame).not.toContain('--adopt-preexisting');
-          } else {
-            expect(state.files[NOTE]).toBeUndefined();
-            expect(frame).toContain('Re-run with --adopt-preexisting to track it.');
-          }
-          cleanup();
-        } finally {
-          await vault.cleanup();
-        }
+        const r = mountUpdate({ vaultRoot: vault.root, options: { yes: true, adoptPreexisting } });
+        const frame = await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.2\.0/.test(f), 30_000);
+        const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+          files: Record<string, { ownership: string }>;
+        };
+        return { frame, entry: state.files[NOTE], content: await vault.readFile(NOTE) };
+      } finally {
+        await vault.cleanup();
       }
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
-  }, 180_000);
+  }
+
+  it('17b. --yes keeps a file at a path the new version adds untracked and says so (#61)', async () => {
+    const { frame, entry, content } = await runAddCollision(false);
+    expect(content).toBe('My own note.\n');
+    expect(entry).toBeUndefined();
+    expect(frame).toContain('Re-run with --adopt-preexisting to track it.');
+  }, 90_000);
+
+  it('17c. --yes --adopt-preexisting tracks that file as modified (#61)', async () => {
+    const { frame, entry, content } = await runAddCollision(true);
+    expect(content).toBe('My own note.\n');
+    expect(entry?.ownership).toBe('modified');
+    expect(frame).not.toContain('--adopt-preexisting');
+  }, 90_000);
 
   // ───── Scenario 18: upgrade target declares an unsatisfiable engine → refuse (#121) ─────
 

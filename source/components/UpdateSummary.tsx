@@ -45,6 +45,7 @@ export default function UpdateSummary({
   // counts the overwrite part separately so the line can say which is which.
   const replaced = [...summary.replacedFiles].sort();
   const unchanged = c.silent - c.overwritten;
+  const untracked = summary.keptUntracked.length;
   const parts: string[] = [];
   if (c.overwritten) parts.push(`${c.overwritten} replaced`);
   if (unchanged) parts.push(`${unchanged} unchanged`);
@@ -89,12 +90,11 @@ export default function UpdateSummary({
         </Box>
       )}
 
-      {summary.keptUntracked.length > 0 && (
+      {untracked > 0 && (
         <Text dimColor>
-          {summary.keptUntracked.length === 1
-            ? '1 of your files sits at a path the new version adds and was kept untracked; it comes back each update.'
-            : `${summary.keptUntracked.length} of your files sit at paths the new version adds and were kept untracked; they come back each update.`}{' '}
-          Re-run with --adopt-preexisting to track {summary.keptUntracked.length === 1 ? 'it' : 'them'}.
+          {untracked === 1
+            ? '1 of your files sits at a path the new version adds and was kept untracked; it comes back each update. Re-run with --adopt-preexisting to track it.'
+            : `${untracked} of your files sit at paths the new version adds and were kept untracked; they come back each update. Re-run with --adopt-preexisting to track them.`}
         </Text>
       )}
 

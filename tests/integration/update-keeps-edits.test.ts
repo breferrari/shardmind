@@ -886,6 +886,9 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     // update asked the same question again.
     describe('kept as yours', () => {
       const MINE = '# My own note\n\nWritten before the shard shipped one.\n';
+      // An update run with --adopt-preexisting.
+      const adopting = (shardDir: string, resolution: ConflictResolution = 'keep_mine', dryRun = false) =>
+        update(shardDir, resolution, dryRun, true);
 
       it('stays untracked by default, comes back next update, and is listed as kept untracked', async () => {
         await install();
@@ -901,12 +904,12 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       it('with --adopt-preexisting, is tracked as your modified copy and does not come back', async () => {
         await install();
         await write(NOTE, MINE);
-        const first = await update(await withNote('0.2.0'), 'keep_mine', false, true);
+        const first = await adopting(await withNote('0.2.0'));
         expect(first.result.summary.keptUntracked).toEqual([]);
         expect(await recorded(NOTE)).toMatchObject({ ownership: 'modified', rendered_hash: sha256(BODY) });
         expect(await read(NOTE)).toBe(MINE);
 
-        const again = await update(await withNote('0.3.0'), 'keep_mine', false, true);
+        const again = await adopting(await withNote('0.3.0'));
         expect(again.plan.pendingConflicts.map((c) => c.path)).not.toContain(NOTE);
         expect(await read(NOTE)).toBe(MINE);
       });
@@ -915,9 +918,9 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
         await install();
         const mine = BODY + '\n- my own line\n';
         await write(NOTE, mine);
-        await update(await withNote('0.2.0'), 'keep_mine', false, true);
+        await adopting(await withNote('0.2.0'));
 
-        const { plan } = await update(await withNote('0.3.0', BODY.replace('# New', '# New v3')), 'keep_mine', false, true);
+        const { plan } = await adopting(await withNote('0.3.0', BODY.replace('# New', '# New v3')));
         expect(actionFor(plan, NOTE)).toBe('auto_merge');
         const after = await read(NOTE);
         expect(after).toContain('# New v3');
@@ -927,7 +930,7 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       it('with --adopt-preexisting, skip is tracked like keep mine', async () => {
         await install();
         await write(NOTE, MINE);
-        await update(await withNote('0.2.0'), 'skip', false, true);
+        await adopting(await withNote('0.2.0'), 'skip');
         expect((await recorded(NOTE)).ownership).toBe('modified');
         expect(await read(NOTE)).toBe(MINE);
       });
@@ -935,7 +938,7 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       it('with --adopt-preexisting, accept new still writes the shard and records managed', async () => {
         await install();
         await write(NOTE, MINE);
-        await update(await withNote('0.2.0'), 'accept_new', false, true);
+        await adopting(await withNote('0.2.0'), 'accept_new');
         expect(await read(NOTE)).toBe(BODY);
         expect((await recorded(NOTE)).ownership).toBe('managed');
       });
@@ -944,7 +947,7 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
         await install();
         await write(NOTE, MINE);
         const before = await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8');
-        await update(await withNote('0.2.0'), 'keep_mine', true, true);
+        await adopting(await withNote('0.2.0'), 'keep_mine', true);
         expect(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')).toBe(before);
       });
     });
