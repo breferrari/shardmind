@@ -158,7 +158,7 @@ export function mergeRegions(a: string[], o: string[], b: string[]): IRegion<str
   const identical =
     a.length === o.length && b.length === o.length && o.every((line, i) => a[i] === line && b[i] === line);
   if (!identical) return diff3MergeRegions(a, o, b);
-  if (o.length === 0) return [];
+  if (o.length === 0) return []; // diff3 returns no region for empty inputs
   return [{ stable: true, buffer: 'o', bufferStart: 0, bufferLength: o.length, bufferContent: o }];
 }
 
@@ -173,8 +173,6 @@ export function threeWayMerge(
   base: string,
   theirs: string,
   ours: string,
-  /** Region source; tests pass node-diff3's untrimmed one to compare (#114). */
-  regionsOf: typeof mergeRegions = mergeRegions,
 ): ThreeWayMergeResult {
   // Intern every unique line to an integer-named token. Load-bearing because
   // node-diff3's LCS uses `{}` keyed by line content and collides with
@@ -186,7 +184,7 @@ export function threeWayMerge(
   // newline-as-document-property is preserved through diff3 — we keep it in
   // the merge itself and correct for it in stats after the loop.
   const interner = new LineInterner();
-  const regions: IRegion<string>[] = regionsOf(
+  const regions: IRegion<string>[] = mergeRegions(
     interner.tokenize(theirs.split(LINE_SPLIT)),
     interner.tokenize(base.split(LINE_SPLIT)),
     interner.tokenize(ours.split(LINE_SPLIT)),

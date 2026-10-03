@@ -61,9 +61,7 @@ describe('mergeRegions (#114)', () => {
     expect(result.stats).toEqual({ linesUnchanged: 10_000, linesAutoMerged: 0, linesConflicted: 0 });
   });
 
-  // Trimming the shared prefix and suffix before diffing would be faster in
-  // general, and was rejected: with repeated lines it changes the alignment
-  // diff3 picks, and this clean merge became a conflict.
+  // The case that ruled out trimming the shared prefix and suffix (see mergeRegions).
   it('keeps a clean merge clean where trimming the shared suffix would not', () => {
     const result = threeWayMerge('y\ny', 'x\ny', 'y');
     expect(result.content).toBe('x\ny');
