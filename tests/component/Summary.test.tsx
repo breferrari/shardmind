@@ -68,12 +68,14 @@ describe('Summary', () => {
     expect(frame).toContain('…and 2 more');
   });
 
-  it('says "would replace" in a dry run, and nothing when none were replaced (#55)', () => {
-    const dry = render(<Summary {...baseProps} dryRun replaced={['Home.md']} />);
-    expect(dry.lastFrame() ?? '').toContain('Would replace 1 existing file (no backup):');
-    cleanup();
-    const none = render(<Summary {...baseProps} />);
-    expect(none.lastFrame() ?? '').not.toContain('no backup');
+  it('says "would replace" in a dry run (#55)', () => {
+    const { lastFrame } = render(<Summary {...baseProps} dryRun replaced={['Home.md']} />);
+    expect(lastFrame() ?? '').toContain('Would replace 1 existing file (no backup):');
+  });
+
+  it('shows no replaced list when nothing was replaced (#55)', () => {
+    const { lastFrame } = render(<Summary {...baseProps} />);
+    expect(lastFrame() ?? '').not.toContain('no backup');
   });
 
   it('renders a "skipped" note when a hook is deferred (dry run)', () => {

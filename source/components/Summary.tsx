@@ -53,31 +53,15 @@ export default function Summary({
           : `Installed ${manifest.namespace}/${manifest.name}@${manifest.version} — ${fileCount} files in ${seconds}s`}
       </StatusMessage>
 
-      {backups.length > 0 && (
-        <Box flexDirection="column">
-          <Text bold>Backed up {backups.length} existing file{backups.length === 1 ? '' : 's'}:</Text>
-          {backups.slice(0, 10).map((b) => (
-            <Text key={b.originalPath} dimColor>
-              · {b.backupPath}
-            </Text>
-          ))}
-          {backups.length > 10 && <Text dimColor>  …and {backups.length - 10} more</Text>}
-        </Box>
-      )}
+      <PathList
+        title={`Backed up ${fileCountLabel(backups.length)}:`}
+        paths={backups.map((b) => b.backupPath)}
+      />
 
-      {replaced.length > 0 && (
-        <Box flexDirection="column">
-          <Text bold>
-            {dryRun ? 'Would replace' : 'Replaced'} {replaced.length} existing file{replaced.length === 1 ? '' : 's'} (no backup):
-          </Text>
-          {replaced.slice(0, 10).map((p) => (
-            <Text key={p} dimColor>
-              · {p}
-            </Text>
-          ))}
-          {replaced.length > 10 && <Text dimColor>  …and {replaced.length - 10} more</Text>}
-        </Box>
-      )}
+      <PathList
+        title={`${dryRun ? 'Would replace' : 'Replaced'} ${fileCountLabel(replaced.length)} (no backup):`}
+        paths={replaced}
+      />
 
       <HookSummarySection outcomes={hooks} />
 
@@ -87,6 +71,29 @@ export default function Summary({
           <Text>  {openCmd}</Text>
         </Box>
       )}
+    </Box>
+  );
+}
+
+/** Paths shown before the "…and K more" line. */
+const PATHS_VISIBLE = 10;
+
+function fileCountLabel(n: number): string {
+  return `${n} existing file${n === 1 ? '' : 's'}`;
+}
+
+/** A titled path list, truncated after `PATHS_VISIBLE`; renders nothing when empty. */
+function PathList({ title, paths }: { title: string; paths: string[] }) {
+  if (paths.length === 0) return null;
+  return (
+    <Box flexDirection="column">
+      <Text bold>{title}</Text>
+      {paths.slice(0, PATHS_VISIBLE).map((p) => (
+        <Text key={p} dimColor>
+          · {p}
+        </Text>
+      ))}
+      {paths.length > PATHS_VISIBLE && <Text dimColor>  …and {paths.length - PATHS_VISIBLE} more</Text>}
     </Box>
   );
 }

@@ -604,6 +604,18 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await cleanupVault(vault);
     }
   }, 45_000);
+  // Wizard → confirm → collision review → Overwrite (the second option).
+  async function driveToOverwrite(r: ReturnType<typeof mountInstall>) {
+    await driveMinimalWizard(r, 'Dana');
+    r.stdin.write(ENTER); // modules → confirm
+    await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+    r.stdin.write(ENTER);
+    await waitFor(r.lastFrame, (f) => f.includes('Overwrite'), 15_000);
+    r.stdin.write(ARROW_DOWN); // backup → overwrite
+    await tick(40);
+    r.stdin.write(ENTER);
+  }
+
   // ───── Scenario 13: collision review → Overwrite → summary lists what was replaced (#55) ─────
 
   it('13. collision review → Overwrite → summary lists the replaced file, no backup (#55)', async () => {
@@ -613,14 +625,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     try {
       await fs.writeFile(path.join(vault, 'Home.md'), 'my own home\n');
       const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault });
-      await driveMinimalWizard(r, 'Dana');
-      r.stdin.write(ENTER); // modules → confirm
-      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
-      r.stdin.write(ENTER);
-      await waitFor(r.lastFrame, (f) => f.includes('Overwrite'), 15_000);
-      r.stdin.write(ARROW_DOWN); // backup → overwrite
-      await tick(40);
-      r.stdin.write(ENTER);
+      await driveToOverwrite(r);
       const frame = await waitFor(
         r.lastFrame,
         (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f) && /no backup/.test(f),
@@ -663,6 +668,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await vault.cleanup();
     }
   }, 60_000);
+
   // ───── Scenario 15: dry run → Overwrite removes nothing (#55) ─────
 
   it('15. --dry-run → collision review → Overwrite leaves the file alone (#55)', async () => {
@@ -672,14 +678,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     try {
       await fs.writeFile(path.join(vault, 'Home.md'), 'my own home\n');
       const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault, options: { dryRun: true } });
-      await driveMinimalWizard(r, 'Dana');
-      r.stdin.write(ENTER);
-      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
-      r.stdin.write(ENTER);
-      await waitFor(r.lastFrame, (f) => f.includes('Overwrite'), 15_000);
-      r.stdin.write(ARROW_DOWN);
-      await tick(40);
-      r.stdin.write(ENTER);
+      await driveToOverwrite(r);
       const frame = await waitFor(r.lastFrame, (f) => /Dry run complete/.test(f), 15_000);
       expect(frame).toContain('Would replace 1 existing file (no backup):');
       expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('my own home\n');
