@@ -11,7 +11,7 @@ This project is **spec-driven**. The architecture and implementation are fully d
 | Document | What | When to Read |
 |----------|------|-------------|
 | `VISION.md` | Origin story, architectural bets, scope guardrails, non-goals. | Before proposing features or scope changes. |
-| `ROADMAP.md` | v0.1 milestones linked to GitHub issues. Build order. | Before starting a new milestone. |
+| `ROADMAP.md` | Build order in phases, one per GitHub milestone, each row linking its issue; the Shelf and its dated reasons. Taken with the `take-next` skill (`.claude/skills/take-next/`). | Before starting any task. |
 | **`docs/SHARD-LAYOUT.md`** | **v6 shard-layout contract + three binding invariants. Active design spec.** Folded into `ARCHITECTURE.md §3` and `IMPLEMENTATION.md §4.5` / `§4.5a` / `§4.5b` for the engine specs; this doc remains the canonical contract for the binding properties + author-facing layout. | Before implementing anything related to shard layout, install walk, hook context, adopt command, or obsidian-mind v6. Authoritative over ARCHITECTURE.md / IMPLEMENTATION.md where they conflict. |
 | `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. | Before making any architectural decision. |
 | `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, module specs with TypeScript signatures, algorithms as numbered steps, error cases, 20 merge test fixtures, 6-day build plan. **§9 (Build Plan) is stale — see [#70](https://github.com/breferrari/shardmind/issues/70) for the current task list.** | Before implementing any module. |
@@ -72,11 +72,11 @@ Every PR for a v6 issue must demonstrate in its description:
 - [ ] Copilot review requested and addressed (or each flag explicitly justified as false-positive in PR conversation).
 - [ ] Once [#78](https://github.com/breferrari/shardmind/issues/78) lands: Invariant 1 E2E test still green.
 - [ ] Issue's acceptance criteria checked off with evidence.
-- [ ] Roadmap checkbox updated in the same PR.
+- [ ] Roadmap row's mark updated in the same PR.
 
 ### 5. Session hygiene
 
-- **Start**: read this file, then `ROADMAP.md` (find first unchecked), then the linked issue, then `docs/SHARD-LAYOUT.md` (relevant section). In that order. Don't skip ahead.
+- **Start**: read this file, then run `sh .claude/skills/take-next/next.sh` (the milestone to take from; the topmost ⬜ row of its `ROADMAP.md` section is the task), then the linked issue, then `docs/SHARD-LAYOUT.md` (relevant section). In that order. Don't skip ahead. The `take-next` skill runs this whole agreement as one pass.
 - **During**: run `npm run typecheck` and `npm test` frequently, not just at the end. If a test that should stay green goes red, stop and investigate before continuing — don't paper over.
 - **End**: if work is complete, open a PR referencing the issue (`closes #N`) with the quality-gate evidence. If incomplete, push the branch and comment on the issue with where you stopped, why, and what blocks progress — so the next session can resume.
 
