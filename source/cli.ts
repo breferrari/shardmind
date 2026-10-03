@@ -22,8 +22,14 @@ const pkg = createRequire(import.meta.url)('../package.json') as { version: stri
 
 // An option written after a subcommand belongs to it, not to the root
 // command; Pastel never enables this on the Commander program it builds
-// (#147). See source/cli-options.ts.
-enablePositionalOptions(pastelCommander());
+// (#147). See source/cli-options.ts. If a Pastel or Commander layout ever
+// defeats the patch, run without it rather than refuse every command — the
+// unit tests are what catch that drift.
+try {
+  enablePositionalOptions(pastelCommander());
+} catch {
+  // Options keep Commander's default scoping; see #147.
+}
 
 const app = new Pastel({
   importMeta: import.meta,

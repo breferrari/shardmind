@@ -75,17 +75,73 @@ describe('Commander positional options under Pastel (#147)', () => {
     expect(seen.options['verbose']).toBe(true);
   });
 
-  it('a root flag before the subcommand stays with the root', async () => {
-    const seen = await run('--verbose', 'adopt', '--dry-run');
-    expect(seen.command).toBe('adopt');
-    expect(seen.options['verbose']).toBe(false);
-    expect(seen.options['dryRun']).toBe(true);
-  });
-
-  it('is idempotent', async () => {
+  it('is idempotent: a second call does not wrap parse again', async () => {
+    const proto = (pastelCommander().prototype as { parse: unknown; parseAsync: unknown });
+    const [parse, parseAsync] = [proto.parse, proto.parseAsync];
     enablePositionalOptions(pastelCommander());
+    expect(proto.parse).toBe(parse);
+    expect(proto.parseAsync).toBe(parseAsync);
     const seen = await run('adopt', '--verbose');
     expect(seen.options['verbose']).toBe(true);
+  });
+});
+
+// Error paths and parseAsync, on a program built from Pastel's own Commander
+// the way Pastel builds it. Pastel itself exits the process on a parse error,
+// so these use exitOverride instead of `run`.
+describe('the patched Commander, directly', () => {
+  interface Prog {
+    exitOverride(): Prog;
+    configureOutput(o: { writeErr: (s: string) => void; writeOut: (s: string) => void }): Prog;
+    option(flag: string): Prog;
+    command(name: string): Prog;
+    action(fn: (opts: Record<string, unknown>) => void): Prog;
+    parse(argv: string[], o: { from: 'user' }): Prog;
+    parseAsync(argv: string[], o: { from: 'user' }): Promise<Prog>;
+  }
+
+  function program() {
+    const Command = pastelCommander() as unknown as new () => Prog;
+    const errors: string[] = [];
+    let adopt: Record<string, unknown> | undefined;
+    const root = new Command()
+      .exitOverride()
+      .configureOutput({ writeErr: (s) => errors.push(s), writeOut: () => {} })
+      .option('--verbose')
+      .option('--no-update-check');
+    root.command('adopt').exitOverride().option('--verbose').option('--dry-run')
+      .action((opts) => { adopt = opts; });
+    return { root, errors, adopt: () => adopt };
+  }
+
+  beforeAll(() => {
+    enablePositionalOptions(pastelCommander());
+  });
+
+  it('refuses a root flag written before a subcommand, saying where it belongs', () => {
+    const p = program();
+    expect(() => p.root.parse(['--verbose', 'adopt', '--dry-run'], { from: 'user' })).toThrow();
+    expect(p.errors.join('')).toContain("'--verbose' is an option of");
+    expect(p.errors.join('')).toContain('adopt --verbose');
+    expect(p.adopt()).toBeUndefined();
+  });
+
+  it('refuses a negated root flag before a subcommand too', () => {
+    const p = program();
+    expect(() => p.root.parse(['--no-update-check', 'adopt'], { from: 'user' })).toThrow();
+    expect(p.errors.join('')).toContain("'--no-update-check'");
+  });
+
+  it('gives an unknown flag after a subcommand Commander\'s own error', () => {
+    const p = program();
+    expect(() => p.root.parse(['adopt', '--bogus'], { from: 'user' })).toThrow();
+    expect(p.errors.join('')).toContain("unknown option '--bogus'");
+  });
+
+  it('applies to parseAsync as well as parse', async () => {
+    const p = program();
+    await p.root.parseAsync(['adopt', '--verbose'], { from: 'user' });
+    expect(p.adopt()?.['verbose']).toBe(true);
   });
 });
 

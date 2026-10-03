@@ -11,9 +11,12 @@
  *
  * So the engine patches `Command.prototype.parse` on Pastel's own Commander
  * (resolved from Pastel's location, since Pastel ships a nested copy) to
- * enable positional options on the root command before it parses. Root
- * options then go before the subcommand, and a flag a subcommand does not
- * declare is Commander's `unknown option` error instead of being swallowed.
+ * enable positional options on the root command before it parses. A flag a
+ * subcommand does not declare is then Commander's `unknown option` error
+ * instead of being swallowed, and a root option written before a subcommand
+ * (`shardmind --verbose adopt`) is refused with where it belongs, since the
+ * root command never runs when a subcommand does and the flag would do
+ * nothing.
  *
  * Remove this module once Pastel enables positional options itself, or
  * exposes the program so the caller can.
@@ -23,16 +26,43 @@
 
 import { createRequire } from 'node:module';
 
+interface OptionLike {
+  long?: string;
+  attributeName(): string;
+}
+
 interface CommandLike {
   parse(...args: unknown[]): unknown;
   parseAsync(...args: unknown[]): unknown;
   enablePositionalOptions(positional?: boolean): unknown;
+  hook(event: 'preSubcommand', listener: (thisCommand: CommandLike, sub: CommandLike) => void): unknown;
+  getOptionValueSource(key: string): string | undefined;
+  error(message: string, details?: { code?: string; exitCode?: number }): never;
+  name(): string;
+  options: readonly OptionLike[];
   parent?: unknown;
 }
 
 type CommandCtor = { prototype: object };
 
 const PATCHED = Symbol.for('shardmind.positionalOptions');
+const HOOKED = Symbol.for('shardmind.rootOptionGuard');
+
+/**
+ * Refuse a root option given on the command line before a subcommand: the
+ * root command does not run when a subcommand does, so the flag would
+ * silently do nothing — #147 in the other position.
+ */
+function refuseRootOptionsBeforeSubcommand(root: CommandLike, sub: CommandLike): void {
+  for (const option of root.options) {
+    if (root.getOptionValueSource(option.attributeName()) !== 'cli') continue;
+    const flag = option.long ?? option.attributeName();
+    root.error(
+      `error: '${flag}' is an option of '${root.name()}' itself, not of '${sub.name()}'. To pass it to ${sub.name()}, write it after the subcommand: ${root.name()} ${sub.name()} ${flag}`,
+      { code: 'shardmind.rootOptionBeforeSubcommand', exitCode: 1 },
+    );
+  }
+}
 
 /**
  * The `Command` class Pastel constructs its program from. Resolved through
@@ -62,9 +92,15 @@ export function enablePositionalOptions(Command: CommandCtor): void {
   for (const method of ['parse', 'parseAsync'] as const) {
     const original = proto[method];
     if (typeof original !== 'function') continue;
-    proto[method] = function patched(this: CommandLike, ...args: unknown[]) {
+    proto[method] = function patched(this: CommandLike & { [HOOKED]?: true }, ...args: unknown[]) {
       // Only the program (no parent) decides where its options may appear.
-      if (!this.parent) this.enablePositionalOptions();
+      if (!this.parent) {
+        this.enablePositionalOptions();
+        if (!this[HOOKED]) {
+          this.hook('preSubcommand', refuseRootOptionsBeforeSubcommand);
+          this[HOOKED] = true;
+        }
+      }
       return original.apply(this, args);
     };
   }
