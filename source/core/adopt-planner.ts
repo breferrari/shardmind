@@ -36,7 +36,7 @@ import {
   createRenderer,
   renderFile,
 } from './renderer.js';
-import { mapConcurrent, sha256, toPosix } from './fs-utils.js';
+import { looksBinary, mapConcurrent, sha256, toPosix } from './fs-utils.js';
 
 /**
  * Cap on parallel `readFile` operations during user-vault hashing. Same
@@ -298,20 +298,3 @@ async function classifyOne(
   };
 }
 
-/**
- * Heuristic: a NUL byte in the first 8 KB indicates the file is not a
- * text file the diff UI can render usefully. Same convention git's diff
- * uses (the heuristic predates language-aware detection and is still
- * load-bearing in modern git for the "Binary files differ" message).
- *
- * The 8 KB ceiling caps work for huge files; a buffer that is text for
- * 8 KB and then suddenly contains binary is exotic enough that a wrong
- * answer here just means a noisy 2-way diff, not a correctness issue.
- */
-function looksBinary(buf: Buffer): boolean {
-  const n = Math.min(buf.length, 8192);
-  for (let i = 0; i < n; i++) {
-    if (buf[i] === 0) return true;
-  }
-  return false;
-}
