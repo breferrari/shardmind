@@ -42,6 +42,10 @@ export const options = zod.object({
     .boolean()
     .default(false)
     .describe('Widen latest-release resolution to include prereleases'),
+  adoptPreexisting: zod
+    .boolean()
+    .default(false)
+    .describe('Track a file you keep at a path the new version adds as your modified copy'),
   updateCheck: updateCheckOption,
 });
 
@@ -50,7 +54,7 @@ type Props = {
 };
 
 export default function Update({ options }: Props) {
-  const { yes, verbose, dryRun, release, includePrerelease, updateCheck, json } = options;
+  const { yes, verbose, dryRun, release, includePrerelease, adoptPreexisting, updateCheck, json } = options;
   const { exit: exitApp } = useApp();
 
   const {
@@ -67,6 +71,7 @@ export default function Update({ options }: Props) {
     json,
     release,
     includePrerelease,
+    adoptPreexisting,
   });
 
   // Chrome is suppressed under --json so stdout is exactly one JSON document.

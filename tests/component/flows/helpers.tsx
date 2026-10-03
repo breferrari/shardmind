@@ -231,6 +231,7 @@ export interface UpdateOptions {
   dryRun?: boolean;
   release?: string;
   includePrerelease?: boolean;
+  adoptPreexisting?: boolean;
   updateCheck?: boolean;
 }
 
@@ -246,6 +247,7 @@ export function mountUpdate(opts: {
         verbose: false,
         dryRun: false,
         includePrerelease: false,
+        adoptPreexisting: false,
         updateCheck: true,
         ...opts.options,
       }}

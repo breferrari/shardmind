@@ -31,6 +31,7 @@ function summary(overrides: Partial<Summary> = {}): Summary {
     deletedFiles: [],
     addedFiles: [],
     replacedFiles: [],
+    keptUntracked: [],
     ...overrides,
   };
 }
@@ -283,6 +284,32 @@ describe('UpdateSummary', () => {
       expect(frame).not.toContain('replaced');
       expect(frame).not.toContain('Previous copies');
       expect(frame).toContain('43 unchanged');
+    });
+  });
+
+  // #61: a kept add-collision file stays untracked and re-prompts each update.
+  describe('kept-untracked hint', () => {
+    function frameFor(keptUntracked: string[]) {
+      const { lastFrame } = render(
+        <UpdateSummary summary={summary({ keptUntracked })} durationMs={0} migrationWarnings={[]} hooks={[]} />,
+      );
+      return lastFrame() ?? '';
+    }
+
+    it('points to --adopt-preexisting when a kept file stayed untracked', () => {
+      const frame = frameFor(['brain/New Note.md']);
+      expect(frame).toContain('1 of your files sits at a path the new version adds');
+      expect(frame).toContain('--adopt-preexisting to track it');
+    });
+
+    it('pluralizes for several files', () => {
+      const frame = frameFor(['a.md', 'b.md']);
+      expect(frame).toContain('2 of your files sit at paths the new version adds');
+      expect(frame).toContain('to track them');
+    });
+
+    it('omits the hint when nothing stayed untracked', () => {
+      expect(frameFor([])).not.toContain('--adopt-preexisting');
     });
   });
 });

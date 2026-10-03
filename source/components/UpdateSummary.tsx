@@ -89,6 +89,15 @@ export default function UpdateSummary({
         </Box>
       )}
 
+      {summary.keptUntracked.length > 0 && (
+        <Text dimColor>
+          {summary.keptUntracked.length === 1
+            ? '1 of your files sits at a path the new version adds and was kept untracked; it comes back each update.'
+            : `${summary.keptUntracked.length} of your files sit at paths the new version adds and were kept untracked; they come back each update.`}{' '}
+          Re-run with --adopt-preexisting to track {summary.keptUntracked.length === 1 ? 'it' : 'them'}.
+        </Text>
+      )}
+
       {summary.conflictsResolved > 0 && (
         <Box flexDirection="column">
           <Text dimColor>Conflict resolutions:</Text>

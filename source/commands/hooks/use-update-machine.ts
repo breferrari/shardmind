@@ -82,6 +82,11 @@ export interface UseUpdateMachineInput {
   release?: string;
   /** `--include-prerelease`: widen latest-release resolution to all releases. */
   includePrerelease: boolean;
+  /**
+   * `--adopt-preexisting` (#61): track a kept add-collision file as the
+   * user's modified copy instead of leaving it untracked.
+   */
+  adoptPreexisting?: boolean;
 }
 
 export interface PreparedContext {
@@ -160,7 +165,7 @@ export interface UseUpdateMachineOutput {
 }
 
 export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachineOutput {
-  const { vaultRoot, yes, verbose, dryRun, release, includePrerelease, json } = input;
+  const { vaultRoot, yes, verbose, dryRun, release, includePrerelease, json, adoptPreexisting = false } = input;
   const { exit } = useApp();
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
@@ -543,6 +548,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           tarballSha256: ctx.newTarballSha,
           newTempDir: ctx.newTempDir,
           dryRun,
+          adoptPreexisting,
           // Populate the refs EAGERLY so a mid-write SIGINT can actually
           // find the backup dir and the list of paths to erase. The
           // post-runUpdate assignment below still runs for the
@@ -638,7 +644,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         });
       }
     },
-    [vaultRoot, dryRun, verbose, finish],
+    [vaultRoot, dryRun, verbose, adoptPreexisting, finish],
   );
 
   const onNewValuesComplete = useCallback(
