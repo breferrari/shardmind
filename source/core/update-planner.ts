@@ -365,6 +365,9 @@ export async function renderNewShard(
   return { outputs: [...renderedPairs.flat(), ...copiedPairs] };
 }
 
+/** The `noop` reason for an untracked file adopted because it already matches (#62). */
+export const ALREADY_NEW_VERSION = 'already the new version';
+
 /** Actions that write, or record a path the next update may write. */
 const WRITE_ACTIONS = new Set<UpdateAction['kind']>([
   'overwrite',
@@ -381,7 +384,7 @@ const WRITE_ACTIONS = new Set<UpdateAction['kind']>([
  */
 export function pathsTheUpdateTouches(actions: readonly UpdateAction[]): { writes: string[]; deletes: string[] } {
   const writes = actions.filter(
-    (a) => WRITE_ACTIONS.has(a.kind) || (a.kind === 'noop' && a.reason === 'already the new version'),
+    (a) => WRITE_ACTIONS.has(a.kind) || (a.kind === 'noop' && a.reason === ALREADY_NEW_VERSION),
   );
   return {
     writes: writes.map((a) => a.path),
@@ -690,6 +693,8 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       }
 
       if (stat.isDirectory()) {
+        // A symlink to a folder is a link first: name it as one (#163).
+        await assertSafeVaultPaths(vaultRoot, [output.outputPath]);
         // User has a directory at a path the new shard wants as a file.
         // Reading it as a file below would crash with EISDIR; silently
         // emitting plain `add` would crash the same way on write. Surface
@@ -959,7 +964,7 @@ function alreadyNewVersion(output: RenderedFileEntry, newTempDir: string): Updat
   return {
     kind: 'noop',
     path: output.outputPath,
-    reason: 'already the new version',
+    reason: ALREADY_NEW_VERSION,
     rebaseline: rebaselineOf(output, newTempDir, 'managed'),
   };
 }

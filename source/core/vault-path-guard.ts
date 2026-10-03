@@ -16,7 +16,15 @@ import type { Stats } from 'node:fs';
 import path from 'node:path';
 import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
-import { STATE_FILE, VALUES_FILE } from '../runtime/vault-paths.js';
+import {
+  CACHED_MANIFEST,
+  CACHED_SCHEMA,
+  CACHED_TEMPLATES,
+  HOOK_LOGS_DIR,
+  SHARDMIND_DIR,
+  STATE_FILE,
+  VALUES_FILE,
+} from '../runtime/vault-paths.js';
 import { mapConcurrent } from './fs-utils.js';
 
 export type UnsafeVaultPathReason = 'symlink' | 'symlinked-folder' | 'hard-link' | 'case-mismatch';
@@ -27,23 +35,35 @@ export interface UnsafeVaultPath {
   reason: UnsafeVaultPathReason;
 }
 
-/** The engine's own files, which every install, update and adopt writes. */
-const ENGINE_WRITE_PATHS: readonly string[] = [VALUES_FILE, STATE_FILE];
+/** The engine's own files and folders, which install, update and adopt write into. */
+const ENGINE_WRITE_PATHS: readonly string[] = [
+  VALUES_FILE,
+  STATE_FILE,
+  CACHED_MANIFEST,
+  CACHED_SCHEMA,
+  CACHED_TEMPLATES,
+  path.join(SHARDMIND_DIR, 'backups'),
+  HOOK_LOGS_DIR,
+];
 
 /** Paths named in the error message before "and N more". */
 const MAX_LISTED_PATHS = 10;
 
-/** A cached async lookup that maps "not there" (ENOENT, ENOTDIR) to null. */
-function cachedOrNull<T>(lookup: (key: string) => Promise<T>): (key: string) => Promise<T | null> {
-  const cache = new Map<string, Promise<T | null>>();
+const isMissing = (err: unknown) => {
+  const code = errnoCode(err);
+  return code === 'ENOENT' || code === 'ENOTDIR';
+};
+
+/** A cached async lookup; `onError` maps a failure to a value or rethrows. */
+function cached<T>(
+  lookup: (key: string) => Promise<T>,
+  onError: (err: unknown, key: string) => T,
+): (key: string) => Promise<T> {
+  const cache = new Map<string, Promise<T>>();
   return (key) => {
     let entry = cache.get(key);
     if (!entry) {
-      entry = lookup(key).catch((err: unknown) => {
-        const code = errnoCode(err);
-        if (code === 'ENOENT' || code === 'ENOTDIR') return null;
-        throw err;
-      });
+      entry = lookup(key).catch((err: unknown) => onError(err, key));
       cache.set(key, entry);
     }
     return entry;
@@ -51,39 +71,78 @@ function cachedOrNull<T>(lookup: (key: string) => Promise<T>): (key: string) => 
 }
 
 /**
+ * Whether names under `dir` resolve case-insensitively: its own name with
+ * the case swapped reaches the same inode. When that cannot be told (no
+ * cased letters, or an error), assume it folds, so the listings are read.
+ */
+async function foldsCaseAt(dir: string): Promise<boolean> {
+  const base = path.basename(dir);
+  const swapped = [...base].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('');
+  if (swapped === base) return true;
+  try {
+    const [a, b] = await Promise.all([fsp.lstat(dir), fsp.lstat(path.join(path.dirname(dir), swapped))]);
+    return a.ino === b.ino && a.dev === b.dev;
+  } catch (err) {
+    return !isMissing(err);
+  }
+}
+
+/**
  * The given vault-relative paths (either separator) that are unsafe to
  * touch, walking each component from the vault root. `writes` are checked
- * in full. `deletes` only need their folders checked: unlinking a symlink
- * or a hard-linked file harms nothing else, but deleting through a
- * symlinked folder deletes outside the vault. A path whose parent does
- * not exist yet is safe: nothing on its way is a link. The vault root
- * itself is not checked. Listings and `lstat` results are cached.
+ * in full. `deletes` skip the link checks on their last component:
+ * unlinking a symlink or a hard-linked file harms nothing else, but
+ * deleting through a symlinked folder deletes outside the vault, and a
+ * case-folded name deletes a file the user renamed. A path whose parent
+ * does not exist yet is safe: nothing on its way is a link. The vault
+ * root itself is not checked. Folders are listed for the case check only
+ * on a case-folding filesystem, and a folder that cannot be listed skips
+ * it. A path that cannot be inspected throws `COLLISION_CHECK_FAILED`.
+ * Listings and `lstat` results are cached.
  */
 export async function findUnsafeVaultPaths(
   vaultRoot: string,
   writes: readonly string[],
   deletes: readonly string[] = [],
 ): Promise<UnsafeVaultPath[]> {
-  const list = cachedOrNull((dir) =>
-    fsp.readdir(dir).then((names) => new Set(names.map((n) => n.normalize('NFC')))),
+  const folds = await foldsCaseAt(vaultRoot);
+  // null: no such folder. undefined: not listable, so the case check is skipped.
+  const list = cached<Set<string> | null | undefined>(
+    (dir) => fsp.readdir(dir).then((names) => new Set(names.map((n) => n.normalize('NFC')))),
+    (err) => {
+      if (isMissing(err)) return null;
+      const code = errnoCode(err);
+      if (code === 'EACCES' || code === 'EPERM') return undefined;
+      throw err;
+    },
   );
-  const lstat = cachedOrNull((abs): Promise<Stats> => fsp.lstat(abs));
+  const lstat = cached<Stats | null>(
+    (abs) => fsp.lstat(abs),
+    (err, abs) => {
+      if (isMissing(err)) return null;
+      throw new ShardMindError(
+        `Could not check vault path: ${abs}`,
+        'COLLISION_CHECK_FAILED',
+        err instanceof Error ? err.message : String(err),
+      );
+    },
+  );
 
-  const check = async (rel: string, foldersOnly: boolean): Promise<UnsafeVaultPathReason | null> => {
+  const check = async (rel: string, isDelete: boolean): Promise<UnsafeVaultPathReason | null> => {
     const segments = rel.split(/[\\/]/).filter((s) => s !== '' && s !== '.');
-    const checked = foldersOnly ? segments.slice(0, -1) : segments;
     let dir = vaultRoot;
-    for (const [i, name] of checked.entries()) {
+    for (const [i, name] of segments.entries()) {
       const last = i === segments.length - 1;
       const abs = path.join(dir, name);
-      const [names, st] = await Promise.all([list(dir), lstat(abs)]);
+      const [names, st] = await Promise.all([folds ? list(dir) : undefined, lstat(abs)]);
       if (names === null || st === null) return null;
-      if (!names.has(name.normalize('NFC'))) {
+      if (names && !names.has(name.normalize('NFC'))) {
         // It resolves, but not under this name: the filesystem folded case
         // (a normalization-only difference is the same name, and passes).
         const lower = name.normalize('NFC').toLowerCase();
         if ([...names].some((n) => n.toLowerCase() === lower)) return 'case-mismatch';
       }
+      if (last && isDelete) return null;
       if (st.isSymbolicLink()) return last ? 'symlink' : 'symlinked-folder';
       if (last) return st.isFile() && st.nlink > 1 ? 'hard-link' : null;
       dir = abs;
@@ -92,17 +151,17 @@ export async function findUnsafeVaultPaths(
   };
 
   const all = [
-    ...writes.map((rel) => ({ rel, foldersOnly: false })),
-    ...deletes.map((rel) => ({ rel, foldersOnly: true })),
+    ...writes.map((rel) => ({ rel, isDelete: false })),
+    ...deletes.map((rel) => ({ rel, isDelete: true })),
   ];
-  const reasons = await mapConcurrent(all, 16, ({ rel, foldersOnly }) => check(rel, foldersOnly));
+  const reasons = await mapConcurrent(all, 16, ({ rel, isDelete }) => check(rel, isDelete));
   return all.flatMap(({ rel }, i) => (reasons[i] ? [{ path: rel, reason: reasons[i]! }] : []));
 }
 
 /**
  * Throw `VAULT_PATH_UNSAFE` naming each unsafe path, or resolve. The
- * engine's own files (`shard-values.yaml`, `.shardmind/state.json`) are
- * always checked as writes.
+ * engine's own files and folders (`shard-values.yaml`, `.shardmind/`'s
+ * state, cache, backups and logs) are always checked as writes.
  */
 export async function assertSafeVaultPaths(
   vaultRoot: string,

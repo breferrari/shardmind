@@ -267,6 +267,8 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     }
 
     const files = Array.isArray(rendered) ? rendered : [rendered];
+    // An `_each` template's files are named only once rendered (#163).
+    if (entry.iterator) await assertSafeVaultPaths(vaultRoot, files.map((f) => f.outputPath));
     for (const file of files) {
       if (!dryRun) {
         await writeVaultFile(vaultRoot, file.outputPath, file.content);

@@ -57,8 +57,9 @@ async function loadShard(dir: string) {
   return { manifest, schema, selections, values };
 }
 
-async function install(vault: string, shardDir = MINIMAL_SHARD, dryRun = false) {
-  const { manifest, schema, selections, values } = await loadShard(shardDir);
+async function install(vault: string, shardDir = MINIMAL_SHARD, dryRun = false, extraValues: Record<string, unknown> = {}) {
+  const { manifest, schema, selections, values: base } = await loadShard(shardDir);
+  const values = { ...base, ...extraValues };
   return runInstall({
     dryRun,
     vaultRoot: vault,
@@ -96,6 +97,20 @@ describe.skipIf(!canSymlink)('install, update and adopt refuse a linked vault pa
     await expect(fsp.stat(target)).rejects.toThrow();
     expect(await readState(vault)).toBeNull();
     expect(await fsp.readdir(vault)).toEqual(['Home.md']);
+  });
+
+  it('install checks the path an _each template expands to, not the template name', async () => {
+    const shard = path.join(root, 'shard-each');
+    await fsp.cp(MINIMAL_SHARD, shard, { recursive: true });
+    await fsp.mkdir(path.join(shard, 'people'), { recursive: true });
+    await fsp.writeFile(path.join(shard, 'people', '_each.md.njk'), '# {{ item.name }}\n');
+    await fsp.mkdir(path.join(vault, 'people'));
+    const target = path.join(outside, 'alice-outside.md');
+    await fsp.symlink(target, path.join(vault, 'people', 'alice.md'));
+    await expect(install(vault, shard, false, { people: [{ name: 'alice' }] })).rejects.toMatchObject({
+      code: 'VAULT_PATH_UNSAFE',
+    });
+    await expect(fsp.stat(target)).rejects.toThrow();
   });
 
   it('a dry-run install refuses too, so the preview matches the run', async () => {
@@ -171,6 +186,33 @@ describe.skipIf(!canSymlink)('install, update and adopt refuse a linked vault pa
       expect(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')).toBe(stateBefore);
     },
   );
+
+  it('update names a symlink to a folder at a new path as unsafe, not as a directory in the way', async () => {
+    await install(vault);
+    const newShard = path.join(root, 'shard-0.2.0-add');
+    await fsp.cp(MINIMAL_SHARD, newShard, { recursive: true });
+    const manifestPath = path.join(newShard, '.shardmind', 'shard.yaml');
+    await fsp.writeFile(manifestPath, (await fsp.readFile(manifestPath, 'utf-8')).replace(/^version: .*$/m, 'version: 0.2.0'));
+    await fsp.writeFile(path.join(newShard, 'Added.md'), 'new in 0.2.0\n');
+    await fsp.symlink(outside, path.join(vault, 'Added.md'), 'dir');
+    const state = (await readState(vault)) as ShardState;
+    const oldValues = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
+    const { manifest: newManifest, schema: newSchema } = await loadShard(newShard);
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    await expect(
+      planUpdate({
+        vault: { root: vault, state, drift: await detectDrift(vault, state) },
+        values: { old: oldValues, new: oldValues },
+        newShard: {
+          schema: newSchema,
+          selections,
+          tempDir: newShard,
+          renderContext: buildRenderContext(newManifest, oldValues, selections),
+        },
+        removedFileDecisions: {},
+      }),
+    ).rejects.toMatchObject({ code: 'VAULT_PATH_UNSAFE' });
+  });
 
   it.each(['before-plan', 'after-plan'] as const)(
     'adopt refuses a dangling symlink at a shard path (%s) and writes nothing',

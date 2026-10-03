@@ -43,6 +43,7 @@ import {
   rollbackInstall,
   type BackupRecord,
 } from '../../core/install-executor.js';
+import { assertSafeVaultPaths } from '../../core/vault-path-guard.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
@@ -603,6 +604,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         const validatedResult: WizardResult = { values: validated, selections: result.selections };
 
         const { outputs } = await planOutputs(ctx.schema, ctx.tempDir, validatedResult.selections);
+        // Refuse before any prompt or move, as update and adopt do, so a dry
+        // run and the run agree (#163). `runInstall` checks again, including
+        // the files an `_each` template expands to.
+        await assertSafeVaultPaths(vaultRoot, outputs.map((o) => o.outputPath));
         const collisions = await detectCollisions(vaultRoot, outputs.map((o) => o.outputPath));
 
         // Only the user's own content is prompted for, backed up or
