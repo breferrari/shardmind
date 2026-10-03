@@ -573,6 +573,11 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       // Every entry is a path the plan overwrote or a conflict it resolved.
       const replacing = new Set(plan.actions.filter((a) => a.kind === 'overwrite' || a.kind === 'conflict').map((a) => a.path));
       for (const p of replaced) expect(replacing.has(p)).toBe(true);
+      // counts.overwritten (also in --json) is exactly the silent overwrites;
+      // the accepted conflict is a conflict, not part of `silent`.
+      const overwrites = plan.actions.filter((a) => a.kind === 'overwrite').length;
+      expect(plan.counts.overwritten).toBe(overwrites);
+      expect(updatePlanResult(plan, { dryRun: true }).counts.overwritten).toBe(overwrites);
     });
 
     it('is populated in a dry run', async () => {
@@ -586,9 +591,14 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       await install();
       await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.');
       await editFile(COPY, COPY_LINE, 'My own line.');
-      const { result } = await update(await shardAt('0.2.0', welcome('Welcome to your vault, {{ user_name }}! (v2)')));
+      const { plan, result } = await update(await shardAt('0.2.0', welcome('Welcome to your vault, {{ user_name }}! (v2)')));
       expect(result.summary.replacedFiles).not.toContain(HOME);
       expect(result.summary.replacedFiles).not.toContain(COPY);
+      // COPY's merge is a skip: a #150 rebaseline noop, counted unchanged.
+      expect(actionFor(plan, COPY)).toBe('noop');
+      const overwritten = plan.actions.filter((a) => a.kind === 'overwrite').map((a) => a.path);
+      expect(overwritten).not.toContain(COPY);
+      expect(plan.counts.overwritten).toBe(overwritten.length);
     });
   });
 

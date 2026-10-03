@@ -444,6 +444,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       ...(target.copyFromSourcePath ? { copyFromSourcePath: target.copyFromSourcePath } : {}),
     });
     counts.silent++;
+    // Same set as the executor's `summary.replacedFiles` minus accepted conflicts.
     counts.overwritten++;
   }
 
