@@ -23,12 +23,17 @@ const pkg = createRequire(import.meta.url)('../package.json') as { version: stri
 // An option written after a subcommand belongs to it, not to the root
 // command; Pastel never enables this on the Commander program it builds
 // (#147). See source/cli-options.ts. If a Pastel or Commander layout ever
-// defeats the patch, run without it rather than refuse every command — the
-// unit tests are what catch that drift.
+// defeats the patch, run without it (with a warning) rather than refuse
+// every command.
 try {
   enablePositionalOptions(pastelCommander());
-} catch {
-  // Options keep Commander's default scoping; see #147.
+} catch (err) {
+  // Options keep Commander's default scoping. Say so on stderr, so a broken
+  // layout shows up in a bug report instead of as flags that do nothing.
+  process.emitWarning(
+    `subcommand option scoping is off (${err instanceof Error ? err.message : String(err)}); see #147`,
+    { code: 'SHARDMIND_OPTION_SCOPE' },
+  );
 }
 
 const app = new Pastel({
