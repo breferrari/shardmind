@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (binary files on update — #63)
+
+- **A binary file you changed is no longer corrupted by an update.** Copy-origin files went through the line-based three-way merge on a UTF-8 view of their bytes, so **Accept new** wrote mangled bytes and a file that already matched the new version could be rewritten with garbage. A binary file (a NUL byte in its first 8 KB, git's rule) now skips the merge. It is left alone when the shard did not change it, relabelled when you already have the new bytes, and otherwise offered as a whole-file choice that shows both byte counts. **Accept new** copies the shard's bytes exactly.
+
 ### Fixed (command-line options — #147)
 
 - **Options after a subcommand now reach it.** `shardmind adopt --verbose`, `update --verbose` and every subcommand's `--no-update-check` were taken by the root command and did nothing. A root-only option after a subcommand (`shardmind update --version`) is now an `unknown option` error instead of being silently taken by the root, and a root option before one (`shardmind --verbose update`) now reaches the subcommand instead of being ignored.
