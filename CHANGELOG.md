@@ -8,6 +8,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (Ctrl+C at a prompt — #155)
+
+- **Ctrl+C at a wizard or review prompt now exits 130, not 0.** In a terminal, Ink's prompts run in raw mode, where Ctrl+C arrives as a keystroke rather than a signal. Ink then closed the app on its own, the engine's cancellation handler never ran, and a cancelled `install`, `update` or `adopt` reported success to `$?`. The cancellation bridge now sees that keystroke and cancels the same way a signal does: in-flight writes roll back and the exit code is 130. Nothing on disk changes for a cancel at a wizard prompt, which was already the case.
+- **A second Ctrl+C no longer races or cuts short the rollback the first one started.** Two Ctrl+C presses ran two rollbacks at once on the same paths. In a terminal, Ink also unmounted on the first press and took the rollback's signal handler with it, so the second press killed the rollback halfway. The rollback now runs once per process and keeps its handler until it exits 130.
+
 ### Fixed (control sequences in hook output — #204)
 
 - **A hook's output is shown as text only.** Terminal control sequences a hook prints no longer reach your terminal. That covers links whose text hides their target (OSC 8), clipboard writes (OSC 52), window titles, cursor movement, bells and backspaces. A progress line redrawn with carriage returns shows its last state. Colour codes follow the colour rule above.
