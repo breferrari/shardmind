@@ -269,6 +269,97 @@ describe('shardmind (status)', () => {
     expect(result.stdout).toMatch(/STATE_CORRUPT/);
   });
 
+  describe('--json (#139, ARCHITECTURE §10.3a)', () => {
+    type StatusDoc = {
+      schemaVersion: number;
+      command: string;
+      ok: boolean;
+      error?: { code: string | null; message: string; hint: string | null };
+      result?: {
+        installed: boolean;
+        shard?: string;
+        version?: string;
+        update?: { kind: string; current: string };
+        files?: {
+          counts: { modified: number };
+          modified: Array<{ path: string; linesAdded?: number; linesRemoved?: number }>;
+        };
+        environment?: unknown;
+      };
+    };
+
+    it('emits one parseable document for an installed vault and exits 0', async () => {
+      vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'status-json' });
+      const result = await spawnCli(['--json'], { cwd: vault.root, env: envWithStub() });
+      expect(result.exitCode).toBe(0);
+      // The whole of stdout is the document: no banner, no frame.
+      const doc = JSON.parse(result.stdout) as StatusDoc;
+      expect(doc).toMatchObject({ command: 'status', ok: true, schemaVersion: 1 });
+      expect(doc.result).toMatchObject({ installed: true, shard: 'shardmind/minimal', version: '0.1.0' });
+      expect(doc.result!.update!.kind).toBe('up-to-date');
+      expect(doc.result!.files!.counts.modified).toBe(0);
+      expect(doc.result!.environment).toBeNull();
+    });
+
+    it('answers installed: false outside a managed vault and exits 0', async () => {
+      vault = await createEmptyVault('status-json-empty');
+      const result = await spawnCli(['--json'], { cwd: vault.root, env: envWithStub() });
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        schemaVersion: 1,
+        command: 'status',
+        ok: true,
+        result: { installed: false },
+      });
+    });
+
+    it('reports a corrupt state.json as ok: false with STATE_CORRUPT and exits 1', async () => {
+      vault = await createEmptyVault('status-json-corrupt');
+      await vault.writeFile('.shardmind/state.json', 'not json {{{');
+      const result = await spawnCli(['--json'], { cwd: vault.root, env: envWithStub() });
+      expect(result.exitCode).toBe(1);
+      const doc = JSON.parse(result.stdout) as StatusDoc;
+      expect(doc.ok).toBe(false);
+      expect(doc.error!.code).toBe('STATE_CORRUPT');
+      expect(doc.result).toBeUndefined();
+    });
+
+    it('with --verbose, gives each modified file its line counts', async () => {
+      vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'status-json-verbose' });
+      const home = await vault.readFile('Home.md');
+      await vault.writeFile('Home.md', home + '\n\nI edited this myself.\n');
+      const result = await spawnCli(['--json', '--verbose'], { cwd: vault.root, env: envWithStub() });
+      expect(result.exitCode).toBe(0);
+      const doc = JSON.parse(result.stdout) as StatusDoc;
+      expect(doc.result!.files!.counts.modified).toBe(1);
+      const [entry] = doc.result!.files!.modified;
+      expect(entry!.path).toBe('Home.md');
+      expect(entry!.linesAdded).toBeGreaterThan(0);
+      expect(doc.result!.environment).not.toBeNull();
+    });
+
+    it('stays ok with update.kind unknown when the registry is unreachable', async () => {
+      vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'status-json-offline' });
+      const result = await spawnCli(['--json'], {
+        cwd: vault.root,
+        env: { SHARDMIND_GITHUB_API_BASE: 'http://127.0.0.1:1' },
+        timeoutMs: 20_000,
+      });
+      expect(result.exitCode).toBe(0);
+      const doc = JSON.parse(result.stdout) as StatusDoc;
+      expect(doc.ok).toBe(true);
+      expect(doc.result!.update!.kind).toBe('unknown');
+    }, 25_000);
+
+    it('a --json written before update is update\'s (#147 forwarding)', async () => {
+      vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'status-json-forward' });
+      stub.setLatest(SHARD_SLUG, '0.2.0');
+      const result = await spawnCli(['--json', 'update', '--dry-run'], { cwd: vault.root, env: envWithStub() });
+      expect(result.exitCode).toBe(0);
+      expect((JSON.parse(result.stdout) as StatusDoc).command).toBe('update');
+    });
+  });
+
   it('degrades gracefully when the registry is unreachable', async () => {
     vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'status-offline' });
     // Point the CLI at a port that nothing is listening on; status must
