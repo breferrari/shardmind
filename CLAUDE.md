@@ -12,7 +12,7 @@ This project is **spec-driven**. The architecture and implementation are fully d
 |----------|------|-------------|
 | `VISION.md` | Origin story, architectural bets, scope guardrails, non-goals. | Before proposing features or scope changes. |
 | `ROADMAP.md` | Build order in phases, one per GitHub milestone, each row linking its issue; the Shelf and its dated reasons. Taken with the `take-next` skill (`.claude/skills/take-next/`). | Before starting any task. |
-| **`docs/SHARD-LAYOUT.md`** | **v6 shard-layout contract + three binding invariants. Active design spec.** Folded into `ARCHITECTURE.md §3` and `IMPLEMENTATION.md §4.5` / `§4.5a` / `§4.5b` for the engine specs; this doc remains the canonical contract for the binding properties + author-facing layout. | Before implementing anything related to shard layout, install walk, hook context, adopt command, or obsidian-mind v6. Authoritative over ARCHITECTURE.md / IMPLEMENTATION.md where they conflict. |
+| **`docs/SHARD-LAYOUT.md`** | **v6 shard-layout contract + four binding invariants. Active design spec.** Folded into `ARCHITECTURE.md §3` and `IMPLEMENTATION.md §4.5` / `§4.5a` / `§4.5b` for the engine specs; this doc remains the canonical contract for the binding properties + author-facing layout. | Before implementing anything related to shard layout, install walk, hook context, adopt command, or obsidian-mind v6. Authoritative over ARCHITECTURE.md / IMPLEMENTATION.md where they conflict. |
 | `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. | Before making any architectural decision. |
 | `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, module specs with TypeScript signatures, algorithms as numbered steps, error cases, 20 merge test fixtures. §9 is a historical note on the v0.1 build; current work is in `ROADMAP.md`. | Before implementing any module. |
 | `docs/COMPONENTS.md` | Iterated UI patterns (A/B), `useOncePerKey` hook, `rerender()` regression-test convention. Codifies why state-machine-iterated prompts (`AdoptDiffView`, `DiffView`) need per-iteration ref scoping vs. boolean refs. | Before adding a new Ink component that may be iterated by a parent state machine, or before changing a `useRef` shape inside one. |
@@ -244,7 +244,7 @@ shardmind/
 ├── docs/
 │   ├── ARCHITECTURE.md                # The what and why (22 sections)
 │   ├── IMPLEMENTATION.md              # The how exactly (10 sections)
-│   ├── SHARD-LAYOUT.md                # v6 shard-layout contract — Invariants 1/2/3, file disposition tiers, engine change scope
+│   ├── SHARD-LAYOUT.md                # v6 shard-layout contract — Invariants 1/2/3/4, file disposition tiers, engine change scope
 │   ├── AUTHORING.md                   # Shard author guide — schema, modules, hooks, dotfolder convention
 │   ├── ERRORS.md                      # Typed error code registry — codes, messages, hints, remediation
 │   ├── OPERATIONS.md                  # Deployment notes — air-gapped install, GitHub endpoints, registry config

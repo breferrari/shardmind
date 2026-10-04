@@ -53,18 +53,13 @@ your-shard/                    ← also opens cleanly as an Obsidian vault
 
 Minimum: `.shardmind/shard.yaml` + `.shardmind/shard-schema.yaml`. Everything else is optional.
 
-**Three testable properties** (binding contract):
+**What you uphold as an author** (binding; full text in [`SHARD-LAYOUT.md §Installation invariants`](SHARD-LAYOUT.md#installation-invariants)):
 
-1. The shard repo at HEAD opens cleanly as a vault in Obsidian with no preparation.
-2. `shardmind install --defaults <shard>` produces a vault byte-equivalent to `git clone <shard>` (modulo Tier 1 exclusions + `.shardmind/` engine metadata + vault-root `shard-values.yaml`).
-3. Deleting `.shardmind/` on either side leaves a working vault.
-
-**Installation invariants** you uphold as an author (full text in [`SHARD-LAYOUT.md §Installation invariants`](SHARD-LAYOUT.md#installation-invariants)):
-
-1. `install --defaults` is clone-equivalent: every static file byte-identical, every `.njk` present at its stripped path. CI-tested via `tests/e2e/helpers/invariant1.ts`.
-2. A defaults install touches no managed file. The engine enforces it by not running `personalize` (§6).
-3. `post-update` writes only the managed files in `ctx.newFiles`.
-4. `bootstrap` re-runs on update only when `hooks.bootstrap.fingerprint` changes.
+- The shard repo at HEAD opens cleanly as a vault in Obsidian with no preparation, and deleting `.shardmind/` on either side leaves a working vault.
+- Invariant 1: `install --defaults` is clone-equivalent (static files byte-identical, each `.njk` present at its stripped path). CI-tested via `tests/e2e/helpers/invariant1.ts`.
+- Invariant 2: a defaults install touches no managed file; the engine skips `personalize` (§6).
+- Invariant 3: `post-update` writes only the managed files in `ctx.newFiles`.
+- Invariant 4: `bootstrap` re-runs on update only when `hooks.bootstrap.fingerprint` changes.
 
 File disposition: Tier 1 paths (`.git/`, `.github/`, `.shardmind/`, Obsidian's `workspace.json` / `workspace-mobile.json` / `graph.json`) never install; everything else does unless `.shardmindignore` excludes it; symlinks are rejected. See [`SHARD-LAYOUT.md`](SHARD-LAYOUT.md) for the full v6 layout contract.
 

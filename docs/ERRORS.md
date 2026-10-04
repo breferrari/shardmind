@@ -217,11 +217,11 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 
 **Remedy:** Upgrade shardmind (`npm install -g shardmind@latest`). In v0.2+, migrations will handle forward compatibility.
 
-### `STATE_CACHE_MISSING_TEMPLATES`
+### `STATE_CACHE_MISSING_MANIFEST`
 
-**Meaning:** During install, the shard's `templates/` directory wasn't found in the extracted tarball.
+**Meaning:** While caching the shard source as the merge base (install, update or adopt), `.shardmind/shard.yaml` wasn't found in the extracted shard. Replaces the pre-v6 `STATE_CACHE_MISSING_TEMPLATES`; there is no top-level `templates/` directory any more.
 
-**Remedy:** Shard author issue — add a `templates/` directory.
+**Remedy:** Shard author issue — commit `.shardmind/shard.yaml` at the shard root (see [`SHARD-LAYOUT.md`](SHARD-LAYOUT.md)). Normally `DOWNLOAD_MISSING_MANIFEST` catches this first.
 
 ### `VAULT_NOT_FOUND`
 

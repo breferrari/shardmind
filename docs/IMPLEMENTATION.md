@@ -319,7 +319,7 @@ interface TempShard {
 3. Set headers: `Accept: application/vnd.github+json`, plus `Authorization: Bearer ${GITHUB_TOKEN}` when the env var is set and the host is `api.github.com` or `codeload.github.com` (the token is never sent to any other host, including a `SHARDMIND_GITHUB_API_BASE` stub).
 4. Pipe response body through a hash-tap transform (sha256) and into `tar.x({ strip: 1, C: tempDir })`.
    - `strip: 1` removes the GitHub archive's top-level directory (`owner-repo-sha/`).
-   - `tar.x` normalizes Windows path separators to forward slashes, so the engine never sees `\` in a relPath.
+   - node-tar's own behaviour, not ours: `tar.x` normalizes Windows path separators to forward slashes, so the engine never sees `\` in a relPath.
 5. Verify `<tempDir>/.shardmind/shard.yaml` exists. If not → throw `DOWNLOAD_MISSING_MANIFEST`.
 6. Verify `<tempDir>/.shardmind/shard-schema.yaml` exists. If not → throw `DOWNLOAD_MISSING_SCHEMA`.
 7. Return `TempShard` with `cleanup` function and `tarball_sha256` from the hash tap.
@@ -331,7 +331,7 @@ interface TempShard {
 - Tarball corrupted → `DOWNLOAD_INVALID_TARBALL`.
 - Missing `.shardmind/shard.yaml` → `DOWNLOAD_MISSING_MANIFEST`.
 - Missing `.shardmind/shard-schema.yaml` → `DOWNLOAD_MISSING_SCHEMA`.
-- Disk full → propagate OS error.
+- Disk full, or any other error from the fetch-hash-extract pipeline or from `tar` → `DOWNLOAD_INVALID_TARBALL` (with the underlying message). Only a failure of the initial temp-dir `mkdir` propagates as the raw OS error.
 
 **Dependencies**: `tar` (node-tar), `node:crypto`, `node:stream`.
 
@@ -499,7 +499,7 @@ interface WalkedFile {
 3. For each walked file, classify:
    a. **Module assignment** (returns first hit):
       i. For each module in declaration order: a `mod.paths` match, then an exact `bases/<id>.base.njk` match for `mod.bases`. A `paths` entry matches the identical path, or a prefix ending at a path-segment boundary (an entry ending in `/`, or followed by `/` in `relPath`), so `work/Index.md` does not claim `work/Index.md.backup`. Example: `brain/Index.md` → module `brain` with `paths: ['brain/']`.
-      ii. Only when no module claimed the file by i — per-name match: when the file's parent-dir component (case-insensitive) is `commands` or `agents`, match the basename with its last extension removed against `mod.commands` / `mod.agents` lists. Scopes the heuristic so a vault note named after a command isn't gated by it.
+      ii. Only when no module claimed the file by i — per-name match: when the file's parent-dir component (case-insensitive) is `commands` or `agents`, match the basename with its last extension removed against `mod.commands` / `mod.agents` lists. Scopes the heuristic so a vault note named after a command isn't gated by it. Only the last extension is stripped, so the source file `reflect.md.njk` yields `reflect.md`, which matches no entry: a `.md.njk` command is not gated today (#208).
       iii. Else `null` (always-included; e.g. agent operating manuals at the vault root).
    b. **Excluded?** If `moduleId !== null && selections[moduleId] === 'excluded'` → push to `skip` and continue.
    c. **Render or copy?** `relPath.endsWith('.njk')` → render entry; else copy entry.
@@ -993,13 +993,14 @@ rollbackInstall(vaultRoot: string, writtenPaths: string[], backups?: BackupRecor
 4. **`discardSetAside`** (after success, best effort, never throws): for the old `.shardmind/` record, `carryOverBackups` first moves its `backups/` entries into the new `.shardmind/backups/` (a taken name gets `-<n>`), since an update's or adopt's snapshot can be the only copy of a file; if that throws, the old `.shardmind/` stays where it was set aside. Every other set-aside path is removed.
 
 **Rollback semantics**:
-- **`backupCollisions` is transactional**: when a rename throws, every earlier rename in the call is moved back, so the vault is as it was before the call. A rename-back that fails leaves the content at its backup path, and the `BACKUP_FAILED` hint names that path so the user can move it back. An interrupted loop (`shouldStop`) returns the moves made so far; `onMoved` has already registered each one for the SIGINT handler.
+- **`backupCollisions` is transactional**: when a rename throws, every earlier rename in the call is moved back, so the vault is as it was before the call. A rename-back that fails leaves the content at its backup path, and the `BACKUP_FAILED` hint names that path so the user can move it back. Exception: `uniqueBackupPath` runs outside that `try`, so when it runs out of names (`BACKUP_FAILED`, no free name up to `.999`) the earlier renames in the call are not walked back (defect, #209). An interrupted loop (`shouldStop`) returns the moves made so far; `onMoved` has already registered each one for the SIGINT handler.
 - **`rollbackInstall(vaultRoot, writtenPaths, backups)`** is best effort and swallows every error (the primary failure is already being reported): unlink each written path deepest-first; `rmdir` each parent directory of a written path deepest-first (only empty ones go); remove `.shardmind/` entirely; then `restoreBackups(backups)` last, so backups land on paths the removals freed. `restoreBackups` removes whatever is at the original path and renames the backup back, per entry; failures are collected and returned, not thrown.
-- **Point of no return**: the command layer rolls back only when `runInstall` throws (and not in dry run). After state.json is written the install stands; a later failure is reported, not rolled back, because the old install is already gone. A SIGINT during the install calls `rollbackInstall` with the live `onFileWritten` / `onMoved` lists.
+- **Point of no return**: the command layer rolls back only when `runInstall` throws (and not in dry run). Once `runInstall` returns, the install stands; a later failure is reported, not rolled back, because the old install is already gone. (State.json alone is not the line: `writeValuesFile` runs after `writeState` and can still throw `VALUES_FILE_COLLISION`, which rolls back.) A SIGINT during the install calls `rollbackInstall` with the live `onFileWritten` / `onMoved` lists.
+- **Current behaviour on a throw from `runInstall`** (defect, #207): the command layer calls `rollbackInstall` with an empty written list, because `use-install-machine` assigns `written` only after `runInstall` returns. Backups and set-aside paths are restored and `.shardmind/` is removed, but files already written stay in the vault.
 
 **Error cases**:
 - `VAULT_PATH_UNSAFE`: a planned output, an `_each` output, or one of the engine's own paths is a symlink, sits under a symlinked folder, is a hard-linked file, or exists only under a different case (§4.20).
-- `BACKUP_FAILED`: a rename failed (the hint says whether earlier moves were restored or names the orphaned backup paths), or no free `.shardmind-backup-<stamp>[.n]` name up to `.999`.
+- `BACKUP_FAILED`: a rename failed (the hint says whether earlier moves were restored or names the orphaned backup paths), or no free `.shardmind-backup-<stamp>[.n]` name up to `.999` (earlier renames are then not walked back, #209).
 - `RENDER_FAILED`: a non-`ShardMindError` thrown by `renderFile`. A `ShardMindError` from the renderer (`RENDER_TEMPLATE_ERROR`, `RENDER_FRONTMATTER_ERROR`, `RENDER_ITERATOR_ERROR`, §4.6) passes through unchanged.
 - `VALUES_FILE_COLLISION`: `shard-values.yaml` appeared at the target (`EEXIST` from the `wx` write). The last defense behind `ExistingInstallGate`; any other write error propagates as-is.
 - `STATE_CACHE_MISSING_MANIFEST`: `cacheTemplates` found no `.shardmind/shard.yaml` in the shard source (§4.7).
@@ -1760,6 +1761,8 @@ If install fails mid-render (e.g., template error on file 23 of 47):
 2. Delete `.shardmind/` directory
 3. Show error with the specific template that failed
 4. Exit cleanly — vault is in pre-install state
+
+That is the intent. Today the error path (a throw from `runInstall`) restores backups and removes `.shardmind/` but leaves the files already written, because it rolls back with an empty written list (defect, #207; see §4.11b). A SIGINT rollback does delete them.
 
 ---
 
