@@ -15,9 +15,8 @@ import { assertEngineCompatible, parseManifest } from './manifest.js';
 import { buildValuesValidator, parseSchema } from './schema.js';
 import { resolveComputedDefaults } from './install-planner.js';
 import { resolveModules } from './modules.js';
-import { assertNoOutputClashes, type OutputRef } from './output-clash.js';
-import { toPosix } from './fs-utils.js';
-import { buildRenderContext, compileTemplate, createRenderer, eachOutputPaths, renderFile } from './renderer.js';
+import { findOutputClashes, outputClashError, plannedOutputRefs } from './output-clash.js';
+import { buildRenderContext, compileTemplate, createRenderer, renderFile } from './renderer.js';
 
 export interface LintFinding {
   severity: 'error' | 'warning';
@@ -143,26 +142,24 @@ export async function lintShard(
     }
   }
 
-  // Two files naming one output (#240), with the lint's values for `_each`
-  // expansions. A list whose own items clash was reported by its render.
-  const refs: OutputRef[] = resolution.copy.map((e) => ({ outputPath: e.outputPath, origin: toPosix(shardDir, e.sourcePath) }));
-  for (const entry of resolution.render) {
-    const origin = toPosix(shardDir, entry.sourcePath);
-    const list = entry.iterator ? values[entry.iterator] : undefined;
-    let paths = [entry.outputPath];
-    if (Array.isArray(list)) {
-      try {
-        paths = eachOutputPaths(entry.outputPath, list);
-      } catch {
-        paths = [];
-      }
+  // Two outputs naming one vault path (#240), `_each` lists expanded with
+  // these values. Every clash is reported. Two different modules may be
+  // alternatives a user picks between, so a clash across modules is a
+  // warning; within one module, or with an always-installed file, an error.
+  for (const clash of findOutputClashes(plannedOutputRefs(resolution, values, shardDir))) {
+    const a = clash.first.module ?? null;
+    const b = clash.second.module ?? null;
+    if (a !== null && b !== null && a !== b) {
+      const err = outputClashError(clash);
+      findings.push({
+        severity: 'warning',
+        code: 'LINT_OUTPUT_CLASH_ACROSS_MODULES',
+        message: `${err.message} (modules '${a}' and '${b}')`,
+        hint: `Installing with both modules included is refused with OUTPUT_PATH_CLASH. Fine if the two modules are alternatives a user picks between; otherwise rename one file.`,
+      });
+    } else {
+      error(outputClashError(clash));
     }
-    for (const outputPath of paths) refs.push({ outputPath, origin });
-  }
-  try {
-    assertNoOutputClashes(refs);
-  } catch (err) {
-    error(err);
   }
 
   const modulesWithFiles = new Set(
@@ -201,7 +198,9 @@ export function errorFindings(findings: readonly LintFinding[]): LintFinding[] {
 }
 
 /** Codes `lintShard` emits when the values are wrong, not the shard (its values step). */
-const VALUE_CODES = new Set(['VALUES_INVALID', 'COMPUTED_DEFAULT_FAILED']);
+// A clash can come from the prefill's own `_each` items (#234, #240): if it
+// is gone with the defaults alone, it is the user's to fix, not the shard's.
+const VALUE_CODES = new Set(['VALUES_INVALID', 'COMPUTED_DEFAULT_FAILED', 'OUTPUT_PATH_CLASH', 'RENDER_ITERATOR_NAME_CLASH']);
 
 /**
  * Install's pre-wizard check (#35): `lintShard` for the vault it installs

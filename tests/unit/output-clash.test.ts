@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { assertNoOutputClashes, foldOutputPath } from '../../source/core/output-clash.js';
+import { assertNoOutputClashes, findOutputClashes, foldOutputPath } from '../../source/core/output-clash.js';
 
 describe('assertNoOutputClashes (#240)', () => {
   it('passes distinct outputs', () => {
@@ -39,5 +39,32 @@ describe('assertNoOutputClashes (#240)', () => {
 
   it('folds with NFC then case, as the vault-path guard does', () => {
     expect(foldOutputPath('A/Café.md')).toBe(foldOutputPath('a/café.md'));
+  });
+
+  it('refuses two outputs whose folders differ only in case', () => {
+    const clashes = findOutputClashes([
+      { outputPath: 'Notes/a.md', origin: 'Notes/a.md' },
+      { outputPath: 'notes/b.md', origin: 'notes/b.md' },
+    ]);
+    expect(clashes).toHaveLength(1);
+    expect(clashes[0]!.at).toContain('Notes/');
+  });
+
+  it('refuses a file where another output needs a folder', () => {
+    const clashes = findOutputClashes([
+      { outputPath: 'notes', origin: 'notes.njk' },
+      { outputPath: 'notes/today.md', origin: 'notes/today.md' },
+    ]);
+    expect(clashes).toHaveLength(1);
+    expect(clashes[0]!.first.origin).toBe('notes.njk');
+  });
+
+  it('allows two outputs in one folder spelled the same', () => {
+    expect(
+      findOutputClashes([
+        { outputPath: 'notes/a.md', origin: 'a' },
+        { outputPath: 'notes/b.md', origin: 'b' },
+      ]),
+    ).toEqual([]);
   });
 });

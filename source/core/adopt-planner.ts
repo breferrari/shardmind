@@ -38,7 +38,7 @@ import {
   createRenderer,
   renderFile,
 } from './renderer.js';
-import { assertNoOutputClashes } from './output-clash.js';
+import { assertNoOutputClashes, plannedOutputRefs } from './output-clash.js';
 import { isBinaryForMerge, mapConcurrent, sha256, toPosix } from './fs-utils.js';
 
 /**
@@ -158,6 +158,9 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
   const { vaultRoot, schema, manifest, tempDir, values, selections, now, renames } = input;
 
   const resolution = await resolveModules(schema, selections, tempDir);
+  // Two outputs naming one vault path are refused before rendering or any
+  // write (#240).
+  assertNoOutputClashes(plannedOutputRefs(resolution, values, tempDir));
   const env = createRenderer(tempDir);
   const renderContext = buildRenderContext(manifest, values, selections, now, vaultRoot);
 
@@ -181,8 +184,6 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
   );
 
   const items: ShardOutputItem[] = [...renderedGroups.flat(), ...copyItems];
-  // Two outputs naming one vault file are refused before any write (#240).
-  assertNoOutputClashes(items.map((i) => ({ outputPath: i.outputPath, origin: i.templateKey })));
   const movable = renames?.size
     ? movableRenames(renames, new Set(items.map((i) => i.outputPath)))
     : new Map<string, string>();

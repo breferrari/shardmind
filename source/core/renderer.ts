@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { stripNjk } from './modules.js';
-import { foldOutputPath } from './output-clash.js';
+import { foldOutputPath } from './fs-utils.js';
 import nunjucks from 'nunjucks';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type {

@@ -64,6 +64,25 @@ describe('lintShard (#34)', () => {
     expect(clash[0]!.message).toContain('brain/ideas.md');
   });
 
+  it('warns, not errors, when the clashing files are in two different modules (#240)', async () => {
+    // Two modules that may be alternatives: installing with both is refused,
+    // but the shard itself is not wrong.
+    // One module gates the template, the other the static file; their
+    // outputs differ only in case.
+    await edit('.shardmind/shard-schema.yaml', (y) =>
+      y.replace(
+        'modules:\n',
+        'modules:\n  simple:\n    label: "Simple"\n    paths: [alt/start.md]\n    removable: true\n' +
+          '  fancy:\n    label: "Fancy"\n    paths: [alt/Start.md.njk]\n    removable: true\n',
+      ),
+    );
+    await write('alt/start.md', 'simple\n');
+    await write('alt/Start.md.njk', 'fancy\n');
+    const result = await lintShard(shard, {});
+    expect(errors(result).filter((f) => f.code === 'OUTPUT_PATH_CLASH')).toEqual([]);
+    expect(warnings(result).map((f) => f.code)).toContain('LINT_OUTPUT_CLASH_ACROSS_MODULES');
+  });
+
   it('reports an unparseable schema and stops there', async () => {
     await write('.shardmind/shard-schema.yaml', 'schema_version: 1\nvalues: [not, a, map]\n');
     const result = await lintShard(shard, {});

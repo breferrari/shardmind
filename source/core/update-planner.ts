@@ -30,12 +30,12 @@ import type {
 import { ShardMindError } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { computeMergeAction } from './differ.js';
-import { assertNoOutputClashes } from './output-clash.js';
+import { assertNoOutputClashes, plannedOutputRefs } from './output-clash.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { isCaseOnlyRename } from './rename-migrations.js';
 import { resolveModules } from './modules.js';
 import { renderFile, createRenderer, itemForTemplate } from './renderer.js';
-import { isBinaryForMerge, sha256, mapConcurrent, toPosix } from './fs-utils.js';
+import { isBinaryForMerge, sha256, mapConcurrent } from './fs-utils.js';
 import { CACHED_TEMPLATES } from '../runtime/vault-paths.js';
 
 /** Cap fan-out when reading templates + user files during merge planning. */
@@ -355,6 +355,9 @@ export async function renderNewShard(
   newRenderContext: RenderContext,
 ): Promise<NewFilePlan> {
   const resolution = await resolveModules(newSchema, newSelections, newTempDir);
+  // Two outputs naming one vault path are refused before rendering or any
+  // write (#240).
+  assertNoOutputClashes(plannedOutputRefs(resolution, newRenderContext.values, newTempDir));
   const env = createRenderer(newTempDir);
 
   // Render and copy in parallel (bounded by PLAN_IO_CONCURRENCY) since
@@ -384,12 +387,7 @@ export async function renderNewShard(
     }),
   ]);
 
-  const outputs = [...renderedPairs.flat(), ...copiedPairs];
-  // Two outputs naming one vault file are refused before any write (#240).
-  assertNoOutputClashes(
-    outputs.map((o) => ({ outputPath: o.outputPath, origin: toPosix(newTempDir, o.entry.sourcePath) })),
-  );
-  return { outputs };
+  return { outputs: [...renderedPairs.flat(), ...copiedPairs] };
 }
 
 /** The `noop` reason for an untracked file adopted because it already matches (#62). */

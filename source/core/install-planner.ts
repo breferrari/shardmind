@@ -19,9 +19,9 @@ import { ShardMindError, assertNever } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { isComputedDefault } from './schema.js';
 import { resolveModules } from './modules.js';
-import { assertNoOutputClashes, type OutputRef } from './output-clash.js';
+import { assertNoOutputClashes, plannedOutputRefs } from './output-clash.js';
 import { eachOutputPaths } from './renderer.js';
-import { sha256, mapConcurrent, toPosix } from './fs-utils.js';
+import { sha256, mapConcurrent } from './fs-utils.js';
 
 export interface Collision {
   outputPath: string;
@@ -259,14 +259,8 @@ export async function planOutputs(
     moduleFileCounts[id] = 0;
   }
 
-  // Where each output comes from, for the clash check below (#240).
-  const origins: OutputRef[] = [];
-  const tally = (
-    entry: { outputPath: string; module: string | null; sourcePath: string },
-    source: 'render' | 'copy',
-  ) => {
+  const tally = (entry: { outputPath: string; module: string | null }, source: 'render' | 'copy') => {
     outputs.push({ outputPath: entry.outputPath, source });
-    origins.push({ outputPath: entry.outputPath, origin: toPosix(tempDir, entry.sourcePath) });
     if (entry.module && entry.module in moduleFileCounts) {
       moduleFileCounts[entry.module]!++;
     } else if (!entry.module) {
@@ -281,7 +275,7 @@ export async function planOutputs(
       // eachOutputPaths refuses two items naming the same file (#234), so
       // every path here is distinct.
       for (const outputPath of eachOutputPaths(entry.outputPath, list)) {
-        tally({ outputPath, module: entry.module, sourcePath: entry.sourcePath }, 'render');
+        tally({ outputPath, module: entry.module }, 'render');
       }
     } else {
       tally(entry, 'render');
@@ -289,8 +283,10 @@ export async function planOutputs(
   }
   for (const entry of resolution.copy) tally(entry, 'copy');
 
-  // Two outputs naming one vault file are refused before any write (#240).
-  assertNoOutputClashes(origins);
+  // Two outputs naming one vault path are refused before any write (#240).
+  // Only with the values: without them (module review, the default
+  // selection) the plan is not the one that will be written.
+  if (values) assertNoOutputClashes(plannedOutputRefs(resolution, values, tempDir));
 
   return { outputs, moduleFileCounts, alwaysIncludedFileCount };
 }

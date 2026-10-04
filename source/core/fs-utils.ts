@@ -105,3 +105,12 @@ export function looksBinary(buf: Buffer): boolean {
 export function isBinaryForMerge(buf: Buffer): boolean {
   return looksBinary(buf) || !isUtf8(buf);
 }
+
+/**
+ * The comparison key for a vault path: NFC, then lower case, as the
+ * vault-path guard and rename migrations compare names. Two paths with the
+ * same key are one file on a case- and normalization-insensitive volume.
+ */
+export function foldOutputPath(outputPath: string): string {
+  return outputPath.normalize('NFC').toLowerCase();
+}

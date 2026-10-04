@@ -434,16 +434,16 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 **Remedy:** Give each item a name that differs by more than case or by characters a file name cannot hold, or a `slug` or `name` if it has neither. The list is usually the user's own: a `list` value typed at the wizard, or `values.<key>` in `shard-values.yaml`. The message names the value, both items and the file. A vault installed before #234 with such a list can't update until `shard-values.yaml` is fixed.
 
----
-
-## Update / merge
-
 
 ### `OUTPUT_PATH_CLASH`
 
 **Meaning:** Two shard outputs name the same vault file, identically or differing only in case or Unicode form: a static file and a template, two templates, or an `_each` expansion and either (#240). One write would overwrite the other, and on macOS or Windows the vault would track two names for one file. Refused before anything is written, by install, update and adopt; `shardmind validate` reports it before any user installs. The message names both sources.
 
 **Remedy:** Rename one of the two files in the shard, or (for an `_each` expansion) the list item the file is named after.
+
+---
+
+## Update / merge
 
 ### `MERGE_FAILED`
 
