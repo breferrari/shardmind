@@ -154,7 +154,7 @@ export function throwIfCancelled(signal: AbortSignal | undefined): void {
     throw new ShardMindError(
       'Cancelled.',
       'CANCELLED',
-      'The run was stopped with Ctrl+C and rolled back.',
+      'The run was stopped with Ctrl+C.',
     );
   }
 }

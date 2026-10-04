@@ -59,6 +59,8 @@ import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
 import {
   appendHookOutput,
   useSigintRollback,
+  isCancelledRun,
+  newRunAbort,
   stopRun,
   trackRun,
   type RunInFlight,
@@ -607,7 +609,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       setPhase({ kind: 'writing', total: 0, current: 0, label: 'Preparing…', history });
 
       try {
-        const abort = new AbortController();
+        const abort = newRunAbort();
         const run = runUpdate({
           vaultRoot,
           plan,
@@ -701,6 +703,11 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         });
       } catch (err) {
         runRef.current = null;
+        if (isCancelledRun(err)) {
+          // The Ctrl+C handler reports any rollback failure and exits 130.
+          finish({ kind: 'cancelled', reason: 'Cancelled with Ctrl+C.' });
+          return;
+        }
         finish({
           kind: 'error',
           error: err as Error,

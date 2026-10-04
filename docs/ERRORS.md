@@ -346,7 +346,7 @@ Thrown by `source/core/install-planner.ts` and `source/core/install-executor.ts`
 
 **Meaning:** An install, update or adopt was cancelled with Ctrl+C while it was writing (#249). Thrown by `throwIfCancelled` in `source/core/cancellation.ts`, which each executor calls before every write, so the run stops between two writes and is then rolled back once. The process exits 130.
 
-**Remedy:** None needed: the vault is as it was before the run. If the rollback could not put everything back, the message printed on exit lists what is left (`ROLLBACK_INCOMPLETE`).
+**Remedy:** None needed: the vault is as it was before the run. If the rollback could not put everything back, the list printed on exit names what is left (`ROLLBACK_INCOMPLETE`). A Ctrl+C after the run's last check, just before `state.json`, lets it finish instead, and the exit says so.
 
 ### `ROLLBACK_INCOMPLETE`
 

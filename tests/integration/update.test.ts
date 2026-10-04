@@ -485,7 +485,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     expect(needing).toContain(modifiedPath);
   });
 
-  it('fires onBackupReady before any writes, so SIGINT can roll back mid-run', async () => {
+  it('fires onBackupReady before any writes, once the snapshot is staged', async () => {
     // Round 4 /harden audit caught that the state machine was
     // populating its backupDirRef only AFTER runUpdate returned — so
     // a mid-write Ctrl-C would find the ref null and skip rollback.

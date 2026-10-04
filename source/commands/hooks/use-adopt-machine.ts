@@ -67,6 +67,8 @@ import { rollbackDetail } from '../../core/rollback-report.js';
 import {
   appendHookOutput,
   useSigintRollback,
+  isCancelledRun,
+  newRunAbort,
   stopRun,
   trackRun,
   type RunInFlight,
@@ -432,7 +434,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
       });
 
       try {
-        const abort = new AbortController();
+        const abort = newRunAbort();
         const run = runAdopt({
           vaultRoot,
           manifest: ctx.manifest,
@@ -524,6 +526,11 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         });
       } catch (err) {
         runRef.current = null;
+        if (isCancelledRun(err)) {
+          // The Ctrl+C handler reports any rollback failure and exits 130.
+          finish({ kind: 'cancelled', reason: 'Cancelled with Ctrl+C.' });
+          return;
+        }
         finish({
           kind: 'error',
           error: err as Error,

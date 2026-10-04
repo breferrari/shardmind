@@ -176,27 +176,68 @@ export function resetSigintRollbackForTests(): void {
  */
 export interface RunInFlight {
   readonly abort: AbortController;
-  /** Settles once the run and its rollback have finished, with what the rollback could not undo. */
-  readonly done: Promise<readonly RollbackFailure[]>;
+  /** Settles once the run and its rollback have finished. */
+  readonly done: Promise<RunEnd>;
+}
+
+/** How a run in flight ended. */
+export interface RunEnd {
+  /** It committed: the Ctrl+C came after its last check, and nothing was rolled back. */
+  readonly finished: boolean;
+  /** What its rollback could not undo (#247). */
+  readonly failures: readonly RollbackFailure[];
+}
+
+/** A run whose rollback the caller performs (install): settle `done` once it is over. */
+export interface OpenRun extends RunInFlight {
+  /** The first call wins; later ones do nothing. */
+  readonly settle: (end: RunEnd) => void;
+}
+
+/**
+ * The abort for a new run. Already aborted when a Ctrl+C was handled before
+ * the run started: the handler found no run to stop then, so the run stops
+ * itself before its first write instead of writing while the process exits.
+ */
+export function newRunAbort(): AbortController {
+  const abort = new AbortController();
+  if (sigintRollbackStarted) abort.abort();
+  return abort;
 }
 
 /** Track a run whose own catch rolls back (update, adopt): `done` follows it. */
 export function trackRun(abort: AbortController, run: Promise<unknown>): RunInFlight {
-  return { abort, done: run.then(() => [], (err: unknown) => rollbackFailuresOf(err)) };
+  return {
+    abort,
+    done: run.then(
+      () => ({ finished: true, failures: [] }),
+      (err: unknown) => ({ finished: false, failures: rollbackFailuresOf(err) }),
+    ),
+  };
 }
 
-/** A run whose rollback the caller performs (install): settle `done` once it is over. */
-export function openRun(): RunInFlight & { settle: (failures: readonly RollbackFailure[]) => void } {
-  let settle!: (failures: readonly RollbackFailure[]) => void;
-  const done = new Promise<readonly RollbackFailure[]>((resolve) => {
+/** A run whose rollback the caller performs (install). */
+export function openRun(): OpenRun {
+  let settle!: (end: RunEnd) => void;
+  const done = new Promise<RunEnd>((resolve) => {
     settle = resolve;
   });
-  return { abort: new AbortController(), done, settle };
+  return { abort: newRunAbort(), done, settle };
 }
 
 /** The Ctrl+C rollback: stop the run in flight and wait for it and its rollback. */
 export async function stopRun(run: RunInFlight | null): Promise<readonly RollbackFailure[]> {
   if (!run) return [];
   run.abort.abort();
-  return run.done;
+  const end = await run.done;
+  if (end.finished) {
+    process.stderr.write('\nThe run had already finished when Ctrl+C arrived; nothing was rolled back.\n');
+  }
+  return end.failures;
+}
+
+/** A run stopped by Ctrl+C, whether or not its rollback then left files behind. */
+export function isCancelledRun(err: unknown): boolean {
+  const code = (e: unknown) => (typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined);
+  return code(err) === 'CANCELLED' || code((err as { cause?: unknown } | null)?.cause) === 'CANCELLED';
 }

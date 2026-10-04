@@ -112,14 +112,14 @@ export interface AdoptRunnerOptions {
   onProgress?: (event: AdoptProgressEvent) => void;
   /**
    * Fires once after the snapshot is staged, before any vault write.
-   * Used by the command machine so a mid-write SIGINT can find the
-   * backup dir its rollback handler needs.
+   * Progress only: the rollback is runAdopt's own, in its catch, and a
+   * Ctrl+C reaches it through `signal` (#249).
    */
   onBackupReady?: (backupDir: string) => void;
   /**
    * Fires once per write or record-only action. `introduced=true` when
    * this run created the on-disk file (shard-only fresh install); the
-   * SIGINT rollback erases only those paths. `false` for matches /
+   * rollback erases only those paths. `false` for matches /
    * differs-keep-mine (we didn't write) and differs-use-shard (we
    * overwrote — restore-from-snapshot covers that one).
    */
@@ -422,6 +422,8 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
       // file the user put there mid-adopt, which the rollback must keep.
       addedPaths.push(VALUES_FILE);
       onFileTouched?.(VALUES_FILE, true);
+      // state.json commits the adopt: the last point a Ctrl+C can stop it.
+      throwIfCancelled(signal);
       await writeState(vaultRoot, state);
     }
 

@@ -793,6 +793,44 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     expect(await fsp.readdir(vault)).toEqual(['Home.md']);
   });
 
+  it('a Ctrl+C just before state.json still stops the adopt (#249)', async () => {
+    const { manifest, schema } = await loadShard();
+    const selections = defaultModuleSelections(schema);
+    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+    const adoptPlan = await classifyAdoption({
+      vaultRoot: vault,
+      schema,
+      manifest,
+      tempDir: MINIMAL_SHARD,
+      values: values as Record<string, unknown>,
+      selections,
+    });
+    const abort = new AbortController();
+    const err = await runAdopt({
+      vaultRoot: vault,
+      manifest,
+      schema,
+      tempDir: MINIMAL_SHARD,
+      resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
+      values: values as Record<string, unknown>,
+      selections,
+      plan: adoptPlan,
+      resolutions: {},
+      signal: abort.signal,
+      // shard-values.yaml is the last write before state.json.
+      onFileTouched: (rel) => {
+        if (rel === 'shard-values.yaml') abort.abort();
+      },
+    }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'CANCELLED' });
+    expect(await readState(vault)).toBeNull();
+    // Every file it wrote is gone. (The empty folders it made stay: adopt's
+    // rollback does not track folders yet, a separate gap.)
+    const entries = await fsp.readdir(vault, { recursive: true, withFileTypes: true });
+    expect(entries.filter((e) => e.isFile()).map((e) => e.name)).toEqual([]);
+  });
+
   it('runAdopt with a zero-classification plan still writes engine metadata', async () => {
     // Pin the empty-plan path: a shard whose every file is excluded
     // ends up with `matches=[], differs=[], shardOnly=[]`. Adopt
