@@ -171,6 +171,7 @@ The release pipeline, dependencies and test harness are settled: built, or decli
 | ⬜ | Run one fault-injection contract suite against every pipeline | [#267](https://github.com/breferrari/shardmind/issues/267) |
 | ⬜ | Vendor the remaining @inkjs/ui components into ui-kit and drop the dependency | [#273](https://github.com/breferrari/shardmind/issues/273) |
 | ⬜ | Upgrade to Ink 8 with React 19.3 and chalk 6 | [#270](https://github.com/breferrari/shardmind/issues/270) |
+| ⬜ | Drop the @inkjs/ui chalk override once Pastel stops depending on @inkjs/ui | [#277](https://github.com/breferrari/shardmind/issues/277) |
 
 ## Phase 9 — the second shard
 
