@@ -6,6 +6,42 @@ import type { ShardManifest } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
 
+/**
+ * A vault path in a rename migration: relative, POSIX, inside the vault
+ * and outside the engine's own `.shardmind/` (#178).
+ */
+const VaultPathSchema = z
+  .string()
+  .refine((p) => p.length > 0, 'Must not be empty')
+  .refine((p) => !p.includes('\\'), 'Must use forward slashes')
+  .refine((p) => !p.startsWith('/') && !/^[A-Za-z]:/.test(p), 'Must be relative to the vault')
+  .refine((p) => !p.split('/').includes('..'), 'Must stay inside the vault')
+  .refine((p) => p.split('/')[0] !== '.shardmind', 'Must not be under .shardmind/');
+
+const SemverSchema = z.string().refine((v) => semver.valid(v) !== null, 'Must be valid semver');
+
+const RenameMigrationSchema = z
+  .object({
+    from: SemverSchema,
+    to: SemverSchema,
+    renames: z.record(VaultPathSchema, VaultPathSchema),
+  })
+  .superRefine((m, ctx) => {
+    if (semver.valid(m.from) && semver.valid(m.to) && !semver.gt(m.to, m.from)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'Must be a later version than `from`' });
+    }
+    const seen = new Set<string>();
+    for (const [oldPath, newPath] of Object.entries(m.renames)) {
+      if (oldPath === newPath) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['renames', oldPath], message: 'Renames a path to itself' });
+      }
+      if (seen.has(newPath)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['renames', oldPath], message: `Two paths are renamed to ${newPath}` });
+      }
+      seen.add(newPath);
+    }
+  });
+
 export const ShardManifestSchema = z.object({
   apiVersion: z.literal('v1'),
   name: z.string().regex(/^[a-z0-9-]+$/, 'Must be lowercase alphanumeric with hyphens'),
@@ -60,6 +96,8 @@ export const ShardManifestSchema = z.object({
     // to block the install TUI on.
     timeout_ms: z.number().int().min(1_000).max(600_000).optional(),
   }).default({}),
+  // Path renames between releases (#178). See SHARD-LAYOUT.md §Rename migrations.
+  migrations: z.array(RenameMigrationSchema).optional(),
 });
 
 /**

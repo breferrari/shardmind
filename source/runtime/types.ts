@@ -4,6 +4,13 @@
  * See docs/IMPLEMENTATION.md §5, docs/ARCHITECTURE.md §18 for full documentation.
  */
 
+/** One release's path renames, old vault path → new (#178). */
+export interface RenameMigration {
+  from: string;
+  to: string;
+  renames: Record<string, string>;
+}
+
 export interface ShardManifest {
   apiVersion: 'v1';
   name: string;
@@ -52,6 +59,8 @@ export interface ShardManifest {
      */
     timeout_ms?: number;
   };
+  /** Path renames between releases, applied by `shardmind update` (#178). */
+  migrations?: RenameMigration[];
 }
 
 export interface ShardDependency {
