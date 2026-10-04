@@ -29,17 +29,33 @@ export interface RollbackFailure {
  */
 export function withRollbackFailures(err: unknown, failures: readonly RollbackFailure[]): unknown {
   if (failures.length === 0) return err;
-  const original = err instanceof ShardMindError
-    ? `${err.message} (${err.code})`
-    : err instanceof Error ? err.message : String(err);
+  const original = err instanceof ShardMindError ? `${err.message} (${err.code})` : reasonOf(err);
   const wrapped = new ShardMindError(
     `${original}\n${formatRollbackFailures(failures)}`,
     'ROLLBACK_INCOMPLETE',
     'Put each listed file back from its backup by hand before you run shardmind again.',
   );
-  (wrapped as Error & { rollbackFailures?: RollbackFailure[] }).rollbackFailures = [...failures];
-  (wrapped as Error & { cause?: unknown }).cause = err;
-  return wrapped;
+  return Object.assign(wrapped, { rollbackFailures: [...failures], cause: err });
+}
+
+/**
+ * Run a rollback and return what it could not undo. A rollback that throws
+ * partway is a failure too, never a clean one: it may have stopped before
+ * restoring anything.
+ */
+export async function attemptRollback(
+  rollback: () => Promise<RollbackFailure[]>,
+): Promise<RollbackFailure[]> {
+  try {
+    return await rollback();
+  } catch (err) {
+    return [{ path: '(the rollback)', reason: `stopped partway: ${reasonOf(err)}` }];
+  }
+}
+
+/** An error's message, or the thrown value as text. */
+export function reasonOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** The failures `withRollbackFailures` attached to `err`, or none. */

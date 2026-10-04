@@ -55,7 +55,7 @@ import {
   removeEngineWrites,
 } from './state.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
-import { withRollbackFailures, type RollbackFailure } from './rollback-report.js';
+import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
 
 /** Cap on parallel snapshot copies — same budget update-executor uses. */
 const SNAPSHOT_CONCURRENCY = 16;
@@ -417,13 +417,8 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     return { state, summary, backupDir };
   } catch (err) {
     if (!dryRun && backupDir) {
-      let failures: RollbackFailure[] = [];
-      try {
-        failures = await rollbackAdopt(vaultRoot, backupDir, addedPaths);
-      } catch {
-        // Don't mask the original failure with a rollback failure.
-      }
       // A file left unrestored is never reported as rolled back (#247).
+      const failures = await attemptRollback(() => rollbackAdopt(vaultRoot, backupDir, addedPaths));
       throw withRollbackFailures(err, failures);
     }
     throw err;
@@ -604,11 +599,6 @@ export async function rollbackAdopt(
   }
 
   return failures;
-}
-
-function reasonOf(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
 }
 
 async function writeVaultFileBuffer(

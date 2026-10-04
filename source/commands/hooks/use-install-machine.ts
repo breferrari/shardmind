@@ -47,7 +47,7 @@ import {
 import { assertSafeVaultPaths } from '../../core/vault-path-guard.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
-import { rollbackDetail, withRollbackFailures } from '../../core/rollback-report.js';
+import { attemptRollback, rollbackDetail, withRollbackFailures } from '../../core/rollback-report.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
 import {
   appendHookOutput,
@@ -544,7 +544,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           // path `runInstall` reported through `onFileWritten` (#207): its
           // own return value never arrives when it throws.
           installingRef.current = false;
-          const failures = await rollbackPartialInstall().catch(() => []);
+          const failures = await attemptRollback(rollbackPartialInstall);
           // A backup left unrestored is never reported as rolled back (#247).
           err = withRollbackFailures(err, failures);
         }

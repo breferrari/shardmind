@@ -20,7 +20,7 @@ import type {
   MergeStats,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { withRollbackFailures, type RollbackFailure } from './rollback-report.js';
+import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
@@ -354,15 +354,9 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     return { state: nextState, summary, backupDir };
   } catch (err) {
     if (!dryRun && backupDir) {
-      let rollbackFailures: RollbackFailure[] = [];
-      try {
-        rollbackFailures = await rollbackUpdate(vaultRoot, backupDir, addedPaths);
-      } catch {
-        // Rollback itself crashed — swallow and fall through to rethrow
-        // the original so we never mask the root-cause failure.
-      }
       // A file left unrestored is never reported as rolled back (#247).
-      throw withRollbackFailures(err, rollbackFailures);
+      const failures = await attemptRollback(() => rollbackUpdate(vaultRoot, backupDir, addedPaths));
+      throw withRollbackFailures(err, failures);
     }
     throw err;
   }
@@ -889,11 +883,6 @@ async function restoreTree(
       failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}`, backup: abs });
     }
   }
-}
-
-function reasonOf(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
 }
 
 // ---------------------------------------------------------------------------
