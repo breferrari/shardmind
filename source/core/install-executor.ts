@@ -31,7 +31,14 @@ import {
 import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
-import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
+import {
+  SHARDMIND_DIR,
+  VALUES_FILE,
+  STATE_FILE,
+  CACHED_MANIFEST,
+  CACHED_SCHEMA,
+  CACHED_TEMPLATES,
+} from '../runtime/vault-paths.js';
 
 export interface BackupRecord {
   originalPath: string;
@@ -53,11 +60,19 @@ export interface InstallRunnerOptions {
    * Used by the command layer to maintain a live rollback list for SIGINT.
    */
   onFileWritten?: (outputPath: string) => void;
+  /**
+   * Fires before a write with each vault-relative folder (POSIX) the write
+   * will create, so a rollback removes only folders this install made and
+   * never one the user already had (#215).
+   */
+  onDirCreated?: (dir: string) => void;
   dryRun?: boolean;
 }
 
 export interface InstallResult {
   writtenPaths: string[];
+  /** Folders this install created, as reported through `onDirCreated`. */
+  createdDirs: string[];
   state: ShardState;
   fileCount: number;
 }
@@ -238,7 +253,7 @@ export async function restoreBackups(
  * that fails partway is rolled back too.
  */
 export async function runInstall(opts: InstallRunnerOptions): Promise<InstallResult> {
-  const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, onFileWritten, dryRun } = opts;
+  const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, onFileWritten, onDirCreated, dryRun } = opts;
 
   const resolution = await resolveModules(schema, selections, tempDir);
   // Refuse before the first write, dry run included, if any path would
@@ -246,6 +261,17 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   await assertSafeVaultPaths(vaultRoot, [...resolution.render, ...resolution.copy].map((e) => e.outputPath));
   const totalFiles = resolution.render.length + resolution.copy.length;
   const writtenPaths: string[] = [];
+  const createdDirs: string[] = [];
+  // Report a path before its write, with every folder the write will create,
+  // so a rollback removes exactly what this install made (#207, #215).
+  const recordWrite = async (rel: string): Promise<void> => {
+    for (const dir of await missingAncestors(vaultRoot, rel)) {
+      createdDirs.push(dir);
+      onDirCreated?.(dir);
+    }
+    writtenPaths.push(rel);
+    onFileWritten?.(rel);
+  };
   const fileStates: Record<string, FileState> = {};
 
   onProgress?.({ kind: 'start', total: totalFiles });
@@ -277,8 +303,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     if (entry.iterator) await assertSafeVaultPaths(vaultRoot, files.map((f) => f.outputPath));
     for (const file of files) {
       if (!dryRun) {
-        writtenPaths.push(file.outputPath);
-        onFileWritten?.(file.outputPath);
+        await recordWrite(file.outputPath);
         await writeVaultFile(vaultRoot, file.outputPath, file.content);
       }
       fileStates[file.outputPath] = {
@@ -303,8 +328,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     const buffer = await fsp.readFile(entry.sourcePath);
     const hash = sha256(buffer);
     if (!dryRun) {
-      writtenPaths.push(entry.outputPath);
-      onFileWritten?.(entry.outputPath);
+      await recordWrite(entry.outputPath);
       await writeVaultFileBuffer(vaultRoot, entry.outputPath, buffer);
     }
     fileStates[entry.outputPath] = {
@@ -335,62 +359,75 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   };
 
   if (!dryRun) {
+    // The engine's own `.shardmind/` entries, each recorded like any other
+    // write: a rollback removes these and never `.shardmind/` wholesale,
+    // which may hold the user's files (`boundary-ignore`, #190, #215).
+    await recordWrite(toPosixRel(CACHED_TEMPLATES));
     await initShardDir(vaultRoot);
     await cacheTemplates(vaultRoot, tempDir);
+    await recordWrite(toPosixRel(CACHED_MANIFEST));
+    await recordWrite(toPosixRel(CACHED_SCHEMA));
     await cacheManifest(vaultRoot, manifest, schema, tempDir);
+    await recordWrite(toPosixRel(STATE_FILE));
     await writeState(vaultRoot, state);
+    // Recorded only once written: the exclusive write fails on the user's
+    // own stray values file, which must survive the rollback.
     await writeValuesFile(vaultRoot, values);
     writtenPaths.push(VALUES_FILE);
     onFileWritten?.(VALUES_FILE);
   }
 
-  return { writtenPaths, state, fileCount: totalFiles };
+  return { writtenPaths, createdDirs, state, fileCount: totalFiles };
 }
 
 /**
- * Roll back a partial install. Removes written files, cleans up empty
- * parent directories, deletes .shardmind/ if present, and restores any
- * backups. Best-effort — errors during rollback are swallowed because
- * the primary failure is already being reported.
+ * Roll back a partial install: remove every path it wrote (the engine's
+ * `.shardmind/` entries included), then the folders it created, then
+ * restore any backups. Removes only what this install made: never
+ * `.shardmind/` wholesale, and never a folder the user already had (#215).
+ * Best-effort — errors during rollback are swallowed because the primary
+ * failure is already being reported.
+ *
+ * `createdDirs` is what `runInstall` reported through `onDirCreated`. A
+ * caller without it gets a best-effort sweep of the written paths' empty
+ * parents, which can also remove an empty folder the user had made.
  */
 export async function rollbackInstall(
   vaultRoot: string,
   writtenPaths: string[],
   backups: BackupRecord[] = [],
+  createdDirs?: string[],
 ): Promise<void> {
-  const sortedByDepth = [...writtenPaths].sort(
-    (a, b) => b.split('/').length - a.split('/').length,
-  );
-  for (const rel of sortedByDepth) {
+  const deepestFirst = (paths: Iterable<string>) =>
+    [...paths].sort((a, b) => toPosixRel(b).split('/').length - toPosixRel(a).split('/').length);
+
+  for (const rel of deepestFirst(writtenPaths)) {
     try {
-      await fsp.unlink(path.join(vaultRoot, rel));
+      // removePath, not unlink: `.shardmind/templates` is a folder.
+      await removePath(path.join(vaultRoot, rel));
     } catch {
       // already gone
     }
   }
 
-  // Remove empty parent directories (best-effort, deepest first)
-  const dirs = new Set<string>();
-  for (const rel of writtenPaths) {
-    let dir = path.dirname(rel);
-    while (dir && dir !== '.' && dir !== '/') {
-      dirs.add(dir);
-      dir = path.dirname(dir);
+  let dirs: Iterable<string> | undefined = createdDirs;
+  if (!dirs) {
+    const parents = new Set<string>();
+    for (const rel of writtenPaths) {
+      let dir = path.posix.dirname(toPosixRel(rel));
+      while (dir && dir !== '.' && dir !== '/') {
+        parents.add(dir);
+        dir = path.posix.dirname(dir);
+      }
     }
+    dirs = parents;
   }
-  const sortedDirs = [...dirs].sort((a, b) => b.split('/').length - a.split('/').length);
-  for (const rel of sortedDirs) {
+  for (const rel of deepestFirst(dirs)) {
     try {
       await fsp.rmdir(path.join(vaultRoot, rel));
     } catch {
-      // non-empty or already gone
+      // non-empty (the user's files are in it) or already gone
     }
-  }
-
-  try {
-    await removePath(path.join(vaultRoot, SHARDMIND_DIR));
-  } catch {
-    // ignore
   }
 
   // Restore any backups last, so they land on paths that have been
@@ -398,6 +435,25 @@ export async function rollbackInstall(
   if (backups.length > 0) {
     await restoreBackups(backups);
   }
+}
+
+/** A vault-relative path in POSIX form, whichever separator it was built with. */
+function toPosixRel(rel: string): string {
+  return rel.split(path.sep).join('/');
+}
+
+/** The folders (POSIX, shallowest first) that writing `rel` will create. */
+async function missingAncestors(vaultRoot: string, rel: string): Promise<string[]> {
+  const parts = toPosixRel(rel).split('/').slice(0, -1);
+  const missing: string[] = [];
+  let current = '';
+  for (const part of parts) {
+    current = current ? `${current}/${part}` : part;
+    if (missing.length > 0 || !(await pathExists(path.join(vaultRoot, current)))) {
+      missing.push(current);
+    }
+  }
+  return missing;
 }
 
 async function writeVaultFile(
