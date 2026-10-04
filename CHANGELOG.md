@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (`_each` items that name the same file — #234)
+
+- **An `_each` list whose items name the same file is refused before anything is written.** `Alice` and `alice`, or `Bob/Ops` and `Bob-Ops`, used to write one file (the last item won), and on macOS or Windows the vault then tracked two names for it. Install, update and adopt now stop with `RENDER_ITERATOR_NAME_CLASH`, naming both items and the file.
+
 ### Fixed (a failed install keeps your files under `.shardmind/` — #215)
 
 - **A failed or cancelled fresh install no longer deletes your files under `.shardmind/`, or folders you had already made.** The rollback deleted the whole `.shardmind/` folder, which since #190 can hold your `boundary-ignore`, and removed any empty folder the install had written into. It now removes only what the install itself created.
