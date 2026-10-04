@@ -12,6 +12,7 @@ import {
   rehashManagedFiles,
   snapshotTrackedHashes,
   removeEngineWrites,
+  createBackupDir,
 } from '../../source/core/state.js';
 import type { ShardState, ShardManifest, ShardSchema } from '../../source/runtime/types.js';
 import { ShardMindError } from '../../source/runtime/types.js';
@@ -711,5 +712,30 @@ describe('removeEngineWrites (#215, #243)', () => {
     await fsp.mkdir(path.join(snapshot, 'files'), { recursive: true });
     expect(await removeEngineWrites(vault, { snapshotDir: snapshot, removeEmptyDir: true })).toEqual([]);
     await expect(fsp.access(path.join(vault, '.shardmind'))).rejects.toThrow();
+  });
+});
+
+describe('createBackupDir (#248)', () => {
+  let vault: string;
+  beforeEach(() => {
+    vault = path.join(os.tmpdir(), `backup-dir-${crypto.randomUUID()}`);
+  });
+  afterEach(async () => {
+    await fsp.rm(vault, { recursive: true, force: true });
+  });
+
+  it('gives two adopts in the same instant their own folders, the second suffixed', async () => {
+    const now = new Date('2026-10-04T12:00:00.123Z');
+    const a = await createBackupDir(vault, now, 'adopt');
+    const b = await createBackupDir(vault, now, 'adopt');
+    expect(path.basename(a)).toBe('adopt-2026-10-04T12-00-00-123');
+    expect(path.basename(b)).toBe('adopt-2026-10-04T12-00-00-123-1');
+  });
+
+  it('never reuses a folder that is already there, even an empty one', async () => {
+    const now = new Date('2026-10-04T12:00:00.000Z');
+    const taken = path.join(vault, '.shardmind', 'backups', 'adopt-2026-10-04T12-00-00-000');
+    await fsp.mkdir(taken, { recursive: true });
+    expect(await createBackupDir(vault, now, 'adopt')).toBe(`${taken}-1`);
   });
 });

@@ -85,7 +85,7 @@ async function plan(vaultRoot: string): Promise<AdoptPlan> {
   });
 }
 
-async function adopt(vaultRoot: string, resolutions: AdoptResolutions = {}) {
+async function adopt(vaultRoot: string, resolutions: AdoptResolutions = {}, now?: Date) {
   const { manifest, schema } = await loadShard();
   const selections = defaultModuleSelections(schema);
   const validator = buildValuesValidator(schema);
@@ -111,6 +111,7 @@ async function adopt(vaultRoot: string, resolutions: AdoptResolutions = {}) {
       selections,
       plan: adoptPlan,
       resolutions,
+      now,
     }),
   };
 }
@@ -704,6 +705,27 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
       spy.mockRestore();
     }
     expect(await fsp.readFile(path.join(notes, 'a.md'), 'utf-8')).toBe('the only copy\n');
+  });
+
+  it('two adopts started at the same instant snapshot to two folders (#248)', async () => {
+    const now = new Date('2026-10-04T12:00:00.000Z');
+    await fsp.writeFile(path.join(vault, 'Home.md'), 'first\n', 'utf-8');
+    const first = (await adopt(vault, { 'Home.md': 'use_shard' }, now)).result.backupDir!;
+    // Make the vault adoptable again: only the first snapshot under
+    // .shardmind/ and a Home.md with different user bytes.
+    for (const name of await fsp.readdir(vault)) {
+      if (name !== '.shardmind') await fsp.rm(path.join(vault, name), { recursive: true });
+    }
+    for (const name of await fsp.readdir(path.join(vault, '.shardmind'))) {
+      if (name !== 'backups') await fsp.rm(path.join(vault, '.shardmind', name), { recursive: true });
+    }
+    await fsp.writeFile(path.join(vault, 'Home.md'), 'second\n', 'utf-8');
+    const second = (await adopt(vault, { 'Home.md': 'use_shard' }, now)).result.backupDir!;
+
+    expect(second).not.toBe(first);
+    // The first snapshot still holds the first run's copy.
+    expect(await fsp.readFile(path.join(first, 'files', 'Home.md'), 'utf-8')).toBe('first\n');
+    expect(await fsp.readFile(path.join(second, 'files', 'Home.md'), 'utf-8')).toBe('second\n');
   });
 
   it('runAdopt with a zero-classification plan still writes engine metadata', async () => {

@@ -21,10 +21,8 @@ import {
   planUpdate,
   renderNewShard,
 } from '../../source/core/update-planner.js';
-import {
-  createBackupDir,
-  rollbackUpdate,
-} from '../../source/core/update-executor.js';
+import { rollbackUpdate } from '../../source/core/update-executor.js';
+import { createBackupDir } from '../../source/core/state.js';
 import { sha256 } from '../../source/core/fs-utils.js';
 import type {
   ShardSchema,
@@ -427,8 +425,8 @@ describe('createBackupDir — concurrency and clock edge cases', () => {
 
   it('allocates distinct directories when called twice at the exact same instant', async () => {
     const frozen = new Date('2026-04-20T10:30:45.123Z');
-    const a = await createBackupDir(tempRoot, frozen);
-    const b = await createBackupDir(tempRoot, frozen);
+    const a = await createBackupDir(tempRoot, frozen, 'update');
+    const b = await createBackupDir(tempRoot, frozen, 'update');
     expect(a).not.toBe(b);
     const statA = await fsp.stat(a);
     const statB = await fsp.stat(b);
@@ -438,8 +436,8 @@ describe('createBackupDir — concurrency and clock edge cases', () => {
 
   it('the second call lands under -1 when the first took the un-suffixed name', async () => {
     const frozen = new Date('2026-04-20T10:30:45.999Z');
-    const a = await createBackupDir(tempRoot, frozen);
-    const b = await createBackupDir(tempRoot, frozen);
+    const a = await createBackupDir(tempRoot, frozen, 'update');
+    const b = await createBackupDir(tempRoot, frozen, 'update');
     expect(path.basename(b)).toMatch(/-1$/);
     expect(a).not.toBe(b);
   });

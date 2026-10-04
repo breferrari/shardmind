@@ -38,7 +38,6 @@ import type {
 import { ShardMindError } from '../runtime/types.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import {
-  SHARDMIND_DIR,
   STATE_FILE,
   VALUES_FILE,
 } from '../runtime/vault-paths.js';
@@ -53,6 +52,7 @@ import {
   writeState,
   STATE_SCHEMA_VERSION,
   removeEngineWrites,
+  createBackupDir,
 } from './state.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
 import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
@@ -250,7 +250,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     plan.matches.length + plan.shardOnly.length + plan.differs.length;
   onProgress?.({ kind: 'start', total: totalActions });
 
-  const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now);
+  const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now, 'adopt');
   const addedPaths: string[] = [];
 
   const fileStates: Record<string, FileState> = {};
@@ -470,13 +470,6 @@ function buildFileState(
     ownership,
     ...(c.iteratorKey ? { iterator_key: c.iteratorKey } : {}),
   };
-}
-
-async function createBackupDir(vaultRoot: string, now: Date): Promise<string> {
-  const stamp = now.toISOString().replace(/:/g, '-').replace(/\..+$/, '');
-  const backupDir = path.join(vaultRoot, SHARDMIND_DIR, 'backups', `adopt-${stamp}`);
-  await fsp.mkdir(backupDir, { recursive: true });
-  return backupDir;
 }
 
 /**

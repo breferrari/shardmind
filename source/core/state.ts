@@ -404,3 +404,39 @@ export async function removeEngineWrites(
   }
   return failures;
 }
+
+/**
+ * Allocate this run's snapshot folder, `.shardmind/backups/<kind>-<stamp>`,
+ * for update and adopt alike (#248). The stamp is to the millisecond and the
+ * folder is created exclusively (`recursive: false` surfaces EEXIST), with
+ * `-<n>` on a taken name, so two runs started in the same instant never
+ * share a snapshot: a rollback of one would overwrite or delete the other's
+ * copies. The suffix also guards against clock rewinds, coarse filesystem
+ * mtime granularity, and two concurrent runs that hit the exact same
+ * millisecond. Pattern mirrors `install-executor.uniqueBackupPath`.
+ */
+export async function createBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt'): Promise<string> {
+  const stamp = now.toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
+  const base = path.join(vaultRoot, SHARDMIND_DIR, 'backups', `${kind}-${stamp}`);
+  for (let i = 0; i < 1000; i++) {
+    const candidate = i === 0 ? base : `${base}-${i}`;
+    try {
+      await fsp.mkdir(candidate, { recursive: false });
+      return candidate;
+    } catch (err) {
+      const code = errnoCode(err);
+      if (code === 'ENOENT') {
+        // Parent folders don't exist yet. Create them, then retry this name.
+        await fsp.mkdir(path.dirname(base), { recursive: true });
+        i--;
+        continue;
+      }
+      if (code !== 'EEXIST') throw err;
+    }
+  }
+  throw new ShardMindError(
+    `Could not allocate a unique ${kind} backup directory under ${SHARDMIND_DIR}/backups/`,
+    kind === 'update' ? 'UPDATE_WRITE_FAILED' : 'ADOPT_WRITE_FAILED',
+    `Too many recent ${kind} runs with the same timestamp — clean up old ${kind}-* directories and retry.`,
+  );
+}
