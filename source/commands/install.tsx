@@ -137,6 +137,8 @@ export default function Install({ args, options }: Props) {
             durationMs={phase.durationMs}
             backups={phase.backups}
             replaced={phase.replaced}
+            removed={phase.removed}
+            keptStale={phase.keptStale}
             hooks={phase.hooks}
             dryRun={phase.dryRun}
           />

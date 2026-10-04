@@ -223,18 +223,27 @@ export async function discardSetAside(
   setAside: BackupRecord[],
   oldState: BackupRecord | undefined,
   vaultRoot: string,
-): Promise<void> {
+): Promise<BackupRecord[]> {
+  // What could not be removed is still there under its backup name, and is
+  // returned so the summary lists it rather than calling it removed (#228).
+  const left: BackupRecord[] = [];
   for (const record of setAside) {
     if (record === oldState) {
       try {
         await carryOverBackups(record.backupPath, vaultRoot);
         await carryOverUserEntries(record.backupPath, vaultRoot);
       } catch {
+        left.push(record);
         continue;
       }
     }
-    await removePath(record.backupPath).catch(() => {});
+    try {
+      await removePath(record.backupPath);
+    } catch {
+      left.push(record);
+    }
   }
+  return left;
 }
 
 async function uniqueBackupPath(absolutePath: string, stamp: string): Promise<string> {

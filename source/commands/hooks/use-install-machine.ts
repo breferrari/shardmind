@@ -36,6 +36,9 @@ import {
   missingValueKeys,
   defaultModuleSelections,
   splitByOwnContent,
+  staleOutputs,
+  detectStale,
+  stillFiles,
   type Collision,
 } from '../../core/install-planner.js';
 import {
@@ -46,6 +49,7 @@ import {
   type BackupRecord,
 } from '../../core/install-executor.js';
 import { assertSafeVaultPaths } from '../../core/vault-path-guard.js';
+import { toPosix } from '../../core/fs-utils.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
 import { attemptRollback, rollbackDetail, withRollbackFailures, type RollbackFailure } from '../../core/rollback-report.js';
@@ -86,7 +90,7 @@ export type Phase =
   | { kind: 'loading'; message: string }
   | { kind: 'gate'; state: ShardState; ctx: PreparedContext }
   | { kind: 'wizard'; ctx: PreparedContext }
-  | { kind: 'collision'; collisions: Collision[]; untouched: Collision[]; result: WizardResult; ctx: PreparedContext }
+  | { kind: 'collision'; collisions: Collision[]; untouched: Collision[]; stale: StaleFiles; result: WizardResult; ctx: PreparedContext }
   | { kind: 'installing'; total: number; current: number; label: string; history: string[]; ctx: PreparedContext; result: WizardResult; backups: BackupRecord[] }
   | RunningHookPhase // a lifecycle hook (bootstrap / personalize / legacy
       // post-install) is streaming output. We are already past the
@@ -94,7 +98,7 @@ export type Phase =
       // but does NOT roll the install back. See docs/ARCHITECTURE.md §9.3 for
       // the Helm-style contract. Shape shared with update via core/hook.ts so
       // `appendHookOutput` narrows generically.
-  | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; fileCount: number; durationMs: number; backups: BackupRecord[]; replaced: string[]; hooks: HookOutcome[]; dryRun: boolean }
+  | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; fileCount: number; durationMs: number; backups: BackupRecord[]; replaced: string[]; removed: string[]; keptStale: string[]; hooks: HookOutcome[]; dryRun: boolean }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
 
@@ -108,7 +112,18 @@ interface PlacedCollisions {
   setAside: BackupRecord[];
   /** The record in `setAside` for a reinstall's old `.shardmind/`. */
   oldState?: BackupRecord;
+  /** Files the previous install wrote and this one no longer plans, untouched: removed (#228). */
+  removed: string[];
+  /** The same, edited by the user: kept where they are, no longer tracked (#228). */
+  keptStale: string[];
 }
+
+/**
+ * The previous install's files a reinstall no longer plans, split by
+ * whether the user edited them (#228). Never prompted for, backed up or
+ * overwritten: there is no shard version of them.
+ */
+type StaleFiles = Awaited<ReturnType<typeof splitByOwnContent>>;
 
 export interface UseInstallMachineInput {
   shardRef: string;
@@ -429,7 +444,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       placed: PlacedCollisions,
       run: OpenRun | null,
     ) => {
-      const { backups, replaced, setAside, oldState } = placed;
+      const { backups, replaced, setAside, oldState, removed, keptStale } = placed;
       const start = Date.now();
       const history: string[] = [];
 
@@ -511,7 +526,12 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         // replaced file and an old install's state leave no backup (#55).
         // The old state's own backups (update and adopt snapshots) move into
         // the new one first; they can be the only copy of a file.
-        await discardSetAside(setAside, oldState, vaultRoot);
+        const left = await discardSetAside(setAside, oldState, vaultRoot);
+        // A stale file whose set-aside copy could not be deleted is still in
+        // the vault under its backup name: listed as such, never as removed.
+        const leftPaths = new Set(left.map((r) => toPosix(vaultRoot, r.originalPath)));
+        const removedNow = removed.filter((rel) => !leftPaths.has(rel));
+        const leftBackups = left.filter((r) => r !== oldState);
 
         // The hook orchestrator owns slot selection (bootstrap → personalize,
         // legacy post-install once), per-slot context, write-boundary checks,
@@ -533,7 +553,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
               values: result.values,
               modules: result.selections,
               newFiles: [],
-              removedFiles: [],
+              // A reinstall removes the files the shard no longer has (#228).
+              removedFiles: dryRun ? [] : removedNow,
               dryRun: Boolean(dryRun),
             },
             {
@@ -554,8 +575,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           vaultRoot,
           fileCount: runResult.fileCount,
           durationMs: Date.now() - start,
-          backups,
+          backups: [...backups, ...leftBackups],
           replaced,
+          removed: dryRun ? removed : removedNow,
+          keptStale,
           hooks: hookOutcomes,
           dryRun: Boolean(dryRun),
         });
@@ -607,14 +630,21 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       own: Collision[],
       untouched: Collision[],
       policy: 'backup' | 'overwrite',
+      stale: StaleFiles,
     ) => {
       // Classified before a prompt that may have stayed open: a file edited
       // since is the user's now, so check the untouched ones again.
       const recheck = await splitByOwnContent(untouched, ctx.previous ?? null);
       const ownNow = [...own, ...recheck.own];
       const replaced = policy === 'overwrite' ? ownNow.map((c) => c.outputPath) : [];
+      // A stale file edited during the prompts is the user's now: kept (#228).
+      const staleNow = await splitByOwnContent(stale.untouched, ctx.previous ?? null);
+      const removed = staleNow.untouched.map((c) => c.outputPath);
+      // Only files still there are reported as kept: a folder at the path,
+      // or a file deleted meanwhile, is not one the user edited.
+      const keptStale = await stillFiles(vaultRoot, [...stale.own, ...staleNow.own]);
       if (dryRun) {
-        await executeInstall(ctx, result, { backups: [], replaced, setAside: [] }, null);
+        await executeInstall(ctx, result, { backups: [], replaced, setAside: [], removed, keptStale }, null);
         return;
       }
       const oldInstall = ctx.previous
@@ -634,7 +664,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       try {
         try {
           await backupCollisions(
-            [...oldInstall, ...recheck.untouched, ...ownNow],
+            [...oldInstall, ...recheck.untouched, ...staleNow.untouched, ...ownNow],
             undefined,
             (record) => {
               moved.push(record);
@@ -664,6 +694,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
             replaced,
             setAside: moved.filter((m) => !kept.has(m.originalPath)),
             oldState: moved.find((m) => m.originalPath === oldStatePath),
+            removed,
+            keptStale,
           },
           run,
         );
@@ -687,22 +719,29 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         // Refuse before any prompt or move, as update and adopt do, so a dry
         // run and the run agree (#163). `runInstall` checks again at write
         // time, for a caller that plans without values.
-        await assertSafeVaultPaths(vaultRoot, outputs.map((o) => o.outputPath));
-        const collisions = await detectCollisions(vaultRoot, outputs.map((o) => o.outputPath));
+        // A reinstall also removes the files the shard no longer has (#228):
+        // those go through the guard as deletes, as an update's do.
+        const plannedPaths = outputs.map((o) => o.outputPath);
+        const stalePaths = staleOutputs(ctx.previous ?? null, plannedPaths);
+        await assertSafeVaultPaths(vaultRoot, plannedPaths, stalePaths);
+        const collisions = await detectCollisions(vaultRoot, plannedPaths);
 
         // Only the user's own content is prompted for, backed up or
         // reported; a reinstall's untouched files are simply replaced.
         const { own, untouched } = await splitByOwnContent(collisions, ctx.previous ?? null);
+        // What the previous install wrote and this one no longer plans: an
+        // untouched one is removed, an edited one kept as the user's (#228).
+        const stale = await splitByOwnContent(await detectStale(vaultRoot, stalePaths), ctx.previous ?? null);
         if (own.length > 0 && force) {
-          await placeCollisions(ctx, validatedResult, own, untouched, 'overwrite');
+          await placeCollisions(ctx, validatedResult, own, untouched, 'overwrite', stale);
         } else if (own.length > 0 && !nonInteractive) {
-          setPhase({ kind: 'collision', collisions: own, untouched, result: validatedResult, ctx });
+          setPhase({ kind: 'collision', collisions: own, untouched, stale, result: validatedResult, ctx });
         } else {
           // Non-interactive policy: auto-backup. Applies to both `--yes` and
           // `--defaults`; the collision UI requires interactive input neither
           // mode can provide. With nothing of the user's in the way this only
           // sets a reinstall's old install aside.
-          await placeCollisions(ctx, validatedResult, own, untouched, 'backup');
+          await placeCollisions(ctx, validatedResult, own, untouched, 'backup', stale);
         }
       } catch (err) {
         finish({ kind: 'error', error: err as Error });
@@ -718,14 +757,14 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   const onCollisionChoice = useCallback(
     async (action: CollisionAction) => {
       if (phase.kind !== 'collision') return;
-      const { collisions, untouched, result, ctx } = phase;
+      const { collisions, untouched, stale, result, ctx } = phase;
       if (action === 'cancel') {
         finish({ kind: 'cancelled', reason: 'User cancelled at collision review.' });
         return;
       }
 
       try {
-        await placeCollisions(ctx, result, collisions, untouched, action);
+        await placeCollisions(ctx, result, collisions, untouched, action, stale);
       } catch (err) {
         finish({ kind: 'error', error: err as Error });
       }

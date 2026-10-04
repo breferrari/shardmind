@@ -28,6 +28,10 @@ interface SummaryProps {
   backups: BackupRecord[];
   /** Vault-relative paths replaced with no backup: Overwrite or `--force` (#55). */
   replaced: string[];
+  /** Files the previous install wrote that the shard no longer has, untouched: removed (#228). */
+  removed?: string[];
+  /** The same, edited by the user: kept, and theirs from now on (#228). */
+  keptStale?: string[];
   hooks: HookOutcome[];
   dryRun?: boolean;
 }
@@ -39,6 +43,8 @@ export default function Summary({
   durationMs,
   backups,
   replaced,
+  removed = [],
+  keptStale = [],
   hooks,
   dryRun,
 }: SummaryProps) {
@@ -63,6 +69,16 @@ export default function Summary({
         paths={replaced}
       />
 
+      <PathList
+        title={`${dryRun ? 'Would remove' : 'Removed'} ${fileCountLabel(removed.length, '')} the shard no longer has:`}
+        paths={removed}
+      />
+
+      <PathList
+        title={`${dryRun ? 'Would keep' : 'Kept'} ${fileCountLabel(keptStale.length, '')} you edited that the shard no longer has; ${keptStale.length === 1 ? "it's" : "they're"} yours now:`}
+        paths={keptStale}
+      />
+
       <HookSummarySection outcomes={hooks} />
 
       {!dryRun && (
@@ -78,8 +94,8 @@ export default function Summary({
 /** Paths shown before the "…and K more" line. */
 const PATHS_VISIBLE = 10;
 
-function fileCountLabel(n: number): string {
-  return `${n} existing file${n === 1 ? '' : 's'}`;
+function fileCountLabel(n: number, adjective = 'existing'): string {
+  return `${n} ${adjective ? `${adjective} ` : ''}file${n === 1 ? '' : 's'}`;
 }
 
 /** A titled path list, truncated after `PATHS_VISIBLE`; renders nothing when empty. */
