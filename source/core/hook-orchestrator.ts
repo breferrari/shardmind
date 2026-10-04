@@ -42,6 +42,8 @@ import {
 import {
   detectManagedWrites,
   detectUnmanagedCreates,
+  eitherIgnores,
+  loadBoundaryIgnore,
   snapshotUnmanaged,
   type HookViolation,
   type UnmanagedSnapshot,
@@ -146,6 +148,8 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   // Lazily loaded once and reused across a slot's before/after snapshots so
   // the vault `.shardmindignore` is parsed at most once per run.
   let ignore: IgnoreFilter | undefined;
+  // Why `.shardmind/boundary-ignore` was not applied, when it was not (#190).
+  let ignoreProblem: string | undefined;
   // Tracked-file hashes before any slot runs. The re-hash compares against
   // this, not against `rendered_hash`: a file the user edited before the
   // hook phase differs from its recorded baseline without any hook touching
@@ -189,7 +193,13 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
     // the hook runs (so bootstrap's own artifacts are already in the baseline).
     let unmanagedBefore: UnmanagedSnapshot | undefined;
     if (job.boundary === 'unmanaged-create') {
-      ignore ??= await loadIgnoreSafe(plan.vaultRoot);
+      if (!ignore) {
+        // The vault owner's exclusions (#190) join the vault's .shardmindignore.
+        const own = await loadBoundaryIgnore(plan.vaultRoot);
+        const base = await loadIgnoreSafe(plan.vaultRoot);
+        ignore = own.filter ? eitherIgnores(base, own.filter) : base;
+        ignoreProblem = own.problem;
+      }
       unmanagedBefore = await snapshotUnmanaged(plan.vaultRoot, ignore);
     }
 
@@ -227,7 +237,11 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
       violation = detectUnmanagedCreates(after, unmanagedBefore, state);
     }
 
-    const summary = summarize(result, { violation, deprecated: job.deprecated });
+    const summary = summarize(result, {
+      violation,
+      deprecated: job.deprecated,
+      ignoreProblem: job.boundary === 'unmanaged-create' ? ignoreProblem : undefined,
+    });
     // Persist the full output (and attach the pointer) when the hook crashed or
     // its output is long enough that the Summary will truncate it.
     const withLog = summary ? await attachHookLog(plan.vaultRoot, job.slot, summary) : summary;
@@ -357,19 +371,20 @@ export function bootstrapShouldRerun(
 /** Merge a boundary violation / deprecation flag into a HookResult summary. */
 function summarize(
   result: HookResult,
-  extra: { violation: HookViolation | null; deprecated?: boolean },
+  extra: { violation: HookViolation | null; deprecated?: boolean; ignoreProblem?: string },
 ): HookSummary | null {
   const summary = summarizeHook(result);
   // Nothing to render: the hook produced no summary (e.g. the script vanished
   // between lookup and run → `absent`) and there's no violation/deprecation
   // note to surface on its own.
-  if (!summary && !extra.violation && !extra.deprecated) return null;
+  if (!summary && !extra.violation && !extra.deprecated && !extra.ignoreProblem) return null;
   const merged: HookSummary = summary ? { ...summary } : {};
   if (extra.violation) {
     merged.violation = { kind: extra.violation.kind, paths: extra.violation.paths };
     if (extra.violation.unreadable) merged.violation.unreadable = extra.violation.unreadable;
   }
   if (extra.deprecated) merged.deprecated = true;
+  if (extra.ignoreProblem) merged.ignoreProblem = extra.ignoreProblem;
   return merged;
 }
 

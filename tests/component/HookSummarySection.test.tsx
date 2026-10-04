@@ -160,6 +160,23 @@ describe('HookSummarySection', () => {
     expect(frame).toContain('Personalize hook boundary check incomplete: could not read the vault root, .cache');
   });
 
+  it('suggests .shardmind/boundary-ignore, and its cost, on an incomplete walk (#190)', () => {
+    const frame = out([
+      { slot: 'personalize', summary: { exitCode: 0, violation: { kind: 'incomplete', paths: ['.cache'] } } },
+    ]).lastFrame() ?? '';
+    expect(frame.replace(/\s+/g, ' ')).toContain('list it in .shardmind/boundary-ignore');
+    expect(frame.replace(/\s+/g, ' ')).toContain('go unchecked');
+  });
+
+  it('warns when .shardmind/boundary-ignore was not applied (#190)', () => {
+    const frame = out([
+      { slot: 'personalize', summary: { exitCode: 0, ignoreProblem: 'it matches every name at the vault root' } },
+    ]).lastFrame() ?? '';
+    const flat = frame.replace(/\s+/g, ' ');
+    expect(flat).toContain('Did not apply .shardmind/boundary-ignore: it matches every name at the vault root');
+    expect(flat).toContain('The check ran without it.');
+  });
+
   it('lists unreadable folders beside an unmanaged-create violation', () => {
     const frame = out([
       {

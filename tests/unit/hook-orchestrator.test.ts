@@ -220,6 +220,44 @@ describe('runHooks — write-boundary detection', () => {
     expect(v, 'post-hook walk missed .cache/stray.json').toEqual({ kind: 'unmanaged-create', paths: ['.cache/stray.json'] });
   }, 30_000);
 
+  it('skips a folder the vault owner excluded in .shardmind/boundary-ignore (#190)', async () => {
+    await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind', 'boundary-ignore'), '.cache/\n');
+    await hook('personalize.ts', `
+      import { writeFile, mkdir } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx) {
+        await mkdir(join(ctx.vaultRoot, '.cache'), { recursive: true });
+        await writeFile(join(ctx.vaultRoot, '.cache', 'stray.json'), '{}');
+      }
+    `);
+    const result = await runHooks(
+      installPlan({ manifest: manifest({ personalize: '.shardmind/hooks/personalize.ts' }), values: { user_name: 'Alice' } }),
+      NOOP_UI,
+    );
+    // The user's explicit trade: a write into an excluded folder goes unseen.
+    expect(violationOf(result, 'personalize')).toBeUndefined();
+  }, 30_000);
+
+  it('does not apply a boundary-ignore that matches everything, and says so (#190)', async () => {
+    await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind', 'boundary-ignore'), '**\n');
+    await hook('personalize.ts', `
+      import { writeFile, mkdir } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx) {
+        await mkdir(join(ctx.vaultRoot, '.cache'), { recursive: true });
+        await writeFile(join(ctx.vaultRoot, '.cache', 'stray.json'), '{}');
+      }
+    `);
+    const result = await runHooks(
+      installPlan({ manifest: manifest({ personalize: '.shardmind/hooks/personalize.ts' }), values: { user_name: 'Alice' } }),
+      NOOP_UI,
+    );
+    expect(violationOf(result, 'personalize')).toEqual({ kind: 'unmanaged-create', paths: ['.cache/stray.json'] });
+    expect(result.outcomes.find((o) => o.slot === 'personalize')?.summary?.ignoreProblem).toMatch(/every name/);
+  }, 30_000);
+
   it('reports the check as incomplete when the post-hook walk cannot read a folder (#175)', async () => {
     await hook('personalize.ts', `
       import { writeFile, mkdir } from 'node:fs/promises';

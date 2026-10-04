@@ -188,6 +188,11 @@ export interface HookSummary {
    * See `source/core/hook-boundary.ts`.
    */
   violation?: { kind: 'managed-write' | 'unmanaged-create' | 'incomplete'; paths: string[]; unreadable?: string[] };
+  /**
+   * Why the vault owner's `.shardmind/boundary-ignore` was not applied to the
+   * personalize walk (#190); the UI warns `HOOK_BOUNDARY_IGNORE_INVALID`.
+   */
+  ignoreProblem?: string;
   stdout?: string;
   stderr?: string;
   exitCode?: number;
