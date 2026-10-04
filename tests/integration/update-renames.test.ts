@@ -848,7 +848,46 @@ describe('update applies rename migrations (#178)', () => {
       expect(await vaultTree()).toEqual(before);
     });
 
-    it('a Ctrl+C mid-update, rolled back as the command does, leaves the vault as it was', async () => {
+    it("a failure between a folder's two renames leaves the vault as it was", async () => {
+      await install();
+      await write('brain/mine.md', 'mine\n');
+      const before = await vaultTree();
+      const v2 = await folderCase('0.2.0', changeNote);
+      // The folder's hop into its new spelling fails; on a case-folding
+      // filesystem it is then at its temporary name.
+      const realRename = fsp.rename;
+      vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+        if (path.basename(String(to)) === 'Brain') throw new Error('rename interrupted');
+        return realRename(from, to);
+      });
+      await expect(update(v2)).rejects.toThrow();
+      vi.restoreAllMocks();
+      expect(await vaultTree()).toEqual(before);
+    });
+
+    it('moves a nested folder whose case changes, and a failure mid-way leaves the vault as it was', async () => {
+      // 0.1.0 ships brain/Sub/Deep.md; 0.2.0 renames brain/ to Brain/ and Sub/ to sub/.
+      const v1 = await shardAt('0.1.0', { edits: { 'brain/Sub/Deep.md': () => 'deep\n' } });
+      await install(v1);
+      await write('brain/Sub/mine.md', 'mine\n');
+      const before = await vaultTree();
+      const nested = (version: string, edits: SourceEdits = {}) =>
+        shardAt(version, { from: v1, moves: { brain: 'Brain', 'Brain/Sub': 'Brain/sub' }, edits });
+      failVaultWrite(1);
+      await expect(update(await nested('0.2.0', changeNote))).rejects.toMatchObject({ code: 'UPDATE_WRITE_FAILED' });
+      vi.restoreAllMocks();
+      expect(await vaultTree()).toEqual(before);
+      await update(await nested('0.2.0'));
+      expect(Object.keys(await files())).toEqual(expect.arrayContaining(['Brain/North Star.md', 'Brain/sub/Deep.md']));
+      expect(await read('Brain/sub/Deep.md')).toBe('deep\n');
+      if (await foldsCase()) {
+        expect(await brainNames()).toEqual(['Brain']);
+        expect((await fsp.readdir(path.join(vault, 'Brain'))).filter((n) => n.toLowerCase() === 'sub')).toEqual(['sub']);
+        expect(await fsp.readdir(path.join(vault, 'Brain', 'sub'))).toContain('mine.md');
+      }
+    });
+
+    it('a Ctrl+C mid-update, rolled back from the backup and touched paths the SIGINT handler holds, leaves the vault as it was', async () => {
       await install();
       await write('brain/mine.md', 'mine\n');
       const before = await vaultTree();

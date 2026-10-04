@@ -739,11 +739,12 @@ async function recordFolders(
   backupDir: string,
 ): Promise<void> {
   const folders = new Set<string>();
-  const paths = [...touched.writes, ...touched.deletes, ...folderMoves.map((m) => `${m.to}/x`)];
-  for (const rel of paths) {
+  const addFolders = (rel: string, includeLast: boolean) => {
     const segments = rel.split('/');
-    for (let i = 1; i < segments.length; i++) folders.add(segments.slice(0, i).join('/'));
-  }
+    for (let i = 1; i < segments.length + (includeLast ? 1 : 0); i++) folders.add(segments.slice(0, i).join('/'));
+  };
+  for (const rel of [...touched.writes, ...touched.deletes]) addFolders(rel, false);
+  for (const move of folderMoves) addFolders(move.to, true);
   const created = await mapConcurrent([...folders], SNAPSHOT_CONCURRENCY, async (rel) =>
     (await pathExists(path.join(vaultRoot, rel))) ? null : rel,
   );
@@ -866,8 +867,9 @@ export async function rollbackUpdate(
 
   // Put back the old spelling of every file or folder renamed in place by
   // case (#169, #195). Either order with the restore below gives the same
-  // tree on a case-folding filesystem (mutation-checked against the rollback
-  // tests); undo-first is chosen for readability.
+  // tree on a case-folding filesystem (mutation-checked against the folder
+  // rollback tests in tests/integration/update-renames.test.ts); undo-first
+  // is chosen for readability.
   failures.push(...(await undoCaseHops(vaultRoot, backupDir)));
 
   // Remove anything we newly introduced first so the restore-step can't

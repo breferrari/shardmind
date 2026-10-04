@@ -179,6 +179,12 @@ export async function isFreeFor(vaultRoot: string, from: string, to: string): Pr
   return isCaseOnlyRename(from, to) && sameFile(vaultRoot, from, to);
 }
 
+/** Whether the folder holding `rel` lists its last segment exactly as `rel` spells it. */
+async function spelledAs(vaultRoot: string, rel: string): Promise<boolean> {
+  const names = await fsp.readdir(path.join(vaultRoot, path.posix.dirname(rel))).catch(() => null);
+  return names?.includes(path.posix.basename(rel)) ?? false;
+}
+
 /** One in-place case rename, recorded before it starts so a rollback can undo it. */
 export interface CaseHop {
   from: string;
@@ -207,6 +213,9 @@ export async function renameCaseInPlace(
   journal?: CaseJournal,
 ): Promise<boolean> {
   if (!isCaseOnlyRename(from, to) || !(await sameFile(vaultRoot, from, to))) return false;
+  // Only a folder on the way changed case, and that folder was renamed: the
+  // entry already has its new spelling.
+  if (await spelledAs(vaultRoot, to)) return true;
   const tmp = path.posix.join(
     path.posix.dirname(to),
     `.${path.posix.basename(to)}.shardmind-case-${crypto.randomBytes(4).toString('hex')}`,
@@ -221,12 +230,18 @@ export async function renameCaseInPlace(
 
 const CASE_JOURNAL = 'case-renames.json';
 
-/** A journal that appends each hop to `<backupDir>/case-renames.json`. */
+/**
+ * A journal that appends each hop to `<backupDir>/case-renames.json`, written
+ * to a temporary file and renamed over it, so a kill mid-write leaves the
+ * previous whole journal rather than a truncated one.
+ */
 export function caseJournal(backupDir: string): CaseJournal {
   const hops: CaseHop[] = [];
+  const file = path.join(backupDir, CASE_JOURNAL);
   return async (hop) => {
     hops.push(hop);
-    await fsp.writeFile(path.join(backupDir, CASE_JOURNAL), JSON.stringify(hops), 'utf-8');
+    await fsp.writeFile(`${file}.tmp`, JSON.stringify(hops), 'utf-8');
+    await fsp.rename(`${file}.tmp`, file);
   };
 }
 
@@ -242,8 +257,11 @@ export async function undoCaseHops(
   let hops: CaseHop[];
   try {
     hops = JSON.parse(await fsp.readFile(path.join(backupDir, CASE_JOURNAL), 'utf-8')) as CaseHop[];
-  } catch {
-    return [];
+  } catch (err) {
+    // No journal: the run renamed nothing in place. An unreadable one is a
+    // rollback that cannot be completed, and says so.
+    if (isEnoent(err)) return [];
+    return [{ path: CASE_JOURNAL, reason: `case-rename journal unreadable: ${err instanceof Error ? err.message : String(err)}` }];
   }
   const failures: Array<{ path: string; reason: string }> = [];
   for (const hop of [...hops].reverse()) {

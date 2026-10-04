@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ShardManifestSchema } from '../../source/core/manifest.js';
-import { caseOnlyRenames, parseFromVersion, renamesBetween, sameFile } from '../../source/core/rename-migrations.js';
+import { caseOnlyRenames, parseFromVersion, renamesBetween, sameFile, undoCaseHops } from '../../source/core/rename-migrations.js';
 import { foldsCase } from '../helpers/fs-capabilities.js';
 
 const caseFolds = await foldsCase();
@@ -196,6 +196,14 @@ describe('sameFile (#169)', () => {
     await fsp.writeFile(path.join(dir, 'Notes', 'Foo.md'), 'x');
     await fsp.writeFile(path.join(dir, 'notes', 'Foo.md'), 'y');
     expect(await sameFile(dir, 'Notes/Foo.md', 'notes/Foo.md')).toBe(false);
+  });
+
+  it('undoCaseHops reports an unreadable journal instead of undoing nothing silently (#195)', async () => {
+    expect(await undoCaseHops(dir, dir)).toEqual([]);
+    await fsp.writeFile(path.join(dir, 'case-renames.json'), '[{"from":"a","to":"A","tm');
+    const failures = await undoCaseHops(dir, dir);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]!.reason).toMatch(/journal unreadable/);
   });
 
   it('is false when either path reaches nothing', async () => {
