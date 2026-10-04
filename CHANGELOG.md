@@ -17,6 +17,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **A hook's output is shown as text only.** Terminal control sequences a hook prints no longer reach your terminal. That covers links whose text hides their target (OSC 8), clipboard writes (OSC 52), window titles, cursor movement, bells and backspaces. A progress line redrawn with carriage returns shows its last state. Colour codes follow the colour rule above.
 
+### Fixed (a shard archive that would fill the disk — #32)
+
+- **A shard's tarball can no longer extract to an unbounded size.** Extraction stops at 256 MiB or 100,000 entries, counted before anything past the limit is written, so a small, highly compressed archive (a decompression bomb) cannot fill the disk. The error is `SHARD_TOO_LARGE`. For scale, obsidian-mind extracts to about 6.9 MB in 318 entries.
+  - Raise the limits for a shard you trust with `SHARDMIND_MAX_SHARD_SIZE` (e.g. `1G`) or `SHARDMIND_MAX_SHARD_ENTRIES`. An invalid value is refused (`DOWNLOAD_LIMIT_INVALID`).
+
 ### Fixed (NO_COLOR — #37)
 
 - **`NO_COLOR` now turns colour off in a terminal.** Any non-empty value works, per [no-color.org](https://no-color.org); an empty one does not. `FORCE_COLOR` still turns colour on, even when piped, and wins when both are set. `--help` output, and `--json` output read through a pipe, carry no colour codes. A hook's own colour codes are dropped from its displayed output when colour is off.

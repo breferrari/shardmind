@@ -81,9 +81,23 @@ Thrown by `source/core/download.ts`.
 
 **Meaning:** The downloaded bytes weren't a valid tar archive.
 
-**Typical cause:** The URL didn't point at a tarball, GitHub served a redirect page, or the archive is corrupted.
+**Typical cause:** The URL didn't point at a tarball, GitHub served a redirect page, or the archive is corrupted. Also raised for an entry whose declared size is not a number (#32), which only a malformed or crafted archive has.
 
 **Remedy:** Open the tarball URL in a browser to see what's actually served. Verify the tag exists.
+
+### `SHARD_TOO_LARGE`
+
+**Meaning:** The shard's tarball would extract to more than the size or entry-count limit, so extraction stopped before writing past it and the temporary folder was removed. The message names the limit that tripped. The limits count what the archive's entries declare, which is what extraction writes, so a small, highly compressed archive (a decompression bomb) trips them too.
+
+**Limits:** 256 MiB of extracted bytes and 100,000 entries by default. For scale, obsidian-mind (v9.0.0) extracts to about 6.9 MB in 318 entries (measured 2026-10-04), so the defaults leave about 37x and 300x headroom.
+
+**Remedy:** If you trust a shard that is legitimately this large, raise the limit for that run with `SHARDMIND_MAX_SHARD_SIZE` (bytes, or with a `K`/`M`/`G` suffix, e.g. `1G`) or `SHARDMIND_MAX_SHARD_ENTRIES`. Otherwise, do not install it.
+
+### `DOWNLOAD_LIMIT_INVALID`
+
+**Meaning:** `SHARDMIND_MAX_SHARD_SIZE` or `SHARDMIND_MAX_SHARD_ENTRIES` is set to something that is not a positive whole number (with an optional `K`/`M`/`G` suffix for the size). It is refused rather than ignored, so a typo never silently removes or changes a limit. A variable set to an empty string counts as invalid: unset it instead.
+
+**Remedy:** Fix or unset the variable.
 
 ### `DOWNLOAD_MISSING_MANIFEST`
 
