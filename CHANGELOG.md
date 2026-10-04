@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Internal (one rollback contract for every pipeline — #267)
+
+- **Install, update and adopt now share one fault-injection contract.** 241 table rows fail a write, a rename, a mkdir or a restore, or press Ctrl+C at each step. After every row, the vault must be byte-identical to before, except what the error names. It found #264 and #269. `npm run test:coverage` reports coverage, with no thresholds yet.
+
 ### Fixed (no snapshot writes after a failure — #274)
 
 - **When an update or adopt fails while snapshotting your files, the rollback no longer races copies still being written.** A failed copy made the snapshot step give up at once, while its other copies went on writing into the snapshot the rollback was restoring from. Now it waits for the copies under way, and starts no new one.
