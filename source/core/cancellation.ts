@@ -100,17 +100,17 @@ export function attachStdinCancellation(stdin: StdinLike, deps: CancellationDeps
     if (!setRawMode) return;
     let observing = false;
     stdin.setRawMode = (mode: boolean) => {
-      // Detach before switching off and attach after switching on, so a
-      // throw from the real call (a hung-up terminal) never leaves the
-      // observer attached outside raw mode, where it would flow the stream.
-      if (!mode && observing) {
-        observing = false;
-        stdin.removeListener('data', onData);
-      }
+      // The real call first, both ways. If switching on throws, Ink never
+      // adds its reader, so nothing may be attached. If switching off
+      // throws, Ink keeps its reader (it removes it only after the call
+      // returns), so the observer stays, and Ctrl+C still cancels.
       const result = setRawMode(mode);
       if (mode && !observing) {
         observing = true;
         stdin.on('data', onData);
+      } else if (!mode && observing) {
+        observing = false;
+        stdin.removeListener('data', onData);
       }
       return result;
     };

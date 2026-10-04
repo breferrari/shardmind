@@ -76,19 +76,28 @@ describe('attachStdinCancellation — TTY (raw mode, #155)', () => {
     expect(received.join('')).toBe(`ab${ETX}c`);
   });
 
-  it('detaches before switching raw mode off, even if that call throws', () => {
+  it('keeps observing when switching raw mode off throws, as Ink keeps reading', async () => {
     const stdin = fakeStdin(true);
     let fail = false;
     stdin.setRawMode = () => {
       if (fail) throw new Error('EIO');
       return stdin;
     };
-    attachStdinCancellation(stdin, deps(true));
+    const d = deps(true);
+    attachStdinCancellation(stdin, d);
+    const received: string[] = [];
+    const onReadable = () => {
+      let chunk: Buffer | null;
+      while ((chunk = stdin.read() as Buffer | null) !== null) received.push(chunk.toString());
+    };
     stdin.setRawMode!(true);
-    expect(stdin.listenerCount('data')).toBe(1);
+    stdin.addListener('readable', onReadable);
     fail = true;
+    // Ink's disableRawMode throws here, before it removes its reader.
     expect(() => stdin.setRawMode!(false)).toThrow('EIO');
-    expect(stdin.listenerCount('data')).toBe(0);
+    stdin.push(ETX);
+    await tick();
+    expect(d.emitSigint).toHaveBeenCalledTimes(1);
   });
 
   it('attaches nothing when switching raw mode on throws', () => {
