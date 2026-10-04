@@ -8,6 +8,15 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (rename migrations on update — #178)
+
+- **A shard can move a file between releases without losing your edits.** It declares the move in `shard.yaml` under `migrations: [{ from, to, renames: { old: new } }]`, and `shardmind update` carries the file to its new path:
+  - a file you never edited moves or is updated there;
+  - an edited one is merged there with the release's changes, or offered in the conflict prompt;
+  - the old path goes.
+- The summary lists each move, and `update --dry-run --json` gives each moved file its `renamedFrom`.
+- Without a declared rename, a moved file is still removed and added fresh, as before.
+
 ### Fixed (Ctrl+C during a download — #57)
 
 - **Ctrl+C while a shard is downloading no longer leaves its temp folder behind.** Install, update and adopt registered the cleanup of their `shardmind-<id>` temp folder only once the download finished, so an interrupt during it left the folder in the system temp directory.
