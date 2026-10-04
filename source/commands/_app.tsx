@@ -1,4 +1,4 @@
-import type { AppProps } from 'pastel';
+import type { AppProps } from '../cli-kit/index.js';
 import CrashBoundary from '../components/CrashBoundary.js';
 import { jsonCommandOf } from '../core/json-output.js';
 import { resolveEngineVersion } from './hooks/cli-version.js';

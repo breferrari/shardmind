@@ -65,4 +65,15 @@ describe('cli-kit boundary (#277)', () => {
     expect(fs.readFileSync(path.join(KIT, 'LICENSE-sindresorhus'), 'utf-8')).toMatch(/Copyright \(c\) Sindre Sorhus/);
   });
 
+  it('leaves no pastel import anywhere in source/ or tests/', () => {
+    const found: string[] = [];
+    for (const dir of ['source', 'tests']) {
+      for (const file of sourceFiles(path.join(REPO, dir))) {
+        if (specifiers(fs.readFileSync(file, 'utf-8')).some((spec) => spec === 'pastel' || spec.startsWith('pastel/'))) {
+          found.push(path.relative(REPO, file));
+        }
+      }
+    }
+    expect(found).toEqual([]);
+  });
 });
