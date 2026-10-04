@@ -177,7 +177,7 @@ describe('assertShardInstallable (#35)', () => {
     const err = await assertShardInstallable(shard, {}).catch((e: unknown) => e);
     expect(err).toMatchObject({ code: 'INSTALL_SHARD_INVALID' });
     expect((err as Error).message).toMatch(/2 problems/);
-    expect((err as Error).message).toMatch(/RENDER_\w+ brain\/Broken One\.md/);
+    expect((err as Error).message).toMatch(/brain\/Broken One\.md: [\s\S]* \[RENDER_\w+\]/);
     expect((err as Error).message).toMatch(/extras\/Broken Two\.md/);
   });
 

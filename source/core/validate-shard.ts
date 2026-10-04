@@ -9,7 +9,7 @@ import path from 'node:path';
 import { downloadShard } from './download.js';
 import { resolve as resolveRef } from './registry.js';
 import { loadValuesYaml } from './values-io.js';
-import { lintShard, type LintFinding } from './lint-shard.js';
+import { errorFindings, lintShard, type LintFinding } from './lint-shard.js';
 import { emitJson, jsonFailure, jsonSuccess } from './json-output.js';
 import { ShardMindError } from '../runtime/types.js';
 
@@ -72,7 +72,7 @@ export async function validateShard(
 }
 
 function report(target: string, findings: LintFinding[]): ValidateReport {
-  const errors = findings.filter((f) => f.severity === 'error').length;
+  const errors = errorFindings(findings).length;
   return { target, findings, errors, warnings: findings.length - errors };
 }
 

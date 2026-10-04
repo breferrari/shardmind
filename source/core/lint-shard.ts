@@ -161,7 +161,12 @@ function isComputed(value: unknown): boolean {
 }
 
 
-/** Value findings: the answers are wrong, not the shard. */
+/** The error findings, warnings dropped. */
+export function errorFindings(findings: readonly LintFinding[]): LintFinding[] {
+  return findings.filter((f) => f.severity === 'error');
+}
+
+/** Codes `lintShard` emits when the values are wrong, not the shard (its values step). */
 const VALUE_CODES = new Set(['VALUES_INVALID', 'COMPUTED_DEFAULT_FAILED']);
 
 /**
@@ -172,14 +177,13 @@ const VALUE_CODES = new Set(['VALUES_INVALID', 'COMPUTED_DEFAULT_FAILED']);
  * every one; warnings never block.
  */
 export async function assertShardInstallable(shardDir: string, prefill: Record<string, unknown>): Promise<void> {
-  let { findings } = await lintShard(shardDir, { values: prefill });
-  const errorsOf = (fs: LintFinding[]) => fs.filter((f) => f.severity === 'error');
-  if (errorsOf(findings).some((f) => VALUE_CODES.has(f.code)) && Object.keys(prefill).length > 0) {
-    findings = (await lintShard(shardDir, {})).findings;
+  let errors = errorFindings((await lintShard(shardDir, { values: prefill })).findings);
+  if (Object.keys(prefill).length > 0 && errors.some((f) => VALUE_CODES.has(f.code))) {
+    errors = errorFindings((await lintShard(shardDir, {})).findings);
   }
-  const errors = errorsOf(findings);
   if (errors.length === 0) return;
-  const lines = errors.map((f) => `  - ${f.code}${f.path ? ` ${f.path}` : ''}: ${f.message}`);
+  // The shape `shardmind validate` prints each finding in.
+  const lines = errors.map((f) => `  - ${f.path ? `${f.path}: ` : ''}${f.message} [${f.code}]`);
   throw new ShardMindError(
     `The shard has ${errors.length} problem${errors.length === 1 ? '' : 's'}; nothing was asked or written:\n${lines.join('\n')}`,
     'INSTALL_SHARD_INVALID',
