@@ -169,16 +169,22 @@ describe('update --dry-run --json that would need answers', () => {
     expect(doc).toMatchObject({ ok: true });
   }, 120_000);
 
-  it('answers an up-to-date vault with an empty plan instead of nothing', async () => {
+  it('answers an up-to-date vault with a plan marked upToDate instead of nothing', async () => {
     stub.setVersion(plainBump.slug, '0.1.0', plainBump.v01);
     stub.setLatest(plainBump.slug, '0.1.0');
-    const vault = await createInstalledVault({ stub, shardRef: `github:${plainBump.slug}`, values: VALUES, prefix: 'update-json-current' });
-    vaults.push(vault);
-    const { doc, exitCode } = await updateJson(vault);
-    expect(exitCode).toBe(0);
-    const plan = doc as unknown as Plan;
-    expect(plan.ok).toBe(true);
-    expect(plan.result.files).toEqual([]);
-    expect(Object.values(plan.result.counts).every((n) => n === 0)).toBe(true);
+    try {
+      const vault = await createInstalledVault({ stub, shardRef: `github:${plainBump.slug}`, values: VALUES, prefix: 'update-json-current' });
+      vaults.push(vault);
+      const { doc, exitCode } = await updateJson(vault);
+      expect(exitCode).toBe(0);
+      const plan = doc as unknown as Plan & { result: { upToDate?: boolean; version?: string } };
+      expect(plan.ok).toBe(true);
+      expect(plan.result.upToDate).toBe(true);
+      expect(plan.result.version).toBe('0.1.0');
+      expect(plan.result.files).toEqual([]);
+      expect(Object.values(plan.result.counts).every((n) => n === 0)).toBe(true);
+    } finally {
+      stub.setLatest(plainBump.slug, '0.2.0');
+    }
   }, 120_000);
 });

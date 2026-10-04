@@ -563,14 +563,16 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         stub.setVersion(REMOVED_FILE_SLUG, '0.2.0', v02);
         stub.setLatest(REMOVED_FILE_SLUG, '0.2.0');
 
-        const r = mountUpdate({ vaultRoot: vault.root, options: { dryRun: true, json: true } });
+        mountUpdate({ vaultRoot: vault.root, options: { dryRun: true, json: true } });
+        // Under --json the tree renders nothing, so a hidden prompt shows up
+        // only as a document that never arrives.
         const deadline = Date.now() + 30_000;
         while (!written.join('').includes('"schemaVersion"') && Date.now() < deadline) await tick(50);
+        expect(written.join(''), 'no JSON document within 30 s: the run is waiting on a prompt').toContain('"schemaVersion"');
         const doc = JSON.parse(written.join('')) as { ok: boolean; error: { code: string; message: string } };
         expect(doc.ok).toBe(false);
         expect(doc.error.code).toBe('UPDATE_JSON_NEEDS_ANSWERS');
         expect(doc.error.message).toContain('CLAUDE.md');
-        expect(r.lastFrame() ?? '').not.toContain('Removed by new shard');
       } finally {
         await vault.cleanup();
       }

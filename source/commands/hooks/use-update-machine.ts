@@ -330,7 +330,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           if (disposed) return;
           // A --json run always answers with a document (#230): nothing to
           // do is an empty plan, in the same shape as any other.
-          if (json && dryRun) emitJson(jsonSuccess('update', upToDatePlanResult({ dryRun: true })));
+          if (json && dryRun) emitJson(jsonSuccess('update', upToDatePlanResult({ dryRun: true, version: state.version })));
           finish({ kind: 'up-to-date', manifest: newManifest, state });
           return;
         }
@@ -422,34 +422,6 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     [],
   );
 
-  const continueAfterValues = useCallback(
-    (ctx: PreparedContext, values: Record<string, unknown>) => {
-      const validated = validateValues(ctx.newSchema, values);
-      if (ctx.newOptionalModules.length > 0) {
-        if (json) {
-          // Under --json the modules question cannot be asked. Carry it on
-          // as pending with --yes's answer (include them), so the removed-
-          // files check runs too and one refusal names every decision (#230).
-          const pendingModules = ctx.newOptionalModules.map((m) => m.id);
-          const included = mergeModuleSelections(
-            ctx.state.modules,
-            ctx.newSchema,
-            Object.fromEntries(pendingModules.map((id) => [id, 'included'])),
-          );
-          void continueWithRemovedPrompt(ctx, validated, included, pendingModules);
-          return;
-        }
-        setPhase({ kind: 'prompt-new-modules', ctx, values: validated });
-        return;
-      }
-      const selections = mergeModuleSelections(ctx.state.modules, ctx.newSchema, {});
-      void continueWithRemovedPrompt(ctx, validated, selections);
-    },
-    // continueWithRemovedPrompt is declared below, so it cannot be listed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [json],
-  );
-
   /** The rename migrations between the installed and the new version, applied to state and drift (#178). */
   const resolveRenames = (ctx: PreparedContext, drift: DriftReport, newFilePlan: NewFilePlan) =>
     applyRenames({
@@ -488,10 +460,10 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           // refusal, so following its hint decides nothing unannounced.
           const pending: Array<{ decision: string; answer: string }> = [];
           if (pendingModules.length > 0) {
-            pending.push({ decision: `new optional modules (${listed(pendingModules)})`, answer: 'include them' });
+            pending.push({ decision: `new optional modules (${pendingModules.join(', ')})`, answer: 'include the new modules' });
           }
           if (removedModified.length > 0 && !yes) {
-            pending.push({ decision: `removed files you edited (${listed(removedModified)})`, answer: 'keep them' });
+            pending.push({ decision: `removed files you edited (${removedModified.join(', ')})`, answer: 'keep the removed files' });
           }
           if (pending.length > 0) {
             throw jsonNeedsAnswers(
@@ -518,6 +490,32 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [vaultRoot, yes, dryRun, json, finish],
+  );
+
+  const continueAfterValues = useCallback(
+    (ctx: PreparedContext, values: Record<string, unknown>) => {
+      const validated = validateValues(ctx.newSchema, values);
+      if (ctx.newOptionalModules.length > 0) {
+        if (json) {
+          // Under --json the modules question cannot be asked. Carry it on
+          // as pending with --yes's answer (include them), so the removed-
+          // files check runs too and one refusal names every decision (#230).
+          const pendingModules = ctx.newOptionalModules.map((m) => m.id);
+          const included = mergeModuleSelections(
+            ctx.state.modules,
+            ctx.newSchema,
+            Object.fromEntries(pendingModules.map((id) => [id, 'included'])),
+          );
+          void continueWithRemovedPrompt(ctx, validated, included, pendingModules);
+          return;
+        }
+        setPhase({ kind: 'prompt-new-modules', ctx, values: validated });
+        return;
+      }
+      const selections = mergeModuleSelections(ctx.state.modules, ctx.newSchema, {});
+      void continueWithRemovedPrompt(ctx, validated, selections);
+    },
+    [json, continueWithRemovedPrompt],
   );
 
   const runPlanAndResolve = useCallback(
@@ -800,19 +798,18 @@ function throwNoInstall(): never {
 }
 
 /**
- * The error for a --json run that reached a decision it would prompt for
+ * The error for a --json run that reached decisions it would prompt for
  * (#230). update.tsx renders nothing under --json, so a prompt would wait
  * unseen and no document would be written; this becomes the run's one JSON
- * failure document instead.
+ * failure document instead. A JSON document is never capped, so every path
+ * is named.
  */
-/** At most 10 items, then a count, as the update's other path lists. */
-function listed(items: readonly string[]): string {
-  const shown = items.slice(0, 10).join(', ');
-  return items.length > 10 ? `${shown} and ${items.length - 10} more` : shown;
-}
-
 function jsonNeedsAnswers(decision: string, hint: string): ShardMindError {
-  return new ShardMindError(`--json cannot answer the update's question about ${decision}`, 'UPDATE_JSON_NEEDS_ANSWERS', hint);
+  return new ShardMindError(
+    `--json cannot answer the update's question about ${decision}`,
+    'UPDATE_JSON_NEEDS_ANSWERS',
+    hint,
+  );
 }
 
 /**

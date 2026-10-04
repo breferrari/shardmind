@@ -265,6 +265,13 @@ function updateFile(action: UpdateAction): UpdatePlanFile {
 
 export interface UpdatePlanResult {
   readonly dryRun: boolean;
+  /**
+   * Only on an up-to-date vault, with its installed version (#230). A normal
+   * plan lists every tracked file, so this is what tells "nothing to do" from
+   * an empty shard.
+   */
+  readonly upToDate?: true;
+  readonly version?: string;
   readonly counts: UpdatePlan['counts'];
   readonly files: readonly UpdatePlanFile[];
 }
@@ -282,9 +289,9 @@ export function updatePlanResult(
   };
 }
 
-/** An up-to-date vault's plan: the same shape, nothing to do (#230). */
-export function upToDatePlanResult(opts: { dryRun: boolean }): UpdatePlanResult {
-  return { dryRun: opts.dryRun, counts: emptyUpdatePlanCounts(), files: [] };
+/** An up-to-date vault's plan: marked, with its version, and nothing to do (#230). */
+export function upToDatePlanResult(opts: { dryRun: boolean; version: string }): UpdatePlanResult {
+  return { dryRun: opts.dryRun, upToDate: true, version: opts.version, counts: emptyUpdatePlanCounts(), files: [] };
 }
 
 // ---------------------------------------------------------------------------
