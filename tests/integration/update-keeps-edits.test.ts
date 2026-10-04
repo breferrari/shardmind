@@ -1099,6 +1099,62 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     });
   });
 
+  // chmod does not stop root from writing, so these cannot fail the update there.
+  const asRoot = process.getuid?.() === 0;
+
+  it.skipIf(asRoot)('a rolled-back update leaves the template cache exactly as it was, with no template from the new version (#264)', async () => {
+    await install();
+    const cacheDir = path.join(vault, '.shardmind', 'templates');
+    const tree = async (dir: string): Promise<Record<string, string>> => {
+      const out: Record<string, string> = {};
+      for (const rel of (await fsp.readdir(dir, { recursive: true })) as string[]) {
+        const abs = path.join(dir, rel);
+        if ((await fsp.stat(abs)).isFile()) out[rel.split(path.sep).join('/')] = sha256(await fsp.readFile(abs));
+      }
+      return out;
+    };
+    const before = await tree(cacheDir);
+    // 0.2.0 adds a template the cache never had.
+    const shard2 = await shardAt('0.2.0', { 'brain/Added In 0.2.md.njk': () => '# Added\n' });
+    // Fail the update after the template cache is rewritten: the values
+    // file is written next, and a read-only one refuses the write.
+    const valuesPath = path.join(vault, 'shard-values.yaml');
+    await fsp.chmod(valuesPath, 0o444);
+    try {
+      await expect(update(shard2)).rejects.toThrow();
+    } finally {
+      await fsp.chmod(valuesPath, 0o644);
+    }
+    expect(await tree(cacheDir)).toEqual(before);
+  });
+
+  it.skipIf(asRoot)('a rolled-back update leaves no template cache where there was none before (#264)', async () => {
+    await install();
+    const cacheDir = path.join(vault, '.shardmind', 'templates');
+    await fsp.rm(cacheDir, { recursive: true, force: true });
+    const valuesPath = path.join(vault, 'shard-values.yaml');
+    await fsp.chmod(valuesPath, 0o444);
+    try {
+      await expect(update(await shardAt('0.2.0', { 'brain/Added In 0.2.md.njk': () => '# Added\n' }))).rejects.toThrow();
+    } finally {
+      await fsp.chmod(valuesPath, 0o644);
+    }
+    await expect(fsp.access(cacheDir)).rejects.toThrow();
+  });
+
+  it('a rollback whose snapshot never finished leaves the live template cache alone (#264)', async () => {
+    await install();
+    const cacheDir = path.join(vault, '.shardmind', 'templates');
+    const before = await fsp.readdir(cacheDir, { recursive: true });
+    // A snapshot cut short by a failed copy: no templates copy, no marker.
+    const backupDir = path.join(root, 'cut-short-backup');
+    await fsp.mkdir(path.join(backupDir, 'cache'), { recursive: true });
+    const { rollbackUpdate } = await import('../../source/core/update-executor.js');
+    const failures = await rollbackUpdate(vault, backupDir, []);
+    expect(failures).toEqual([]);
+    expect(await fsp.readdir(cacheDir, { recursive: true })).toEqual(before);
+  });
+
   it('a pristine copy-origin file is still overwritten silently when its source changes', async () => {
     await install();
     const { plan } = await update(await shardAt('0.2.0', { [COPY]: (s) => s.replace(COPY_LINE, 'New upstream line.') }));
