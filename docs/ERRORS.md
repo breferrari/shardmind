@@ -382,6 +382,12 @@ The engine refuses rather than falling back to schema defaults, because a silent
 
 **Remedy:** Pass `--values <file>` to supply answers, or `--yes` to accept schema defaults deliberately. `--values` alone is sufficient without a TTY.
 
+### `INSTALL_SHARD_INVALID`
+
+**Meaning:** Before asking anything, install checks the downloaded shard the way `shardmind validate` does: every module included, every template rendered with the schema defaults, or with your `--values` over them. At least one check failed, so the install stopped before the wizard and before any write to the vault. The message lists every problem with its code and the file it is about. A template that fails here is a bug in the shard, even when it sits in a module you meant to leave out.
+
+**Remedy:** Shard author: run `shardmind validate` on the shard and fix what it reports. User: if a `--values` file is passed, check the values it names; otherwise report the problem to the shard's author, or install an earlier version of the shard (`owner/repo@<version>`).
+
 ### `INSTALL_GATE_NON_INTERACTIVE`
 
 **Meaning:** The target directory is already shardmind-managed, so the install needs an answer from the existing-install gate, and there is no interactive terminal to ask for one. `--yes` does **not** answer this gate — overwriting a managed vault is not a default the engine assumes on your behalf.
