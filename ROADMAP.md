@@ -165,6 +165,7 @@ The release pipeline, dependencies and test harness are settled: built, or decli
 | ✅ | TUI testing framework — continuing-hardening tracker | [#122](https://github.com/breferrari/shardmind/issues/122) |
 | ⬜ | Run the Layer 2 real-terminal tests on Windows under ConPTY | [#174](https://github.com/breferrari/shardmind/issues/174) |
 | ⬜ | Reach the write-phase SIGINT rollback deterministically in E2E | [#186](https://github.com/breferrari/shardmind/issues/186) |
+| ⬜ | Run one fault-injection contract suite against every pipeline | [#267](https://github.com/breferrari/shardmind/issues/267) |
 
 ## Phase 9 — the second shard
 
