@@ -32,6 +32,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
   - If you save with markers still in the file, the prompt says so and asks: edit again, use it as is, or keep yours.
   - With neither variable set, the option isn't shown. The disabled "(Open in editor · v0.2)" placeholder is gone.
 
+### Added (one shardmind run per vault — #253)
+
+- **Only one `install`, `update` or `adopt` runs on a vault at a time.** Two runs at once, such as two agents updating the same vault, could each overwrite the other's state and undo the other's work. A run now holds `.shardmind.lock` at the vault root from its start until it ends. A second run stops with `VAULT_LOCKED`, which names the run holding the vault and its PID.
+  - A lock left behind on this computer by a run that crashed or was killed is taken over, with a one-line note.
+  - A lock from another computer (a synced vault) is never taken over; the error says `.shardmind.lock` is safe to delete if no shardmind is running.
+  - `--dry-run`, status (`shardmind`, `--json`) and `validate` only read, so they never wait on the lock.
+
 ### Fixed (two adopts never share a snapshot folder — #248)
 
 - **Each adopt now keeps its snapshot of your files in its own folder.** Adopt named the folder to the second and reused one that was already there. A retry within the same second, after an adopt that failed and kept its snapshot, wrote over the first copies, and its own rollback could then delete them. It now names the folder the way update does, to the millisecond and never reusing one.

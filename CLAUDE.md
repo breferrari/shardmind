@@ -137,6 +137,7 @@ shardmind/
 │   │       ├── use-self-update-check.ts # Async npm-registry check + suppression rules (#113)
 │   │       ├── use-self-update-banner.tsx # Composed hook: pkg.version + check + <SelfUpdateBanner /> (#113)
 │   │       ├── cli-version.ts         # Bundle-aware shardmind pkg.version resolver (#113)
+│   │       ├── use-vault-lock.ts      # take/release the vault lock in install/update/adopt (#253)
 │   │       ├── update-check-option.ts # Shared --no-update-check option, named for the positive (#147)
 │   │       └── shared.ts              # summarizeHook, useSigintRollback
 │   ├── components/
@@ -193,6 +194,7 @@ shardmind/
 │   │   ├── values-io.ts               # Shared YAML load for shard-values.yaml
 │   │   ├── values-defaults.ts         # `valuesAreDefaults(values, schema)` — Invariant 2 helper
 │   │   ├── update-check.ts            # 24h cached latest-version lookup (status + update)
+│   │   ├── vault-lock.ts              # One run per vault: <vault>/.shardmind.lock, stale takeover, exit backstop (#253)
 │   │   ├── self-update-check.ts       # 24h cached npm-registry check for newer engine versions (#113)
 │   │   ├── status.ts                  # Pure StatusReport builder for the status command
 │   │   ├── cancellation.ts            # Cross-platform SIGINT bridge (Windows stdin-ETX)
@@ -380,6 +382,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `bug-report.ts` | §7.2a | `describeError` (known / environment / bug), the version-only report link, the plain-text top-level crash handler (#225) |
 | `rollback-report.ts` | §4.11b (Reporting the rollback) | `ROLLBACK_INCOMPLETE` for a rollback that left files behind, shared by install / update / adopt (#247) |
 | `editor.ts` | §4.24 | Open a conflict in `$VISUAL` / `$EDITOR`: temp copy, outcome (saved / cancelled), raw-mode handoff, marker check (#50) |
+| `vault-lock.ts` | §4.25 | One run per vault: `<vault>/.shardmind.lock` (wx), `VAULT_LOCKED`, stale same-host takeover, release + exit backstop (#253) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
