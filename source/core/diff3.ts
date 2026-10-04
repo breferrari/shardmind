@@ -1,4 +1,4 @@
-/**
+/*!
  * `diff3MergeRegions`, ported from node-diff3 3.2.1 with an LCS that stays
  * fast when lines repeat (#170). Every region is identical to node-diff3's:
  * `tests/unit/diff3.test.ts` holds it to node-diff3 itself.
@@ -15,7 +15,7 @@
  * One smaller change leaves the output as it was: the sorted hunks are
  * walked by index rather than `shift()`ed. Everything else is node-diff3's
  * code, typed. When node-diff3's LCS stops rescanning, this file can go back
- * to importing it. Its licence:
+ * to importing it. Its licence (a `/*!` comment, so the build keeps it):
  *
  * The MIT License (MIT)
  *

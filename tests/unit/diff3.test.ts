@@ -14,6 +14,9 @@ import { diff3MergeRegions } from '../../source/core/diff3.js';
 const lines = (alphabet: string[], maxLength: number) =>
   fc.array(fc.constantFrom(...alphabet), { maxLength });
 
+/** 150 to 400 lines: fast-check's default size would keep them short. */
+const long = () => fc.array(fc.constantFrom('x', 'y', 'z', 'w', 'v', ''), { minLength: 150, maxLength: 400 });
+
 function same(a: string[], o: string[], b: string[]): void {
   expect(diff3MergeRegions(a, o, b)).toEqual(oracle(a, o, b));
 }
@@ -53,6 +56,16 @@ describe('diff3MergeRegions (#170)', () => {
     );
   });
 
+  it('returns the regions node-diff3 returns for longer inputs, where the slot search runs deep', () => {
+    // Hundreds of candidates, so the binary search takes many steps.
+    fc.assert(
+      fc.property(long(), long(), long(), (a, o, b) => {
+        same(a, o, b);
+      }),
+      { numRuns: 60 },
+    );
+  });
+
   it('keeps the alignments that repeats make ambiguous (#114)', () => {
     same(['x', 'y'], ['y', 'y'], ['y']);
     same(['y'], ['y', 'y'], ['x', 'y']);
@@ -65,22 +78,20 @@ describe('diff3MergeRegions (#170)', () => {
     same(['constructor', 'toString', '__proto__'], ['__proto__', 'constructor'], ['hasOwnProperty', 'constructor']);
   });
 
-  it('merges 8,000 repeat-heavy lines edited on both sides in well under a second', () => {
+  it('merges 32,000 repeat-heavy lines edited on both sides within the test timeout', () => {
+    // No wall-clock assertion: the bound is the test timeout. The port takes
+    // about half a second here; node-diff3's cubic LCS would take minutes, so
+    // a regression fails by far, and a loaded runner does not (#114, #170).
     const o: string[] = [];
-    for (let i = 0; i < 8000; i++) o.push(`row ${i % 100}`);
+    for (let i = 0; i < 32000; i++) o.push(`row ${i % 100}`);
     const a = [...o];
-    a[2400] = 'user edit';
+    a[9600] = 'user edit';
     const b = [...o];
-    b[5600] = 'shard edit';
-    const start = performance.now();
+    b[22400] = 'shard edit';
     const regions = diff3MergeRegions(a, o, b);
-    const ms = performance.now() - start;
-    // node-diff3 takes about 2.5 s here; the port, tens of milliseconds.
-    // The ceiling is generous for a loaded CI runner.
-    expect(ms).toBeLessThan(1000);
     expect(regions.some((r) => r.stable && r.buffer === 'a')).toBe(true);
     expect(regions.some((r) => r.stable && r.buffer === 'b')).toBe(true);
-  });
+  }, 20_000);
 
   it('matches node-diff3 at 4,000 repeat-heavy lines, the scale where the change matters', () => {
     const o: string[] = [];

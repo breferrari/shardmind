@@ -1506,7 +1506,7 @@ ones, which is the only way to distinguish stable-unchanged lines from
 stable-auto-merged lines and produce accurate merge stats.
 
 ```typescript
-import { diff3MergeRegions } from 'node-diff3';
+import { diff3MergeRegions } from './diff3.js';  // node-diff3's, ported (#170)
 
 export function threeWayMerge(base, theirs, ours): ThreeWayMergeResult {
   const regions = diff3MergeRegions(

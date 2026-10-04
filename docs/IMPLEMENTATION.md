@@ -831,7 +831,7 @@ Shard update version of conflicting lines
 
 Within one row, the candidates at positions ≥ `r` are the previous row's thresholds, and their `buffer2index` strictly increases. So the slot is the largest `s ≥ r` with `buffer2index < j`, taken only if the next candidate's `buffer2index > j`. A binary search finds that same `s`, so every region is identical to node-diff3's.
 
-A property test against node-diff3 itself (the oracle, still a dependency, whose types `differ.ts` keeps using) holds the port to that. A size cap with a whole-file-conflict fallback was rejected: it changes merge results above the cap.
+A property test against node-diff3 itself (the oracle, still a dependency, whose types `differ.ts` keeps using) holds the port to that. A size cap with a whole-file-conflict fallback was rejected: it changes merge results above the cap. What stays slow is one very large class of equal lines: each row still visits every match in its class, as Hunt–Szymanski does, so 20,000 lines that are half blank take about 3 s (8,000 lines of 100 distinct: 23 ms; node-diff3: 2.3 s).
 
 **Dependencies**: `node-diff3` (types, and the test oracle), `diff3.ts`, `renderer.ts`, `node:crypto`.
 

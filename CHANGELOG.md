@@ -18,7 +18,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Changed (faster merges of long files with repeated lines — #170)
 
-- **`shardmind update` merges a long file with many repeated lines in milliseconds, not seconds.** Merging your edits into a shard file that repeats its lines a lot (a long table, log or checklist) used to slow down sharply as the file grew: 8,000 lines took over 2 seconds, and 4,000 identical lines took 31 seconds. They now take 23 ms and 0.3 s. Every merge result is exactly what it was before; a test checks the new code against the old on thousands of random files.
+- **`shardmind update` merges long files with many repeated lines much faster.** Merging your edits into a shard file that repeats its lines a lot (a long table, log or checklist) used to slow down sharply as the file grew: 8,000 lines of 100 distinct took over 2 seconds, a 2,000-line note with a blank line every third line took 0.4 s, and 4,000 identical lines took 31 seconds. They now take 23 ms, 12 ms and 0.3 s. A 10,000-line note with a blank line every third line takes 0.35 s. One shape is still slow: a very long file that is mostly one repeated line, such as 20,000 lines that are half blank, takes about 3 seconds. Every merge result is exactly what it was before; a test checks the new code against the old on thousands of random files.
 
 ### Fixed (a reinstall keeps your files under `.shardmind/` — #237)
 
