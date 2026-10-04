@@ -91,7 +91,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ✅ | NO_COLOR / FORCE_COLOR respect across Ink components | [#37](https://github.com/breferrari/shardmind/issues/37) |
 | ✅ | Agent/headless ergonomics: non-interactive mode, JSON output, per-file plan, value detection | [#139](https://github.com/breferrari/shardmind/issues/139) |
 | ✅ | Apply a shard release that only changes a file's case | [#169](https://github.com/breferrari/shardmind/issues/169) |
-| ⬜ | Align the RELEASE-SMOKE cancellation rows with the engine | [#155](https://github.com/breferrari/shardmind/issues/155) |
+| ✅ | Align the RELEASE-SMOKE cancellation rows with the engine | [#155](https://github.com/breferrari/shardmind/issues/155) |
 | ⬜ | Apply a shard release that only changes a folder's case | [#195](https://github.com/breferrari/shardmind/issues/195) |
 | ✅ | Strip non-colour terminal control sequences from rendered hook output | [#204](https://github.com/breferrari/shardmind/issues/204) |
 | ⬜ | Roll back the files a failed install already wrote | [#207](https://github.com/breferrari/shardmind/issues/207) |

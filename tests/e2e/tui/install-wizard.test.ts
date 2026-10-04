@@ -35,6 +35,7 @@ import {
   spawnCliPty,
   ENTER,
   ARROW_DOWN,
+  CTRL_C,
   driveMinimalWizard,
 } from './helpers/pty-cli.js';
 
@@ -162,6 +163,62 @@ describe.skipIf(skipOnWindows)(
             .then((s) => s.isFile())
             .catch(() => false);
           expect(stateExists).toBe(true);
+        } finally {
+          await handle.dispose();
+        }
+      },
+      90_000,
+    );
+
+    // ───── Ctrl+C at the first wizard prompt → exit 130 (#155) ─────
+
+    it(
+      'Ctrl+C at the first wizard prompt exits 130 and leaves the directory empty (#155)',
+      async () => {
+        const vault = await makeVault('s155');
+        const handle = await spawnCliPty(['install', SHARD_REF], {
+          cwd: vault,
+          env: { SHARDMIND_GITHUB_API_BASE: stub.url },
+        });
+        try {
+          await handle.waitForScreen(
+            (s) => /4 questions to answer/.test(s),
+            { timeoutMs: 30_000, description: 'wizard intro frame' },
+          );
+          // Raw mode: the terminal sends Ctrl+C as the byte 0x03, not a
+          // signal. Ink's own exitOnCtrlC used to unmount on it and the
+          // process exited 0, reporting a cancelled install as success.
+          handle.write(CTRL_C);
+
+          const exit = await handle.waitForExit();
+          expect(exit.timedOut).toBe(false);
+          expect(exit.exitCode).toBe(130);
+          expect(await fs.readdir(vault)).toEqual([]);
+        } finally {
+          await handle.dispose();
+        }
+      },
+      90_000,
+    );
+
+    it(
+      'Ctrl+C at a later prompt (confirm) also exits 130 with nothing written (#155)',
+      async () => {
+        const vault = await makeVault('s155b');
+        const handle = await spawnCliPty(['install', SHARD_REF], {
+          cwd: vault,
+          env: { SHARDMIND_GITHUB_API_BASE: stub.url },
+        });
+        try {
+          // Cancel after the whole wizard has run, not just at its first
+          // prompt: the same exit code at the last prompt before any write.
+          await driveMinimalWizard(handle, 'Frank');
+          handle.write(CTRL_C);
+
+          const exit = await handle.waitForExit();
+          expect(exit.timedOut).toBe(false);
+          expect(exit.exitCode).toBe(130);
+          expect(await fs.readdir(vault)).toEqual([]);
         } finally {
           await handle.dispose();
         }
