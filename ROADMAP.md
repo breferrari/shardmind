@@ -116,7 +116,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ✅ | Restore the template cache exactly when an update rolls back | [#264](https://github.com/breferrari/shardmind/issues/264) |
 | ✅ | Put the update's template cache back exactly on rollback (duplicate of #264) | [#268](https://github.com/breferrari/shardmind/issues/268) |
 | ⬜ | Remove the folders an adopt made when its snapshot folder fails | [#269](https://github.com/breferrari/shardmind/issues/269) |
-| ⬜ | Stop mapConcurrent's other tasks before it rejects | [#274](https://github.com/breferrari/shardmind/issues/274) |
+| ✅ | Stop mapConcurrent's other tasks before it rejects | [#274](https://github.com/breferrari/shardmind/issues/274) |
 
 ## Phase 6 — docs match the code
 
