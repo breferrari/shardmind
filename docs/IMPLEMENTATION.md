@@ -1783,6 +1783,17 @@ Update + migration codes (added in Milestone 4):
 
 Commands catch errors and render them in Ink with `StatusMessage variant="error"`.
 
+### 7.2a Unexpected errors (#225)
+
+Every command's error view is one component, `components/ErrorView.tsx` (install, update, adopt, status and validate). A `ShardMindError` keeps its view: message, `code: <CODE>`, hint, and any detail. Anything else is an engine error:
+
+1. The message, then "This is a bug in shardmind. Please report it:" and a new-issue link built by `bugReportUrl(error, version)` (`core/bug-report.ts`).
+2. The stack, dimmed, printed locally only.
+
+The link carries the shardmind version and at most the error's first line, scrubbed by `scrubFirstLine`: the first line only, every quoted string and every path-like token (one holding `/` or `\`, or starting with a drive letter) replaced by `…`, capped at 120 characters. It never carries values, vault paths or file contents. The body asks the user to paste the stack and the command if they choose to.
+
+`--json`: `error.stack` is the stack for an error that is not a `ShardMindError`, and `null` otherwise (additive; `schemaVersion` stays 1). The document stays free of terminal codes.
+
 ### 7.3 Rollback on Install Failure
 
 If install fails mid-render (e.g., template error on file 23 of 47):
