@@ -1676,9 +1676,10 @@ staying hermetic. No test reaches the public internet.
   byte, keystrokes typed between prompts stay buffered, and on `0x03` the
   bridge emits SIGINT (or exits 130 when no handler is registered), which
   the rollback handler answers with exit 130. So Ctrl+C exits 130 at any
-  prompt. `useSigintRollback` runs once per process whatever the source, so
+  prompt. `useSigintRollback` runs once per process whatever the source, and
+  keeps its listener after Ink unmounts while that run is in progress, so
   a second Ctrl+C during a rollback neither starts another nor cuts the
-  first short. Outside raw mode the kernel delivers a
+  first short. Escalating past a stuck rollback takes a real kill. Outside raw mode the kernel delivers a
   real SIGINT, as before.
 
   The **test harness** delivers ETX on Windows and a real signal on POSIX.

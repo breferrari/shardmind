@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
 import { Text } from 'ink';
-import { useSigintRollback } from '../../source/commands/hooks/shared.js';
+import { useSigintRollback, resetSigintRollbackForTests } from '../../source/commands/hooks/shared.js';
 
 function Probe(props: { rollback: () => Promise<void>; cleanup: () => Promise<void> }) {
   useSigintRollback({ isActive: () => true, rollback: props.rollback, cleanup: props.cleanup });
@@ -20,6 +20,7 @@ function Probe(props: { rollback: () => Promise<void>; cleanup: () => Promise<vo
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  resetSigintRollbackForTests();
 });
 
 describe('useSigintRollback', () => {
@@ -43,5 +44,44 @@ describe('useSigintRollback', () => {
     expect(cleanupFn).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledWith(130);
+  });
+
+  it('keeps absorbing SIGINT after the tree unmounts mid-rollback', async () => {
+    // In a TTY the first Ctrl+C also reaches Ink, which unmounts the tree
+    // while the rollback is still running. A second Ctrl+C must not find
+    // zero listeners, or Node's default action kills the rollback.
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    let release!: () => void;
+    const rollback = vi.fn(() => new Promise<void>((r) => (release = r)));
+    const listenersBefore = process.listenerCount('SIGINT');
+    const r = render(<Probe rollback={rollback} cleanup={async () => {}} />);
+    await new Promise((res) => setImmediate(res));
+
+    process.emit('SIGINT');
+    r.unmount();
+    expect(process.listenerCount('SIGINT')).toBe(listenersBefore + 1);
+    process.emit('SIGINT');
+    await new Promise((res) => setImmediate(res));
+    expect(rollback).toHaveBeenCalledTimes(1);
+
+    release();
+    await new Promise((res) => setImmediate(res));
+    await new Promise((res) => setImmediate(res));
+    expect(exit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start a second rollback from a remounted instance', async () => {
+    vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    let release!: () => void;
+    const first = vi.fn(() => new Promise<void>((r) => (release = r)));
+    const second = vi.fn(async () => {});
+    render(<Probe rollback={first} cleanup={async () => {}} />);
+    render(<Probe rollback={second} cleanup={async () => {}} />);
+    await new Promise((res) => setImmediate(res));
+
+    process.emit('SIGINT');
+    await new Promise((res) => setImmediate(res));
+    expect(first.mock.calls.length + second.mock.calls.length).toBe(1);
+    release?.();
   });
 });

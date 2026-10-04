@@ -105,14 +105,10 @@ export function useSigintRollback(opts: {
   cleanupRef.current = opts.cleanup;
 
   useEffect(() => {
-    // Once per process, whatever the source: a second Ctrl+C (a kernel
-    // SIGINT, or the stdin bridge's) while a rollback is running must not
-    // start a second one racing it on the same paths, nor cut it short.
-    // The first run ends in exit(130).
-    let running = false;
     const handler = async () => {
-      if (running) return;
-      running = true;
+      // Once per process, whatever the source (see `sigintRollbackStarted`).
+      if (sigintRollbackStarted) return;
+      sigintRollbackStarted = true;
       try {
         if (isActiveRef.current()) await rollbackRef.current();
       } catch {
@@ -127,8 +123,35 @@ export function useSigintRollback(opts: {
       process.exit(130);
     };
     process.on('SIGINT', handler);
+    sigintHandlers.add(handler);
     return () => {
+      // Once a rollback has started, keep the listener: in a TTY the first
+      // Ctrl+C also makes Ink unmount the tree, and a second Ctrl+C that
+      // finds no SIGINT listener would let Node's default action kill the
+      // rollback halfway. The handler absorbs it; the run ends in exit(130).
+      if (sigintRollbackStarted) return;
       process.off('SIGINT', handler);
+      sigintHandlers.delete(handler);
     };
   }, []);
+}
+
+/**
+ * Set by the first SIGINT any `useSigintRollback` instance handles, and
+ * never cleared: that run ends the process with exit(130). Module scope,
+ * not per effect, so a second Ctrl+C (a kernel SIGINT or the stdin
+ * bridge's, #155) is absorbed even by a remounted or second instance, and
+ * never starts a rollback racing the first on the same paths.
+ */
+let sigintRollbackStarted = false;
+const sigintHandlers = new Set<() => Promise<void>>();
+
+/**
+ * Tests mock `process.exit`, so the process outlives the run: clear the
+ * latch and drop the listeners a started run kept registered.
+ */
+export function resetSigintRollbackForTests(): void {
+  sigintRollbackStarted = false;
+  for (const handler of sigintHandlers) process.off('SIGINT', handler);
+  sigintHandlers.clear();
 }
