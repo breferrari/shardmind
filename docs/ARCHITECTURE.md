@@ -1068,6 +1068,7 @@ The update-check cache (`.shardmind/update-check.json`, 24h TTL) is stable-only.
 | **typescript** | Language |
 | **@sindresorhus/tsconfig** | Pastel's recommended TS config |
 | **vitest** | Test runner |
+| **@vitest/coverage-v8** | Coverage report (`npm run test:coverage`), pinned to vitest's version; no thresholds yet (#267) |
 
 ### 11.4 Dependency Risk: `@inkjs/ui`
 
@@ -1483,6 +1484,7 @@ export default {
 | **Integration** | Multi-module flows: install pipeline, update pipeline | vitest | `tests/integration/` |
 | **Fixture-based** | Three-way merge scenarios with real files | vitest + fixture dirs | `tests/fixtures/` |
 | **E2E** | Full CLI invocation (`dist/cli.js`) against a temp vault, routed through a local GitHub API emulator | vitest + `node:child_process` | `tests/e2e/` |
+| **Rollback contract** | One fault table (fail the Nth write, rename, mkdir or restore; Ctrl+C at write N) run against install, update and adopt; after the rollback the vault tree is byte-identical to before, except what `ROLLBACK_INCOMPLETE` names and each pipeline's documented exceptions (#267) | vitest + `tests/helpers/fault-fs.ts`, one injector over the shared `fsp` | `tests/integration/rollback-contract.test.ts` |
 
 ### 19.2 Fixture Directory Structure
 
