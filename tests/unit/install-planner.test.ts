@@ -312,6 +312,30 @@ describe('backupCollisions', () => {
     expect(await fsp.readFile(b, 'utf-8')).toBe('b');
   });
 
+  it('moves earlier collisions back when a later one finds no backup name (#209)', async () => {
+    const a = path.join(vault, 'a.md');
+    const b = path.join(vault, 'b.md');
+    await fsp.writeFile(a, 'a');
+    await fsp.writeFile(b, 'b');
+    // Every same-stamp backup name for b is taken, so its lookup throws
+    // after a has already been moved aside.
+    const at = new Date('2026-10-04T10:00:00Z');
+    const stamp = '2026-10-04T10-00-00';
+    const taken = `${b}.shardmind-backup-${stamp}`;
+    await fsp.writeFile(taken, '');
+    for (let i = 1; i < 1000; i++) await fsp.writeFile(`${taken}.${i}`, '');
+    await expect(
+      backupCollisions(
+        [
+          { outputPath: 'a.md', absolutePath: a, size: 1, mtime: new Date(), kind: 'file' },
+          { outputPath: 'b.md', absolutePath: b, size: 1, mtime: new Date(), kind: 'file' },
+        ],
+        at,
+      ),
+    ).rejects.toMatchObject({ code: 'BACKUP_FAILED' });
+    expect(await fsp.readFile(a, 'utf-8')).toBe('a');
+  });
+
   it('renames each colliding file with a timestamped backup suffix', async () => {
     const original = path.join(vault, 'Home.md');
     await fsp.writeFile(original, 'user content', 'utf-8');

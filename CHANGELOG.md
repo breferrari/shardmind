@@ -23,6 +23,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
   - Update now reads volatility from the templates, the installed one or the new one, so existing vaults are fixed on their next update, and a template that turns volatile in a release is skipped from that release on.
   - A volatile file you deleted stays deleted.
 
+### Fixed (install collision backups — #209)
+
+- **An install that cannot back up a colliding file puts the ones it already moved back.** When no backup name was free for a later file, the earlier files stayed renamed to `*.shardmind-backup-*` although the error said the vault was unchanged.
+
 ### Added (exclude a folder from the write-boundary check — #190)
 
 - **A vault can list folders the `personalize` write-boundary check skips**, in `.shardmind/boundary-ignore`, one gitignore-style pattern per line. Use it for a folder that is unreadable for good, which otherwise warns `HOOK_BOUNDARY_INCOMPLETE` on every install.

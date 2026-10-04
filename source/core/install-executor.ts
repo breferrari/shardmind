@@ -95,8 +95,11 @@ export async function backupCollisions(
 
   for (const collision of collisions) {
     if (shouldStop?.()) break;
-    const backupPath = await uniqueBackupPath(collision.absolutePath, stamp);
+    // Name lookup and rename are both guarded: a lookup that fails (no free
+    // name, an I/O error) walks back the moves already made too (#209).
+    let backupPath: string;
     try {
+      backupPath = await uniqueBackupPath(collision.absolutePath, stamp);
       await fsp.rename(collision.absolutePath, backupPath);
     } catch (err) {
       // Restore the renames we've already done so the vault ends up
