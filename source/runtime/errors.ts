@@ -27,6 +27,10 @@ export type ErrorCode =
   // Engine compatibility (requires.shardmind vs. running engine, #121)
   | 'SHARDMIND_VERSION_MISMATCH'
 
+  // External tools a shard needs (external_tools in shard.yaml, #138)
+  | 'EXTERNAL_TOOL_UNMET'
+  | 'EXTERNAL_TOOL_WHEN_INVALID'
+
   // Shard schema (shard-schema.yaml)
   | 'SCHEMA_NOT_FOUND'
   | 'SCHEMA_READ_FAILED'
