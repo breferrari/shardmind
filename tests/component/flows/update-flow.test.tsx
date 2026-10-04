@@ -8,7 +8,7 @@
  * #109 (firedRef leaked across files in DiffView).
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { cleanup } from 'ink-testing-library';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -117,7 +117,7 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
 
   // A node script stands in for the editor, through $VISUAL. `resolve`
   // saves a hand-merged file; `markers` saves an edit that keeps them.
-  async function withFakeEditor<T>(mode: 'resolve' | 'markers', run: () => Promise<T>): Promise<T> {
+  async function withFakeEditor<T>(mode: 'resolve' | 'markers' | 'noop', run: () => Promise<T>): Promise<T> {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fake-editor-'));
     const script = path.join(dir, 'editor.cjs');
     await fs.writeFile(
@@ -126,7 +126,7 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         "const fs = require('node:fs');",
         'const file = process.argv[process.argv.length - 1];',
         `if (${JSON.stringify(mode)} === 'resolve') fs.writeFileSync(file, 'Hand-merged by me.\\n');`,
-        `else fs.writeFileSync(file, fs.readFileSync(file, 'utf-8') + '\\nmore of mine\\n');`,
+        `else if (${JSON.stringify(mode)} === 'markers') fs.writeFileSync(file, fs.readFileSync(file, 'utf-8') + '\\nmore of mine\\n');`,
         '',
       ].join('\n'),
     );
@@ -162,6 +162,11 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         const r = mountUpdate({ vaultRoot: vault.root });
         const prompt = await waitFor(r.lastFrame, (f) => /Conflict in Home\.md/.test(f), 20_000);
         expect(prompt).toContain('Open in editor');
+        // The handoff sets the stream's own raw mode (Node's call, which is
+        // also how the Windows console mode is set): off for the editor, back
+        // on after. Ink's counted setter would not have left it.
+        const stdin = r.stdin as unknown as { setRawMode: (on: boolean) => void };
+        const rawMode = vi.spyOn(stdin, 'setRawMode');
         // Options: [accept_new, keep_mine, skip, open_editor].
         for (let i = 0; i < 3; i++) {
           r.stdin.write(ARROW_DOWN);
@@ -170,6 +175,8 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         r.stdin.write(ENTER);
         const frame = await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.3\.0/.test(f), 20_000);
         expect(frame.replace(/\s+/g, ' ')).toContain('1 edited in your editor');
+        // The editor's pair; Ink leaves raw mode itself when the app exits after the summary.
+        expect(rawMode.mock.calls.slice(0, 2)).toEqual([[false], [true]]);
         expect(await vault.readFile('Home.md')).toBe('Hand-merged by me.\n');
         const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
           files: Record<string, { ownership: string; rendered_hash: string }>;
@@ -207,6 +214,36 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         expect(after).toBe(before);
         expect(after).not.toMatch(/^<<<<<<< /m);
       } finally {
+        await vault.cleanup();
+      }
+    });
+  }, 90_000);
+
+  it('13d. Ctrl+C at the prompt after a cancelled edit still rolls back and exits 130 (#50)', async () => {
+    await withFakeEditor('noop', async () => {
+      const vault = await conflictInHome('s13d-editor-sigint');
+      const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+      try {
+        const homeBefore = await vault.readFile('Home.md');
+        const stateBefore = await vault.readFile('.shardmind/state.json');
+        const r = mountUpdate({ vaultRoot: vault.root });
+        await waitFor(r.lastFrame, (f) => /Conflict in Home\.md/.test(f), 20_000);
+        for (let i = 0; i < 3; i++) {
+          r.stdin.write(ARROW_DOWN);
+          await tick(40);
+        }
+        r.stdin.write(ENTER);
+        // Saved unchanged: a cancel, back to the prompt.
+        await waitFor(r.lastFrame, (f) => /Nothing was written; choose again/.test(f.replace(/\s+/g, ' ')), 20_000);
+        // SIGINT's listeners come back on the next turn of the loop.
+        await new Promise((done) => setImmediate(done));
+        process.emit('SIGINT');
+        await waitFor(() => String(exit.mock.calls.length), (n) => n !== '0', 20_000);
+        expect(exit).toHaveBeenCalledWith(130);
+        expect(await vault.readFile('Home.md')).toBe(homeBefore);
+        expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+      } finally {
+        exit.mockRestore();
         await vault.cleanup();
       }
     });
