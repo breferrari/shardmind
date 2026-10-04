@@ -53,7 +53,7 @@ import {
   writeState,
   STATE_SCHEMA_VERSION,
 } from './state.js';
-import type { AdoptClassification, AdoptPlan } from './adopt-planner.js';
+import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
 
 /** Cap on parallel snapshot copies — same budget update-executor uses. */
 const SNAPSHOT_CONCURRENCY = 16;
@@ -431,8 +431,8 @@ interface PlannedMove {
 function plannedMoves(plan: AdoptPlan): PlannedMove[] {
   const moves: PlannedMove[] = [];
   for (const c of [...plan.matches, ...plan.differs]) {
-    if (c.kind === 'shard-only' || c.movedFrom === undefined) continue;
-    moves.push({ from: c.movedFrom, to: c.path, matched: c.kind === 'matches' });
+    const from = movedFromOf(c);
+    if (from !== undefined) moves.push({ from, to: c.path, matched: c.kind === 'matches' });
   }
   return moves;
 }

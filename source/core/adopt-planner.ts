@@ -95,6 +95,11 @@ export type AdoptClassification =
       volatile: boolean;
     };
 
+/** The old path a classification's file moves from (#179), if any. */
+export function movedFromOf(c: AdoptClassification): string | undefined {
+  return c.kind === 'shard-only' ? undefined : c.movedFrom;
+}
+
 /**
  * Output of adopt classification. Three buckets, no `userOnly` field —
  * adopt deliberately never enumerates the user's tree. Classification is
@@ -198,7 +203,7 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
   await assertSafeVaultPaths(
     vaultRoot,
     classifications.map((c) => c.path),
-    classifications.flatMap((c) => (c.kind !== 'shard-only' && c.movedFrom !== undefined ? [c.movedFrom] : [])),
+    classifications.flatMap((c) => movedFromOf(c) ?? []),
   );
 
   return {

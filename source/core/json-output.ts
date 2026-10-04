@@ -18,7 +18,7 @@
  */
 
 import { ShardMindError } from '../runtime/types.js';
-import type { AdoptClassification, AdoptPlan } from './adopt-planner.js';
+import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
 import type { UpdateAction, UpdatePlan } from './update-planner.js';
 
 /** Bumped only on a breaking reshape, never for additive fields. */
@@ -129,7 +129,7 @@ function adoptFile(
     classification,
     shardHash: entry.shardHash,
     volatile: entry.volatile,
-    ...(entry.kind !== 'shard-only' && entry.movedFrom !== undefined ? { movedFrom: entry.movedFrom } : {}),
+    ...(movedFromOf(entry) === undefined ? {} : { movedFrom: movedFromOf(entry) }),
   };
   if (entry.kind === 'differs') {
     return {
