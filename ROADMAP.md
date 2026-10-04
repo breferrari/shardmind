@@ -58,7 +58,7 @@ The suite fails only on real defects, on all three operating systems.
 |---|---|---|
 | ✅ | Flaky test: merge-adversarial 10K-lines tokenize times out under parallel pressure | [#114](https://github.com/breferrari/shardmind/issues/114) |
 | ✅ | Flake: hook-runner pre-throw stdout dropped under parallel CPU pressure | [#106](https://github.com/breferrari/shardmind/issues/106) |
-| ⬜ | E2E: bridge SIGINT delivery reliably on GH Actions Windows runner | [#57](https://github.com/breferrari/shardmind/issues/57) |
+| ✅ | E2E: bridge SIGINT delivery reliably on GH Actions Windows runner | [#57](https://github.com/breferrari/shardmind/issues/57) |
 | ⬜ | Fix the write-boundary A2 test flaking under load | [#175](https://github.com/breferrari/shardmind/issues/175) |
 | ⬜ | Stop dist/ changing while E2E tests spawn the CLI | [#176](https://github.com/breferrari/shardmind/issues/176) |
 | ⬜ | Read a fast-exiting CLI's last output in the PTY harness | [#177](https://github.com/breferrari/shardmind/issues/177) |
@@ -132,6 +132,7 @@ The release pipeline, dependencies and test harness are settled: built, or decli
 | ⬜ | release.yml: split into two pipelines (GitHub release before npm publish) | [#108](https://github.com/breferrari/shardmind/issues/108) |
 | ⬜ | TUI testing framework — continuing-hardening tracker | [#122](https://github.com/breferrari/shardmind/issues/122) |
 | ⬜ | Run the Layer 2 real-terminal tests on Windows under ConPTY | [#174](https://github.com/breferrari/shardmind/issues/174) |
+| ⬜ | Reach the write-phase SIGINT rollback deterministically in E2E | [#186](https://github.com/breferrari/shardmind/issues/186) |
 
 ## Phase 9 — the second shard
 
