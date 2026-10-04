@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { ShardManifestSchema } from '../../source/core/manifest.js';
-import { parseFromVersion, renamesBetween } from '../../source/core/rename-migrations.js';
+import { caseOnlyRenames, parseFromVersion, renamesBetween } from '../../source/core/rename-migrations.js';
 
 const base = { apiVersion: 'v1', name: 'demo', namespace: 'acme', version: '6.2.0' };
 
@@ -87,5 +87,47 @@ describe('parseFromVersion (#179)', () => {
 
   it.each(['five', '5.1', '', '>=5.0.0'])('refuses %j with ADOPT_FROM_VERSION_INVALID', (value) => {
     expect(() => parseFromVersion(value)).toThrow(expect.objectContaining({ code: 'ADOPT_FROM_VERSION_INVALID' }));
+  });
+});
+
+describe('caseOnlyRenames (#169)', () => {
+  const pairs = (tracked: string[], shipped: string[], declared: Record<string, string> = {}) =>
+    Object.fromEntries(caseOnlyRenames(tracked, new Set(shipped), new Map(Object.entries(declared))));
+
+  it('pairs a tracked file no longer shipped with the new path that differs only in case', () => {
+    expect(pairs(['Foo.md', 'Home.md'], ['foo.md', 'Home.md'])).toEqual({ 'Foo.md': 'foo.md' });
+    expect(pairs(['brain/North Star.md'], ['brain/north star.md'])).toEqual({ 'brain/North Star.md': 'brain/north star.md' });
+  });
+
+  it('pairs nothing when two new paths fold to the old name', () => {
+    expect(pairs(['Foo.md'], ['foo.md', 'FOO.md'])).toEqual({});
+  });
+
+  it('pairs nothing when two old files fold to the new name', () => {
+    expect(pairs(['Foo.md', 'FOO.md'], ['foo.md'])).toEqual({});
+  });
+
+  it('pairs nothing when a folder changes case (#195)', () => {
+    expect(pairs(['Notes/Foo.md'], ['notes/Foo.md'])).toEqual({});
+    expect(pairs(['Notes/Foo.md'], ['notes/foo.md'])).toEqual({});
+  });
+
+  it('pairs nothing when the old path is still shipped or the new one is already tracked', () => {
+    expect(pairs(['Foo.md'], ['Foo.md', 'foo.md'])).toEqual({});
+    expect(pairs(['Foo.md', 'foo.md'], ['foo.md'])).toEqual({});
+  });
+
+  it('pairs nothing for names that differ by more than case', () => {
+    expect(pairs(['Foo.md'], ['Foo.txt'])).toEqual({});
+  });
+
+  it('leaves a declared rename of the old path, or into the new one, to the declaration', () => {
+    expect(pairs(['Foo.md'], ['foo.md'], { 'Foo.md': 'bar.md' })).toEqual({});
+    expect(pairs(['Foo.md', 'Old.md'], ['foo.md'], { 'Old.md': 'foo.md' })).toEqual({});
+  });
+
+  it('treats a Unicode normalization difference as the same name', () => {
+    // NFD "e\u0301" vs NFC "\u00e9": the same name to a user, folded by macOS.
+    expect(pairs(['Caf\u00e9.md'], ['cafe\u0301.md'])).toEqual({ 'Caf\u00e9.md': 'cafe\u0301.md' });
   });
 });
