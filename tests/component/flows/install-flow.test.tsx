@@ -848,6 +848,35 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     }
   }, 60_000);
 
+  // ───── A failed fresh install keeps the user's .shardmind/ files and folders (#215) ─────
+
+  it("fresh install that fails keeps the user's .shardmind/boundary-ignore and empty folder (#215)", async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vaultRoot = await makeVaultDir('s215-keep-own');
+    try {
+      // The user's own `.shardmind/boundary-ignore` (#190) and an empty
+      // folder the shard also writes into, both made before any install.
+      const ignore = 'archive/\n';
+      await fs.mkdir(path.join(vaultRoot, '.shardmind'), { recursive: true });
+      await fs.writeFile(path.join(vaultRoot, '.shardmind', 'boundary-ignore'), ignore, 'utf-8');
+      await fs.mkdir(path.join(vaultRoot, 'brain'), { recursive: true });
+      // Fails the last write, after every file and state.json (as in #207).
+      const stray = 'user_name: "left over"\n';
+      await fs.writeFile(path.join(vaultRoot, 'shard-values.yaml'), stray, 'utf-8');
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot, options: { defaults: true } });
+      await waitFor(() => r.frames.join('\n'), (f) => /VALUES_FILE_COLLISION/.test(f), 30_000);
+      await tick(200);
+      expect((await fs.readdir(vaultRoot)).sort()).toEqual(['.shardmind', 'brain', 'shard-values.yaml']);
+      expect(await fs.readdir(path.join(vaultRoot, '.shardmind'))).toEqual(['boundary-ignore']);
+      expect(await fs.readFile(path.join(vaultRoot, '.shardmind', 'boundary-ignore'), 'utf-8')).toBe(ignore);
+      expect(await fs.readdir(path.join(vaultRoot, 'brain'))).toEqual([]);
+    } finally {
+      await cleanupVault(vaultRoot);
+    }
+  }, 60_000);
+
   // ───── Scenario 18: gate → Reinstall with --yes backs up only the user's own content (#55) ─────
 
   it("18. gate → Reinstall with --yes → only the edited file is backed up, the old install's untouched files are not (#55)", async () => {

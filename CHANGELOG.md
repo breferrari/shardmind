@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (a failed install keeps your files under `.shardmind/` — #215)
+
+- **A failed or cancelled fresh install no longer deletes your files under `.shardmind/`, or folders you had already made.** The rollback deleted the whole `.shardmind/` folder, which since #190 can hold your `boundary-ignore`, and removed any empty folder the install had written into. It now removes only what the install itself created.
+
 ### Changed (`_each` files from a string list — #227)
 
 - **An `_each` template now names each file after its list item when the list holds strings or numbers.** A `list` value entered in the wizard is a list of strings, and every item used to be written to the same `<folder>/unknown.md`, so only the last one survived. Now `people: [Alice, Bob]` writes `people/Alice.md` and `people/Bob.md`. Object items are still named by `slug`, else `name`.

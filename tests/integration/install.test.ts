@@ -424,7 +424,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     });
 
     // Simulate a post-install failure and roll back
-    await rollbackInstall(vault, result.writtenPaths, backups);
+    await rollbackInstall(vault, result.writtenPaths, backups, result.createdDirs);
 
     const restored = await fsp.readFile(original, 'utf-8');
     expect(restored).toBe('user content');
@@ -448,14 +448,63 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       selections,
     });
 
-    await rollbackInstall(vault, result.writtenPaths);
+    await rollbackInstall(vault, result.writtenPaths, [], result.createdDirs);
 
     // All originally-written files are gone
     for (const p of result.writtenPaths) {
       await expect(fsp.access(path.join(vault, p))).rejects.toThrow();
     }
-    // .shardmind/ is gone
+    // .shardmind/ is gone: the install created it, and it is empty again
     await expect(fsp.access(path.join(vault, '.shardmind'))).rejects.toThrow();
+    expect(await fsp.readdir(vault)).toEqual([]);
+  });
+
+  describe('rollback removes only what the install made (#215)', () => {
+    async function freshInstall() {
+      const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+      const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+      const selections = defaultModuleSelections(schema);
+      const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+      return runInstall({
+        vaultRoot: vault, manifest, schema, tempDir: MINIMAL_SHARD, resolved: RESOLVED,
+        tarballSha256: 'deadbeef', values, selections,
+      });
+    }
+
+    it("keeps the user's .shardmind/ file and an empty folder they made", async () => {
+      await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
+      await fsp.writeFile(path.join(vault, '.shardmind', 'boundary-ignore'), 'archive/\n', 'utf-8');
+      await fsp.mkdir(path.join(vault, 'brain'), { recursive: true });
+      const result = await freshInstall();
+      expect(result.createdDirs).not.toContain('brain');
+      expect(result.createdDirs).not.toContain('.shardmind');
+
+      await rollbackInstall(vault, result.writtenPaths, [], result.createdDirs);
+
+      expect((await fsp.readdir(vault)).sort()).toEqual(['.shardmind', 'brain']);
+      expect(await fsp.readdir(path.join(vault, '.shardmind'))).toEqual(['boundary-ignore']);
+      expect(await fsp.readdir(path.join(vault, 'brain'))).toEqual([]);
+    });
+
+    it("removes the engine's .shardmind/ entries even when written after a Ctrl+C snapshot", async () => {
+      const result = await freshInstall();
+      // A Ctrl+C rollback sees the lists as they were when it started, before
+      // runInstall reached the cache and state writes.
+      const early = result.writtenPaths.filter((p) => !p.startsWith('.shardmind/') && p !== 'shard-values.yaml');
+      const earlyDirs = result.createdDirs.filter((d) => d !== '.shardmind' && !d.startsWith('.shardmind/'));
+      await rollbackInstall(vault, [...early, 'shard-values.yaml'], [], [...earlyDirs, '.shardmind']);
+      expect(await fsp.readdir(vault)).toEqual([]);
+    });
+
+    it('leaves a folder the user put at a planned file path', async () => {
+      const result = await freshInstall();
+      // Simulate a folder that appeared at a recorded file path.
+      await fsp.unlink(path.join(vault, 'Home.md'));
+      await fsp.mkdir(path.join(vault, 'Home.md'));
+      await fsp.writeFile(path.join(vault, 'Home.md', 'mine.txt'), 'mine\n', 'utf-8');
+      await rollbackInstall(vault, result.writtenPaths, [], result.createdDirs);
+      expect(await fsp.readFile(path.join(vault, 'Home.md', 'mine.txt'), 'utf-8')).toBe('mine\n');
+    });
   });
 });
 

@@ -160,6 +160,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   // any files written so far and restore any backups created during
   // collision handling.
   const writtenPathsRef = useRef<string[]>([]);
+  // Folders the install created, so a rollback leaves the user's own (#215).
+  const createdDirsRef = useRef<string[]>([]);
   const backupsRef = useRef<BackupRecord[]>([]);
   const installingRef = useRef(false);
   // Set by the first Ctrl+C: stops the set-aside loop before its next move,
@@ -201,7 +203,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   // One rollback for both failure paths, a Ctrl+C and an error before the
   // install commits: every path written so far, then everything moved aside.
   const rollbackPartialInstall = () =>
-    rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current);
+    rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current, createdDirsRef.current);
 
   useSigintRollback({
     isActive: () => {
@@ -405,6 +407,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       // SIGINT handler too.
       backupsRef.current = [...backups, ...setAside];
       writtenPathsRef.current = [];
+      createdDirsRef.current = [];
       installingRef.current = true;
 
       setPhase({
@@ -435,6 +438,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           dryRun,
           onFileWritten: (outputPath) => {
             writtenPathsRef.current.push(outputPath);
+          },
+          onDirCreated: (dir) => {
+            createdDirsRef.current.push(dir);
           },
           onProgress: (ev) => {
             if (ev.kind === 'start') {
@@ -580,6 +586,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       // undo, and rollback would delete the old `.shardmind/`.
       const moved: BackupRecord[] = [];
       writtenPathsRef.current = [];
+      createdDirsRef.current = [];
       backupsRef.current = moved;
       try {
         await backupCollisions(
