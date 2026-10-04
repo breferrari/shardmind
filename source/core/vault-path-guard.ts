@@ -21,9 +21,11 @@ import {
   CACHED_SCHEMA,
   CACHED_TEMPLATES,
   HOOK_LOGS_DIR,
+  LOCK_FILE,
   SHARDMIND_DIR,
   STATE_FILE,
-  VALUES_FILE, LOCK_FILE } from '../runtime/vault-paths.js';
+  VALUES_FILE,
+} from '../runtime/vault-paths.js';
 import { mapConcurrent } from './fs-utils.js';
 
 export type UnsafeVaultPathReason = 'symlink' | 'symlinked-folder' | 'hard-link' | 'case-mismatch';

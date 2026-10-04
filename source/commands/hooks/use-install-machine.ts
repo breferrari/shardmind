@@ -24,6 +24,7 @@ import { resolve as resolveRef } from '../../core/registry.js';
 import { downloadShard, DownloadCancelledError } from '../../core/download.js';
 import { parseManifest, assertEngineCompatible } from '../../core/manifest.js';
 import { resolveEngineVersion } from './cli-version.js';
+import { useVaultLock } from './use-vault-lock.js';
 import { assertShardInstallable } from '../../core/lint-shard.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
 import { readState } from '../../core/state.js';
@@ -189,6 +190,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     async () => {},
   );
 
+  // One run per vault (#253); --dry-run writes nothing and takes no lock.
+  const { take: takeLock, release: releaseLock } = useVaultLock(vaultRoot, 'install', !dryRun);
+
   const finish = useCallback(
     (next: Phase) => {
       setPhase(next);
@@ -197,10 +201,12 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         // process exits non-zero on error. Success and user-cancel stay
         // at 0 — cancelled is the user's choice, not a failure.
         if (next.kind === 'error') process.exitCode = 1;
+        // The run is over: the next one may start (#253).
+        releaseLock();
         setTimeout(() => exit(), 100);
       }
     },
-    [exit],
+    [exit, releaseLock],
   );
 
   // If a render is in progress when the user hits Ctrl+C, roll back
@@ -243,6 +249,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
             '--defaults uses schema defaults for every value; --values would override them. Drop one of the two flags.',
           );
         }
+        // Before state is read: a plan made from a state another run is
+        // changing would be stale (#253).
+        takeLock();
         const existing = await readState(vaultRoot);
         if (defaults && existing && !force) {
           throw new ShardMindError(
