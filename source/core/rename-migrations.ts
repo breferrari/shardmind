@@ -84,15 +84,9 @@ export async function applyRenames(input: {
       const to = newOf.get(e.path);
       return to === undefined ? e : { ...e, path: to };
     });
-  return {
-    state: { ...state, files },
-    drift: {
-      managed: rekey(drift.managed),
-      modified: rekey(drift.modified),
-      volatile: rekey(drift.volatile),
-      missing: rekey(drift.missing),
-      orphaned: drift.orphaned,
-    },
-    movedFrom,
-  };
+  const { orphaned, ...tracked } = drift;
+  const rekeyed = Object.fromEntries(
+    Object.entries(tracked).map(([kind, entries]) => [kind, rekey(entries)]),
+  ) as Omit<DriftReport, 'orphaned'>;
+  return { state: { ...state, files }, drift: { ...rekeyed, orphaned }, movedFrom };
 }

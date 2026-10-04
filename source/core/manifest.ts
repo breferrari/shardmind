@@ -6,6 +6,8 @@ import type { ShardManifest } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
 
+const SemverSchema = z.string().refine((v) => semver.valid(v) !== null, 'Must be valid semver');
+
 /**
  * A vault path in a rename migration: relative, POSIX, inside the vault
  * and outside the engine's own `.shardmind/` (#178).
@@ -17,8 +19,6 @@ const VaultPathSchema = z
   .refine((p) => !p.startsWith('/') && !/^[A-Za-z]:/.test(p), 'Must be relative to the vault')
   .refine((p) => !p.split('/').includes('..'), 'Must stay inside the vault')
   .refine((p) => p.split('/')[0] !== '.shardmind', 'Must not be under .shardmind/');
-
-const SemverSchema = z.string().refine((v) => semver.valid(v) !== null, 'Must be valid semver');
 
 const RenameMigrationSchema = z
   .object({
@@ -46,7 +46,7 @@ export const ShardManifestSchema = z.object({
   apiVersion: z.literal('v1'),
   name: z.string().regex(/^[a-z0-9-]+$/, 'Must be lowercase alphanumeric with hyphens'),
   namespace: z.string().regex(/^[a-z0-9-]+$/, 'Must be lowercase alphanumeric with hyphens'),
-  version: z.string().refine(v => semver.valid(v) !== null, 'Must be valid semver'),
+  version: SemverSchema,
   description: z.string().optional(),
   persona: z.string().optional(),
   license: z.string().optional(),
