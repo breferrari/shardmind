@@ -13,9 +13,20 @@ import {
   SHARD_SOURCE_DIR,
 } from '../runtime/vault-paths.js';
 
-export async function downloadShard(tarballUrl: string): Promise<TempShard> {
+/**
+ * Fetch and extract a shard tarball into a fresh temp dir. `onTempDir`
+ * receives that dir's cleanup as soon as the dir exists, before the
+ * fetch: a command's Ctrl+C handler can then remove it mid-download,
+ * which `TempShard.cleanup`, only returned once the download finishes,
+ * cannot (#57).
+ */
+export async function downloadShard(
+  tarballUrl: string,
+  onTempDir?: (cleanup: () => Promise<void>) => void,
+): Promise<TempShard> {
   const tempDir = path.join(os.tmpdir(), `shardmind-${crypto.randomUUID()}`);
   await fs.mkdir(tempDir, { recursive: true });
+  onTempDir?.(() => cleanup(tempDir));
 
   // Fetch tarball
   const headers: Record<string, string> = {

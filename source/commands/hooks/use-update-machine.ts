@@ -286,8 +286,11 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           kind: 'loading',
           message: `Downloading ${resolved.namespace}/${resolved.name}@${resolved.version}…`,
         });
-        const temp = await downloadShard(resolved.tarballUrl);
-        ctxCleanupRef.current = temp.cleanup;
+        // The cleanup is registered before the fetch, so a Ctrl+C during the
+        // download removes the temp dir too (#57).
+        const temp = await downloadShard(resolved.tarballUrl, (cleanup) => {
+          ctxCleanupRef.current = cleanup;
+        });
 
         setPhase({ kind: 'loading', message: 'Parsing new manifest and schema…' });
         const newManifest = await parseManifest(temp.manifest);

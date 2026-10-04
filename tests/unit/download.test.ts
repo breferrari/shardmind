@@ -76,6 +76,20 @@ describe('downloadShard', () => {
     await expect(fs.access(tempDir)).rejects.toThrow();
   });
 
+  it('hands over a cleanup before the fetch starts, so an interrupt mid-download can remove the dir (#57)', async () => {
+    let handedOver: (() => Promise<void>) | undefined;
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      // The download is in flight: the cleanup must already exist.
+      expect(handedOver).toBeTypeOf('function');
+      return createMockResponse(FIXTURE_TARBALL);
+    });
+    const result = await downloadShard('https://example.com/tarball', (cleanup) => {
+      handedOver = cleanup;
+    });
+    await handedOver!();
+    await expect(fs.access(result.tempDir)).rejects.toThrow();
+  });
+
   it('throws DOWNLOAD_HTTP_ERROR on non-200 response', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       new Response('Not Found', { status: 404, statusText: 'Not Found' }),
