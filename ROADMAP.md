@@ -126,7 +126,7 @@ Each authoring and CLI proposal is built, or declined with a reason that survive
 | ✅ | VaultFS abstraction with built-in rollback tracking (declined) | [#33](https://github.com/breferrari/shardmind/issues/33) |
 | ⬜ | shardmind validate <shard> command | [#34](https://github.com/breferrari/shardmind/issues/34) |
 | ⬜ | Pre-install template syntax lint | [#35](https://github.com/breferrari/shardmind/issues/35) |
-| ⬜ | Debug logging (SHARDMIND_DEBUG env var) | [#36](https://github.com/breferrari/shardmind/issues/36) |
+| ✅ | Debug logging (SHARDMIND_DEBUG env var) (declined) | [#36](https://github.com/breferrari/shardmind/issues/36) |
 | ⬜ | $EDITOR integration for DiffView conflict resolution | [#50](https://github.com/breferrari/shardmind/issues/50) |
 | ⬜ | Declare & enforce external CLI tool dependencies (e.g. qmd) with version ranges at install/update | [#138](https://github.com/breferrari/shardmind/issues/138) |
 | ✅ | Let a vault exclude a permanently unreadable folder from the write-boundary walk | [#190](https://github.com/breferrari/shardmind/issues/190) |
@@ -459,7 +459,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [x] ~~VaultFS abstraction with built-in rollback tracking~~ declined ([#33](https://github.com/breferrari/shardmind/issues/33))
 - [ ] `shardmind validate <shard>` command ([#34](https://github.com/breferrari/shardmind/issues/34))
 - [ ] Pre-install template syntax lint ([#35](https://github.com/breferrari/shardmind/issues/35))
-- [ ] Debug logging (`SHARDMIND_DEBUG` env var) ([#36](https://github.com/breferrari/shardmind/issues/36))
+- [x] ~~Debug logging (`SHARDMIND_DEBUG` env var)~~ declined ([#36](https://github.com/breferrari/shardmind/issues/36))
 - [ ] `NO_COLOR` / `FORCE_COLOR` respect across Ink components ([#37](https://github.com/breferrari/shardmind/issues/37))
 - [ ] Alternate registry configurability (GHE, private, custom URL) ([#39](https://github.com/breferrari/shardmind/issues/39))
 - [x] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
