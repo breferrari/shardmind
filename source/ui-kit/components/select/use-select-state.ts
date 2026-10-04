@@ -5,7 +5,6 @@ import {
 	useCallback,
 	useMemo,
 	useState,
-	useEffect,
 } from 'react';
 import {type Option} from '../../types.js';
 import OptionMap from '../../lib/option-map.js';
@@ -279,11 +278,20 @@ export const useSelectState = ({
 		});
 	}, []);
 
+	// onChange is an event of the Enter key, not an effect of state
+	// (ShardMind fix). Upstream fired it from an effect on
+	// `previousValue !== value`, which never fired for the seeded default
+	// (ShardMind #103) and fired again on every parent re-render with a new
+	// callback or options (vadimdemedes/ink-ui#26).
 	const selectFocusedOption = useCallback(() => {
 		dispatch({
 			type: 'select-focused-option',
 		});
-	}, []);
+
+		if (state.focusedValue !== undefined) {
+			onChange?.(state.focusedValue);
+		}
+	}, [state.focusedValue, onChange]);
 
 	const visibleOptions = useMemo(() => {
 		return options
@@ -294,11 +302,6 @@ export const useSelectState = ({
 			.slice(state.visibleFromIndex, state.visibleToIndex);
 	}, [options, state.visibleFromIndex, state.visibleToIndex]);
 
-	useEffect(() => {
-		if (state.value && state.previousValue !== state.value) {
-			onChange?.(state.value);
-		}
-	}, [state.previousValue, state.value, options, onChange]);
 
 	return {
 		focusedValue: state.focusedValue,

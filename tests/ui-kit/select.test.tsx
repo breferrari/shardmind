@@ -57,6 +57,31 @@ describe('ui-kit Select', () => {
     expect(lastFrame()).not.toContain('Alpha');
   });
 
+  it('fires onChange on Enter on the seeded default (ShardMind #103)', async () => {
+    const onChange = vi.fn();
+    const { stdin } = render(<Select options={OPTIONS} defaultValue="a" onChange={onChange} />);
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onChange).toHaveBeenCalledWith('a');
+  });
+
+  it('fires onChange once per Enter, never again on a parent re-render (vadimdemedes/ink-ui#26)', async () => {
+    const onChange = vi.fn();
+    const r = render(<Select options={OPTIONS} onChange={(v) => onChange(v)} />);
+    await tick();
+    r.stdin.write(DOWN);
+    await tick();
+    r.stdin.write(ENTER);
+    await tick();
+    // The parent re-renders with a new callback and new option objects.
+    r.rerender(<Select options={OPTIONS.map((o) => ({ ...o }))} onChange={(v) => onChange(v)} />);
+    await tick();
+    r.rerender(<Select options={OPTIONS.map((o) => ({ ...o }))} onChange={(v) => onChange(v)} />);
+    await tick();
+    expect(onChange.mock.calls).toEqual([['b']]);
+  });
+
   it('ignores keys while disabled', async () => {
     const onChange = vi.fn();
     const { stdin } = render(<Select options={OPTIONS} isDisabled onChange={onChange} />);
