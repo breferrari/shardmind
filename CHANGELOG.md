@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (`shardmind --json` — #139)
+
+- **`shardmind --json` writes the status report as one JSON document**, in the same envelope as `update` and `adopt`. It says whether the directory is a managed vault (`installed`), the installed version against the latest (`update`), and every modified, missing and orphaned file, uncapped. With `--verbose`, each modified file adds `linesAdded`/`linesRemoved`, and the `frontmatter` and `environment` sections fill in. Outside a vault the answer is `installed: false` with exit 0. A failure such as a corrupt `state.json` is `ok: false` with exit 1, while the human view still exits 0. See `docs/ARCHITECTURE.md §10.3a`.
+
 ### Fixed (Windows file holds during cleanup — #191)
 
 - **On Windows, a file a virus scanner or search indexer still holds no longer breaks a cleanup.** Clearing the shard cache, a rollback, a backup's removal and the update-check caches now retry `ENOTEMPTY`, `EBUSY` and `EPERM` a few times before failing. A cache clear could otherwise abort an install or update that would have succeeded, and a backup removal could leave a stray `.shardmind-backup-*` behind.
