@@ -14,7 +14,7 @@ This project is **spec-driven**. The architecture and implementation are fully d
 | `ROADMAP.md` | Build order in phases, one per GitHub milestone, each row linking its issue; the Shelf and its dated reasons. Taken with the `take-next` skill (`.claude/skills/take-next/`). | Before starting any task. |
 | **`docs/SHARD-LAYOUT.md`** | **v6 shard-layout contract + three binding invariants. Active design spec.** Folded into `ARCHITECTURE.md §3` and `IMPLEMENTATION.md §4.5` / `§4.5a` / `§4.5b` for the engine specs; this doc remains the canonical contract for the binding properties + author-facing layout. | Before implementing anything related to shard layout, install walk, hook context, adopt command, or obsidian-mind v6. Authoritative over ARCHITECTURE.md / IMPLEMENTATION.md where they conflict. |
 | `docs/ARCHITECTURE.md` | The what and why. 22 sections. Core concepts, ownership model, schema format, module system, values layer, signals, operations, competitive moat. | Before making any architectural decision. |
-| `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, module specs with TypeScript signatures, algorithms as numbered steps, error cases, 20 merge test fixtures, 6-day build plan. **§9 (Build Plan) is stale — see [#70](https://github.com/breferrari/shardmind/issues/70) for the current task list.** | Before implementing any module. |
+| `docs/IMPLEMENTATION.md` | The how, exactly. System diagram, data flows, module specs with TypeScript signatures, algorithms as numbered steps, error cases, 20 merge test fixtures. §9 is a historical note on the v0.1 build; current work is in `ROADMAP.md`. | Before implementing any module. |
 | `docs/COMPONENTS.md` | Iterated UI patterns (A/B), `useOncePerKey` hook, `rerender()` regression-test convention. Codifies why state-machine-iterated prompts (`AdoptDiffView`, `DiffView`) need per-iteration ref scoping vs. boolean refs. | Before adding a new Ink component that may be iterated by a parent state machine, or before changing a `useRef` shape inside one. |
 | `examples/minimal-shard/` | Minimal test shard for development. 4 values, 2 modules, signals. Flat v6 layout (`.shardmind/` sidecar, content at native paths, dotfolder `.njk` for rendering). | Use as a fixture for engine-level tests; obsidian-mind v6 conversion lands at Milestone 5. |
 
@@ -22,7 +22,7 @@ This project is **spec-driven**. The architecture and implementation are fully d
 
 ### Build Order
 
-**Authoritative task list for v0.1: [#70](https://github.com/breferrari/shardmind/issues/70)** (engine changes, shard conversion, docs, tests, acceptance criteria). Spec for what to build: [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md). The day-by-day rhythm in `docs/IMPLEMENTATION.md §9` is preserved below for cadence reference, but the specific sub-tasks within each day are superseded by #70's tracks (the `templates/` walk, `partials` field, and Cookiecutter-style source/target split described in §9 do not reflect the v6 contract).
+**Authoritative task list for v0.1: [#70](https://github.com/breferrari/shardmind/issues/70)** (engine changes, shard conversion, docs, tests, acceptance criteria). Spec for what to build: [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md). The day-by-day rhythm below is kept for cadence reference. `docs/IMPLEMENTATION.md §9` is now a short historical note, and #70's tracks replaced its pre-v6 sub-tasks.
 
 | Day | Focus |
 |-----|-------|
@@ -339,8 +339,8 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `drift.ts` | §4.8 | Ownership detection + drift analysis |
 | `differ.ts` | §4.9 | Three-way merge via node-diff3 |
 | `migrator.ts` | §4.10 | Apply schema migrations to values |
-| `install-planner.ts` | §4.11a (to land) | Pure install plan (outputs, collisions, value-coercion, computed defaults) |
-| `install-executor.ts` | §4.11b (to land) | Apply install plan with transactional backup + rollback |
+| `install-planner.ts` | §4.11a | Pure install plan (outputs, collisions, value-coercion, computed defaults) |
+| `install-executor.ts` | §4.11b | Apply install plan with transactional backup + rollback |
 | `update-planner.ts` | §4.11 | Plan update actions from drift + new-shard render |
 | `update-executor.ts` | §4.12 | Apply update plan with snapshot-based rollback |
 | `adopt-planner.ts` | §4.17 | Classify user vault vs shard outputs (matches / differs / shard-only) |
