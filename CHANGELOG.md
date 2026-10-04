@@ -8,6 +8,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (`--json` in a terminal — #198)
+
+- **`--json` writes one clean document in a terminal too.** `update`, `adopt` and `shardmind --json` used to wrap the document in invisible cursor codes when stdout was a terminal. A terminal now gets byte for byte what a pipe gets. Errors still go to stderr.
+- **A crash in a `--json` run still answers on stdout.** A bug that escapes every command used to leave stdout empty under `--json`, with the report only on stderr. It now also writes one failure document with the stack.
+
 ### Fixed (two adopts never share a snapshot folder — #248)
 
 - **Each adopt now keeps its snapshot of your files in its own folder.** Adopt named the folder to the second and reused one that was already there. A retry within the same second, after an adopt that failed and kept its snapshot, wrote over the first copies, and its own rollback could then delete them. It now names the folder the way update does, to the millisecond and never reusing one.

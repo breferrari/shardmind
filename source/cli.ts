@@ -1,12 +1,20 @@
 import { createRequire } from 'node:module';
 import { installStdinCancellation } from './core/cancellation.js';
 import { applyNoColor } from './core/color-env.js';
+import { isJsonRun, markNonInteractive } from './core/json-run.js';
 
 // NO_COLOR turns colour off unless FORCE_COLOR is set (#37). chalk, which Ink
 // colours through, reads the environment once when it is first imported, so
 // this runs before Pastel loads Ink: Pastel and cli-options are imported
 // dynamically below, never statically above this line.
 applyNoColor(process.env);
+
+// A --json run writes in a terminal exactly what it writes piped (#198; see
+// core/json-run.ts), so this too runs before anything loads Ink. stdin is
+// left alone: the stdin SIGINT bridge reads a non-TTY stdin directly, which
+// on a real terminal would stop a backgrounded run (SIGTTIN).
+const jsonRun = isJsonRun(process.argv.slice(2));
+if (jsonRun) markNonInteractive(process.stdout);
 
 // A throw that escapes every command (a command module that fails to load, a
 // rejection nobody awaited) is printed as plain text, since Ink may not be
@@ -20,14 +28,29 @@ const crash = {
     return resolveEngineVersion();
   },
   write: (text: string) => void process.stderr.write(text),
-  // Exit once stderr drains: a pipe write can still be queued (Windows, macOS).
-  // The code is set first, so an exit elsewhere in the meantime still fails.
+  writeJson: undefined as ((error: unknown) => void) | undefined,
+  // Exit once stdout and stderr drain: a pipe write can still be queued
+  // (Windows, macOS). The code is set first, so an exit elsewhere in the
+  // meantime still fails.
   exit: (code: number) => {
     process.exitCode = code;
-    process.stderr.write('', () => process.exit(code));
+    process.stdout.write('', () => process.stderr.write('', () => process.exit(code)));
   },
 };
 const reportCrash = installCrashHandlers(process, crash);
+
+// A --json caller reads stdout, so a crash in a --json run also answers there
+// with one failure document (#198), unless the run already wrote its document.
+// Loaded once the handlers are in place: if it cannot load, the plain-text
+// report on stderr still stands.
+if (jsonRun) {
+  const json = await import('./core/json-output.js').catch(() => undefined);
+  if (json) {
+    crash.writeJson = (error) => {
+      if (!json.jsonEmitted()) json.emitJson(json.jsonFailure(json.jsonCommandOf(process.argv.slice(2)), error));
+    };
+  }
+}
 
 try {
   // `<command> --json` for the commands listed here runs before Pastel loads

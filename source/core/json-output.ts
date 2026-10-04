@@ -87,6 +87,8 @@ function toJsonError(error: unknown): JsonErrorPayload {
   return { code: d.kind === 'known' ? d.code : null, message: d.message, hint: d.hint, stack: null };
 }
 
+let emitted = false;
+
 /**
  * Write the document and a single trailing newline. Pretty-printed on
  * purpose: these documents are read by humans debugging an agent at least as
@@ -98,6 +100,15 @@ export function emitJson(
   write: (chunk: string) => void = (chunk) => void process.stdout.write(chunk),
 ): void {
   write(`${JSON.stringify(envelope, null, 2)}\n`);
+  emitted = true;
+}
+
+/**
+ * True once this process has written a document. A crash after that (a late
+ * rejection) must not append a second one: the caller parses stdout whole.
+ */
+export function jsonEmitted(): boolean {
+  return emitted;
 }
 
 // ---------------------------------------------------------------------------

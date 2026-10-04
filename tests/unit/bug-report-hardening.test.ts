@@ -96,5 +96,8 @@ describe('jsonCommandOf (#225)', () => {
     expect(jsonCommandOf(['adopt', 'github:a/b', '--json'])).toBe('adopt');
     expect(jsonCommandOf(['update', '--json', '--yes'])).toBe('update');
     expect(jsonCommandOf(['validate', '.', '--json'])).toBe('validate');
+    // Root options are all boolean flags, so one before the subcommand is skipped.
+    expect(jsonCommandOf(['--verbose', 'update', '--json'])).toBe('update');
+    expect(jsonCommandOf(['--no-update-check', 'adopt', 'github:a/b', '--json'])).toBe('adopt');
   });
 });

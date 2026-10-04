@@ -1,0 +1,89 @@
+/**
+ * `source/core/json-run.ts` (#198): which runs are `--json` runs of update,
+ * adopt or status, and making stdout non-interactive for them.
+ * See docs/IMPLEMENTATION.md §4.23.
+ */
+
+import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { isJsonRun, markNonInteractive } from '../../source/core/json-run.js';
+
+describe('isJsonRun', () => {
+  it.each([
+    [['--json']],
+    [['--json', '--verbose']],
+    [['update', '--dry-run', '--json']],
+    [['adopt', 'github:acme/demo', '--dry-run', '--json']],
+    [['--json', 'update', '--dry-run']],
+    [['validate', '--json']],
+    // Root options (#147) are all boolean flags, so the subcommand after one is still found.
+    [['--verbose', 'update', '--dry-run', '--json']],
+    [['--no-update-check', 'adopt', 'github:acme/demo', '--json']],
+  ])('is a JSON run: %j', (argv) => {
+    expect(isJsonRun(argv)).toBe(true);
+  });
+
+  it.each([
+    [[]],
+    [['update', '--dry-run']],
+    [['update', '--json', '--help']],
+    [['--json', '-h']],
+    [['update', '--json=false']],
+    [['update', '--json=true', '--dry-run']],
+    [['install', 'github:acme/demo', '--json']],
+    [['update', '--', '--json']],
+  ])('is not a JSON run: %j', (argv) => {
+    expect(isJsonRun(argv)).toBe(false);
+  });
+});
+
+describe('every command with --json goes through the gate', () => {
+  // A command that gains a `json` option must be a JSON run here, or its
+  // --json in a terminal would get Ink's cursor codes and live prompts again.
+  const commandsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../source/commands');
+  // Any `json:` key declared through zod (`zod.` or `z.`), quoted or not, in
+  // any command file at any depth; index.tsx is the status command.
+  const declaresJson = /['"]?\bjson['"]?\s*:\s*z(?:od)?\b/;
+  const withJson = (fs.readdirSync(commandsDir, { recursive: true }) as string[])
+    .filter((file) => file.endsWith('.tsx'))
+    .filter((file) => declaresJson.test(fs.readFileSync(path.join(commandsDir, file), 'utf-8')))
+    .map((file) => file.replace(/\.tsx$/, '').split(path.sep).join('/'));
+
+  it('finds the --json commands', () => {
+    expect(withJson).toEqual(expect.arrayContaining(['index', 'update', 'adopt', 'validate']));
+  });
+
+  it.each(withJson)('%s --json is a JSON run', (name) => {
+    expect(isJsonRun(name === 'index' ? ['--json'] : [name, '--json'])).toBe(true);
+  });
+});
+
+describe('markNonInteractive', () => {
+  it('makes a terminal stream report it is not a TTY', () => {
+    const stream = { isTTY: true } as { isTTY?: boolean };
+    markNonInteractive(stream);
+    expect(stream.isTTY).toBe(false);
+  });
+
+  it('leaves a piped stream as it is', () => {
+    const stream = {} as { isTTY?: boolean };
+    markNonInteractive(stream);
+    expect(stream.isTTY).toBeFalsy();
+  });
+});
+
+describe('root options before the subcommand', () => {
+  // isJsonRun and jsonCommandOf take the first non-option argument as the
+  // subcommand. That holds while every root option is a boolean flag: an
+  // option that took a value (`--profile work update --json`) would make the
+  // value look like the subcommand.
+  it('are all boolean flags', async () => {
+    const { options } = await import('../../source/commands/index.js');
+    for (const [name, schema] of Object.entries(options.shape)) {
+      expect(schema.safeParse(true).success, name).toBe(true);
+      expect(schema.safeParse('update').success, name).toBe(false);
+    }
+  });
+});

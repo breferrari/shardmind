@@ -140,6 +140,11 @@ export interface SpawnCliPtyOptions {
    * do via `args`.
    */
   nodeArgs?: string[];
+  /**
+   * The CLI to run instead of `dist/cli.js`: a copy of the build whose
+   * command module a crash scenario replaces (tests/e2e/helpers/broken-dist.ts).
+   */
+  cli?: string;
 }
 
 /**
@@ -177,6 +182,13 @@ export interface PtyHandle {
   write: (data: string) => void;
   /** Cell-grid view of what the child has rendered. */
   screen: VirtualScreen;
+  /**
+   * Every byte the child wrote to the terminal so far, stdout and stderr
+   * merged (a PTY has one channel), with the line discipline's CRLF. For
+   * byte-level assertions the cell grid cannot make, such as "no escape
+   * sequence at all" (#198).
+   */
+  raw: () => string;
   /**
    * Resolve when the screen reaches the predicate. Times out via
    * `opts.timeoutMs` (default 30_000) and throws including the most
@@ -276,7 +288,7 @@ export async function spawnCliPty(
 
   const screen = createVirtualScreen({ cols, rows });
 
-  const argv = opts.nodeArgs ?? [DIST_CLI, ...args];
+  const argv = opts.nodeArgs ?? [opts.cli ?? DIST_CLI, ...args];
   const pty: IPty = nodePty.spawn(process.execPath, argv, {
     name: 'xterm-256color',
     cols,
@@ -296,7 +308,9 @@ export async function spawnCliPty(
   // `waitForExit`'s `screen.settled()`. `void` makes the
   // fire-and-forget intent explicit and quiets the no-floating-promises
   // lint that ts strict + vitest surface for unhandled returns.
+  let raw = '';
   pty.onData((chunk) => {
+    raw += chunk;
     void screen.feed(chunk);
   });
 
@@ -448,7 +462,7 @@ export async function spawnCliPty(
     screen.dispose();
   };
 
-  return { pid: pty.pid, write, screen, waitForScreen, sigint, waitForExit, kill, dispose };
+  return { pid: pty.pid, write, screen, raw: () => raw, waitForScreen, sigint, waitForExit, kill, dispose };
 }
 
 /**

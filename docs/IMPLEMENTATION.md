@@ -1608,9 +1608,9 @@ export function hookOutputForDisplay(text: string): string;
 4. A tab becomes spaces up to the next multiple of 8 columns, since Ink measures a raw tab as zero width. Columns are counted per code point: East Asian wide characters count 2 and combining marks 0 (an approximation of `string-width`, which is not a dependency).
 5. Unterminated sequences cannot swallow output. A lone ESC is removed by itself. An OSC, DCS, SOS, PM or APC is aborted, as a terminal aborts it, by an ESC that does not start ST, or by CAN (0x18) or SUB (0x1A). The partial sequence is removed, and scanning resumes at the ESC (CAN and SUB are removed). With no terminator and no abort before the end of the line, it loses only its introducer, and its payload stays as inert text. An unfinished CSI loses its introducer, parameter and intermediate bytes, and an unfinished escape loses its ESC and intermediate bytes.
 
-Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` loads `pastel` and `./cli-options.js` with `await import()` after it, because a static import would load Ink, and with it chalk, before any statement runs. Hook subprocesses inherit the resulting `FORCE_COLOR=0`. `--json` output is `JSON.stringify`, written outside Ink, so a piped `--json` run carries no ANSI whatever the colour variables say. With stdout a terminal, Ink still writes cursor codes around it (#198).
+Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` loads `pastel` and `./cli-options.js` with `await import()` after it, because a static import would load Ink, and with it chalk, before any statement runs. Hook subprocesses inherit the resulting `FORCE_COLOR=0`. `--json` output is `JSON.stringify`, written outside Ink, so a piped `--json` run carries no ANSI whatever the colour variables say.
 
----
+A terminal `--json` run behaves exactly as a piped one: see §4.23.
 
 ### 4.22 `lint-shard.ts`
 
@@ -1628,6 +1628,35 @@ lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: st
 5. `renderFile` for every render entry with `buildRenderContext(manifest, values, selections)`; each failure is recorded with the entry's output path.
 6. `findOutputClashes` over `plannedOutputRefs` (`output-clash.ts`), with `_each` lists expanded with these values (#240). Every clash is reported: across two different modules as the warning `LINT_OUTPUT_CLASH_ACROSS_MODULES` (they may be alternatives a user picks between), otherwise as an `OUTPUT_PATH_CLASH` error. #35's install check counts a clash, like an invalid value, as the prefill's when it disappears with the defaults alone.
 7. Warnings: a module whose paths match no file in the walk; a group no value belongs to.
+
+
+### 4.23 `json-run.ts`
+
+Makes a `--json` run in a terminal behave exactly as piped (#198).
+
+```typescript
+export function isJsonRun(argv: readonly string[]): boolean;
+export function markNonInteractive(stream: { isTTY?: boolean }): void;
+```
+
+A mounted Ink app in a TTY did two things under `--json` that a pipe never sees:
+- it wrote synchronized-output and cursor codes around its frame even when the command rendered nothing (`\x1b[?2026h\x1b[?25l` before the document, `\x1b[?25h` after);
+- it offered prompts, because stdin was a TTY, which `--json` renders as nothing. `adopt --dry-run --json` without `--yes` or `--values` waited in an invisible wizard where the piped run refused with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`. This predates #198.
+
+Ink decides the first from `stdout.isTTY` (`interactive` defaults to `!isInCi && stdout.isTTY`), and Pastel passes no render options. So for a run `isJsonRun` accepts, `cli.ts` marks stdout non-interactive right after `applyNoColor`, before Pastel or any component loads.
+
+1. `isJsonRun`: `--json` appears before any `--`, there is no `-h` or `--help`, and the first non-option argument is `update`, `adopt`, `validate` or absent (the status command). `--json=true` is not a form Commander accepts for a boolean flag. `validate --json` runs headless without Ink (#34), so marking stdout changes nothing there; it is a JSON run for the crash answer below. Install has no `--json`. A unit test ties the accepted commands to every command file under `source/commands/` that declares a `json` option.
+2. `markNonInteractive` defines `isTTY` as `false` on stdout. The only readers of `stdout.isTTY` are Ink's interactive decision (and its synchronized-output check) and the self-update banner, which is already off under `--json`.
+
+The second is decided where the prompt is decided, not by faking stdin. Ink derives `isRawModeSupported` from `stdin.isTTY`, but marking stdin non-interactive would send the stdin SIGINT bridge (`core/cancellation.ts`) down its pipe path on a real terminal. A backgrounded run would then get SIGTTIN and stop, and type-ahead would be swallowed. Instead, a machine with a `--json` mode treats `json` like a missing terminal at its prompt decision:
+- adopt: `!isRawModeSupported || json` refuses with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`, or uses `--values`, exactly as piped;
+- update: #230.
+
+A throw that escapes every command (#225) also answers on stdout under `--json`. The top-level crash handler in `cli.ts` is given `writeJson` for a run `isJsonRun` accepts, and it writes one failure document (`ok: false`, `code: null`, the `stack`) before the plain-text report on stderr. The exit waits for both streams to drain. `json-output.ts` is loaded after the handlers are installed, and a failure to load it, or a throw while writing, still leaves the stderr report and exit 1. A run that already wrote its document (`jsonEmitted()`) gets no second one. For `validate --json` this covers a crash outside its runner, which catches its own errors. A `--json` caller never gets an empty stdout, and a terminal gets the same document as a pipe.
+
+stdin and stderr are never touched.
+
+---
 
 ---
 
