@@ -280,7 +280,9 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
       vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, opts) => {
         const f = String(file);
         if (interrupted && inVault(f)) writtenAfter.push(path.relative(root, f));
-        if (!interrupted && inVault(f)) {
+        // The run's first content write: `.shardmind/` also holds the
+        // update-check cache, written before the run starts.
+        if (!interrupted && inVault(f) && !path.relative(root, f).startsWith('.shardmind')) {
           // Ctrl+C lands during the update's first write, which goes on
           // while the handler acts.
           interrupted = true;

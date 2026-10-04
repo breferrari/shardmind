@@ -174,6 +174,12 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       removedFileDecisions: {},
     });
     const abort = new AbortController();
+    const realWrite = fsp.writeFile;
+    let writesAfterAbort = 0;
+    const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (abort.signal.aborted) writesAfterAbort++;
+      return realWrite(file, data, opts);
+    });
     const err = await runUpdate({
       vaultRoot: vault,
       plan,
@@ -192,6 +198,10 @@ describe('update pipeline (against examples/minimal-shard)', () => {
         if (ev.kind === 'file') abort.abort();
       },
     }).catch((e: unknown) => e);
+    writeSpy.mockRestore();
+    // The progress event comes just before its action's write, which goes
+    // on; nothing after it. The rollback copies, never writes.
+    expect(writesAfterAbort).toBeLessThanOrEqual(1);
     expect(err).toMatchObject({ code: 'CANCELLED' });
     expect(await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe(homeBefore);
     expect(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')).toBe(stateBefore);

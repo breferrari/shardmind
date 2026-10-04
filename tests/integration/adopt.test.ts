@@ -770,6 +770,12 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
       selections,
     });
     const abort = new AbortController();
+    const realWrite = fsp.writeFile;
+    let writesAfterAbort = 0;
+    const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (abort.signal.aborted) writesAfterAbort++;
+      return realWrite(file, data, opts);
+    });
     const err = await runAdopt({
       vaultRoot: vault,
       manifest,
@@ -786,11 +792,58 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
         if (ev.kind === 'file') abort.abort();
       },
     }).catch((e: unknown) => e);
+    writeSpy.mockRestore();
+    // Stopped before its next write: the rollback copies, never writes.
+    expect(writesAfterAbort).toBe(0);
     expect(err).toMatchObject({ code: 'CANCELLED' });
     expect(await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('mine\n');
     expect(await readState(vault)).toBeNull();
     // Only the user's file is left: every shard file it wrote was removed.
     expect(await fsp.readdir(vault)).toEqual(['Home.md']);
+  });
+
+  it('a Ctrl+C after the shard-only writes stops before a differing file is overwritten (#249)', async () => {
+    const { manifest, schema } = await loadShard();
+    const selections = defaultModuleSelections(schema);
+    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+    await fsp.writeFile(path.join(vault, 'Home.md'), 'mine\n', 'utf-8');
+    const adoptPlan = await classifyAdoption({
+      vaultRoot: vault,
+      schema,
+      manifest,
+      tempDir: MINIMAL_SHARD,
+      values: values as Record<string, unknown>,
+      selections,
+    });
+    const lastShardOnly = adoptPlan.shardOnly[adoptPlan.shardOnly.length - 1]!.path;
+    const abort = new AbortController();
+    const realWrite = fsp.writeFile;
+    let writesAfterAbort = 0;
+    const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (abort.signal.aborted) writesAfterAbort++;
+      return realWrite(file, data, opts);
+    });
+    const err = await runAdopt({
+      vaultRoot: vault,
+      manifest,
+      schema,
+      tempDir: MINIMAL_SHARD,
+      resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
+      values: values as Record<string, unknown>,
+      selections,
+      plan: adoptPlan,
+      resolutions: { 'Home.md': 'use_shard' },
+      signal: abort.signal,
+      // Ctrl+C lands right after the last shard-only file is written.
+      onFileTouched: (rel) => {
+        if (rel === lastShardOnly) abort.abort();
+      },
+    }).catch((e: unknown) => e);
+    writeSpy.mockRestore();
+    expect(err).toMatchObject({ code: 'CANCELLED' });
+    expect(writesAfterAbort).toBe(0);
+    expect(await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('mine\n');
   });
 
   it('a Ctrl+C just before state.json still stops the adopt (#249)', async () => {

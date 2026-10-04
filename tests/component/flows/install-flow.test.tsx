@@ -938,11 +938,13 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     });
     const realRename = fs.rename;
     let interrupted = false;
+    let movedAfter = 0;
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     try {
       await vault.writeFile('Home.md', 'my edited home\n');
       const stateBefore = await vault.readFile('.shardmind/state.json');
       vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+        if (interrupted && String(to).includes('shardmind-backup-')) movedAfter++;
         const result = await realRename(from, to);
         if (!interrupted && String(to).includes('shardmind-backup-')) {
           // Ctrl+C lands right after the first move aside.
@@ -961,6 +963,8 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await tick(500);
       expect(interrupted).toBe(true);
       expect(exit).toHaveBeenCalledWith(130);
+      // The loop stops before its next move (#55).
+      expect(movedAfter).toBe(0);
       expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
       expect(await vault.readFile('Home.md')).toBe('my edited home\n');
       expect(await leftoverBackups(vault.root)).toEqual([]);
