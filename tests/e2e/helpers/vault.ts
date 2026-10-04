@@ -12,13 +12,15 @@
  *      not a hand-constructed `.shardmind/` tree, so tests exercise the
  *      same code paths the user would hit.
  *
- * `createInstalledVault` is deliberately slow (one subprocess per call) —
- * don't re-use it across independent tests. Each test that needs a
- * pre-installed vault gets its own, cleaned up on exit.
+ * `createInstalledVault` gives each test its own installed vault, cleaned up
+ * on exit. The install subprocess runs once per distinct fixture per test
+ * file, and later calls copy that result (#218; see the function).
  */
 
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { removePath } from '../../../source/core/fs-utils.js';
@@ -78,49 +80,212 @@ export async function createEmptyVault(prefix = 'vault'): Promise<Vault> {
   };
 }
 
+/** Runs `shardmind <args>`; the real CLI by default, injectable for counting. */
+export type InstallRunner = typeof spawnCli;
+
 /**
- * Create a temp vault and install `shardRef` into it using the real CLI.
- * The install runs non-interactively via `--yes` and reads values from a
- * temporary YAML file prefilled from `values`. Returns after a successful
- * exit (throws otherwise).
+ * Installed fixtures, per test file (vitest isolates modules per file) and per
+ * install runner (a custom runner's side effects stay in its own cache): key
+ * → the template directory a copy is made from, or `null` when the key cannot
+ * be cached. Each entry is a promise, so concurrent calls with one key share
+ * one install.
+ */
+const installedTemplates = new Map<InstallRunner, Map<string, Promise<string | null>>>();
+/** Every template directory made, for cleanup. */
+const templateRoots = new Set<string>();
+/** Bumped by `cleanupAllVaults`, so a template still being built when it runs is discarded. */
+let cacheGeneration = 0;
+
+let exitCleanupRegistered = false;
+/**
+ * Removes leftover templates when the worker exits normally, for files that
+ * never call `cleanupAllVaults`. A worker killed by a signal runs no
+ * handlers; `cleanupAllVaults` stays the primary path.
+ */
+function registerExitCleanup(): void {
+  if (exitCleanupRegistered) return;
+  exitCleanupRegistered = true;
+  process.once('exit', () => {
+    for (const root of templateRoots) {
+      try {
+        fsSync.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+      } catch {
+        // A Windows file hold: leave this one, keep removing the rest.
+      }
+    }
+  });
+}
+
+/** How many installed-vault templates this file holds. For tests of the cache. */
+export function installedTemplateCount(): number {
+  return templateRoots.size;
+}
+
+/**
+ * A vault with `shardRef` installed by the real CLI (`install --yes`, values
+ * from a temporary YAML file). Throws if the install fails.
+ *
+ * Each distinct fixture is installed once per test file and copied after that
+ * (#218): an install is a full CLI subprocess, and a scenario that installs
+ * only to set up an update or adopt ran two of them in one test budget. The
+ * key is everything that decides the result: the stub, what it serves for
+ * the shard right now (tarball contents included), the ref and the values as
+ * written to YAML. A copy is the vault the install would produce, because an
+ * installed vault records no absolute path. That is checked on each template:
+ * a vault that mentions its own path in any spelling, as a hook writing
+ * `ctx.vaultRoot` does (the obsidian-mind fixture's bootstrap hook), is never
+ * cached, so that shard installs every time. A copy keeps the clock of the
+ * install it came from (state.json times, rendered dates).
+ *
+ * `fresh: true` always runs the install; a test whose subject is the install
+ * itself spawns `install` directly instead of using this helper. Building a
+ * template is best-effort: if it fails, the vault is still returned.
  */
 export async function createInstalledVault(input: {
   stub: GitHubStub;
   shardRef: string;
   values: Record<string, unknown>;
   prefix?: string;
+  fresh?: boolean;
+  install?: InstallRunner;
 }): Promise<Vault> {
   const vault = await createEmptyVault(input.prefix ?? 'installed');
+  const install = input.install ?? spawnCli;
+  const valuesYaml = stringifyYaml(input.values);
+  const key = JSON.stringify([input.stub.url, input.stub.servingState(slugOf(input.shardRef)), input.shardRef, valuesYaml]);
 
-  const valuesPath = path.join(vault.root, `.values-${crypto.randomUUID()}.yaml`);
-  await fs.writeFile(valuesPath, stringifyYaml(input.values), 'utf-8');
+  let cache = installedTemplates.get(install);
+  if (!cache) installedTemplates.set(install, (cache = new Map()));
 
-  const result = await spawnCli(['install', input.shardRef, '--yes', '--values', valuesPath], {
-    cwd: vault.root,
-    env: { SHARDMIND_GITHUB_API_BASE: input.stub.url },
-  });
-
-  if (result.exitCode !== 0) {
-    await vault.cleanup();
-    throw new Error(
-      `createInstalledVault: install failed (exit ${result.exitCode}).\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-    );
+  const cached = input.fresh ? undefined : cache.get(key);
+  if (cached) {
+    const template = await cached;
+    if (template !== null) {
+      await fs.cp(template, vault.root, COPY_OPTIONS);
+      return vault;
+    }
   }
 
-  // The values prefill file was inside the vault for convenience; delete
-  // it so it doesn't leak into listFiles() / drift detection.
-  await fs.rm(valuesPath, { force: true });
+  // Only the first caller of a key builds its template; the rest wait on it.
+  let settle: ((template: string | null) => void) | undefined;
+  if (!input.fresh && !cached) cache.set(key, new Promise((resolve) => (settle = resolve)));
 
-  return vault;
+  try {
+    const valuesPath = path.join(vault.root, `.values-${crypto.randomUUID()}.yaml`);
+    await fs.writeFile(valuesPath, valuesYaml, 'utf-8');
+
+    const result = await install(['install', input.shardRef, '--yes', '--values', valuesPath], {
+      cwd: vault.root,
+      env: { SHARDMIND_GITHUB_API_BASE: input.stub.url },
+    });
+
+    if (result.exitCode !== 0) {
+      await vault.cleanup();
+      throw new Error(
+        `createInstalledVault: install failed (exit ${result.exitCode}).\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      );
+    }
+
+    // The values prefill file was inside the vault for convenience; delete
+    // it so it doesn't leak into listFiles() / drift detection.
+    await fs.rm(valuesPath, { force: true });
+
+    if (settle) {
+      const built = await buildTemplate(vault.root);
+      // A failed copy is worth retrying on the next call; a vault that is
+      // tied to its own path never is.
+      if (built.kind === 'failed') cache.delete(key);
+      settle(built.kind === 'template' ? built.root : null);
+    }
+    return vault;
+  } catch (err) {
+    if (settle) {
+      cache.delete(key);
+      settle(null);
+    }
+    throw err;
+  }
+}
+
+const COPY_OPTIONS = { recursive: true, verbatimSymlinks: true } as const;
+
+type Built = { kind: 'template'; root: string } | { kind: 'position-dependent' } | { kind: 'failed' };
+
+/**
+ * Copies an installed vault into a template. It cannot be reused when it is
+ * tied to its own path; the copy can also fail (a Windows file hold just after
+ * the install exits), or be overtaken by `cleanupAllVaults`. Never throws.
+ */
+async function buildTemplate(root: string): Promise<Built> {
+  const generation = cacheGeneration;
+  let copy: string | undefined;
+  try {
+    if (!(await isPositionIndependent(root))) return { kind: 'position-dependent' };
+    copy = await fs.mkdtemp(path.join(os.tmpdir(), 'shardmind-e2e-template-'));
+    await fs.cp(root, copy, COPY_OPTIONS);
+    if (generation !== cacheGeneration) throw new Error('cache was cleared while the template was built');
+    templateRoots.add(copy);
+    registerExitCleanup();
+    return { kind: 'template', root: copy };
+  } catch {
+    if (copy) await removePath(copy).catch(() => {});
+    return { kind: 'failed' };
+  }
+}
+
+/** `acme/demo` from `github:acme/demo`, `github:acme/demo@1.0.0` or `github:acme/demo#main`. */
+function slugOf(shardRef: string): string {
+  return shardRef.replace(/^github:/, '').split(/[@#]/)[0]!;
 }
 
 /**
- * Best-effort cleanup of all live vaults. Called from the global
- * `afterAll` in case a test threw before its local afterEach ran.
+ * True when no file under `root` mentions `root` itself in any of the forms a
+ * path is written: as given and as its real path (which resolves Windows 8.3
+ * names), each native, forward-slash, JSON-escaped and as a `file:` URL, and
+ * compared case-insensitively on Windows and macOS. A vault holding any
+ * symlink is treated as tied to its path too, since a link's target is not
+ * checked. Such a vault can be copied elsewhere and stay the same vault.
+ */
+async function isPositionIndependent(root: string): Promise<boolean> {
+  if (await containsSymlink(root)) return false;
+  const spellings = new Set<string>();
+  for (const p of new Set([root, await fs.realpath(root)])) {
+    spellings.add(p);
+    spellings.add(toPosix(p));
+    spellings.add(JSON.stringify(p).slice(1, -1));
+    spellings.add(pathToFileURL(p).href);
+    spellings.add(decodeURI(pathToFileURL(p).href));
+  }
+  const caseInsensitive = process.platform === 'win32' || process.platform === 'darwin';
+  const fold = caseInsensitive ? (s: string) => s.toLowerCase() : (s: string) => s;
+  const forms = [...spellings].map(fold);
+  for (const rel of await listRecursive(root)) {
+    const content = fold(await fs.readFile(path.join(root, rel), 'utf-8'));
+    for (const form of forms) if (content.includes(form)) return false;
+  }
+  return true;
+}
+
+function toPosix(p: string): string {
+  return p.split(path.sep).join('/');
+}
+
+async function containsSymlink(root: string): Promise<boolean> {
+  const entries = await fs.readdir(root, { recursive: true, withFileTypes: true });
+  return entries.some((entry) => entry.isSymbolicLink());
+}
+
+/**
+ * Best-effort cleanup of all live vaults and installed-vault templates.
+ * Called from the global `afterAll` in case a test threw before its local
+ * afterEach ran.
  */
 export async function cleanupAllVaults(): Promise<void> {
-  const roots = [...activeVaults];
+  const roots = [...activeVaults, ...templateRoots];
+  cacheGeneration += 1;
   activeVaults.clear();
+  installedTemplates.clear();
+  templateRoots.clear();
   for (const root of roots) {
     await removePath(root).catch(() => {});
   }
