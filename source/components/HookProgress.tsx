@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { hookOutputForDisplay } from './hook-output.js';
+import { hookLineForDisplay } from './hook-output.js';
 import { Spinner } from './ui.js';
 import type { HookStage } from '../core/hook.js';
 
@@ -41,12 +41,12 @@ export default function HookProgress({ stage, output, shardLabel, index, total }
 
   // Split on either LF or CRLF so Windows-authored hooks tail cleanly.
   // Empty lines (the trailing one the final newline leaves, or one that was
-  // only colour codes) are skipped so the tail doesn't waste a line. Only the
-  // lines the tail shows are stripped: the buffer re-renders on every chunk.
+  // only control codes) are skipped so the tail doesn't waste a line. Only the
+  // lines the tail shows are sanitized: the buffer re-renders on every chunk.
   const lines = output.split(/\r?\n/);
   const tail: string[] = [];
   for (let i = lines.length - 1; i >= 0 && tail.length < TAIL_LINES; i--) {
-    const line = hookOutputForDisplay(lines[i]!);
+    const line = hookLineForDisplay(lines[i]!);
     if (line.length > 0) tail.unshift(line);
   }
 
