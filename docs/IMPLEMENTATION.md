@@ -1640,6 +1640,7 @@ Makes a `--json` run in a terminal behave exactly as piped (#198).
 ```typescript
 export function isJsonRun(argv: readonly string[]): boolean;
 export function markNonInteractive(stream: { isTTY?: boolean }): void;
+export function dropTrailingBlankWrites(stream: Pick<NodeJS.WritableStream, 'write'>): void;
 ```
 
 A mounted Ink app in a TTY did two things under `--json` that a pipe never sees:
@@ -1658,6 +1659,8 @@ The second is decided where the prompt is decided, not by faking stdin. Ink deri
 A throw that escapes every command (#225) also answers on stdout under `--json`. The top-level crash handler in `cli.ts` is given `writeJson` for a run `isJsonRun` accepts, and it writes one failure document (`ok: false`, `code: null`, the `stack`) before the plain-text report on stderr. The exit waits for both streams to drain. `json-output.ts` is loaded after the handlers are installed, and a failure to load it, or a throw while writing, still leaves the stderr report and exit 1. A run that already wrote its document (`jsonEmitted()`) gets no second one. For `validate --json` this covers a crash outside its runner, which catches its own errors. A `--json` caller never gets an empty stdout, and a terminal gets the same document as a pipe.
 
 stdin and stderr are never touched.
+
+The same gate keeps the document's single trailing newline (#231). At unmount, Ink in non-interactive mode writes its last frame plus `'\n'`. Under `--json` the frame is empty, so every document ended in `}\n\n`, piped too, against `emitJson`'s one-newline contract. `dropTrailingBlankWrites(process.stdout)` drops a write of exactly `'\n'` once a write has carried content, and still calls that write's callback, because Ink's exit barrier waits on it. Every other write passes through untouched. `validate --json` writes its own document without Ink and is not affected.
 
 ---
 
