@@ -110,29 +110,13 @@ export interface BuildStatusReportOptions {
   uncapped?: boolean;
 }
 
-/** Caps for one report: the display caps, or none under `uncapped`. */
-interface ListCaps {
-  paths: number;
-  invalidValueKeys: number;
-  frontmatterIssues: number;
-}
-
-function listCaps(uncapped: boolean | undefined): ListCaps {
-  return uncapped
-    ? { paths: Infinity, invalidValueKeys: Infinity, frontmatterIssues: Infinity }
-    : {
-        paths: MAX_PATHS_PER_BUCKET,
-        invalidValueKeys: MAX_INVALID_VALUE_KEYS,
-        frontmatterIssues: MAX_FRONTMATTER_ISSUES,
-      };
-}
-
 export async function buildStatusReport(
   vaultRoot: string,
   opts: BuildStatusReportOptions,
 ): Promise<StatusReport | null> {
   const now = opts.now ?? Date.now();
-  const caps = listCaps(opts.uncapped);
+  // A display cap, or none under `uncapped`.
+  const cap = (display: number): number => (opts.uncapped ? Infinity : display);
 
   const state = await readState(vaultRoot);
   if (!state) return null;
@@ -164,7 +148,7 @@ export async function buildStatusReport(
         })
       : resolveUpdate(state, currentVersion, vaultRoot, now, warnings, opts.verbose),
     schema
-      ? buildValuesSummary(rawValues, schema, caps.invalidValueKeys)
+      ? buildValuesSummary(rawValues, schema, cap(MAX_INVALID_VALUE_KEYS))
       : Promise.resolve<StatusValuesSummary>({
           valid: false,
           total: 0,
@@ -178,7 +162,7 @@ export async function buildStatusReport(
   // synthesize a minimal one from state so the status view can still render.
   const effectiveManifest: ShardManifest = manifest ?? synthesizeManifest(state);
 
-  const driftSummary = summarizeDrift(drift, caps.paths);
+  const driftSummary = summarizeDrift(drift, cap(MAX_PATHS_PER_BUCKET));
   const modules: StatusModuleSummary = buildModuleSummary(state);
 
   // Verbose sections are independent — fan them out in parallel. Each has
@@ -189,13 +173,13 @@ export async function buildStatusReport(
         driftSummary.modified > 0
           ? computeModifiedChanges(
               vaultRoot,
-              drift.modified.slice(0, caps.paths),
+              drift.modified.slice(0, cap(MAX_PATHS_PER_BUCKET)),
               effectiveManifest,
               rawValues,
               state.modules,
             )
           : Promise.resolve(null),
-        schema ? lintFrontmatter(vaultRoot, drift, schema, caps.frontmatterIssues) : Promise.resolve(null),
+        schema ? lintFrontmatter(vaultRoot, drift, schema, cap(MAX_FRONTMATTER_ISSUES)) : Promise.resolve(null),
         probeEnvironment(),
       ])
     : [null, null, null];

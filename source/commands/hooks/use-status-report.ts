@@ -74,7 +74,7 @@ export function useStatusReport(input: UseStatusReportInput): UseStatusReportOut
         const report = await buildStatusReport(vaultRoot, {
           verbose,
           skipUpdateCheck: skipUpdateCheck ?? false,
-          uncapped: uncapped ?? false,
+          uncapped,
         });
         if (disposed) return;
         if (!report) {
