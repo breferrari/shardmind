@@ -282,7 +282,7 @@ export async function spawnCliPty(
     delete env[key];
   }
   // Real-TTY env. xterm-256color is what most modern emulators
-  // advertise; Ink + @inkjs/ui adapt to it, and our virtual-screen
+  // advertise; Ink + the ui-kit adapt to it, and our virtual-screen
   // emulator parses everything they emit.
   Object.assign(env, { TERM: 'xterm-256color' }, opts.env ?? {});
 

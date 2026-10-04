@@ -2,7 +2,7 @@
  * Layer 2 install-wizard scenarios — #111 Phase 2 scenarios 1, 9, 11.
  *
  * Drives the install wizard end-to-end inside a real PTY so the
- * production raw-mode keystroke handlers (`@inkjs/ui` Select / TextInput,
+ * production raw-mode keystroke handlers (ui-kit Select / TextInput,
  * `useInput`) run against actual TTY semantics. Layer 1's in-process
  * mount fakes raw mode; this layer is the ground truth.
  *
