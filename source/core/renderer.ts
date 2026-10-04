@@ -164,10 +164,15 @@ function renderEach(
  * and the write from ever naming different files.
  */
 export function eachOutputPaths(outputPath: string, list: readonly unknown[]): string[] {
+  const dir = path.posix.dirname(outputPath);
+  const base = path.posix.basename(outputPath);
   return list.map((item) => {
-    const fields = (item ?? {}) as Record<string, unknown>;
+    const fields = item as Record<string, unknown>;
     const slug = sanitizeSlug(String(fields['slug'] ?? fields['name'] ?? 'unknown'));
-    return outputPath.replace('_each', slug);
+    // Only the basename's `_each`, and a replacer function, so a `$&` or
+    // `$'` in the slug is taken literally rather than as a pattern.
+    const named = base.replace('_each', () => slug);
+    return dir === '.' ? named : `${dir}/${named}`;
   });
 }
 

@@ -614,8 +614,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         // expands to, so a user file at one is a collision like any other (#214).
         const { outputs } = await planOutputs(ctx.schema, ctx.tempDir, validatedResult.selections, validated);
         // Refuse before any prompt or move, as update and adopt do, so a dry
-        // run and the run agree (#163). `runInstall` checks again, including
-        // the files an `_each` template expands to.
+        // run and the run agree (#163). `runInstall` checks again at write
+        // time, for a caller that plans without values.
         await assertSafeVaultPaths(vaultRoot, outputs.map((o) => o.outputPath));
         const collisions = await detectCollisions(vaultRoot, outputs.map((o) => o.outputPath));
 

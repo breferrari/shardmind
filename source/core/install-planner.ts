@@ -271,7 +271,9 @@ export async function planOutputs(
     // A non-array value keeps the template path; the render then fails
     // with RENDER_ITERATOR_ERROR, as it always has.
     if (Array.isArray(list)) {
-      for (const outputPath of eachOutputPaths(entry.outputPath, list)) {
+      // Two items can name the same file; the render writes it once (the
+      // last wins), so plan it once, or its collision is backed up twice.
+      for (const outputPath of new Set(eachOutputPaths(entry.outputPath, list))) {
         tally({ outputPath, module: entry.module }, 'render');
       }
     } else {

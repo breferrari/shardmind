@@ -314,6 +314,18 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       }
     });
 
+    it('planOutputs lists a path two items share once, so its collision is backed up once', async () => {
+      const shard = await eachShard();
+      try {
+        const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+        const values = { people: [{ name: 'Alice' }, { name: 'Alice' }] };
+        const { outputs } = await planOutputs(schema, shard, defaultModuleSelections(schema), values);
+        expect(outputs.map((o) => o.outputPath)).toEqual(['people/Alice.md']);
+      } finally {
+        await fsp.rm(shard, { recursive: true, force: true });
+      }
+    });
+
     it('planOutputs without values keeps the template path (module review, before values exist)', async () => {
       const shard = await eachShard();
       try {
