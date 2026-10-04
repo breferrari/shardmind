@@ -18,10 +18,10 @@
  */
 
 import fs from 'node:fs/promises';
-import { removePath } from '../../../source/core/fs-utils.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
+import { removePath } from '../../../source/core/fs-utils.js';
 import { stringify as stringifyYaml } from 'yaml';
 import { spawnCli } from './spawn-cli.js';
 import type { GitHubStub } from './github-stub.js';

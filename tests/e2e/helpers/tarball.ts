@@ -18,12 +18,12 @@
  */
 
 import fs from 'node:fs/promises';
-import { removePath } from '../../../source/core/fs-utils.js';
 import path from 'node:path';
 import os from 'node:os';
 import * as tar from 'tar';
 import { stringify as stringifyYaml, parse as parseYaml } from 'yaml';
 import { fileURLToPath } from 'node:url';
+import { removePath } from '../../../source/core/fs-utils.js';
 import { copyDir, hashSourceTree, cachedFilesExist } from './tarball-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);

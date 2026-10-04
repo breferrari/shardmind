@@ -13,16 +13,21 @@ export async function pathExists(absolutePath: string): Promise<boolean> {
   }
 }
 
-/** Errors a recursive remove hits while another process (a virus scanner, a search indexer) holds a file in the tree. */
-const TRANSIENT_RM_CODES = new Set(['ENOTEMPTY', 'EBUSY', 'EPERM']);
+/**
+ * Errors a recursive remove hits while another process (a virus scanner, a
+ * search indexer) holds a file in the tree, or descriptors run short: the set
+ * `fs.rm` itself retries.
+ */
+const TRANSIENT_RM_CODES = new Set(['ENOTEMPTY', 'EBUSY', 'EPERM', 'EMFILE', 'ENFILE']);
 
 /**
  * Remove a file or folder tree; a path that does not exist is not an error.
  * On Windows a scanner or indexer can still hold a file just written, and the
  * remove then fails with ENOTEMPTY, EBUSY or EPERM until it lets go (#191):
- * those are retried up to `maxRetries` times, `retryDelay` ms apart and
- * growing, and the original error is thrown if they do not clear. Any other
- * error is thrown at once.
+ * those, and EMFILE / ENFILE, are retried up to `maxRetries` times,
+ * `retryDelay` ms apart and growing, and the original error is thrown if they
+ * do not clear. Any other error is thrown at once. The loop is ours, not `fs.rm`'s `maxRetries`, so
+ * a test can inject the error through `fsp.rm` and see it retried.
  */
 export async function removePath(
   absolutePath: string,
