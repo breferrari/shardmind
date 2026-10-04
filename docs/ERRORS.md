@@ -493,9 +493,9 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 ### `UPDATE_WRITE_FAILED`
 
-**Meaning:** A write during the update executor failed (mkdir + writeFile on a planned output path). Typically filesystem-level (permissions, disk-full, antivirus lock). May also surface as the code on a wrapped rollback-incomplete error when the update failed AND the snapshot couldn't restore every file.
+**Meaning:** A write during the update executor failed (mkdir + writeFile on a planned output path). Typically filesystem-level (permissions, disk-full, antivirus lock). When the rollback that follows could not restore every file, the update fails with `ROLLBACK_INCOMPLETE` instead, naming this code in its message (#247).
 
-**Remedy:** Check filesystem permissions on the vault directory and the mentioned path; retry. If partial-rollback also failed, the error message lists paths the snapshot couldn't restore — those files still exist under `.shardmind/backups/update-*/files/`.
+**Remedy:** Check filesystem permissions on the vault directory and the mentioned path; retry. A rollback that could not restore everything is `ROLLBACK_INCOMPLETE`.
 
 ### `MIGRATION_INVALID_VERSION`
 
@@ -529,7 +529,7 @@ Thrown by `source/core/adopt-executor.ts` (and surfaced through `source/commands
 
 **Meaning:** A write during the adopt executor failed (mkdir + writeFile on a planned output, or the `shard-values.yaml` write at finish). Surfaces both for engine-side write failures and for the `Missing adopt resolution for <path>` invariant assertion when a `differs` classification reaches the executor without a `keep_mine` / `use_shard` decision.
 
-**Remedy:** For filesystem-level failures, check permissions on the vault directory and the mentioned path. The snapshot-rollback restored any user content the executor had snapshotted before the failure; newly-written shard-only files were erased. For the missing-resolution case, that's a state-machine bug — open an issue.
+**Remedy:** For filesystem-level failures, check permissions on the vault directory and the mentioned path. The snapshot-rollback restored any user content the executor had snapshotted before the failure; newly-written shard-only files were erased. If it could not restore a file, the adopt fails with `ROLLBACK_INCOMPLETE` instead (#247). For the missing-resolution case, that's a state-machine bug — open an issue.
 
 `VALUES_FILE_COLLISION` is also reachable from adopt: a vault containing `shard-values.yaml` without `.shardmind/state.json` is a partial-adoption inconsistent state. The hint asks the user to move the stray file aside before re-running.
 
