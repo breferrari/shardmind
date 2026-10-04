@@ -21,10 +21,8 @@ import { pathToFileURL } from 'node:url';
 import { injectFaults } from '../../helpers/fault-fs.js';
 
 export interface HoldWriteOptions {
-  /** Hold before the `nth` write (1-based) whose destination is inside `under`. */
+  /** Hold before the `nth` write (1-based) inside the vault, the child's working directory. */
   nth: number;
-  /** The vault. */
-  under: string;
   /** Written when the hold begins, so the test knows the write is under way. */
   marker: string;
 }
@@ -38,9 +36,11 @@ export function holdWrite(opts: HoldWriteOptions): void {
   injectFaults({
     beforeWrite: {
       nth: opts.nth,
-      // The CLI writes through its real working directory: on macOS the temp
-      // folder is a symlink (/var → /private/var), so match on the real path.
-      under: fs.realpathSync.native(opts.under),
+      // The vault is the child's working directory, and the CLI builds every
+      // vault path from `process.cwd()`: the real path on macOS (where the
+      // temp folder is the symlink /var → /private/var), the short 8.3 form
+      // on a Windows runner started in one. Matching on it matches the CLI.
+      under: process.cwd(),
       hook: () => {
         fs.writeFileSync(opts.marker, '');
         return released;

@@ -76,7 +76,7 @@ async function interruptMidWrite(vault: Vault, args: string[]): Promise<{ result
   const result = await spawnCli(args, {
     cwd: vault.root,
     env: { SHARDMIND_GITHUB_API_BASE: stub.url, SHARDMIND_NO_UPDATE_CHECK: '1' },
-    nodeArgs: holdWriteNodeArgs({ nth: HOLD_AT, under: vault.root, marker }),
+    nodeArgs: holdWriteNodeArgs({ nth: HOLD_AT, marker }),
     signalAt: { signal: 'SIGINT', when: hold },
     timeoutMs: 60_000,
   });
