@@ -96,8 +96,8 @@ export default function UpdateSummary({
       {untracked > 0 && (
         <Text dimColor>
           {untracked === 1
-            ? '1 of your files sits at a path the new version adds and was kept untracked; it comes back each update. Re-run with --adopt-preexisting to track it.'
-            : `${untracked} of your files sit at paths the new version adds and were kept untracked; they come back each update. Re-run with --adopt-preexisting to track them.`}
+            ? '1 of your files sits at a path the new version adds and was kept untracked; it comes back each update. Choose Keep mine and track it at the prompt (without --yes), or re-run with --adopt-preexisting to track it.'
+            : `${untracked} of your files sit at paths the new version adds and were kept untracked; they come back each update. Choose Keep mine and track it for each at the prompt (without --yes), or re-run with --adopt-preexisting to track them.`}
         </Text>
       )}
 

@@ -101,7 +101,9 @@ export type UpdateAction = (
        * On `accept_new` the shard content adopts the path as managed; on
        * `keep_mine` / `skip` the user's file stays on disk AND stays
        * untracked — we never silently start managing a file the user
-       * didn't opt in to.
+       * didn't opt in to. The opt-ins track it as the user's modified copy:
+       * `keep_and_track` for this file (#165), or the run's
+       * `--adopt-preexisting` (#61).
        */
       preexisting?: boolean;
     }
@@ -216,7 +218,12 @@ export interface PlanUpdateInput {
   removedFileDecisions: Record<string, 'delete' | 'keep'>;
 }
 
-export type ConflictResolution = 'accept_new' | 'keep_mine' | 'skip';
+/**
+ * `keep_and_track` (#165) is keep mine that also tracks a preexisting
+ * add-collision as the user's modified copy, for that file alone; on a file
+ * already tracked it is the same as `keep_mine`.
+ */
+export type ConflictResolution = 'accept_new' | 'keep_mine' | 'keep_and_track' | 'skip';
 
 export interface SchemaAdditions {
   /** Required value keys in the new schema that are missing from current values. */

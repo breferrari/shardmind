@@ -156,7 +156,12 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
   }
 
   /** One full update, drift to state write, resolving every conflict as `resolution`. */
-  async function update(shardDir: string, resolution: ConflictResolution = 'keep_mine', dryRun = false, adoptPreexisting = false) {
+  async function update(
+    shardDir: string,
+    resolution: ConflictResolution | Record<string, ConflictResolution> = 'keep_mine',
+    dryRun = false,
+    adoptPreexisting = false,
+  ) {
     const state = (await readState(vault)) as ShardState;
     const values = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
     const manifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
@@ -174,7 +179,9 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       },
       removedFileDecisions: {},
     });
-    const conflictResolutions = Object.fromEntries(plan.pendingConflicts.map((c) => [c.path, resolution]));
+    const conflictResolutions = Object.fromEntries(
+      plan.pendingConflicts.map((c) => [c.path, typeof resolution === 'string' ? resolution : (resolution[c.path] ?? 'keep_mine')]),
+    );
     const result = await runUpdate({
       vaultRoot: vault,
       plan,
@@ -989,6 +996,61 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
         const { plan } = await adopting(await shardWith('0.3.0', Buffer.from([0x89, 0x50, 0x00, 0x03])));
         expect(plan.pendingConflicts.find((c) => c.path === BIN)?.result.binary).toBeDefined();
         expect(await fsp.readFile(path.join(vault, BIN))).toEqual(MINE_BIN);
+      });
+
+      // #165: one collision tracked, another left untracked, in the same run.
+      describe('Keep mine and track it, for one file', () => {
+        const OTHER = 'brain/Other Note.md';
+        const OTHER_BODY = '# Other\n\nAlso shipped in 0.2.0.\n';
+        const withBoth = (version: string, body = BODY) =>
+          shardAt(version, { [NOTE]: () => body, [OTHER]: () => OTHER_BODY });
+
+        it('tracks that file as your modified copy at the shard hash, and leaves the other untracked', async () => {
+          await install();
+          await write(NOTE, MINE);
+          await write(OTHER, MINE);
+          const { result } = await update(await withBoth('0.2.0'), { [NOTE]: 'keep_and_track', [OTHER]: 'keep_mine' });
+          // The shard's hash, never yours (#150): yours would read as pristine.
+          expect(await recorded(NOTE)).toMatchObject({ ownership: 'modified', rendered_hash: sha256(BODY) });
+          expect(await recorded(OTHER)).toBeUndefined();
+          expect(result.summary.keptUntracked).toEqual([OTHER]);
+          expect(result.summary.conflictsKeptMine).toBe(2);
+          expect(await read(NOTE)).toBe(MINE);
+          expect(await read(OTHER)).toBe(MINE);
+        });
+
+        it('merges your bytes on the next update instead of asking again or replacing them', async () => {
+          await install();
+          const mine = BODY + '\n- my own line\n';
+          await write(NOTE, mine);
+          await write(OTHER, MINE);
+          await update(await withBoth('0.2.0'), { [NOTE]: 'keep_and_track', [OTHER]: 'keep_mine' });
+
+          const { plan } = await update(await withBoth('0.3.0', BODY.replace('# New', '# New v3')));
+          expect(plan.pendingConflicts.map((c) => c.path)).toEqual([OTHER]);
+          expect(actionFor(plan, NOTE)).toBe('auto_merge');
+          const after = await read(NOTE);
+          expect(after).toContain('# New v3');
+          expect(after).toContain('my own line');
+        });
+
+        it('keeps a file already tracked, like keep mine, when the resolution reaches one', async () => {
+          await install();
+          await write(NOTE, MINE);
+          await update(await withNote('0.2.0'), 'keep_and_track');
+          await write(NOTE, MINE + '\nmore of mine\n');
+          await update(await withNote('0.3.0', '# Rewritten by the shard\n'), 'keep_and_track');
+          expect(await read(NOTE)).toBe(MINE + '\nmore of mine\n');
+          expect(await recorded(NOTE)).toMatchObject({ ownership: 'modified', rendered_hash: sha256('# Rewritten by the shard\n') });
+        });
+
+        it('a dry run writes no state', async () => {
+          await install();
+          await write(NOTE, MINE);
+          const before = await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8');
+          await update(await withNote('0.2.0'), 'keep_and_track', true);
+          expect(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')).toBe(before);
+        });
       });
 
       it('a dry run with --adopt-preexisting writes no state', async () => {

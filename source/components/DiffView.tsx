@@ -3,9 +3,15 @@ import { Box, Text } from 'ink';
 import { Select } from './ui.js';
 import { useOncePerKey } from './use-once-per-key.js';
 import type { ConflictRegion, MergeResult } from '../runtime/types.js';
+import type { ConflictResolution } from '../core/update-planner.js';
 
-/** Conflict-resolution choices returned to the state machine. */
-export type DiffAction = 'accept_new' | 'keep_mine' | 'skip';
+/**
+ * Conflict-resolution choices returned to the state machine: the update
+ * planner's conflict resolutions, one set for both.
+ * `keep_and_track` is offered only for an add-collision, without
+ * --adopt-preexisting (#165).
+ */
+export type DiffAction = ConflictResolution;
 
 /** Matches differ.ts's canonical splitter: tolerate CR, accept LF. */
 const LINE_SPLIT = /\r?\n/;
@@ -18,7 +24,11 @@ const CONTEXT_LINES = 3;
  * lookup below to filter the disabled "Open in editor" placeholder so
  * no out-of-band value reaches `onChoice`.
  */
-const DIFF_ACTIONS = new Set<DiffAction>(['accept_new', 'keep_mine', 'skip']);
+const DIFF_ACTIONS = new Set<DiffAction>(
+  // A Record over the union: a new resolution that is not listed here fails
+  // the typecheck instead of being dropped by onChange (#103, #109).
+  Object.keys({ accept_new: true, keep_mine: true, keep_and_track: true, skip: true } satisfies Record<DiffAction, true>) as DiffAction[],
+);
 
 const SELECT_OPTIONS: Array<{ label: string; value: DiffAction | 'open_editor_disabled' }> = [
   { label: 'Accept new (use shard version)', value: 'accept_new' },
@@ -39,6 +49,18 @@ const PREEXISTING_OPTIONS = SELECT_OPTIONS.map((o) => ({
   ...o,
   label: PREEXISTING_LABELS[o.value] ?? o.label,
 }));
+
+/**
+ * Without --adopt-preexisting, Keep mine leaves the file untracked; this
+ * tracks it as the user's modified copy for this file alone (#165). With the
+ * flag, Keep mine already tracks, so the plain list is shown.
+ */
+const PREEXISTING_TRACKABLE_OPTIONS = PREEXISTING_OPTIONS.flatMap((o) =>
+  // After Skip, so the options a user already knows keep their positions.
+  o.value === 'skip'
+    ? [o, { label: 'Keep mine and track it (merge future updates into your file)', value: 'keep_and_track' as const }]
+    : [o],
+);
 
 interface DiffViewProps {
   path: string;
@@ -68,6 +90,7 @@ export default function DiffView({
   // conflict prompt after the first. See Pattern B in
   // `docs/COMPONENTS.md` for the broader convention.
   const tryFire = useOncePerKey(filePath);
+  const options = !preexisting ? SELECT_OPTIONS : adoptPreexisting ? PREEXISTING_OPTIONS : PREEXISTING_TRACKABLE_OPTIONS;
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -83,7 +106,7 @@ export default function DiffView({
           <Text dimColor>
             {adoptPreexisting
               ? 'The new version adds this path. Keep mine or Skip keeps your file and tracks it as your modified copy.'
-              : 'The new version adds this path. Keep mine or Skip keeps your file untracked, so the next update asks again (--adopt-preexisting tracks it).'}
+              : 'The new version adds this path. Keep mine or Skip keeps your file untracked, so the next update asks again; Keep mine and track it tracks it (--adopt-preexisting tracks every one).'}
           </Text>
         )}
       </Box>
@@ -118,7 +141,7 @@ export default function DiffView({
 
       <Select
         key={filePath}
-        options={preexisting ? PREEXISTING_OPTIONS : SELECT_OPTIONS}
+        options={options}
         onChange={(choice) => {
           if (!DIFF_ACTIONS.has(choice as DiffAction)) return;
           if (!tryFire()) return;

@@ -13,6 +13,7 @@ import { cleanup } from 'ink-testing-library';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { sha256 } from '../../../source/core/fs-utils.js';
 
 import {
   setupFlowSuite,
@@ -397,7 +398,8 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
 
   // A user file at a path v0.2.0 adds; --yes keeps it (#61).
   // `interactive` drives the prompt instead of --yes: it keeps mine and returns the prompt's frame (#60).
-  async function runAddCollision(adoptPreexisting: boolean, interactive = false) {
+  // `downs` picks the option: 1 is Keep mine, 3 is Keep mine and track it, after Skip (#165).
+  async function runAddCollision(adoptPreexisting: boolean, interactive = false, downs = 1) {
     const { stub } = getCtx();
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'addc-'));
     const NOTE = 'New Note.md';
@@ -429,14 +431,16 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         let prompt = '';
         if (interactive) {
           prompt = await waitFor(r.lastFrame, (f) => /collides with your file/.test(f), 30_000);
-          // Options: [accept_new, keep_mine, skip, (open_editor_disabled)].
-          r.stdin.write(ARROW_DOWN);
-          await tick(40);
+          // Options: [accept_new, keep_mine, skip, (keep_and_track without the flag), (open_editor_disabled)].
+          for (let i = 0; i < downs; i++) {
+            r.stdin.write(ARROW_DOWN);
+            await tick(40);
+          }
           r.stdin.write(ENTER);
         }
         const frame = await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.2\.0/.test(f), 30_000);
         const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
-          files: Record<string, { ownership: string }>;
+          files: Record<string, { ownership: string; rendered_hash: string }>;
         };
         return { frame, prompt, entry: state.files[NOTE], content: await vault.readFile(NOTE) };
       } finally {
@@ -451,7 +455,7 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     const { frame, entry, content } = await runAddCollision(false);
     expect(content).toBe('My own note.\n');
     expect(entry).toBeUndefined();
-    expect(frame).toContain('Re-run with --adopt-preexisting to track it.');
+    expect(frame.replace(/\s+/g, ' ')).toContain('re-run with --adopt-preexisting to track it.');
   }, 90_000);
 
   it('17c. --yes --adopt-preexisting tracks that file as modified (#61)', async () => {
@@ -475,6 +479,17 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     expect(prompt.replace(/\s+/g, ' ')).toContain('tracks it as your modified copy');
     expect(content).toBe('My own note.\n');
     expect(entry?.ownership).toBe('modified');
+  }, 90_000);
+
+  it('17g. the prompt offers Keep mine and track it, which tracks that file as modified (#165)', async () => {
+    const { prompt, frame, entry, content } = await runAddCollision(false, true, 3);
+    expect(prompt.replace(/\s+/g, ' ')).toContain('Keep mine and track it');
+    expect(content).toBe('My own note.\n');
+    expect(entry?.ownership).toBe('modified');
+    // The shard's hash, never yours (#150): yours would read as pristine.
+    expect(entry?.rendered_hash).toBe(sha256('The shard note.\n'));
+    // Tracked, so the summary does not report it kept untracked.
+    expect(frame.replace(/\s+/g, ' ')).not.toContain('kept untracked');
   }, 90_000);
 
   // ───── Scenario 17f: a declared rename carries the user's edit to the new path (#178) ─────
