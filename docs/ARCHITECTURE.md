@@ -883,7 +883,7 @@ Then the diff review:
   [Accept new] [Keep mine] [Skip] (Open in editor · v0.2)
 ```
 
-When the new version adds a path where you already have an untracked file of your own, the prompt says so: its header reads "New file from shard collides with your file <path>" instead of "Conflict in", and a line under it says that Keep mine and Skip leave your file untracked, or, with `--adopt-preexisting`, track it as your modified copy. Accept new reads "replace your file", and no merge stats are shown, since no merge ran (#60).
+When the new version adds a path where you already have an untracked file of your own, the prompt says so: its header reads "New file from shard collides with your file <path>" instead of "Conflict in", and a line under it says that Keep mine and Skip leave your file untracked, or, with `--adopt-preexisting`, track it as your modified copy. Accept new reads "replace your file", and no merge stats are shown, since no merge ran (#60). Without `--adopt-preexisting`, the prompt also offers **Keep mine and track it**, which keeps your file and tracks it as your modified copy for that file alone, so one collision can be tracked while another in the same run stays untracked (#165). With the flag, Keep mine already tracks, so the choice is not shown.
 
 A binary file (a NUL byte in its first 8 KB) never reaches the line merge: its prompt reads "Can't merge this file line by line (binary, or not UTF-8) — yours N bytes, shard M bytes. Choose a whole version." and **Accept new** copies the shard's bytes exactly (#63; IMPLEMENTATION §4.11).
 
