@@ -65,6 +65,7 @@ export default function Update({ options }: Props) {
     onNewModulesComplete,
     onRemovedFilesComplete,
     onConflictChoice,
+    canEdit,
   } = useUpdateMachine({
     vaultRoot: process.cwd(),
     yes,
@@ -163,6 +164,10 @@ export default function Update({ options }: Props) {
             result={pending.result}
             preexisting={pending.preexisting}
             adoptPreexisting={adoptPreexisting}
+            canEdit={canEdit}
+            editNote={phase.edit?.note}
+            editHasMarkers={phase.edit?.pendingContent !== undefined}
+            attempt={phase.edit?.attempt ?? 0}
             onChoice={onConflictChoice}
           />
         </CommandFrame>

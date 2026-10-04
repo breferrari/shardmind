@@ -113,6 +113,142 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     }
   }, 90_000);
 
+  // ───── Scenarios 13b, 13c: Open in editor (#50) ─────
+
+  // A node script stands in for the editor, through $VISUAL. `resolve`
+  // saves a hand-merged file; `markers` saves an edit that keeps them.
+  async function withFakeEditor<T>(mode: 'resolve' | 'markers' | 'noop', run: () => Promise<T>): Promise<T> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fake-editor-'));
+    const script = path.join(dir, 'editor.cjs');
+    await fs.writeFile(
+      script,
+      [
+        "const fs = require('node:fs');",
+        'const file = process.argv[process.argv.length - 1];',
+        `if (${JSON.stringify(mode)} === 'resolve') fs.writeFileSync(file, 'Hand-merged by me.\\n');`,
+        `else if (${JSON.stringify(mode)} === 'markers') fs.writeFileSync(file, fs.readFileSync(file, 'utf-8') + '\\nmore of mine\\n');`,
+        '',
+      ].join('\n'),
+    );
+    const saved = { VISUAL: process.env['VISUAL'], EDITOR: process.env['EDITOR'] };
+    process.env['VISUAL'] = `node "${script}"`;
+    try {
+      return await run();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  async function conflictInHome(prefix: string) {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix });
+    const home = await vault.readFile('Home.md');
+    await vault.writeFile('Home.md', home + '\nUser edit at the very bottom.\n');
+    stub.setVersion(SHARD_SLUG, '0.3.0', fixtures.byVersion['0.3.0']!);
+    stub.setLatest(SHARD_SLUG, '0.3.0');
+    return vault;
+  }
+
+  it('13b. Open in editor → the saved edit is written and tracked as modified (#50)', async () => {
+    await withFakeEditor('resolve', async () => {
+      const vault = await conflictInHome('s13b-editor');
+      try {
+        const r = mountUpdate({ vaultRoot: vault.root });
+        const prompt = await waitFor(r.lastFrame, (f) => /Conflict in Home\.md/.test(f), 20_000);
+        expect(prompt).toContain('Open in editor');
+        // The handoff sets the stream's own raw mode (Node's call, which is
+        // also how the Windows console mode is set): off for the editor, back
+        // on after. Ink's counted setter would not have left it.
+        const stdin = r.stdin as unknown as { setRawMode: (on: boolean) => void };
+        const rawMode = vi.spyOn(stdin, 'setRawMode');
+        // Options: [accept_new, keep_mine, skip, open_editor].
+        for (let i = 0; i < 3; i++) {
+          r.stdin.write(ARROW_DOWN);
+          await tick(40);
+        }
+        r.stdin.write(ENTER);
+        const frame = await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.3\.0/.test(f), 20_000);
+        expect(frame.replace(/\s+/g, ' ')).toContain('1 edited in your editor');
+        // The editor's pair; Ink leaves raw mode itself when the app exits after the summary.
+        expect(rawMode.mock.calls.slice(0, 2)).toEqual([[false], [true]]);
+        expect(await vault.readFile('Home.md')).toBe('Hand-merged by me.\n');
+        const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+          files: Record<string, { ownership: string; rendered_hash: string }>;
+        };
+        expect(state.files['Home.md']?.ownership).toBe('modified');
+        // The shard's render is the baseline, never the edit (#150).
+        expect(state.files['Home.md']?.rendered_hash).not.toBe(sha256('Hand-merged by me.\n'));
+      } finally {
+        await vault.cleanup();
+      }
+    });
+  }, 90_000);
+
+  it('13c. an edit that keeps conflict markers returns to the prompt; Keep mine writes no markers (#50)', async () => {
+    await withFakeEditor('markers', async () => {
+      const vault = await conflictInHome('s13c-editor-markers');
+      try {
+        const before = await vault.readFile('Home.md');
+        const r = mountUpdate({ vaultRoot: vault.root });
+        await waitFor(r.lastFrame, (f) => /Conflict in Home\.md/.test(f), 20_000);
+        for (let i = 0; i < 3; i++) {
+          r.stdin.write(ARROW_DOWN);
+          await tick(40);
+        }
+        r.stdin.write(ENTER);
+        await waitFor(r.lastFrame, (f) => /still has conflict markers/.test(f.replace(/\s+/g, ' ')), 20_000);
+        // Options: [edit_again, use_edit, keep_mine].
+        r.stdin.write(ARROW_DOWN);
+        await tick(40);
+        r.stdin.write(ARROW_DOWN);
+        await tick(40);
+        r.stdin.write(ENTER);
+        await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.3\.0/.test(f), 20_000);
+        const after = await vault.readFile('Home.md');
+        expect(after).toBe(before);
+        expect(after).not.toMatch(/^<<<<<<< /m);
+      } finally {
+        await vault.cleanup();
+      }
+    });
+  }, 90_000);
+
+  it('13d. Ctrl+C at the prompt after a cancelled edit still rolls back and exits 130 (#50)', async () => {
+    await withFakeEditor('noop', async () => {
+      const vault = await conflictInHome('s13d-editor-sigint');
+      const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+      try {
+        const homeBefore = await vault.readFile('Home.md');
+        const stateBefore = await vault.readFile('.shardmind/state.json');
+        const r = mountUpdate({ vaultRoot: vault.root });
+        await waitFor(r.lastFrame, (f) => /Conflict in Home\.md/.test(f), 20_000);
+        for (let i = 0; i < 3; i++) {
+          r.stdin.write(ARROW_DOWN);
+          await tick(40);
+        }
+        r.stdin.write(ENTER);
+        // Saved unchanged: a cancel, back to the prompt.
+        await waitFor(r.lastFrame, (f) => /Nothing was written; choose again/.test(f.replace(/\s+/g, ' ')), 20_000);
+        // SIGINT's listeners come back on the next turn of the loop.
+        await new Promise((done) => setImmediate(done));
+        process.emit('SIGINT');
+        await waitFor(() => String(exit.mock.calls.length), (n) => n !== '0', 20_000);
+        expect(exit).toHaveBeenCalledWith(130);
+        expect(await vault.readFile('Home.md')).toBe(homeBefore);
+        expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+      } finally {
+        exit.mockRestore();
+        await vault.cleanup();
+      }
+    });
+  }, 90_000);
+
   // ───── Scenario 14: ≥3 conflicts → iterate (#109 regression) ─────
 
   it('14. multiple conflicts → DiffView iterates each (#109 regression)', async () => {

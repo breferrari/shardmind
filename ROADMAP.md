@@ -138,7 +138,7 @@ Each authoring and CLI proposal is built, or declined with a reason that survive
 | ✅ | shardmind validate <shard> command | [#34](https://github.com/breferrari/shardmind/issues/34) |
 | ✅ | Pre-install template syntax lint | [#35](https://github.com/breferrari/shardmind/issues/35) |
 | ✅ | Debug logging (SHARDMIND_DEBUG env var) (declined) | [#36](https://github.com/breferrari/shardmind/issues/36) |
-| ⬜ | $EDITOR integration for DiffView conflict resolution | [#50](https://github.com/breferrari/shardmind/issues/50) |
+| ✅ | $EDITOR integration for DiffView conflict resolution | [#50](https://github.com/breferrari/shardmind/issues/50) |
 | ⬜ | Declare & enforce external CLI tool dependencies (e.g. qmd) with version ranges at install/update | [#138](https://github.com/breferrari/shardmind/issues/138) |
 | ✅ | Let a vault exclude a permanently unreadable folder from the write-boundary walk | [#190](https://github.com/breferrari/shardmind/issues/190) |
 | ✅ | Let the update prompt track a kept add-collision file per file | [#165](https://github.com/breferrari/shardmind/issues/165) |
@@ -478,7 +478,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [x] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
 - [ ] Re-evaluate `@inkjs/ui` dependency ([#43](https://github.com/breferrari/shardmind/issues/43))
 - [x] Drop `LineInterner` workaround once `node-diff3` releases the prototype-lookup fix ([#49](https://github.com/breferrari/shardmind/issues/49))
-- [ ] `$EDITOR` integration for DiffView conflict resolution ([#50](https://github.com/breferrari/shardmind/issues/50))
+- [x] `$EDITOR` integration for DiffView conflict resolution ([#50](https://github.com/breferrari/shardmind/issues/50))
 - [x] 24h update-check cache shared between status + update ([#51](https://github.com/breferrari/shardmind/issues/51) — shipped with #13)
 - [x] DiffView: distinguish preexisting add-collision from modified-file conflict ([#60](https://github.com/breferrari/shardmind/issues/60))
 - [x] `--yes` policy for preexisting add-collisions ([#61](https://github.com/breferrari/shardmind/issues/61))

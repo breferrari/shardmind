@@ -15,9 +15,9 @@
  * rollback via the executor's snapshot before surfacing an error phase.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import path from 'node:path';
-import { useApp } from 'ink';
+import { useApp, useStdin } from 'ink';
 import { loadValuesYaml } from '../../core/values-io.js';
 import { toPosix } from '../../core/fs-utils.js';
 import type {
@@ -64,6 +64,7 @@ import { buildRenderContext } from '../../core/renderer.js';
 import { rollbackDetail } from '../../core/rollback-report.js';
 import { VALUES_FILE } from '../../runtime/vault-paths.js';
 import type { DiffAction } from '../../components/DiffView.js';
+import { editInEditor, hasConflictMarkers, resolveEditorCommand, withSigintHeld, withTerminalReleased } from '../../core/editor.js';
 
 export interface UseUpdateMachineInput {
   vaultRoot: string;
@@ -134,6 +135,8 @@ export type Phase =
       selections: ModuleSelections;
       currentIndex: number;
       resolutions: Record<string, ConflictResolution>;
+      /** The current file's editor round (#50): attempts, why the last came back, an edit that kept markers. */
+      edit?: ConflictEditState;
     }
   | {
       kind: 'writing';
@@ -167,6 +170,8 @@ export interface UseUpdateMachineOutput {
   onNewModulesComplete: (choices: Record<string, 'included' | 'excluded'>) => void;
   onRemovedFilesComplete: (decisions: Record<string, 'delete' | 'keep'>) => void;
   onConflictChoice: (action: DiffAction) => void;
+  /** An editor is set ($VISUAL or $EDITOR), so the conflict prompt offers Open in editor (#50). */
+  canEdit: boolean;
   onCancel: (reason?: string) => void;
 }
 
@@ -749,21 +754,67 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     [runPlanAndResolve],
   );
 
+  const { stdin, isRawModeSupported } = useStdin();
+  // The stream's own raw mode, not Ink's setter: Ink counts its users and
+  // would leave raw mode on while the prompt holds it (#50).
+  const setStreamRawMode = useMemo(
+    () => (isRawModeSupported && typeof stdin.setRawMode === 'function' ? (on: boolean) => void stdin.setRawMode(on) : undefined),
+    [stdin, isRawModeSupported],
+  );
+  // $VISUAL, then $EDITOR; with neither, the prompt offers no editor (#50).
+  const [editorCommand] = useState(() => resolveEditorCommand(process.env));
+
   const onConflictChoice = useCallback(
     (action: DiffAction) => {
       const current = phaseRef.current;
       if (current.kind !== 'resolving-conflicts') return;
       const pc = current.plan.pendingConflicts[current.currentIndex];
       if (!pc) return;
-      const nextResolutions = { ...current.resolutions, [pc.path]: action };
-      const nextIndex = current.currentIndex + 1;
-      if (nextIndex < current.plan.pendingConflicts.length) {
-        setPhase({ ...current, currentIndex: nextIndex, resolutions: nextResolutions });
+      const edit = current.edit ?? { attempt: 0 };
+
+      const resolve = (resolution: ConflictResolution): void => {
+        const nextResolutions = { ...current.resolutions, [pc.path]: resolution };
+        const nextIndex = current.currentIndex + 1;
+        if (nextIndex < current.plan.pendingConflicts.length) {
+          setPhase({ ...current, currentIndex: nextIndex, resolutions: nextResolutions, edit: undefined });
+          return;
+        }
+        void executeWrite(current.ctx, current.plan, current.values, current.selections, nextResolutions);
+      };
+
+      if (action === 'use_edit') {
+        // The one way conflict markers reach the vault: chosen, by name (#50).
+        if (edit.pendingContent !== undefined) resolve({ kind: 'edited', content: edit.pendingContent });
         return;
       }
-      void executeWrite(current.ctx, current.plan, current.values, current.selections, nextResolutions);
+      if (action === 'open_editor' || action === 'edit_again') {
+        if (!editorCommand) return;
+        const start = action === 'edit_again' && edit.pendingContent !== undefined ? edit.pendingContent : pc.result.content;
+        // The editor owns the terminal meanwhile; raw mode comes back on every
+        // path, and a Ctrl+C in the editor cancels the edit, not the update.
+        const outcome = withSigintHeld(() =>
+          withTerminalReleased(setStreamRawMode, () =>
+            editInEditor(start, path.basename(pc.path), { command: editorCommand, dir: current.ctx.newTempDir }),
+          ),
+        );
+        if (outcome.kind === 'saved' && !hasConflictMarkers(outcome.content)) {
+          resolve({ kind: 'edited', content: outcome.content });
+          return;
+        }
+        // Back to this file's prompt: a cancel is never an accept, and markers
+        // left in the edit wait for an explicit choice.
+        setPhase({
+          ...current,
+          edit:
+            outcome.kind === 'saved'
+              ? { attempt: edit.attempt + 1, pendingContent: outcome.content }
+              : { ...edit, attempt: edit.attempt + 1, note: `${outcome.detail} Nothing was written; choose again.` },
+        });
+        return;
+      }
+      resolve(action);
     },
-    [executeWrite],
+    [executeWrite, editorCommand, setStreamRawMode],
   );
 
   const onCancel = useCallback(
@@ -773,6 +824,8 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 
   return {
     phase,
+    // Only with an editor set and a terminal to hand it (#50).
+    canEdit: editorCommand !== undefined && setStreamRawMode !== undefined,
     onNewValuesComplete,
     onNewModulesComplete,
     onRemovedFilesComplete,
@@ -1025,4 +1078,14 @@ function labelForAction(kind: string): string {
     case 'restore_missing': return '↺';
     default: return '·';
   }
+}
+
+/** One file's editor round in the conflict prompt (#50). */
+interface ConflictEditState {
+  /** Edits started on this file: each return is a new prompt round. */
+  attempt: number;
+  /** Why the last edit came back without a resolution. */
+  note?: string;
+  /** Saved text that still has conflict markers, waiting for edit again / use as is / keep mine. */
+  pendingContent?: string;
 }

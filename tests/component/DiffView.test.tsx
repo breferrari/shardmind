@@ -149,29 +149,91 @@ describe('DiffView', () => {
     expect(onChoice).toHaveBeenCalledWith('keep_mine');
   });
 
-  it('never fires onChoice for the disabled "Open in editor" option', async () => {
-    const onChoice = vi.fn<(a: DiffAction) => void>();
-    const { stdin } = render(
-      <DiffView
-        path="a.md"
-        index={1}
-        total={1}
-        result={makeResult()}
-        onChoice={onChoice}
-      />,
-    );
-    await tick(30);
-    // Arrow past accept_new, keep_mine, skip to the disabled option.
-    stdin.write(ARROW_DOWN);
-    stdin.write(ARROW_DOWN);
-    stdin.write(ARROW_DOWN);
-    await tick(50);
-    stdin.write(ENTER);
-    await tick(80);
-    // onChoice is never called with 'open_editor' or the raw placeholder.
-    for (const call of onChoice.mock.calls) {
-      expect(['accept_new', 'keep_mine', 'skip']).toContain(call[0]);
-    }
+  describe('Open in editor (#50)', () => {
+    const plain = (frame: string | undefined) => (frame ?? '').replace(/\s+/g, ' ');
+    const down = async (stdin: { write: (s: string) => void }, n: number) => {
+      for (let i = 0; i < n; i++) {
+        stdin.write(ARROW_DOWN);
+        await tick(30);
+      }
+    };
+
+    it('is not offered when no editor is set: no placeholder, nothing to pick past Skip', async () => {
+      const onChoice = vi.fn<(a: DiffAction) => void>();
+      const { stdin, lastFrame } = render(<DiffView path="a.md" index={1} total={1} result={makeResult()} onChoice={onChoice} />);
+      await tick(30);
+      expect(plain(lastFrame())).not.toContain('editor');
+      await down(stdin, 3);
+      stdin.write(ENTER);
+      await waitForCall(onChoice);
+      expect(onChoice).toHaveBeenCalledWith('skip');
+    });
+
+    it('is offered last on a text conflict when an editor is set, and fires open_editor', async () => {
+      const onChoice = vi.fn<(a: DiffAction) => void>();
+      const { stdin, lastFrame } = render(
+        <DiffView path="a.md" index={1} total={1} result={makeResult()} canEdit onChoice={onChoice} />,
+      );
+      await tick(30);
+      expect(plain(lastFrame())).toContain('Open in editor');
+      await down(stdin, 3);
+      stdin.write(ENTER);
+      await waitForCall(onChoice);
+      expect(onChoice).toHaveBeenCalledWith('open_editor');
+    });
+
+    it('is not offered for a binary conflict, which has no lines to edit', () => {
+      const { lastFrame } = render(
+        <DiffView
+          path="logo.png"
+          index={1}
+          total={1}
+          result={{ content: '', conflicts: [], stats: { linesUnchanged: 0, linesAutoMerged: 0, linesConflicted: 0 }, binary: { yours: 1, shard: 2 } }}
+          canEdit
+          onChoice={() => {}}
+        />,
+      );
+      expect(plain(lastFrame())).not.toContain('Open in editor');
+    });
+
+    it('shows why an edit came back, and takes a new choice on the same file', async () => {
+      const onChoice = vi.fn<(a: DiffAction) => void>();
+      const r = render(<DiffView path="a.md" index={1} total={1} result={makeResult()} canEdit onChoice={onChoice} />);
+      await tick(30);
+      await down(r.stdin, 3);
+      r.stdin.write(ENTER);
+      await waitForCall(onChoice);
+      // The machine returns to this file's prompt after a cancelled edit.
+      r.rerender(
+        <DiffView path="a.md" index={1} total={1} result={makeResult()} canEdit attempt={1} editNote="vi exited with code 1. Nothing was changed; choose again." onChoice={onChoice} />,
+      );
+      await tick(30);
+      expect(plain(r.lastFrame())).toContain('Nothing was changed; choose again.');
+      r.stdin.write(ARROW_DOWN);
+      await tick(30);
+      r.stdin.write(ENTER);
+      await waitForCall(onChoice, 2);
+      expect(onChoice.mock.calls.map(([a]) => a)).toEqual(['open_editor', 'keep_mine']);
+    });
+
+    it('after an edit that kept markers, offers edit again, use as is, or keep mine, and says why', async () => {
+      const onChoice = vi.fn<(a: DiffAction) => void>();
+      const r = render(
+        <DiffView path="a.md" index={1} total={1} result={makeResult()} canEdit attempt={1} editHasMarkers onChoice={onChoice} />,
+      );
+      await tick(30);
+      const frame = plain(r.lastFrame());
+      expect(frame).toContain('still has conflict markers');
+      expect(frame).toContain('Edit again');
+      expect(frame).toContain('Use my edit as is (conflict markers included)');
+      expect(frame).toContain('Keep mine');
+      expect(frame).not.toContain('Accept new');
+      r.stdin.write(ARROW_DOWN);
+      await tick(30);
+      r.stdin.write(ENTER);
+      await waitForCall(onChoice);
+      expect(onChoice).toHaveBeenCalledWith('use_edit');
+    });
   });
 
   it('tolerates CRLF line endings in merge content without rendering \\r artifacts', () => {

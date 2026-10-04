@@ -223,7 +223,20 @@ export interface PlanUpdateInput {
  * add-collision as the user's modified copy, for that file alone; on a file
  * already tracked it is the same as `keep_mine`.
  */
-export type ConflictResolution = 'accept_new' | 'keep_mine' | 'keep_and_track' | 'skip';
+export type ConflictResolution = ConflictChoice | EditedResolution;
+
+/** The choices a prompt picks from. */
+export type ConflictChoice = 'accept_new' | 'keep_mine' | 'keep_and_track' | 'skip';
+
+/**
+ * The user resolved the conflict in their editor (#50): `content` is what
+ * they saved, written by the executor and recorded `modified` at the
+ * shard's hash. Never offered for a binary file.
+ */
+export interface EditedResolution {
+  readonly kind: 'edited';
+  readonly content: string;
+}
 
 export interface SchemaAdditions {
   /** Required value keys in the new schema that are missing from current values. */

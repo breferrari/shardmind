@@ -1090,7 +1090,7 @@ interface PlanUpdateInput {
 **Flow**:
 1. Allocate a unique backup directory under `.shardmind/backups/update-<ISO-timestamp>[-N]/`. The millisecond-precision timestamp and numeric suffix together guarantee no collisions between concurrent or near-simultaneous updates. `createBackupDir(vaultRoot, now, kind)` in `state.ts` does this for update and adopt alike (#248).
 2. **Snapshot**: copy every file the plan touches (modified content + `.shardmind/state.json` + cached `manifest.yaml`/`shard-schema.yaml`/`templates/`) into `files/` and `cache/` subdirectories of the backup dir. Parallel copies bounded by `SNAPSHOT_CONCURRENCY=16`.
-3. **Write pass**: for each non-delete action, fire progress event, write content, update in-memory `nextFiles` map, record summary stat. `overwrite` never adds to `addedPaths` (rollback erasure list); `add` and `restore_missing` do. `keep_as_user` untracks the path from `nextFiles` so the engine stops considering it managed. A `preexisting` add-collision resolved `keep_mine` or `skip` is dropped from `nextFiles` (left untracked) and listed in `summary.keptUntracked`, unless the run sets `adoptPreexisting` (`--adopt-preexisting`, #61): then it is recorded `modified` at the shard's hash (`newContentHash`), the baseline rule of §4.7, so the user's bytes are merged on later updates and the collision is not raised again. A preexisting collision resolved `keep_and_track` (the prompt's "Keep mine and track it", #165) is recorded that way whatever the flag, and counts as kept mine. `ConflictResolution` is `'accept_new' | 'keep_mine' | 'keep_and_track' | 'skip'`; on a conflict in a file already tracked, `keep_and_track` is the same as `keep_mine`, and the prompt never offers it there. The `add` branch also pushes the path to `summary.addedFiles` — the carve-out the update machine reads to populate `HookContext.newFiles` (Invariant 3, additive-only post-update hooks). `overwrite`, `auto_merge`, `restore_missing`, and `accept_new` are all excluded since those paths were already in `state.files` before this run. The `overwrite` branch and conflict `accept_new` (including a `preexisting` untracked collision) push the path to `summary.replacedFiles`: the files whose existing bytes were swapped wholesale for the shard's, which the update summary lists by path (#153). `auto_merge`, `restore_missing` and `add` are not replacements. Populated in dry run too, so the dry-run summary previews the same list. The Changes line's "N replaced · M unchanged" split reads the planner's `counts.overwritten` (the managed-overwrite part of `counts.silent`, incremented at the same site), never arithmetic over the summary's lists.
+3. **Write pass**: for each non-delete action, fire progress event, write content, update in-memory `nextFiles` map, record summary stat. `overwrite` never adds to `addedPaths` (rollback erasure list); `add` and `restore_missing` do. `keep_as_user` untracks the path from `nextFiles` so the engine stops considering it managed. A `preexisting` add-collision resolved `keep_mine` or `skip` is dropped from `nextFiles` (left untracked) and listed in `summary.keptUntracked`, unless the run sets `adoptPreexisting` (`--adopt-preexisting`, #61): then it is recorded `modified` at the shard's hash (`newContentHash`), the baseline rule of §4.7, so the user's bytes are merged on later updates and the collision is not raised again. A preexisting collision resolved `keep_and_track` (the prompt's "Keep mine and track it", #165) is recorded that way whatever the flag, and counts as kept mine. A conflict resolved `{ kind: 'edited', content }` (Open in editor, #50) writes `content` as text and is recorded `modified` at `newContentHash` (§4.7, #150), counted in `summary.conflictsEdited`; a dry run writes nothing. `ConflictResolution` is `ConflictChoice | EditedResolution`: `'accept_new' | 'keep_mine' | 'keep_and_track' | 'skip'`, or `{ kind: 'edited', content }` (#50). On a conflict in a file already tracked, `keep_and_track` is the same as `keep_mine`, and the prompt never offers it there. The `add` branch also pushes the path to `summary.addedFiles` — the carve-out the update machine reads to populate `HookContext.newFiles` (Invariant 3, additive-only post-update hooks). `overwrite`, `auto_merge`, `restore_missing`, and `accept_new` are all excluded since those paths were already in `state.files` before this run. The `overwrite` branch and conflict `accept_new` (including a `preexisting` untracked collision) push the path to `summary.replacedFiles`: the files whose existing bytes were swapped wholesale for the shard's, which the update summary lists by path (#153). `auto_merge`, `restore_missing` and `add` are not replacements. Populated in dry run too, so the dry-run summary previews the same list. The Changes line's "N replaced · M unchanged" split reads the planner's `counts.overwritten` (the managed-overwrite part of `counts.silent`, incremented at the same site), never arithmetic over the summary's lists.
 4. **Delete pass**: runs after all writes so a rename-style move (delete + add at a different path) can't clobber the incoming file.
 4a. **Renames (#178)**: before any write, each rename's new path is checked still free (`isFreeFor`: nothing there, not even a dangling symlink, and no file where a folder on its way should be; refused with `UPDATE_WRITE_FAILED` otherwise), both paths are snapshotted (a case-only pair, its old path only), and the new path joins `addedPaths` (and `onFileTouched`) once. After the write pass, for each action with `renamedFrom`: if the write pass wrote its new path the old path is unlinked; otherwise (`noop`, `skip_volatile`, conflict `keep_mine` / `skip`) the old file is moved to the new path, after checking it is still free, and a missing old file (a deleted volatile one) is skipped. A case-only pair whose two paths are the same file (a case-folding filesystem) is never unlinked: it is renamed in place, old path → a temporary name in the same folder → new path, with the temporary name in `addedPaths` before the first rename so a rollback removes it and restores the old file from the snapshot. Before the write pass, on a case-folding filesystem, each folder a pair changes the case of is renamed in place the same way (`renameCaseInPlace`, shallowest first). Every in-place hop, file or folder, is journaled to `<backupDir>/case-renames.json` (written whole through a temporary file) before its first rename, and the folders on the way to every touched path that did not exist yet are recorded in `<backupDir>/folders.json`. `rollbackUpdate` undoes the journal newest first (`undoCaseHops`; an unreadable journal is a rollback failure), removes `addedPaths`, restores the snapshot, then removes the recorded folders that are empty again. On a case-sensitive filesystem, after the renames and deletes, each old folder spelling a pair vacated is removed if it is empty (`rmdir`, never recursive), deepest first. The vault path guard takes the pairs (`pathsTheUpdateTouches().caseRenames`) and does not report a pair's spelling of any segment as a `case-mismatch` of the other. The state entry moves with it under the new template keys (`renamedKeys`), and `summary.renamedFiles` lists `{ from, to }`.
 5. **Cache + state**: call `initShardDir`, `cacheTemplates`, `cacheManifest`, `writeValuesFile`, `writeState`. Order matters — state is the last thing we touch.
@@ -1660,6 +1660,48 @@ stdin and stderr are never touched.
 
 ---
 
+### 4.23 `editor.ts`
+
+Open a conflict in the user's editor (#50). Pure of Ink. The caller runs `editInEditor` inside `withSigintHeld` and `withTerminalReleased`.
+
+```typescript
+resolveEditorCommand(env: NodeJS.ProcessEnv): string | undefined
+editInEditor(content: string, fileName: string, opts: { command: string; dir: string; platform?: NodeJS.Platform }): EditOutcome
+withTerminalReleased<T>(setRawMode: ((on: boolean) => void) | undefined, fn: () => T): T
+withSigintHeld<T>(fn: () => T, onRestored?: () => void): T
+hasConflictMarkers(content: string): boolean
+
+type EditOutcome = { kind: 'saved'; content: string } | { kind: 'cancelled'; detail: string }  // detail: one sentence, ending in a full stop
+```
+
+1. **`resolveEditorCommand`**: the first non-blank of `env.VISUAL` and `env.EDITOR`, else `undefined`. The prompt offers Open in editor only with an editor set and an interactive terminal (raw mode supported). shardmind never guesses an editor. No prompt is shown under `--yes` or `--json`.
+2. **The temp copy.** `editInEditor` writes `content` to `fs.mkdtempSync(<dir>/shardmind-edit-)/<fileName>`.
+   - `dir` is the run's temp directory (the downloaded shard's, removed when the command ends).
+   - `fileName` is the vault file's basename, so the editor sees its extension. On Windows, `%` and `"` in it become `_`, since cmd.exe expands `%VAR%` even inside double quotes.
+3. **Running the editor.** It runs `<command> <quoted path>` through the shell (`spawnSync`, `stdio: 'inherit'`), so a command with arguments such as `code --wait` works. The path is double-quoted on Windows and single-quoted elsewhere, with embedded quotes escaped.
+4. **Outcomes.**
+   - An editor that cannot start, a signal, a non-zero exit, a temp copy that cannot be created (its note says so), or one that cannot be read back (moved, deleted) is `cancelled`.
+   - A file saved byte-identical to what was written is `cancelled`, with a note that a window editor must wait (`VISUAL="code --wait"`).
+   - Anything else is `saved`, with the content as saved.
+
+   A cancel returns to the same prompt with its note; it is never an accept.
+5. **Cleanup.** The edit directory is removed on every path. A failed removal (a window editor still holding it, Windows `EBUSY`) is left to the run's temp-dir cleanup and never changes the outcome.
+6. **`hasConflictMarkers`**: a line that starts with `<<<<<<< ` or `>>>>>>> `. A lone `=======` line is a Markdown setext underline, not a marker.
+7. **`withTerminalReleased`**: `setRawMode(false)` before `fn`, `setRawMode(true)` after, on every path. The caller passes the stdin stream's own `setRawMode`, not Ink's: Ink counts its raw-mode users and would not leave raw mode while the prompt holds it.
+8. **`withSigintHeld`**: an editor that leaves the terminal cooked lets Ctrl+C reach node too, queued in libuv while `spawnSync` blocks, and that Ctrl+C must cancel the edit, not the update and its choices so far.
+   - A no-op listener goes on before the SIGINT listeners come off, and they come back before it goes. SIGINT always has a listener: with none, Node closes its signal handle and a signal takes the default action.
+   - The queued signal is delivered in the poll phase of the loop turn after `fn`. The restore waits for the check phase after that (two `setImmediate`s), so the no-op listener takes it.
+   - `rawListeners` keeps a `once` listener a `once`. A nested call just runs `fn`.
+
+**In the prompt.** A `saved` result with markers left returns to the prompt, saying so, with three choices:
+- Edit again;
+- Use my edit as is, markers included, which is the only way markers reach the vault;
+- Keep mine.
+
+A `saved` result without markers resolves the conflict as `{ kind: 'edited', content }`. The vault is never written here: the update executor's write pass writes the edited text under its snapshot and rollback (§4.12), and records it `modified` at the shard's hash. On an add-collision (`preexisting`), an edit is an explicit choice to manage the file, so it is tracked the same way.
+
+Known limit: keys typed in the terminal while a window editor is open are read by the next prompt once raw mode returns.
+
 ## 5. Runtime Module: `shardmind/runtime`
 
 ### 5.1 `resolveVaultRoot()`
@@ -1750,7 +1792,7 @@ Shows a three-way diff for a single file. Used during update for modified files 
 
 Props:
 ```typescript
-export type DiffAction = ConflictResolution; // 'accept_new' | 'keep_mine' | 'keep_and_track' | 'skip'
+export type DiffAction = ConflictChoice | 'open_editor' | 'edit_again' | 'use_edit'; // ConflictChoice: 'accept_new' | 'keep_mine' | 'keep_and_track' | 'skip'
 
 interface DiffViewProps {
   path: string;
@@ -1759,17 +1801,26 @@ interface DiffViewProps {
   result: MergeResult;
   preexisting?: boolean;      // PendingConflict.preexisting: an untracked file at a path the new version adds
   adoptPreexisting?: boolean; // the run's --adopt-preexisting flag (#61)
+  canEdit?: boolean;          // $VISUAL or $EDITOR is set, and the terminal supports raw mode (#50)
+  editNote?: string;          // why the last edit came back (cancelled, unchanged)
+  editHasMarkers?: boolean;   // the last edit was saved with conflict markers
+  attempt?: number;           // edit rounds on this file: each is a new prompt round
   onChoice: (action: DiffAction) => void;
 }
 ```
 
-Renders: file-path header with `(N of M)` counter, each `ConflictRegion` with ±3 context lines and color-coded `yours`/`shard update` sides, a merge-stats summary (`linesUnchanged · linesAutoMerged · N regions conflicted`), and a `Select` with three active options and one disabled placeholder: Accept new · Keep mine · Skip · (Open in editor · disabled). For a `preexisting` add-collision without `--adopt-preexisting`, a fourth, Keep mine and track it (`keep_and_track`, #165), comes after Skip, so the existing options keep their positions.
+Renders: file-path header with `(N of M)` counter, each `ConflictRegion` with ±3 context lines and color-coded `yours`/`shard update` sides, a merge-stats summary (`linesUnchanged · linesAutoMerged · N regions conflicted`), and a `Select`: Accept new · Keep mine · Skip. For a `preexisting` add-collision without `--adopt-preexisting`, Keep mine and track it (`keep_and_track`, #165) comes after Skip. Last, when `canEdit` and the conflict is not binary, Open in editor (`open_editor`, #50). New options come after the existing ones, so a known key sequence keeps its meaning.
 
 A `preexisting` conflict (#60) is not an edit of a shard file, so its header reads `New file from shard collides with your file <path> (N of M)` instead of `Conflict in <path>`, a line under it says what Keep mine and Skip do with the file (it stays yours and untracked, so the next update asks again; with `adoptPreexisting`, it is tracked as your modified copy), Keep mine is labelled `Keep mine (keep your file)` and Accept new `Accept new (replace your file)`, and the merge-stats line and each region's line range are left out, since no merge ran. A modified-file conflict renders as above. The planner copies `preexisting` from the `conflict` action onto `PendingConflict`.
 
 CRLF-tolerant — all splits use `/\r?\n/` so a Windows-saved user file does not render `\r` characters that would corrupt the terminal.
 
-The "Open in editor" option is rendered disabled; its choice value is filtered by a `Set<DiffAction>` allowlist so an accidental activation never reaches `onChoice`. Editor integration is tracked in issue #50.
+**Open in editor (#50).** The update machine resolves the editor once (`resolveEditorCommand`, §4.23) and passes `canEdit`. On `open_editor` it runs `editInEditor` on the merged text with markers (`result.content`) under `withTerminalReleased`, then:
+- a `saved` edit without markers resolves the file as `{ kind: 'edited', content }`;
+- a `saved` edit with markers returns to this file with `editHasMarkers`, offering Edit again (`edit_again`, starting from that edit) · Use my edit as is (`use_edit`, the only way markers reach the vault) · Keep mine;
+- a `cancelled` edit returns with `editNote`.
+
+Each return increments `attempt`. The dedup key and the `Select` key are `<path>#<attempt>`, so the new round takes its choice (Pattern B). Choices are filtered by a `Set<DiffAction>` built from a `Record<DiffAction, true>`, so an unlisted action fails the typecheck.
 
 ### 6.6 `Header.tsx`
 
