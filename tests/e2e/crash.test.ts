@@ -6,7 +6,8 @@
  * `node_modules`, so its imports resolve as the real build's do.
  *
  * - A module that throws when Pastel loads it escapes every command: the
- *   top-level handler in `cli.ts` prints it as plain text to stderr.
+ *   top-level handler in `cli.ts` prints it as plain text to stderr, and a
+ *   `--json` run also writes it as a failure document to stdout.
  * - A command that throws while it renders reaches the CrashBoundary in
  *   `commands/_app.tsx`, which shows it through the error view.
  *
@@ -16,40 +17,38 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { ensureBuilt } from './helpers/build-once.js';
+import { createBrokenDist, type BrokenDist } from './helpers/broken-dist.js';
+import { FAKE_TTY_IMPORT } from '../helpers/fake-tty.js';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '../..');
 
-let root: string;
+let dist: BrokenDist;
 let version: string;
 
 beforeAll(async () => {
-  await ensureBuilt();
+  dist = await createBrokenDist();
   version = (JSON.parse(await fs.readFile(path.join(REPO_ROOT, 'package.json'), 'utf-8')) as { version: string }).version;
-  root = path.join(os.tmpdir(), `shardmind-crash-${crypto.randomUUID()}`);
-  await fs.mkdir(root, { recursive: true });
-  await fs.cp(path.join(REPO_ROOT, 'dist'), path.join(root, 'dist'), { recursive: true });
-  await fs.copyFile(path.join(REPO_ROOT, 'package.json'), path.join(root, 'package.json'));
-  await fs.symlink(path.join(REPO_ROOT, 'node_modules'), path.join(root, 'node_modules'), 'junction');
 }, 120_000);
 
 afterAll(async () => {
-  if (root) await fs.rm(root, { recursive: true, force: true });
+  await dist?.cleanup();
 });
 
-/** Replace the root command's module in the copy, and run `shardmind` with no arguments. */
-async function runWithRootCommand(source: string) {
-  await fs.writeFile(path.join(root, 'dist', 'commands', 'index.js'), source);
-  return spawnSync(process.execPath, [path.join(root, 'dist', 'cli.js')], {
-    cwd: root,
-    env: { ...process.env, CI: '1', NO_COLOR: '1' },
+function runCli(args: string[], opts: { tty?: boolean } = {}) {
+  return spawnSync(process.execPath, [...(opts.tty ? ['--import', FAKE_TTY_IMPORT] : []), dist.cli, ...args], {
+    cwd: dist.root,
+    env: { ...process.env, CI: '1', NO_COLOR: '1', SHARDMIND_NO_UPDATE_CHECK: '1' },
     encoding: 'utf-8',
     timeout: 60_000,
   });
+}
+
+/** Replace the root command's module in the copy, and run `shardmind` with no arguments. */
+async function runWithRootCommand(source: string) {
+  await dist.setRootCommand(source);
+  return runCli([]);
 }
 
 describe('a bug no error view catches (#225)', () => {
@@ -74,8 +73,7 @@ describe('a bug no error view catches (#225)', () => {
   }, 60_000);
 
   it('writes a throw while a --json command renders as one failure document with the stack', async () => {
-    await fs.writeFile(
-      path.join(root, 'dist', 'commands', 'index.js'),
+    await dist.setRootCommand(
       [
         "import zod from 'zod';",
         "export const options = zod.object({ json: zod.boolean().default(false) });",
@@ -83,15 +81,40 @@ describe('a bug no error view catches (#225)', () => {
         '',
       ].join('\n'),
     );
-    const result = spawnSync(process.execPath, [path.join(root, 'dist', 'cli.js'), '--json'], {
-      cwd: root,
-      env: { ...process.env, CI: '1', NO_COLOR: '1' },
-      encoding: 'utf-8',
-      timeout: 60_000,
-    });
+    const result = runCli(['--json']);
     expect(result.status, result.stdout + result.stderr).toBe(1);
     const doc = JSON.parse(result.stdout) as { ok: boolean; command: string; error: { code: null; stack: string } };
     expect(doc).toMatchObject({ ok: false, command: 'status', error: { code: null } });
     expect(doc.error.stack).toContain('boom while rendering json');
+  }, 60_000);
+
+  // A --json caller reads stdout: a crash outside every command still answers
+  // there with one failure document, the same piped and in a terminal. The
+  // plain-text report stays on stderr for a human.
+  it.each([
+    ['status --json', ['--json'], 'status'],
+    ['update --dry-run --json', ['update', '--dry-run', '--json'], 'update'],
+    ['adopt --dry-run --json', ['adopt', 'github:acme/demo', '--dry-run', '--json'], 'adopt'],
+  ])('writes a throw that escapes every command in %s as one failure document on stdout', async (_name, args, command) => {
+    await dist.setRootCommand("throw new TypeError('boom from a broken module under json');\n");
+    const piped = runCli(args);
+    const terminal = runCli(args, { tty: true });
+    expect(piped.status, piped.stderr).toBe(1);
+    const doc = JSON.parse(piped.stdout) as { ok: boolean; command: string; error: { code: null; stack: string } };
+    expect(doc).toMatchObject({ ok: false, command, error: { code: null } });
+    expect(doc.error.stack).toMatch(/TypeError: boom from a broken module under json\s+at /);
+    expect(piped.stdout.endsWith('}\n')).toBe(true);
+    expect(piped.stderr).toContain('This is a bug in shardmind. Please report it:');
+    expect(terminal.status).toBe(1);
+    expect(terminal.stdout).not.toContain('\u001b');
+    expect(terminal.stdout).toBe(piped.stdout);
+  }, 60_000);
+
+  it('keeps stdout empty for a crash in a run without --json', async () => {
+    await dist.setRootCommand("throw new TypeError('boom without json');\n");
+    const result = runCli(['update', '--dry-run']);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('boom without json');
   }, 60_000);
 });

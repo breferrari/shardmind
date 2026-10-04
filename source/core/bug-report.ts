@@ -89,12 +89,19 @@ export function formatErrorPlain(error: unknown, version: string | undefined, cw
  */
 export function installCrashHandlers(
   proc: { on(event: 'uncaughtException' | 'unhandledRejection', listener: (error: unknown) => void): unknown },
-  opts: { readonly version: string | undefined; write: (text: string) => void; exit: (code: number) => void },
+  opts: {
+    readonly version: string | undefined;
+    write: (text: string) => void;
+    /** A `--json` run: also answer the caller on stdout (#198). */
+    writeJson?: (error: unknown) => void;
+    exit: (code: number) => void;
+  },
 ): (error: unknown) => void {
   let crashed = false;
   const crash = (error: unknown): void => {
     if (crashed) return;
     crashed = true;
+    opts.writeJson?.(error);
     opts.write(formatErrorPlain(error, opts.version));
     opts.exit(1);
   };

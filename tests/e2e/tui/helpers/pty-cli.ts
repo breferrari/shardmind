@@ -140,6 +140,11 @@ export interface SpawnCliPtyOptions {
    * do via `args`.
    */
   nodeArgs?: string[];
+  /**
+   * The CLI to run instead of `dist/cli.js`: a copy of the build whose
+   * command module a crash scenario replaces (tests/e2e/helpers/broken-dist.ts).
+   */
+  cli?: string;
 }
 
 /**
@@ -283,7 +288,7 @@ export async function spawnCliPty(
 
   const screen = createVirtualScreen({ cols, rows });
 
-  const argv = opts.nodeArgs ?? [DIST_CLI, ...args];
+  const argv = opts.nodeArgs ?? [opts.cli ?? DIST_CLI, ...args];
   const pty: IPty = nodePty.spawn(process.execPath, argv, {
     name: 'xterm-256color',
     cols,

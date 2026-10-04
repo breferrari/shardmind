@@ -18,6 +18,8 @@ import { ensureBuilt } from '../helpers/build-once.js';
 import { spawnCli } from '../helpers/spawn-cli.js';
 import { createInstalledVault, cleanupAllVaults, stripShardmindMetadata, type Vault } from '../helpers/vault.js';
 import { spawnCliPty } from './helpers/pty-cli.js';
+import { createBrokenDist } from '../helpers/broken-dist.js';
+import { spawnSync } from 'node:child_process';
 
 const SLUG = 'acme/demo';
 const REF = `github:${SLUG}`;
@@ -123,5 +125,35 @@ describe.skipIf(process.platform === 'win32')('--json in a real terminal (#198)'
     const { piped, terminal } = await bothWays(vault.root, ['adopt', REF, '--dry-run', '--json', ...extra]);
     expect(terminal).not.toContain(ESC);
     expect(terminal).toBe(piped);
+  }, 90_000);
+
+  // A throw that escapes every command still answers a --json caller with one
+  // failure document, in a terminal as piped (#225).
+  it('a crash outside every command under --json is byte-identical to the piped run', async () => {
+    const dist = await createBrokenDist();
+    try {
+      await dist.setRootCommand("throw new TypeError('boom from a broken module under json');\n");
+      const args = ['update', '--dry-run', '--json'];
+      const env = { SHARDMIND_NO_UPDATE_CHECK: '1' };
+      const piped = spawnSync(process.execPath, [dist.cli, ...args], {
+        cwd: dist.root,
+        env: { ...process.env, ...env },
+        encoding: 'utf-8',
+        timeout: 60_000,
+      });
+      const handle = await spawnCliPty(args, { cwd: dist.root, cli: dist.cli, env: { ...env, TERM: 'xterm-256color' } });
+      try {
+        await handle.waitForExit();
+        const terminal = handle.raw().replace(/\r\n/g, '\n');
+        expect(terminal).not.toContain(ESC);
+        // A terminal shows stderr too: the document, then the plain-text report.
+        expect(terminal).toBe(piped.stdout + piped.stderr);
+        expect(JSON.parse(piped.stdout)).toMatchObject({ ok: false, command: 'update', error: { code: null } });
+      } finally {
+        handle.dispose();
+      }
+    } finally {
+      await dist.cleanup();
+    }
   }, 90_000);
 });

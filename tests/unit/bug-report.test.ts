@@ -163,6 +163,25 @@ describe('installCrashHandlers (#225)', () => {
     expect(exits).toEqual([1]);
   });
 
+  it('also hands the first crash, and only it, to writeJson when one is given (a --json run)', () => {
+    const proc = new EventEmitter();
+    const written: string[] = [];
+    const json: unknown[] = [];
+    const exits: number[] = [];
+    installCrashHandlers(proc, {
+      version: '0.1.9',
+      write: (s) => written.push(s),
+      writeJson: (error) => json.push(error),
+      exit: (c) => exits.push(c),
+    });
+    const first = new TypeError('first');
+    proc.emit('unhandledRejection', first);
+    proc.emit('uncaughtException', new TypeError('second'));
+    expect(json).toEqual([first]);
+    expect(written.join('')).toContain('This is a bug in shardmind');
+    expect(exits).toEqual([1]);
+  });
+
   it('prints an unhandled rejection the same way', () => {
     const { proc, written, exits } = harness();
     proc.emit('unhandledRejection', new RangeError('nobody awaited'));

@@ -13,7 +13,8 @@ applyNoColor(process.env);
 // core/json-run.ts), so this too runs before anything loads Ink. stdin is
 // left alone: the stdin SIGINT bridge reads a non-TTY stdin directly, which
 // on a real terminal would stop a backgrounded run (SIGTTIN).
-if (isJsonRun(process.argv.slice(2))) markNonInteractive(process.stdout);
+const jsonRun = isJsonRun(process.argv.slice(2));
+if (jsonRun) markNonInteractive(process.stdout);
 
 // A throw that escapes every command (a command module that fails to load, a
 // rejection nobody awaited) is printed as plain text, since Ink may not be
@@ -21,17 +22,22 @@ if (isJsonRun(process.argv.slice(2))) markNonInteractive(process.stdout);
 // exits 130.
 const { installCrashHandlers } = await import('./core/bug-report.js');
 const { resolveEngineVersion } = await import('./commands/hooks/cli-version.js');
+// A --json caller reads stdout, so a --json run also answers there with a
+// failure document (#198). `validate --json` catches its own errors.
+const json = jsonRun ? await import('./core/json-output.js') : undefined;
 const crash = {
   // Read when needed (cached after the first read), not on every launch.
   get version() {
     return resolveEngineVersion();
   },
   write: (text: string) => void process.stderr.write(text),
-  // Exit once stderr drains: a pipe write can still be queued (Windows, macOS).
-  // The code is set first, so an exit elsewhere in the meantime still fails.
+  writeJson: json && ((error: unknown) => json.emitJson(json.jsonFailure(json.jsonCommandOf(process.argv.slice(2)), error))),
+  // Exit once stdout and stderr drain: a pipe write can still be queued
+  // (Windows, macOS). The code is set first, so an exit elsewhere in the
+  // meantime still fails.
   exit: (code: number) => {
     process.exitCode = code;
-    process.stderr.write('', () => process.exit(code));
+    process.stdout.write('', () => process.stderr.write('', () => process.exit(code)));
   },
 };
 const reportCrash = installCrashHandlers(process, crash);
