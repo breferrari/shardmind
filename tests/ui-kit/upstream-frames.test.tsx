@@ -10,8 +10,8 @@ import { render } from 'ink-testing-library';
 import { Box } from 'ink';
 import chalk from 'chalk';
 import type { ReactNode } from 'react';
-import g from 'figures';
-import { Alert, Badge, ProgressBar, Spinner, StatusMessage } from '@inkjs/ui';
+import { figures as g } from '../../source/ui-kit/lib/figures.js';
+import { Alert, Badge, ProgressBar, Spinner, StatusMessage } from '../../source/ui-kit/index.js';
 
 const narrow = (node: ReactNode) => render(<Box width={24}>{node}</Box>).lastFrame();
 const bar = (value: number) => render(<Box width={10}><ProgressBar value={value} /></Box>).lastFrame();

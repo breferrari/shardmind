@@ -1,10 +1,16 @@
+/*
+ * From @inkjs/ui 2.0.0 (github.com/vadimdemedes/ink-ui, commit 14b1145),
+ * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
+ * Modified by Brenno Ferrari: frames from lib/spinners.ts instead of cli-spinners.
+ */
+
 import {useEffect, useState} from 'react';
-import spinners, {type SpinnerName} from 'cli-spinners';
+import {spinners, type SpinnerName} from '../../lib/spinners.js';
 
 export type UseSpinnerProps = {
 	/**
 	 * Type of a spinner.
-	 * See [cli-spinners](https://github.com/sindresorhus/cli-spinners) for available spinners.
+	 * See `lib/spinners.ts` for the available spinners.
 	 *
 	 * @default dots
 	 */

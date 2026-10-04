@@ -14,5 +14,5 @@
     "sourceMap": true
   },
   "include": ["source/**/*.ts", "source/**/*.tsx"],
-  "exclude": ["node_modules", "dist", "tests", "source/ui-kit/components/alert", "source/ui-kit/components/badge", "source/ui-kit/components/progress-bar", "source/ui-kit/components/spinner", "source/ui-kit/components/status-message"]
+  "exclude": ["node_modules", "dist", "tests"]
 }

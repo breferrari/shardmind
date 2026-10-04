@@ -13,17 +13,10 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const KIT = path.join(REPO, 'source', 'ui-kit');
 const ALLOWED_PACKAGES = new Set(['ink', 'react']);
 
-// Vendored byte for byte and not yet adapted (#273); the next commit
-// adapts them and empties this list.
-const PENDING_ADAPTATION = ['alert', 'badge', 'progress-bar', 'spinner', 'status-message'].map((name) =>
-  path.join(KIT, 'components', name) + path.sep,
-);
-
 function sourceFiles(dir: string): string[] {
   return (fs.readdirSync(dir, { recursive: true }) as string[])
     .filter((rel) => /\.(ts|tsx)$/.test(rel))
-    .map((rel) => path.join(dir, rel))
-    .filter((file) => !PENDING_ADAPTATION.some((folder) => file.startsWith(folder)));
+    .map((rel) => path.join(dir, rel));
 }
 
 /** Every module specifier in `import … from`, `export … from`, `import('…')` and side-effect imports. */

@@ -1,6 +1,14 @@
+/*
+ * From @inkjs/ui 2.0.0 (github.com/vadimdemedes/ink-ui, commit 14b1145),
+ * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
+ * Modified by Brenno Ferrari: glyphs from lib/figures.ts; typed theme parameters.
+ */
+
 import {type BoxProps, type TextProps} from 'ink';
-import figures from 'figures';
+import {figures} from '../../lib/figures.js';
 import {type ComponentTheme} from '../../theme.js';
+
+type AlertVariant = 'info' | 'success' | 'error' | 'warning';
 
 const colorByVariant: Record<string, string> = {
 	info: 'blue',
@@ -11,7 +19,7 @@ const colorByVariant: Record<string, string> = {
 
 const theme = {
 	styles: {
-		container: ({variant}): BoxProps => ({
+		container: ({variant}: {variant: AlertVariant}): BoxProps => ({
 			flexGrow: 1,
 			borderStyle: 'round',
 			borderColor: colorByVariant[variant],
@@ -21,7 +29,7 @@ const theme = {
 		iconContainer: (): BoxProps => ({
 			flexShrink: 0,
 		}),
-		icon: ({variant}): TextProps => ({
+		icon: ({variant}: {variant: AlertVariant}): TextProps => ({
 			color: colorByVariant[variant],
 		}),
 		content: (): BoxProps => ({
@@ -36,7 +44,7 @@ const theme = {
 		}),
 		message: (): TextProps => ({}),
 	},
-	config({variant}) {
+	config({variant}: {variant: AlertVariant}) {
 		let icon: string | undefined;
 
 		if (variant === 'info') {
