@@ -822,7 +822,6 @@ interface ConflictRegion {
 
 **Conflict markers** (same format as git):
 ```
-<<<<<<< yours
 User's version of conflicting lines
 =======
 Shard update version of conflicting lines
@@ -1664,9 +1663,7 @@ The same gate keeps the document's single trailing newline (#231). At unmount, I
 
 ---
 
----
-
-### 4.23 `editor.ts`
+### 4.24 `editor.ts`
 
 Open a conflict in the user's editor (#50). Pure of Ink. The caller runs `editInEditor` inside `withSigintHeld` and `withTerminalReleased`.
 
@@ -1707,6 +1704,26 @@ type EditOutcome = { kind: 'saved'; content: string } | { kind: 'cancelled'; det
 A `saved` result without markers resolves the conflict as `{ kind: 'edited', content }`. The vault is never written here: the update executor's write pass writes the edited text under its snapshot and rollback (§4.12), and records it `modified` at the shard's hash. On an add-collision (`preexisting`), an edit is an explicit choice to manage the file, so it is tracked the same way.
 
 Known limit: keys typed in the terminal while a window editor is open are read by the next prompt once raw mode returns.
+
+### 4.25 `vault-lock.ts`
+
+One run per vault (#253, ARCHITECTURE §10.5c). Synchronous, so the process `exit` handler can release.
+
+```typescript
+interface VaultLockInfo { pid: number; hostname: string; command: string; startedAt: string }
+interface VaultLock { release(): void; tookOver?: VaultLockInfo }
+acquireVaultLock(vaultRoot: string, command: 'install' | 'update' | 'adopt', deps?: { pid?: number; hostname?: string; isAlive?: (pid: number) => boolean; now?: () => Date }): VaultLock
+```
+
+1. **Create.** `openSync(<vault>/.shardmind.lock, 'wx')` writes `VaultLockInfo` as JSON. On success it registers a `process.on('exit')` handler that releases, and returns.
+2. **On `EEXIST`,** it reads the holder.
+   - **Unreadable,** not a regular file (a symlink, a folder), or not that JSON: throw `VAULT_LOCKED`. Nothing is overwritten.
+   - **Same hostname and `isAlive(pid)` is false** (`process.kill(pid, 0)` fails `ESRCH`; `EPERM` means alive): stale. Remove it and create again, once. If that create meets `EEXIST`, another run took it first, and its holder is reported. The result carries `tookOver`.
+   - **Otherwise** (alive, or another hostname): throw `VAULT_LOCKED`.
+3. **The error.** The message names the command, PID, start time and, for another host, the hostname. The hint says to wait, or, when no shardmind process is running, that `.shardmind.lock` in the vault folder is safe to delete.
+4. **`release()`** removes the file only if it still holds this run's PID and start time. It is idempotent, and removes the `exit` handler.
+
+`commands/hooks/use-vault-lock.ts` wraps it for the three machines: take at the start of the run effect (not under `--dry-run`), with a stale takeover's note on stderr; release in `finish` and on unmount.
 
 ## 5. Runtime Module: `shardmind/runtime`
 
@@ -1821,7 +1838,7 @@ A `preexisting` conflict (#60) is not an edit of a shard file, so its header rea
 
 CRLF-tolerant — all splits use `/\r?\n/` so a Windows-saved user file does not render `\r` characters that would corrupt the terminal.
 
-**Open in editor (#50).** The update machine resolves the editor once (`resolveEditorCommand`, §4.23) and passes `canEdit`. On `open_editor` it runs `editInEditor` on the merged text with markers (`result.content`) under `withTerminalReleased`, then:
+**Open in editor (#50).** The update machine resolves the editor once (`resolveEditorCommand`, §4.24) and passes `canEdit`. On `open_editor` it runs `editInEditor` on the merged text with markers (`result.content`) under `withTerminalReleased`, then:
 - a `saved` edit without markers resolves the file as `{ kind: 'edited', content }`;
 - a `saved` edit with markers returns to this file with `editHasMarkers`, offering Edit again (`edit_again`, starting from that edit) · Use my edit as is (`use_edit`, the only way markers reach the vault) · Keep mine;
 - a `cancelled` edit returns with `editNote`.

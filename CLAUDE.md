@@ -379,7 +379,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `hook-boundary.ts` | §4.16b | Pure detect-and-warn write-boundary detector (managed-write / unmanaged-create) |
 | `bug-report.ts` | §7.2a | `describeError` (known / environment / bug), the version-only report link, the plain-text top-level crash handler (#225) |
 | `rollback-report.ts` | §4.11b (Reporting the rollback) | `ROLLBACK_INCOMPLETE` for a rollback that left files behind, shared by install / update / adopt (#247) |
-| `editor.ts` | §4.23 | Open a conflict in `$VISUAL` / `$EDITOR`: temp copy, outcome (saved / cancelled), raw-mode handoff, marker check (#50) |
+| `editor.ts` | §4.24 | Open a conflict in `$VISUAL` / `$EDITOR`: temp copy, outcome (saved / cancelled), raw-mode handoff, marker check (#50) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.

@@ -1,6 +1,6 @@
 /**
  * Open a conflict in the user's editor (#50). See docs/IMPLEMENTATION.md
- * §4.23.
+ * §4.24.
  *
  * Pure of Ink: the caller releases the terminal's raw mode around
  * `editInEditor` with `withTerminalReleased`, and holds SIGINT with
