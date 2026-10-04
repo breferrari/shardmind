@@ -370,7 +370,7 @@ Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-fl
 
 ### `JSON_REQUIRES_DRY_RUN`
 
-**Meaning:** `--json` was passed without `--dry-run` on `adopt` or `update`. The JSON surface is currently the **plan** surface: the document is emitted at the dry-run decision point, before any prompt.
+**Meaning:** `--json` was passed without `--dry-run` on `adopt` or `update`. The JSON surface is currently the **plan** surface: the document is emitted at the dry-run decision point, before any conflict prompt. A decision the dry run itself would ask about fails with `UPDATE_JSON_NEEDS_ANSWERS` on update and `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES` on adopt.
 
 Allowing it on a real run would render no UI (the command renders nothing under `--json`) and emit no document, so the process would sit at a prompt nobody can answer and exit 0 — a silent no-op reporting success. The engine refuses instead.
 
@@ -483,7 +483,7 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 ### `UPDATE_JSON_NEEDS_ANSWERS`
 
-**Meaning:** `shardmind update --dry-run --json` reached a decision the update would ask you about, and `--json` cannot ask. The message names the decision (#230):
+**Meaning:** `shardmind update --dry-run --json` reached decisions the update would ask you about, and `--json` cannot ask. The message names every pending decision, with at most 10 paths each (#230):
 
 - **new optional modules**: the new version adds a removable module your install has never chosen;
 - **removed files you edited**: the new version drops files you modified;
