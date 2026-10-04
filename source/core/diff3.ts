@@ -12,7 +12,10 @@
  * the largest `s >= r` with `buffer2index < j`, taken only when the next
  * candidate's `buffer2index > j`. A binary search finds that same `s`.
  *
- * Everything else is node-diff3's code, typed. Its licence:
+ * One smaller change leaves the output as it was: the sorted hunks are
+ * walked by index rather than `shift()`ed. Everything else is node-diff3's
+ * code, typed. When node-diff3's LCS stops rescanning, this file can go back
+ * to importing it. Its licence:
  *
  * The MIT License (MIT)
  *
@@ -63,6 +66,8 @@ interface Hunk {
   abLength: number;
 }
 
+const NO_MATCHES: readonly number[] = [];
+
 function lcs(buffer1: readonly string[], buffer2: readonly string[]): Candidate {
   // A null-prototype map: a line such as `__proto__` or `constructor` is a
   // plain key, as in node-diff3 >= 3.2.1 (bhousel/node-diff3#86).
@@ -78,7 +83,7 @@ function lcs(buffer1: readonly string[], buffer2: readonly string[]): Candidate 
   const candidates: Candidate[] = [NULLRESULT];
 
   for (let i = 0; i < buffer1.length; i++) {
-    const buffer2indices = equivalenceClasses[buffer1[i]!] ?? [];
+    const buffer2indices = equivalenceClasses[buffer1[i]!] ?? NO_MATCHES;
     let r = 0;
     let c = candidates[0]!;
 
