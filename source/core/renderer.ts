@@ -158,8 +158,8 @@ function renderEach(
 
 /**
  * The paths an `_each` template expands to, one per list item: `_each` in
- * the template's output path replaced by the item's sanitized `slug` (or
- * `name`). The install plan calls this too, so it can back up a user file
+ * the template's output path replaced by the item itself when it is a
+ * string or number, else by its sanitized `slug` (or `name`). The install plan calls this too, so it can back up a user file
  * at an expanded path before the write (#214); sharing it keeps the plan
  * and the write from ever naming different files.
  */
@@ -167,8 +167,13 @@ export function eachOutputPaths(outputPath: string, list: readonly unknown[]): s
   const dir = path.posix.dirname(outputPath);
   const base = path.posix.basename(outputPath);
   return list.map((item) => {
-    const fields = item as Record<string, unknown>;
-    const slug = sanitizeSlug(String(fields['slug'] ?? fields['name'] ?? 'unknown'));
+    // A string or number item (what the wizard's list input produces) names
+    // its own file (#227); an object item names it by `slug`, else `name`.
+    const raw =
+      typeof item === 'string' || typeof item === 'number'
+        ? item
+        : ((item as Record<string, unknown>)['slug'] ?? (item as Record<string, unknown>)['name'] ?? 'unknown');
+    const slug = sanitizeSlug(String(raw));
     // Only the basename's `_each`, and a replacer function, so a `$&` or
     // `$'` in the slug is taken literally rather than as a pattern.
     const named = base.replace('_each', () => slug);
