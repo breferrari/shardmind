@@ -160,3 +160,29 @@ function isComputed(value: unknown): boolean {
   return typeof value === 'string' && value.includes('{{');
 }
 
+
+/** Value findings: the answers are wrong, not the shard. */
+const VALUE_CODES = new Set(['VALUES_INVALID', 'COMPUTED_DEFAULT_FAILED']);
+
+/**
+ * Install's pre-wizard check (#35): `lintShard` with the `--values` prefill
+ * over the defaults. A prefill the schema rejects is the user's to fix in the
+ * wizard (or a later VALUES_INVALID under --yes), so the shard is then checked
+ * with the defaults alone. Any error left throws INSTALL_SHARD_INVALID listing
+ * every one; warnings never block.
+ */
+export async function assertShardInstallable(shardDir: string, prefill: Record<string, unknown>): Promise<void> {
+  let { findings } = await lintShard(shardDir, { values: prefill });
+  const errorsOf = (fs: LintFinding[]) => fs.filter((f) => f.severity === 'error');
+  if (errorsOf(findings).some((f) => VALUE_CODES.has(f.code)) && Object.keys(prefill).length > 0) {
+    findings = (await lintShard(shardDir, {})).findings;
+  }
+  const errors = errorsOf(findings);
+  if (errors.length === 0) return;
+  const lines = errors.map((f) => `  - ${f.code}${f.path ? ` ${f.path}` : ''}: ${f.message}`);
+  throw new ShardMindError(
+    `The shard has ${errors.length} problem${errors.length === 1 ? '' : 's'}; nothing was asked or written:\n${lines.join('\n')}`,
+    'INSTALL_SHARD_INVALID',
+    'Shard author: run `shardmind validate` on the shard. User: report it to the shard author, or install an earlier version.',
+  );
+}

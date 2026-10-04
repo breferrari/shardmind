@@ -44,6 +44,7 @@ const SLUG_COMPUTED = 'acme/computed-default';
 const SLUG_MULTISELECT = 'acme/multiselect';
 const SLUG_VERSION_MISMATCH = 'acme/future-engine';
 const SLUG_BROKEN = 'acme/broken-render';
+const SLUG_LINT = 'acme/lint-before-wizard';
 
 describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10)', () => {
   const getCtx = setupFlowSuite({
@@ -73,6 +74,10 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         latest: '0.1.0',
       },
       [SLUG_BROKEN]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
+      [SLUG_LINT]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
@@ -609,6 +614,59 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await cleanupVault(vault);
     }
   }, 45_000);
+  // ───── A broken shard is refused before the wizard, every problem listed (#35) ─────
+
+  it('broken templates → INSTALL_SHARD_INVALID before the wizard, each path listed, no vault write (#35)', async () => {
+    const { stub } = getCtx();
+    const vault = await makeVaultDir('s-lint-before-wizard');
+    try {
+      const tarPath = await buildCustomTarball({
+        version: '0.1.0',
+        prefix: 'lint-before-wizard-0.1.0',
+        manifestOverrides: { hooks: {}, name: 'minimal', namespace: 'shardmind' },
+        outDir: vault,
+        mutate: async (work) => {
+          await fs.writeFile(path.join(work, 'Broken One.md.njk'), '{% if %}\n');
+          await fs.mkdir(path.join(work, 'extras'), { recursive: true });
+          await fs.writeFile(path.join(work, 'extras', 'Broken Two.md.njk'), '{{ not_a_function() }}\n');
+        },
+      });
+      stub.setRef(SLUG_LINT, 'v0.1.0', STUB_SHA, tarPath);
+      // Interactive: without the check, the first value prompt would render.
+      const r = mountInstall({ shardRef: `github:${SLUG_LINT}#v0.1.0`, vaultRoot: vault });
+      // An error exits shortly after rendering, which clears lastFrame; read the history.
+      const all = await waitFor(
+        () => r.frames.join(' ').replace(/\s+/g, ' '),
+        (f) => /INSTALL_SHARD_INVALID/.test(f) && /extras\/Broken Two\.md/.test(f),
+        30_000,
+      );
+      expect(all).toMatch(/Broken One\.md/);
+      expect(all).toMatch(/shardmind validate/);
+      expect(all).not.toMatch(/questions to answer/);
+      expect(await fs.readdir(vault)).not.toContain('.shardmind');
+      expect(await fs.readdir(vault)).not.toContain('shard-values.yaml');
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
+
+  it('a --values answer the schema rejects is not a shard problem: the wizard still opens (#35)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await makeVaultDir('s-lint-bad-prefill');
+    const valuesFile = `${vault}-values.yaml`;
+    try {
+      await fs.writeFile(valuesFile, 'vault_purpose: not-an-option\n');
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault, options: { values: valuesFile } });
+      const frame = await waitFor(r.lastFrame, (f) => /questions to answer/.test(f), 30_000);
+      expect(frame).not.toMatch(/INSTALL_SHARD_INVALID/);
+    } finally {
+      await fs.rm(valuesFile, { force: true });
+      await cleanupVault(vault);
+    }
+  }, 45_000);
+
   // ───── A user file at an `_each`-expanded path is backed up, not overwritten (#214) ─────
 
   it('install backs up a user file at a path an _each template expands to (#214)', async () => {
@@ -783,7 +841,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   // ───── Scenario 17: a --force reinstall that fails puts everything back (#55) ─────
 
-  it('17. --yes --force reinstall whose render fails → old install and edits restored, nothing left aside (#55)', async () => {
+  it('17. --yes --force reinstall of a shard with a broken template → refused before anything is touched (#55, #35)', async () => {
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
     stub.setLatest(SHARD_SLUG, '0.1.0');
@@ -813,7 +871,9 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         options: { yes: true, force: true },
       });
       // An error exits ~100 ms after rendering, which clears lastFrame; read the history.
-      await waitFor(() => r.frames.join('\n'), (f) => /RENDER_TEMPLATE_ERROR/.test(f), 30_000);
+      // The pre-install check (#35) refuses it before any move; the executor's
+      // own rollback is covered by tests/integration/install.test.ts.
+      await waitFor(() => r.frames.join('\n'), (f) => /INSTALL_SHARD_INVALID/.test(f), 30_000);
       await tick(200);
       expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
       expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);

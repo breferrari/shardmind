@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { lintShard } from '../../source/core/lint-shard.js';
+import { lintShard, assertShardInstallable } from '../../source/core/lint-shard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MINIMAL_SHARD = path.resolve(__dirname, '../../examples/minimal-shard');
@@ -55,6 +55,23 @@ describe('lintShard (#34)', () => {
     const result = await lintShard(shard, {});
     expect(errors(result).map((f) => f.path).sort()).toEqual(['brain/Broken One.md', 'brain/Broken Two.md']);
     for (const f of errors(result)) expect(f.code).toMatch(/^RENDER_/);
+  });
+
+  it('reports frontmatter that is not YAML once rendered (#35)', async () => {
+    await write('brain/Bad Front.md.njk', '---\ntags: [unclosed\n---\nbody\n');
+    const result = await lintShard(shard, {});
+    expect(errors(result)).toMatchObject([{ code: 'RENDER_FRONTMATTER_ERROR', path: 'brain/Bad Front.md' }]);
+  });
+
+  it('renders an undefined variable as empty, as install does: no finding (#35)', async () => {
+    await write('brain/Missing.md.njk', 'Hello {{ no_such_value }}\n');
+    expect((await lintShard(shard, {})).findings).toEqual([]);
+  });
+
+  it('reports a broken template in a removable module: every module is checked (#35)', async () => {
+    await write('extras/Broken.md.njk', '{% endif %}\n');
+    const result = await lintShard(shard, {});
+    expect(errors(result)).toMatchObject([{ path: 'extras/Broken.md' }]);
   });
 
   it('renders with the schema defaults, and with --values over them', async () => {
@@ -143,5 +160,33 @@ describe('parseValidateArgv (#34)', () => {
     await expect(validateShard(path.join(root, 'nope'), {})).rejects.toMatchObject({ code: 'VALIDATE_TARGET_INVALID' });
     await expect(validateShard('./nope', {})).rejects.toMatchObject({ code: 'VALIDATE_TARGET_INVALID' });
     await expect(validateShard(path.join(shard, 'CLAUDE.md'), {})).rejects.toMatchObject({ code: 'VALIDATE_TARGET_INVALID' });
+  });
+});
+
+describe('assertShardInstallable (#35)', () => {
+  it('passes a clean shard, and one with warnings only', async () => {
+    await expect(assertShardInstallable(shard, {})).resolves.toBeUndefined();
+    await edit('.shardmind/shard-schema.yaml', (s) => s.replace('groups:', 'groups:\n  - id: empty_group\n    label: "Empty"'));
+    expect(warnings(await lintShard(shard, {}))).not.toEqual([]);
+    await expect(assertShardInstallable(shard, {})).resolves.toBeUndefined();
+  });
+
+  it('lists every error with its code and path in one INSTALL_SHARD_INVALID', async () => {
+    await write('brain/Broken One.md.njk', '{% if %}\n');
+    await write('extras/Broken Two.md.njk', '{{ not_a_function() }}\n');
+    const err = await assertShardInstallable(shard, {}).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'INSTALL_SHARD_INVALID' });
+    expect((err as Error).message).toMatch(/2 problems/);
+    expect((err as Error).message).toMatch(/RENDER_\w+ brain\/Broken One\.md/);
+    expect((err as Error).message).toMatch(/extras\/Broken Two\.md/);
+  });
+
+  it('checks the shard with the defaults when the prefill itself is invalid', async () => {
+    await expect(assertShardInstallable(shard, { vault_purpose: 'not-an-option' })).resolves.toBeUndefined();
+    await write('brain/Broken.md.njk', '{% if %}\n');
+    await expect(assertShardInstallable(shard, { vault_purpose: 'not-an-option' })).rejects.toMatchObject({
+      code: 'INSTALL_SHARD_INVALID',
+      message: expect.stringMatching(/brain\/Broken\.md/),
+    });
   });
 });

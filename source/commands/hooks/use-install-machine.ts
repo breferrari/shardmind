@@ -24,6 +24,7 @@ import { resolve as resolveRef } from '../../core/registry.js';
 import { downloadShard, DownloadCancelledError } from '../../core/download.js';
 import { parseManifest, assertEngineCompatible } from '../../core/manifest.js';
 import { resolveEngineVersion } from './cli-version.js';
+import { assertShardInstallable } from '../../core/lint-shard.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
 import { readState } from '../../core/state.js';
 import {
@@ -267,6 +268,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         const schema = await parseSchema(temp.schema);
 
         const prefill = valuesFile ? await loadValuesFile(valuesFile, schema) : {};
+        // A template that cannot render fails here, every one listed, before
+        // the user answers anything (#35).
+        setPhase({ kind: 'loading', message: 'Checking the shard…' });
+        await assertShardInstallable(temp.tempDir, prefill);
 
         const { moduleFileCounts, alwaysIncludedFileCount } = await planOutputs(
           schema,
