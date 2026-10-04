@@ -62,7 +62,6 @@ interface StdinLike extends NodeJS.EventEmitter {
   isTTY?: boolean;
   setRawMode?: (mode: boolean) => unknown;
   resume(): unknown;
-  listenerCount(event: string): number;
   unref?: () => void;
 }
 
@@ -75,8 +74,8 @@ export function attachStdinCancellation(stdin: StdinLike, deps: CancellationDeps
   // handler is present at emit time, exit 130 directly so cancellation is
   // always observable to the parent.
   const onData = (chunk: Buffer | string): void => {
-    const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-    if (!bytes.includes(ETX)) return;
+    // Buffers unless someone set an encoding on stdin; both have includes().
+    if (!(typeof chunk === 'string' ? chunk.includes('') : chunk.includes(ETX))) return;
     if (!deps.emitSigint()) deps.exit(130);
   };
 
