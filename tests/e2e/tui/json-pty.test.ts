@@ -35,13 +35,19 @@ async function installed(prefix: string): Promise<Vault> {
 }
 
 /**
- * The same run, piped and in a terminal. The minimal shard renders the
- * current time into its templates, so content hashes in a plan differ between
- * two runs a second apart; they are masked. Every other byte must match.
+ * Masks the values of a plan's content-hash fields, and nothing else. The
+ * minimal shard renders the current time into its templates (a `date:`
+ * frontmatter field), so `shardHash` / `userHash` differ between two runs a
+ * second apart. Every other byte, escape bytes included, is left as it is.
  */
+export function maskPlanHashes(text: string): string {
+  return text.replace(/"(shardHash|userHash)": "[0-9a-f]{64}"/g, '"$1": "<hash>"');
+}
+
+/** The same run, piped and in a terminal, with plan hashes masked. */
 async function bothWays(cwd: string, args: string[]): Promise<{ piped: string; terminal: string }> {
   const env = { SHARDMIND_GITHUB_API_BASE: stub.url, SHARDMIND_NO_UPDATE_CHECK: '1' };
-  const maskHashes = (s: string): string => s.replace(/"[0-9a-f]{64}"/g, '"<hash>"');
+  const maskHashes = maskPlanHashes;
   const piped = await spawnCli(args, { cwd, env });
   const handle = await spawnCliPty(args, { cwd, env: { ...env, TERM: 'xterm-256color' } });
   try {
@@ -51,6 +57,25 @@ async function bothWays(cwd: string, args: string[]): Promise<{ piped: string; t
     handle.dispose();
   }
 }
+
+// Runs everywhere: the mask must not hide what the equivalence test checks.
+describe('maskPlanHashes', () => {
+  const doc = '{\n  "path": "Home.md",\n  "shardHash": "' + 'a'.repeat(64) + '",\n  "action": "add"\n}\n';
+
+  it('masks only shardHash and userHash values', () => {
+    expect(maskPlanHashes(doc)).toBe('{\n  "path": "Home.md",\n  "shardHash": "<hash>",\n  "action": "add"\n}\n');
+    const other = '{ "tarballSha": "' + 'b'.repeat(64) + '" }';
+    expect(maskPlanHashes(other)).toBe(other);
+  });
+
+  it('still tells apart a stray escape byte', () => {
+    expect(maskPlanHashes(`${ESC}[?25l${doc}`)).not.toBe(maskPlanHashes(doc));
+  });
+
+  it('still tells apart a changed non-hash field', () => {
+    expect(maskPlanHashes(doc.replace('"add"', '"overwrite"'))).not.toBe(maskPlanHashes(doc));
+  });
+});
 
 describe.skipIf(process.platform === 'win32')('--json in a real terminal (#198)', () => {
   beforeAll(async () => {
