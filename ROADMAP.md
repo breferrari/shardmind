@@ -140,7 +140,7 @@ Each authoring and CLI proposal is built, or declined with a reason that survive
 | ⬜ | $EDITOR integration for DiffView conflict resolution | [#50](https://github.com/breferrari/shardmind/issues/50) |
 | ⬜ | Declare & enforce external CLI tool dependencies (e.g. qmd) with version ranges at install/update | [#138](https://github.com/breferrari/shardmind/issues/138) |
 | ✅ | Let a vault exclude a permanently unreadable folder from the write-boundary walk | [#190](https://github.com/breferrari/shardmind/issues/190) |
-| ⬜ | Let the update prompt track a kept add-collision file per file | [#165](https://github.com/breferrari/shardmind/issues/165) |
+| ✅ | Let the update prompt track a kept add-collision file per file | [#165](https://github.com/breferrari/shardmind/issues/165) |
 | ✅ | Merge files with many repeated lines in less than cubic time | [#170](https://github.com/breferrari/shardmind/issues/170) |
 | ⬜ | Write --json output without terminal control codes in a TTY | [#198](https://github.com/breferrari/shardmind/issues/198) |
 | ⬜ | Decide whether adopt gets --skip-hooks | [#199](https://github.com/breferrari/shardmind/issues/199) |
