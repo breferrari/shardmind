@@ -336,7 +336,7 @@ A template whose first non-whitespace content is `{# shardmind: volatile #}` ren
 
 ### `_each` templates
 
-A template whose output path contains `_each` renders once per entry of a list-typed value. The rendered filename replaces `_each` with the item itself when it is a string or number (what a `list` value entered in the wizard holds), or with an object item's `slug`, else its `name`, sanitized for the filesystem. Two items that would name the same file (differing only in case, or equal once sanitized) are refused with `RENDER_ITERATOR_NAME_CLASH`.
+A template whose output path contains `_each` renders once per entry of a list-typed value. The rendered filename replaces `_each` with the item itself when it is a string or number (what a `list` value entered in the wizard holds), or with an object item's `slug`, else its `name`, sanitized for the filesystem. Two items that would name the same file (differing only in case, or equal once sanitized) are refused with `RENDER_ITERATOR_NAME_CLASH`. More generally, no two files in a shard may install to the same vault path, even differing only in case: a static `people/alice.md` next to `people/_each.md.njk` with an item `Alice` is refused with `OUTPUT_PATH_CLASH`, and `shardmind validate` reports it.
 
 ## 6. Hooks
 

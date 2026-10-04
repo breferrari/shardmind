@@ -438,6 +438,13 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 ## Update / merge
 
+
+### `OUTPUT_PATH_CLASH`
+
+**Meaning:** Two shard outputs name the same vault file, identically or differing only in case or Unicode form: a static file and a template, two templates, or an `_each` expansion and either (#240). One write would overwrite the other, and on macOS or Windows the vault would track two names for one file. Refused before anything is written, by install, update and adopt; `shardmind validate` reports it before any user installs. The message names both sources.
+
+**Remedy:** Rename one of the two files in the shard, or (for an `_each` expansion) the list item the file is named after.
+
 ### `MERGE_FAILED`
 
 **Meaning:** The three-way merge engine (`source/core/differ.ts`) threw while applying `node-diff3` to a modified file. Rare — usually a symptom of a file the merge engine can't handle.
@@ -611,7 +618,7 @@ These are **not** thrown `ShardMindError`s — they don't appear in the `ErrorCo
 If you're a shard author and hit a code that feels authoring-side, the specifically author-facing ones are:
 - `SCHEMA_RESERVED_NAME`, `SCHEMA_VALIDATION_FAILED`
 - `COMPUTED_DEFAULT_FAILED`, `COMPUTED_DEFAULT_INVALID`
-- `RENDER_FAILED`, `RENDER_FRONTMATTER_ERROR`, `RENDER_ITERATOR_ERROR`, `RENDER_ITERATOR_NAME_CLASH`
+- `RENDER_FAILED`, `RENDER_FRONTMATTER_ERROR`, `RENDER_ITERATOR_ERROR`, `RENDER_ITERATOR_NAME_CLASH`, `OUTPUT_PATH_CLASH`
 - `DOWNLOAD_MISSING_MANIFEST`, `DOWNLOAD_MISSING_SCHEMA`
 - `HOOK_SLOT_CONFLICT` (thrown), plus the non-fatal hook warnings `HOOK_BOOTSTRAP_MANAGED_WRITE`, `HOOK_PERSONALIZE_UNMANAGED_CREATE`, `HOOK_BOUNDARY_INCOMPLETE`, `HOOK_BOUNDARY_IGNORE_INVALID`, `HOOK_POST_INSTALL_DEPRECATED`
 
