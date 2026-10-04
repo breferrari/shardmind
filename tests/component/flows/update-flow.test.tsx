@@ -89,12 +89,12 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
       stub.setLatest(SHARD_SLUG, '0.3.0');
       await fs.writeFile(
         path.join(vault.root, '.shardmind.lock'),
-        JSON.stringify({ pid: process.pid, hostname: (await import('node:os')).hostname(), command: 'install', startedAt: '2026-10-04T12:00:00.000Z' }),
+        JSON.stringify({ pid: process.ppid, hostname: (await import('node:os')).hostname(), command: 'install', startedAt: '2026-10-04T12:00:00.000Z' }),
       );
       const stateBefore = await vault.readFile('.shardmind/state.json');
       const r = mountUpdate({ vaultRoot: vault.root });
       const all = await waitFor(() => r.frames.join(' ').replace(/\s+/g, ' '), (f) => /VAULT_LOCKED/.test(f), 20_000);
-      expect(all).toContain(`install (PID ${process.pid}`);
+      expect(all).toContain(`install (PID ${process.ppid}`);
       expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
     } finally {
       await vault.cleanup();

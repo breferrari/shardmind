@@ -245,11 +245,11 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
     try {
       await fs.writeFile(
         path.join(vault, '.shardmind.lock'),
-        JSON.stringify({ pid: process.pid, hostname: (await import('node:os')).hostname(), command: 'install', startedAt: '2026-10-04T12:00:00.000Z' }),
+        JSON.stringify({ pid: process.ppid, hostname: (await import('node:os')).hostname(), command: 'install', startedAt: '2026-10-04T12:00:00.000Z' }),
       );
       const r = mountAdopt({ shardRef: SHARD_REF, vaultRoot: vault });
       const all = await waitFor(() => r.frames.join(' ').replace(/\s+/g, ' '), (f) => /VAULT_LOCKED/.test(f), 20_000);
-      expect(all).toContain(`install (PID ${process.pid}`);
+      expect(all).toContain(`install (PID ${process.ppid}`);
       expect(await fs.readdir(vault)).toEqual(['.shardmind.lock']);
     } finally {
       await cleanupVault(vault);

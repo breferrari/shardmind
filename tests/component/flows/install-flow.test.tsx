@@ -679,10 +679,10 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     stub.setLatest(SHARD_SLUG, '0.1.0');
     const vault = await makeVaultDir('s-vault-locked');
     try {
-      // This process is alive, so its lock is held.
+      // The test runner's parent: another process, and alive, so its lock is held.
       await fs.writeFile(
         path.join(vault, '.shardmind.lock'),
-        JSON.stringify({ pid: process.pid, hostname: (await import('node:os')).hostname(), command: 'update', startedAt: '2026-10-04T12:00:00.000Z' }),
+        JSON.stringify({ pid: process.ppid, hostname: (await import('node:os')).hostname(), command: 'update', startedAt: '2026-10-04T12:00:00.000Z' }),
       );
       const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault });
       const all = await waitFor(
@@ -690,7 +690,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         (f) => /VAULT_LOCKED/.test(f),
         30_000,
       );
-      expect(all).toContain(`update (PID ${process.pid}`);
+      expect(all).toContain(`update (PID ${process.ppid}`);
       expect(all).not.toMatch(/questions to answer/);
       expect(await fs.readdir(vault)).toEqual(['.shardmind.lock']);
     } finally {

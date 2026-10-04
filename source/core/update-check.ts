@@ -43,6 +43,7 @@ import { SHARDMIND_DIR } from '../runtime/vault-paths.js';
 import { errnoCode } from '../runtime/errno.js';
 import { fetchLatestVersion } from './registry.js';
 import { removePath } from './fs-utils.js';
+import { isHeldByAnotherRun } from './vault-lock.js';
 
 /**
  * Cache entry shape. `schema_version` is tracked so a future incompatible
@@ -162,6 +163,9 @@ export async function readCache(vaultRoot: string): Promise<ReadCacheResult> {
  * invocation will just re-fetch.
  */
 export async function writeCache(vaultRoot: string, entry: UpdateCheck): Promise<void> {
+  // Status takes no lock (#253); while another run holds the vault it may have
+  // moved `.shardmind/` aside, and a mkdir here would break its rollback.
+  if (isHeldByAnotherRun(vaultRoot)) return;
   const filePath = cachePath(vaultRoot);
   const dir = path.dirname(filePath);
   // Temp name includes pid to avoid collisions with a second writer in the
