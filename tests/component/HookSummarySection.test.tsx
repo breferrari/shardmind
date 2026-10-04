@@ -157,7 +157,7 @@ describe('HookSummarySection', () => {
     const frame = out([
       { slot: 'personalize', summary: { exitCode: 0, violation: { kind: 'incomplete', paths: ['.', '.cache'] } } },
     ]).lastFrame() ?? '';
-    expect(frame).toContain('Personalize hook boundary check incomplete: could not read ., .cache');
+    expect(frame).toContain('Personalize hook boundary check incomplete: could not read the vault root, .cache');
   });
 
   it('lists unreadable folders beside an unmanaged-create violation', () => {

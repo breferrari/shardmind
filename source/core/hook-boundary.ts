@@ -25,11 +25,12 @@
  */
 
 import fsp from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import type { HookSlot, ShardState } from '../runtime/types.js';
 import type { IgnoreFilter } from './shardmindignore.js';
 import { isTier1Excluded } from './tier1.js';
-import { errnoCode, isEnoent } from '../runtime/errno.js';
+import { errnoCode } from '../runtime/errno.js';
 
 /**
  * `incomplete`: the personalize walk could not read some folders and found no
@@ -40,7 +41,10 @@ export type HookViolationKind = 'managed-write' | 'unmanaged-create' | 'incomple
 export interface HookViolation {
   slot: HookSlot;
   kind: HookViolationKind;
-  /** Vault-relative posix paths the hook touched outside its boundary. */
+  /**
+   * Vault-relative posix paths the hook touched outside its boundary; for
+   * `incomplete`, the folders the walk could not read.
+   */
   paths: string[];
   /**
    * Folders the personalize walk could not read, set on `unmanaged-create`
@@ -69,7 +73,7 @@ const READDIR_RETRY_MS = 50;
  *
  * A folder that cannot be read is recorded in `unreadable`, never read as
  * empty: an empty read would make the check report that nothing was created
- * (#175). A vanished folder (`ENOENT`) is empty.
+ * (#175). A folder that is gone (`ENOENT` / `ENOTDIR`) is empty.
  */
 export async function snapshotUnmanaged(
   vaultRoot: string,
@@ -81,24 +85,20 @@ export async function snapshotUnmanaged(
 }
 
 /**
- * The folder's entries, or `null` when it vanished (`ENOENT`). A busy or
- * permission-denied folder is read once more after a short pause; any
- * remaining error is thrown.
+ * The folder's entries, or `null` when it is gone (`ENOENT`, or `ENOTDIR`
+ * when a file replaced it). A busy or permission-denied folder is read once
+ * more after a short pause; any remaining error is thrown.
  */
-async function readFolder(dirAbs: string) {
-  try {
-    return await fsp.readdir(dirAbs, { withFileTypes: true });
-  } catch (err) {
-    const code = errnoCode(err);
-    if (code === 'ENOENT') return null;
-    if (code === undefined || !TRANSIENT_READDIR_CODES.has(code)) throw err;
-  }
-  await new Promise((resolve) => setTimeout(resolve, READDIR_RETRY_MS));
-  try {
-    return await fsp.readdir(dirAbs, { withFileTypes: true });
-  } catch (err) {
-    if (isEnoent(err)) return null;
-    throw err;
+async function readFolder(dirAbs: string): Promise<Dirent[] | null> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fsp.readdir(dirAbs, { withFileTypes: true });
+    } catch (err) {
+      const code = errnoCode(err);
+      if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+      if (attempt === 2 || code === undefined || !TRANSIENT_READDIR_CODES.has(code)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, READDIR_RETRY_MS));
+    }
   }
 }
 
@@ -109,7 +109,7 @@ async function walkPaths(
   out: UnmanagedSnapshot,
 ): Promise<void> {
   const dirAbs = relDir === '' ? rootAbs : path.join(rootAbs, relDir);
-  let entries;
+  let entries: Dirent[] | null;
   try {
     entries = await readFolder(dirAbs);
   } catch {

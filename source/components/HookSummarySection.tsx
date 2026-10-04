@@ -133,6 +133,11 @@ function outputBlock(
   );
 }
 
+/** Unreadable folders for display; the walk names the vault root '.'. */
+function folderList(folders: readonly string[]): string {
+  return folders.map((f) => (f === '.' ? 'the vault root' : f)).join(', ');
+}
+
 function violationMessage(
   stage: HookStage,
   violation: NonNullable<HookSummary['violation']>,
@@ -143,12 +148,12 @@ function violationMessage(
       return `${HOOK_NAME[stage]} modified or removed managed file(s): ${paths}. Bootstrap may only write unmanaged paths — move managed-file edits to the personalize hook.`;
     case 'unmanaged-create': {
       const unreadable = violation.unreadable?.length
-        ? ` Could not read ${violation.unreadable.join(', ')}, so it may have created more.`
+        ? ` Could not read ${folderList(violation.unreadable)}, so it may have created more.`
         : '';
       return `${HOOK_NAME[stage]} created unmanaged file(s): ${paths}. Personalize may only edit managed files — move artifact creation to the bootstrap hook.${unreadable}`;
     }
     case 'incomplete':
-      return `${HOOK_NAME[stage]} boundary check incomplete: could not read ${paths}, so unmanaged files it created there may be missed.`;
+      return `${HOOK_NAME[stage]} boundary check incomplete: could not read ${folderList(violation.paths)}, so unmanaged files it created there may be missed.`;
     default:
       return assertNever(violation.kind);
   }

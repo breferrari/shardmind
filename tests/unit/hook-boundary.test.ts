@@ -130,6 +130,13 @@ describe('detectUnmanagedCreates', () => {
     });
   });
 
+  it('reports incomplete, not nothing, when a folder unreadable before the hook holds a new file after it', () => {
+    // `.qmd/` became readable after the hook and holds a file: it may be new,
+    // or may have been there all along. Neither "created" nor "nothing".
+    const v = detectUnmanagedCreates(snap(['Home.md', '.qmd/new']), snap(['Home.md'], ['.qmd']), state);
+    expect(v).toEqual({ slot: 'personalize', kind: 'incomplete', paths: ['.qmd'] });
+  });
+
   it('counts nothing as created when the vault root was unreadable before the hook', () => {
     const v = detectUnmanagedCreates(snap(['Home.md', 'new.md']), snap([], ['.']), state);
     expect(v).toEqual({ slot: 'personalize', kind: 'incomplete', paths: ['.'] });
@@ -240,6 +247,14 @@ describe('snapshotUnmanaged', () => {
         expect(seen.calls).toBe(2);
       });
     }
+
+    it('reads a folder a file replaced (ENOTDIR) as empty, not unreadable', async () => {
+      await write('Home.md');
+      await write(path.join('.cache', 'a.json'));
+      const seen = failReaddir('.cache', ['ENOTDIR']);
+      expect(await snapshotUnmanaged(dir, EMPTY_IGNORE)).toEqual(snap(['Home.md']));
+      expect(seen.calls).toBe(1);
+    });
 
     it('reports any other error as unreadable without a second read', async () => {
       await write('Home.md');
