@@ -481,6 +481,18 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 **Remedy:** Drop the conflicting flag. To switch a ref-installed vault to a tag pin, reinstall via `shardmind install <source>@<version>` (the explicit transition).
 
+### `UPDATE_JSON_NEEDS_ANSWERS`
+
+**Meaning:** `shardmind update --dry-run --json` reached a decision the update would ask you about, and `--json` cannot ask. The message names the decision (#230):
+
+- **new optional modules**: the new version adds a removable module your install has never chosen;
+- **removed files you edited**: the new version drops files you modified;
+- **new required values**: the new schema requires values your `shard-values.yaml` lacks. Every value declares a default today, so this is unreachable with a valid schema.
+
+The run writes this as its one JSON failure document and exits 1, instead of writing nothing.
+
+**Remedy:** Add `--yes`, which includes new optional modules and keeps removed files you edited. For new required values, add them to `shard-values.yaml`; `--yes` cannot supply them either (`VALUES_MISSING`). Or run without `--json` to choose interactively.
+
 ### `UPDATE_CACHE_MISSING`
 
 **Meaning:** One of three drift-between-inputs failures during `shardmind update`:
