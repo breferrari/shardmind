@@ -18,7 +18,7 @@ The reader invoked `/take-next unattended-loop`. That invocation is plan approva
 ## The queue
 
 1. `next.sh`, in its own order.
-2. When it is dry, stop. Shelf items are not taken unattended: the Shelf holds v0.2 and v1.0 scope that waits on demand, and that judgement is the reader's (ruled 2026-10-03, reader).
+2. When it is dry, stop. There is no shelf: the reader retired it on 2026-10-04, moving its items into Phases 4 to 11, and the loop takes those phases in order like any other. This replaces the 2026-10-03 ruling that shelf items are not taken unattended. A pass that concludes an item should be declined still stops that item and reports it, per the decline stop above.
 3. Read the queue again when a pass ends and before calling it dry: issues are filed while the loop runs. When nothing is eligible, tell the reader.
 
 ## Done when

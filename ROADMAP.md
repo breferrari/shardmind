@@ -8,10 +8,10 @@
 
 **[`.claude/skills/take-next/SKILL.md`](.claude/skills/take-next/SKILL.md)** runs the [`CLAUDE.md` Working Agreement](CLAUDE.md#working-agreement-v6-execution-standard) as one pass: one issue, from plan to merged.
 
-- **Order is the phase number at the start of a milestone title.** `sh .claude/skills/take-next/next.sh` names the milestone to take from. A milestone whose description starts `Shelf:` is never next.
+- **Order is the phase number at the start of a milestone title.** `sh .claude/skills/take-next/next.sh` names the milestone to take from. There is no shelf: every open issue sits in a phase, so the loop reaches all of it.
 - **Each phase below has a section whose heading matches its milestone title exactly,** and a table whose marks follow the tracker: ✅ closed, ⬜ open, 🔨 in progress.
 - **`sh .claude/skills/take-next/preflight.sh` checks the record against itself:** every invariant in `docs/SHARD-LAYOUT.md` named by a test, every roadmap mark agreeing with its issue, every open issue in a milestone, and every issue mentioned here.
-- **An issue filed mid-pass gets a milestone and a row** in the same pass. Out-of-scope work goes to the Shelf, with a dated reason in the Deferral shelf.
+- **An issue filed mid-pass gets a milestone and a row** in the same pass. Out-of-scope work gets a row in the phase it belongs to, or in a new phase after the last one, with its dated reason on the issue.
 
 The tracker moved to phases on 2026-10-03. Before that, this file was a checkbox list, kept below as [History](#history).
 
@@ -63,59 +63,120 @@ The suite fails only on real defects, on all three operating systems.
 | ⬜ | Stop dist/ changing while E2E tests spawn the CLI | [#176](https://github.com/breferrari/shardmind/issues/176) |
 | ⬜ | Read a fast-exiting CLI's last output in the PTY harness | [#177](https://github.com/breferrari/shardmind/issues/177) |
 
-## Shelf
+## Phase 4 — close what already shipped
 
-Milestone: [Shelf](https://github.com/breferrari/shardmind/milestone/4)
+Milestone: [Phase 4](https://github.com/breferrari/shardmind/milestone/5)
 
-Every item on the deferral shelf below has a milestone here, so a milestone-filtered query can reach shelved work. The shelf carries the *reason*. This table carries the *state*. `take-next` skips the milestone because its description starts with `Shelf:`.
-
-**A shelf item comes off it when someone asks for it.** The question at that moment is one line: would this be built if it were not already written down? If not, it is declined, and closing it as declined is a result, not a loss.
+Issues whose work already landed elsewhere get verified against the code and closed with the evidence. Each row is verify-and-close: confirm the work against the code or the owning repo, then close the issue with that evidence.
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | Research-wiki shard + E2E tests + npm publish | [#15](https://github.com/breferrari/shardmind/issues/15) |
 | ⬜ | Command namespace prefix for discoverability | [#25](https://github.com/breferrari/shardmind/issues/25) |
 | ⬜ | Topic-based meeting prep command (/prep-topic) | [#26](https://github.com/breferrari/shardmind/issues/26) |
 | ⬜ | npm publishing setup — claim-publish retry + NPM_TOKEN | [#27](https://github.com/breferrari/shardmind/issues/27) |
-| ⬜ | Finalize shardmind/registry index.json schema | [#29](https://github.com/breferrari/shardmind/issues/29) |
+| ⬜ | Encode state-schema migration rules (uses v0.1 framework) | [#40](https://github.com/breferrari/shardmind/issues/40) |
+
+## Phase 5 — engine defects and dependency drift
+
+Milestone: [Phase 5](https://github.com/breferrari/shardmind/milestone/6)
+
+Known defects and stale workarounds in the engine are fixed, so no user is blocked on a case the engine already half-handles.
+
+| | Task | Issue |
+|---|---|---|
+| ⬜ | Make the test suite independent of FORCE_COLOR | [#159](https://github.com/breferrari/shardmind/issues/159) |
+| ⬜ | Drop LineInterner workaround once node-diff3 ships the prototype-lookup fix | [#49](https://github.com/breferrari/shardmind/issues/49) |
+| ⬜ | NO_COLOR / FORCE_COLOR respect across Ink components | [#37](https://github.com/breferrari/shardmind/issues/37) |
+| ⬜ | Agent/headless ergonomics: non-interactive mode, JSON output, per-file plan, value detection | [#139](https://github.com/breferrari/shardmind/issues/139) |
+| ⬜ | Apply a shard release that only changes a file's case | [#169](https://github.com/breferrari/shardmind/issues/169) |
+| ⬜ | Align the RELEASE-SMOKE cancellation rows with the engine | [#155](https://github.com/breferrari/shardmind/issues/155) |
+
+## Phase 6 — docs match the code
+
+Milestone: [Phase 6](https://github.com/breferrari/shardmind/milestone/7)
+
+The implementation docs describe the modules as they are now.
+
+| | Task | Issue |
+|---|---|---|
+| ⬜ | IMPLEMENTATION.md §4.11a / §4.11b for install-planner + install-executor | [#64](https://github.com/breferrari/shardmind/issues/64) |
+| ⬜ | v0.1 docs rewrite: ARCHITECTURE §3 + AUTHORING §2 + IMPLEMENTATION §4.* / §9 per v6 layout | [#85](https://github.com/breferrari/shardmind/issues/85) |
+
+## Phase 7 — authoring and CLI ergonomics
+
+Milestone: [Phase 7](https://github.com/breferrari/shardmind/milestone/8)
+
+Each authoring and CLI proposal is built, or declined with a reason that survives a check. These were deferred as polish with no user report behind them. Each pass decides build or decline under the take-next Declines rule, on evidence.
+
+| | Task | Issue |
+|---|---|---|
 | ⬜ | Enforce tarball size cap in downloadShard | [#32](https://github.com/breferrari/shardmind/issues/32) |
 | ⬜ | VaultFS abstraction with built-in rollback tracking | [#33](https://github.com/breferrari/shardmind/issues/33) |
 | ⬜ | shardmind validate <shard> command | [#34](https://github.com/breferrari/shardmind/issues/34) |
 | ⬜ | Pre-install template syntax lint | [#35](https://github.com/breferrari/shardmind/issues/35) |
 | ⬜ | Debug logging (SHARDMIND_DEBUG env var) | [#36](https://github.com/breferrari/shardmind/issues/36) |
-| ⬜ | NO_COLOR / FORCE_COLOR respect across Ink components | [#37](https://github.com/breferrari/shardmind/issues/37) |
-| ⬜ | Alternate registry configurability (GHE, private, custom URL) | [#39](https://github.com/breferrari/shardmind/issues/39) |
-| ⬜ | Encode state-schema migration rules (uses v0.1 framework) | [#40](https://github.com/breferrari/shardmind/issues/40) |
-| ⬜ | Re-evaluate @inkjs/ui dependency at v0.2 scope freeze | [#43](https://github.com/breferrari/shardmind/issues/43) |
-| ⬜ | Drop LineInterner workaround once node-diff3 ships the prototype-lookup fix | [#49](https://github.com/breferrari/shardmind/issues/49) |
 | ⬜ | $EDITOR integration for DiffView conflict resolution | [#50](https://github.com/breferrari/shardmind/issues/50) |
-| ⬜ | IMPLEMENTATION.md §4.11a / §4.11b for install-planner + install-executor | [#64](https://github.com/breferrari/shardmind/issues/64) |
+| ⬜ | Declare & enforce external CLI tool dependencies (e.g. qmd) with version ranges at install/update | [#138](https://github.com/breferrari/shardmind/issues/138) |
+| ⬜ | Let the update prompt track a kept add-collision file per file | [#165](https://github.com/breferrari/shardmind/issues/165) |
+| ⬜ | Merge files with many repeated lines in less than cubic time | [#170](https://github.com/breferrari/shardmind/issues/170) |
+
+## Phase 8 — release and test tooling
+
+Milestone: [Phase 8](https://github.com/breferrari/shardmind/milestone/9)
+
+The release pipeline, dependencies and test harness are settled: built, or declined with evidence. Each pass decides build or decline under the take-next Declines rule, on evidence.
+
+| | Task | Issue |
+|---|---|---|
+| ⬜ | Re-evaluate @inkjs/ui dependency at v0.2 scope freeze | [#43](https://github.com/breferrari/shardmind/issues/43) |
+| ⬜ | release.yml: split into two pipelines (GitHub release before npm publish) | [#108](https://github.com/breferrari/shardmind/issues/108) |
+| ⬜ | TUI testing framework — continuing-hardening tracker | [#122](https://github.com/breferrari/shardmind/issues/122) |
+| ⬜ | Run the Layer 2 real-terminal tests on Windows under ConPTY | [#174](https://github.com/breferrari/shardmind/issues/174) |
+
+## Phase 9 — the second shard
+
+Milestone: [Phase 9](https://github.com/breferrari/shardmind/milestone/10)
+
+A second shard exists, and the features that wait on one are built or declined. #81 and #86 wait on a second shard in real use, so they follow #15 here.
+
+| | Task | Issue |
+|---|---|---|
+| ⬜ | Research-wiki shard + E2E tests + npm publish | [#15](https://github.com/breferrari/shardmind/issues/15) |
+| ⬜ | v0.2: Shard composition (multi-shard per vault) | [#81](https://github.com/breferrari/shardmind/issues/81) |
+| ⬜ | v0.2: rendered_files opt-in for Nunjucks at vault-visible paths | [#86](https://github.com/breferrari/shardmind/issues/86) |
+
+## Phase 10 — v0.2 contract
+
+Milestone: [Phase 10](https://github.com/breferrari/shardmind/milestone/11)
+
+Each v0.2 contract extension is built, or declined in the spec's out-of-scope list. A deferral goes to `docs/SHARD-LAYOUT.md §Out of scope` with its date, per the take-next Declines rule.
+
+| | Task | Issue |
+|---|---|---|
 | ⬜ | v0.2: Guided file creation (guided_files schema + third install phase) | [#79](https://github.com/breferrari/shardmind/issues/79) |
 | ⬜ | v0.2: Structural variants (modules.structure + vault_purpose) | [#80](https://github.com/breferrari/shardmind/issues/80) |
-| ⬜ | v0.2: Shard composition (multi-shard per vault) | [#81](https://github.com/breferrari/shardmind/issues/81) |
 | ⬜ | v0.2: Dependency fetching (recursive + lock file) | [#82](https://github.com/breferrari/shardmind/issues/82) |
 | ⬜ | v0.2: shardmind eject command | [#83](https://github.com/breferrari/shardmind/issues/83) |
 | ⬜ | v0.2: shardmind init command for shard authors | [#84](https://github.com/breferrari/shardmind/issues/84) |
-| ⬜ | v0.1 docs rewrite: ARCHITECTURE §3 + AUTHORING §2 + IMPLEMENTATION §4.* / §9 per v6 layout | [#85](https://github.com/breferrari/shardmind/issues/85) |
-| ⬜ | v0.2: rendered_files opt-in for Nunjucks at vault-visible paths | [#86](https://github.com/breferrari/shardmind/issues/86) |
 | ⬜ | v0.2: .shardmindignore negation (!pattern) support | [#87](https://github.com/breferrari/shardmind/issues/87) |
+
+## Phase 11 — v1.0 ecosystem
+
+Milestone: [Phase 11](https://github.com/breferrari/shardmind/milestone/12)
+
+Each ecosystem item is built, or declined with the evidence on the issue. Each pass decides build or decline under the take-next Declines rule, on evidence.
+
+| | Task | Issue |
+|---|---|---|
+| ⬜ | Finalize shardmind/registry index.json schema | [#29](https://github.com/breferrari/shardmind/issues/29) |
+| ⬜ | Alternate registry configurability (GHE, private, custom URL) | [#39](https://github.com/breferrari/shardmind/issues/39) |
 | ⬜ | v1.0: Hosted registry (shardmind.dev) + shard discovery + search | [#89](https://github.com/breferrari/shardmind/issues/89) |
 | ⬜ | v1.0: Community — validation CI + shard listing + fork-to-shard guide | [#90](https://github.com/breferrari/shardmind/issues/90) |
 | ⬜ | v1.0: Teams — managed vault templates + shared values + admin controls | [#91](https://github.com/breferrari/shardmind/issues/91) |
-| ⬜ | release.yml: split into two pipelines (GitHub release before npm publish) | [#108](https://github.com/breferrari/shardmind/issues/108) |
-| ⬜ | TUI testing framework — continuing-hardening tracker | [#122](https://github.com/breferrari/shardmind/issues/122) |
-| ⬜ | Declare & enforce external CLI tool dependencies (e.g. qmd) with version ranges at install/update | [#138](https://github.com/breferrari/shardmind/issues/138) |
-| ⬜ | Agent/headless ergonomics: non-interactive mode, JSON output, per-file plan, value detection | [#139](https://github.com/breferrari/shardmind/issues/139) |
-| ⬜ | Align the RELEASE-SMOKE cancellation rows with the engine | [#155](https://github.com/breferrari/shardmind/issues/155) |
-| ⬜ | Make the test suite independent of FORCE_COLOR | [#159](https://github.com/breferrari/shardmind/issues/159) |
-| ⬜ | Let the update prompt track a kept add-collision file per file | [#165](https://github.com/breferrari/shardmind/issues/165) |
-| ⬜ | Apply a shard release that only changes a file's case | [#169](https://github.com/breferrari/shardmind/issues/169) |
-| ⬜ | Merge files with many repeated lines in less than cubic time | [#170](https://github.com/breferrari/shardmind/issues/170) |
-| ⬜ | Run the Layer 2 real-terminal tests on Windows under ConPTY | [#174](https://github.com/breferrari/shardmind/issues/174) |
 
-## Deferral shelf
+## Shelf (retired 2026-10-04)
 
-Items moved out of the build order, each with the phase it moved to and a dated reason. A reason that names a closed issue, a retired invariant or a closed phase is printed by `preflight.sh` for rereading.
+The shelf was retired on 2026-10-04: every item on it moved into Phases 4 to 11. The deferral reasons are kept below as a record of why each item waited. They are history, not a build order.
 
 | Item | Surfaced | Moved to | Why |
 |---|---|---|---|
@@ -165,6 +226,7 @@ Items taken from the Shelf ahead of the phases. Recorded so that movement is vis
 
 | Item | Moved | Why |
 |---|---|---|
+| All 39 Shelf items | Shelf → Phases 4 to 11, 2026-10-04 | The shelf is retired. Every open issue sits in an ordered phase, so the loop reaches all of it, and a pass that judges an item not worth building declines it with evidence. |
 
 ---
 
