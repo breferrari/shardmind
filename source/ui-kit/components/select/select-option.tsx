@@ -1,6 +1,6 @@
-import React, {type ReactNode} from 'react';
+import {type ReactNode} from 'react';
 import {Box, Text} from 'ink';
-import figures from 'figures';
+import {figures} from '../../lib/figures.js';
 import {useComponentTheme} from '../../theme.js';
 import {type Theme} from './theme.js';
 

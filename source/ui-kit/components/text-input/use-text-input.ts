@@ -1,6 +1,5 @@
 import {useMemo} from 'react';
 import {useInput} from 'ink';
-import chalk from 'chalk';
 import {type TextInputState} from './use-text-input-state.js';
 
 export type UseTextInputProps = {
@@ -22,58 +21,69 @@ export type UseTextInputProps = {
 	placeholder?: string;
 };
 
+/** A run of text and how to draw it: `inverse` marks the cursor. */
+export type TextSegment = {
+	readonly text: string;
+	readonly inverse?: boolean;
+	readonly dim?: boolean;
+};
+
 export type UseTextInputResult = {
 	/**
 	 * Input value.
 	 */
-	inputValue: string;
+	inputValue: TextSegment[];
 };
 
-const cursor = chalk.inverse(' ');
+const cursor: TextSegment = {text: ' ', inverse: true};
 
 export const useTextInput = ({
 	isDisabled = false,
 	state,
 	placeholder = '',
 }: UseTextInputProps): UseTextInputResult => {
-	const renderedPlaceholder = useMemo(() => {
+	const renderedPlaceholder = useMemo((): TextSegment[] => {
 		if (isDisabled) {
-			return placeholder ? chalk.dim(placeholder) : '';
+			return placeholder ? [{text: placeholder, dim: true}] : [];
 		}
 
 		return placeholder && placeholder.length > 0
-			? chalk.inverse(placeholder[0]) + chalk.dim(placeholder.slice(1))
-			: cursor;
+			? [
+					{text: placeholder[0]!, inverse: true},
+					{text: placeholder.slice(1), dim: true},
+				]
+			: [cursor];
 	}, [isDisabled, placeholder]);
 
-	const renderedValue = useMemo(() => {
+	const renderedValue = useMemo((): TextSegment[] => {
 		if (isDisabled) {
-			return state.value;
+			return [{text: state.value}];
 		}
 
 		let index = 0;
-		let result = state.value.length > 0 ? '' : cursor;
+		const result: TextSegment[] = state.value.length > 0 ? [] : [cursor];
 
 		for (const char of state.value) {
-			result += index === state.cursorOffset ? chalk.inverse(char) : char;
+			result.push(index === state.cursorOffset ? {text: char, inverse: true} : {text: char});
 
 			index++;
 		}
 
 		if (state.suggestion) {
 			if (state.cursorOffset === state.value.length) {
-				result +=
-					chalk.inverse(state.suggestion[0]) +
-					chalk.dim(state.suggestion.slice(1));
+				result.push(
+					{text: state.suggestion[0]!, inverse: true},
+					{text: state.suggestion.slice(1), dim: true},
+				);
 			} else {
-				result += chalk.dim(state.suggestion);
+				result.push({text: state.suggestion, dim: true});
 			}
 
 			return result;
 		}
 
 		if (state.value.length > 0 && state.cursorOffset === state.value.length) {
-			result += cursor;
+			result.push(cursor);
 		}
 
 		return result;

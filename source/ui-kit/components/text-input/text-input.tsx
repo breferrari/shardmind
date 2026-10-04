@@ -1,4 +1,3 @@
-import React from 'react';
 import {Text} from 'ink';
 import {useComponentTheme} from '../../theme.js';
 import {useTextInputState} from './use-text-input-state.js';
@@ -62,5 +61,13 @@ export function TextInput({
 
 	const {styles} = useComponentTheme<Theme>('TextInput');
 
-	return <Text {...styles.value()}>{inputValue}</Text>;
+	return (
+		<Text {...styles.value()}>
+			{inputValue.map((segment, index) => (
+				<Text key={index} inverse={segment.inverse} dimColor={segment.dim}>
+					{segment.text}
+				</Text>
+			))}
+		</Text>
+	);
 }

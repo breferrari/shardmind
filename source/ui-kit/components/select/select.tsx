@@ -1,4 +1,4 @@
-import React, {type ReactNode} from 'react';
+import {type ReactNode} from 'react';
 import {Box, Text} from 'ink';
 import {useComponentTheme} from '../../theme.js';
 import {type Option} from '../../types.js';
