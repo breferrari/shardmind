@@ -71,11 +71,9 @@ export function caseOnlyRenames(
   const result = new Map<string, string>();
   for (const group of groups.values()) {
     if (group.size !== 2) continue;
-    const [a, b] = [...group] as [string, string];
-    const from = trackedSet.has(a) && !newPaths.has(a) ? a : b;
-    const to = from === a ? b : a;
-    if (!trackedSet.has(from) || newPaths.has(from) || trackedSet.has(to) || !newPaths.has(to)) continue;
-    if (path.posix.dirname(from) !== path.posix.dirname(to)) continue;
+    const from = [...group].find((p) => trackedSet.has(p) && !newPaths.has(p));
+    const to = [...group].find((p) => newPaths.has(p) && !trackedSet.has(p));
+    if (from === undefined || to === undefined || !isCaseOnlyRename(from, to)) continue;
     if (declared.has(from) || declaredTargets.has(to)) continue;
     result.set(from, to);
   }
@@ -87,11 +85,28 @@ export function isCaseOnlyRename(from: string, to: string): boolean {
   return from !== to && path.posix.dirname(from) === path.posix.dirname(to) && fold(from) === fold(to);
 }
 
-/** Whether two vault paths reach the same file: one name folded onto the other. */
-async function sameFile(vaultRoot: string, a: string, b: string): Promise<boolean> {
-  const stat = (rel: string) => fsp.lstat(path.join(vaultRoot, rel)).catch(() => null);
-  const [x, y] = await Promise.all([stat(a), stat(b)]);
-  return x !== null && y !== null && x.dev === y.dev && x.ino === y.ino;
+/**
+ * Whether two paths of a case-only pair reach one file: one name folded onto
+ * the other. Decided by the folder's listing: both spellings listed are two
+ * files; one listed, with both reachable, is one entry under two names. A
+ * listing that spells neither as given (a third Unicode normalization) falls
+ * back to the file index, as `bigint` (an NTFS index exceeds 2^53) and never
+ * 0, which FAT and some network filesystems report for every file.
+ */
+export async function sameFile(vaultRoot: string, a: string, b: string): Promise<boolean> {
+  const stat = (rel: string) => fsp.lstat(path.join(vaultRoot, rel), { bigint: true }).catch(() => null);
+  const [x, y, names] = await Promise.all([
+    stat(a),
+    stat(b),
+    fsp.readdir(path.join(vaultRoot, path.posix.dirname(a))).catch(() => null),
+  ]);
+  if (x === null || y === null) return false;
+  if (names !== null) {
+    const hasA = names.includes(path.posix.basename(a));
+    const hasB = names.includes(path.posix.basename(b));
+    if (hasA || hasB) return hasA !== hasB;
+  }
+  return x.ino !== 0n && x.dev === y.dev && x.ino === y.ino;
 }
 
 /**

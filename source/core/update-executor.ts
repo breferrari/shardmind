@@ -24,7 +24,7 @@ import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
-import { assertRenameTargetFree, isCaseOnlyRename, moveToFreePath, renameCaseInPlace } from './rename-migrations.js';
+import { assertRenameTargetFree, moveToFreePath, renameCaseInPlace, sameFile } from './rename-migrations.js';
 import { hashValues } from './install-planner.js';
 import {
   cacheTemplates,
@@ -718,8 +718,8 @@ async function snapshotForRollback(
   }
   // A case-only rename's two paths can be one file (#169): back it up once,
   // under its old name, which a rollback restores.
-  for (const action of plan.actions) {
-    if (action.renamedFrom !== undefined && isCaseOnlyRename(action.renamedFrom, action.path)) toSnapshot.delete(action.path);
+  for (const [from, to] of pathsTheUpdateTouches(plan.actions).caseRenames) {
+    if (await sameFile(vaultRoot, from, to)) toSnapshot.delete(to);
   }
 
   const filesBackupDir = path.join(backupDir, 'files');

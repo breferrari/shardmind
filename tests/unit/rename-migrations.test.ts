@@ -3,9 +3,15 @@
  * old → new path map an update applies.
  */
 
-import { describe, it, expect } from 'vitest';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ShardManifestSchema } from '../../source/core/manifest.js';
-import { caseOnlyRenames, parseFromVersion, renamesBetween } from '../../source/core/rename-migrations.js';
+import { caseOnlyRenames, parseFromVersion, renamesBetween, sameFile } from '../../source/core/rename-migrations.js';
+import { foldsCase } from '../helpers/fs-capabilities.js';
+
+const caseFolds = await foldsCase();
 
 const base = { apiVersion: 'v1', name: 'demo', namespace: 'acme', version: '6.2.0' };
 
@@ -126,8 +132,38 @@ describe('caseOnlyRenames (#169)', () => {
     expect(pairs(['Foo.md', 'Old.md'], ['foo.md'], { 'Old.md': 'foo.md' })).toEqual({});
   });
 
+  it('pairs a change of Unicode normalization alone, which macOS folds like case', () => {
+    expect(pairs(['caf\u00e9.md'], ['cafe\u0301.md'])).toEqual({ 'caf\u00e9.md': 'cafe\u0301.md' });
+  });
+
   it('treats a Unicode normalization difference as the same name', () => {
     // NFD "e\u0301" vs NFC "\u00e9": the same name to a user, folded by macOS.
     expect(pairs(['Caf\u00e9.md'], ['cafe\u0301.md'])).toEqual({ 'Caf\u00e9.md': 'cafe\u0301.md' });
+  });
+});
+
+describe('sameFile (#169)', () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'shardmind-169-'));
+  });
+  afterEach(async () => {
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it.skipIf(!caseFolds)('is true for two spellings of one file on a case-folding filesystem', async () => {
+    await fsp.writeFile(path.join(dir, 'Foo.md'), 'x');
+    expect(await sameFile(dir, 'Foo.md', 'foo.md')).toBe(true);
+    expect(await sameFile(dir, 'foo.md', 'Foo.md')).toBe(true);
+  });
+
+  it.skipIf(caseFolds)('is false for two files whose names differ only in case', async () => {
+    await fsp.writeFile(path.join(dir, 'Foo.md'), 'x');
+    await fsp.writeFile(path.join(dir, 'foo.md'), 'y');
+    expect(await sameFile(dir, 'Foo.md', 'foo.md')).toBe(false);
+  });
+
+  it('is false when either path reaches nothing', async () => {
+    expect(await sameFile(dir, 'Foo.md', 'foo.md')).toBe(false);
   });
 });
