@@ -14,6 +14,7 @@ import AdoptValuesGate from '../components/AdoptValuesGate.js';
 import AdoptModePicker from '../components/AdoptModePicker.js';
 import AdoptDiffView from '../components/AdoptDiffView.js';
 import AdoptSummary from '../components/AdoptSummary.js';
+import { summarizeExternalTools } from '../core/external-tools.js';
 import CommandFrame from '../components/CommandFrame.js';
 import CommandProgress from '../components/CommandProgress.js';
 import HookProgress from '../components/HookProgress.js';
@@ -211,6 +212,7 @@ export default function Adopt({ args, options }: Props) {
             durationMs={phase.durationMs}
             hooks={phase.hooks}
             dryRun={phase.dryRun}
+            externalTools={summarizeExternalTools(phase.externalTools)}
           />
         </CommandFrame>
       );

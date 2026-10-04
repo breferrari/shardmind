@@ -36,6 +36,7 @@ import { resetSigintRollbackForTests } from '../../../source/commands/hooks/shar
 
 const SLUG_VERSION_MISMATCH = 'acme/adopt-future-engine';
 const SLUG_RENAMED = 'acme/adopt-renamed';
+const SLUG_TOOLS = 'acme/adopt-external-tools';
 
 describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)', () => {
   const getCtx = setupFlowSuite({
@@ -52,8 +53,53 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
         versions: {} as Record<string, string>,
         latest: '0.2.0',
       },
+      [SLUG_TOOLS]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
     },
   });
+
+  // ───── External tools (#138) ─────
+
+  it('a required tool out of range → EXTERNAL_TOOL_UNMET before any write (#138)', async () => {
+    const { stub } = getCtx();
+    const vault = await makeVaultDir('s-adopt-tools');
+    try {
+      await writeRel(vault, 'Home.md', '# user-only Home\n');
+      const tarPath = await buildCustomTarball({
+        version: '0.1.0',
+        prefix: 'adopt-external-tools-0.1.0',
+        manifestOverrides: {
+          hooks: {},
+          name: 'adopt-external-tools',
+          namespace: 'flowtest',
+          // `node` is on PATH wherever the tests run; no version meets this.
+          external_tools: { node: { package: 'node', version: '>=999.0.0', command: 'node' } },
+        },
+        outDir: vault,
+      });
+      stub.setRef(SLUG_TOOLS, 'v0.1.0', STUB_SHA, tarPath);
+      const valuesFile = path.join(vault, 'values.yaml');
+      await fs.writeFile(valuesFile, stringifyYaml(DEFAULT_VALUES), 'utf-8');
+      const r = mountAdopt({
+        shardRef: `github:${SLUG_TOOLS}#v0.1.0`,
+        vaultRoot: vault,
+        options: { yes: true, values: valuesFile },
+      });
+      // The command exits right after its last frame: search every frame it drew.
+      const frame = await waitFor(
+        () => r.frames.join('\n'),
+        (f) => /EXTERNAL_TOOL_UNMET/.test(f) && /npm i -g node@">=999\.0\.0"/.test(f),
+        30_000,
+      );
+      expect(frame).toMatch(/node: found \d+\.\d+\.\d+, needs >=999\.0\.0/);
+      await expect(fs.access(path.join(vault, '.shardmind'))).rejects.toThrow();
+      expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('# user-only Home\n');
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
 
   afterEach(() => {
     cleanup();

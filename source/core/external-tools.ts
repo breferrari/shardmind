@@ -37,6 +37,9 @@ export interface ExternalToolsReport {
   results: ToolResult[];
 }
 
+/** A run that checked no tools: the summary shows nothing for it. */
+export const NO_EXTERNAL_TOOLS: ExternalToolsReport = { declared: false, checked: false, results: [] };
+
 /** The install command for a version inside the declared range. */
 function installHint(tool: ExternalTool): string {
   return `npm i -g ${tool.package}@"${tool.version}"`;

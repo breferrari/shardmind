@@ -13,6 +13,7 @@ import ExistingInstallGate from '../components/ExistingInstallGate.js';
 import CommandProgress from '../components/CommandProgress.js';
 import HookProgress from '../components/HookProgress.js';
 import Summary from '../components/Summary.js';
+import { summarizeExternalTools } from '../core/external-tools.js';
 import CommandFrame from '../components/CommandFrame.js';
 
 import { useInstallMachine } from './hooks/use-install-machine.js';
@@ -141,6 +142,7 @@ export default function Install({ args, options }: Props) {
             keptStale={phase.keptStale}
             hooks={phase.hooks}
             dryRun={phase.dryRun}
+            externalTools={summarizeExternalTools(phase.externalTools)}
           />
         </CommandFrame>
       );

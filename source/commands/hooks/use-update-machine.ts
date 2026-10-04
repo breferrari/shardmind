@@ -55,6 +55,7 @@ import {
 } from '../../core/update-planner.js';
 import { applyRenames, renamesBetween, type AppliedRenames } from '../../core/rename-migrations.js';
 import { runUpdate, type UpdateSummary } from '../../core/update-executor.js';
+import { checkExternalToolsForRun, NO_EXTERNAL_TOOLS, type ExternalToolsReport } from '../../core/external-tools.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
 import {
@@ -166,6 +167,7 @@ export type Phase =
       dryRun: boolean;
       /** Vault-relative POSIX path of the pre-update snapshot; `null` in a dry run. */
       backupDir: string | null;
+      externalTools: ExternalToolsReport;
     }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
@@ -197,6 +199,8 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
   // aborts the subprocess but does NOT roll the update back — by the
   // time we reach the hook, `runUpdate` has already written state.json.
   const hookAbortRef = useRef<AbortController | null>(null);
+  // What the external-tools check found, for the summary (#138).
+  const externalToolsRef = useRef<ExternalToolsReport>(NO_EXTERNAL_TOOLS);
 
   // One run per vault (#253); --dry-run writes nothing and takes no lock.
   const { take: takeLock, release: releaseLock } = useVaultLock(vaultRoot, 'update', !dryRun);
@@ -545,6 +549,8 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       precomputed?: { renamed?: AppliedRenames; newFilePlan?: NewFilePlan },
     ) => {
       try {
+        // With the values final, before the plan and any conflict prompt (#138).
+        externalToolsRef.current = await checkExternalToolsForRun({ manifest: ctx.newManifest, values, dryRun });
         setPhase({ kind: 'loading', message: 'Planning update…' });
         const newRenderContext = buildRenderContext(ctx.newManifest, values, selections, undefined, vaultRoot);
         const newFilePlan =
@@ -709,6 +715,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           durationMs: Date.now() - start,
           dryRun,
           backupDir: result.backupDir ? toPosix(vaultRoot, result.backupDir) : null,
+          externalTools: externalToolsRef.current,
         });
       } catch (err) {
         runRef.current = null;

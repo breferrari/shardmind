@@ -56,6 +56,7 @@ import {
   type AdoptResolutions,
   type AdoptSummary as AdoptSummaryData,
 } from '../../core/adopt-executor.js';
+import { checkExternalToolsForRun, NO_EXTERNAL_TOOLS, type ExternalToolsReport } from '../../core/external-tools.js';
 import {
   defaultModuleSelections,
   mergePrefill,
@@ -155,6 +156,7 @@ export type Phase =
       durationMs: number;
       hooks: HookOutcome[];
       dryRun: boolean;
+      externalTools: ExternalToolsReport;
     }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
@@ -186,6 +188,8 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
   // The adopt in flight, which a Ctrl+C stops and waits for (#249).
   const runRef = useRef<RunInFlight | null>(null);
   const hookAbortRef = useRef<AbortController | null>(null);
+  // What the external-tools check found, for the summary (#138).
+  const externalToolsRef = useRef<ExternalToolsReport>(NO_EXTERNAL_TOOLS);
 
   // One run per vault (#253); --dry-run writes nothing and takes no lock.
   const { take: takeLock, release: releaseLock } = useVaultLock(vaultRoot, 'adopt', !dryRun);
@@ -367,6 +371,8 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           selections: result.selections,
         };
 
+        // With the values final, before the plan and any diff prompt (#138).
+        externalToolsRef.current = await checkExternalToolsForRun({ manifest: ctx.manifest, values: validated, dryRun: Boolean(dryRun) });
         setPhase({ kind: 'planning', ctx, result: validatedResult });
 
         const plan = await classifyAdoption({
@@ -532,6 +538,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           durationMs: Date.now() - start,
           hooks: hookOutcomes,
           dryRun: Boolean(dryRun),
+          externalTools: externalToolsRef.current,
         });
       } catch (err) {
         runRef.current = null;
