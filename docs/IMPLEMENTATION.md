@@ -663,6 +663,8 @@ interface RenderedFile {
 
 ### 4.7 `state.ts`
 
+`state.ts` also holds the two helpers for the rest of `.shardmind/`'s layout: `removeEngineWrites` (a rollback's cleanup, §4.11b, §4.18) and `createBackupDir(vaultRoot, now, kind)` (the run's snapshot folder, §4.12 step 1, §4.18 step 2, #248).
+
 **Purpose**: Read and write `.shardmind/state.json`. Create `.shardmind/` directory structure.
 
 **Baseline rule** (binding on every writer of `state.files`, see `docs/SHARD-LAYOUT.md §Re-hash + state`): `rendered_hash` is the hash of bytes the engine produced for the file (a render or a copy), or of bytes a hook wrote over a file the engine owned. It is never the hash of bytes the user authored. Drift (§4.8) reads "disk equals `rendered_hash`" as "engine-owned and unchanged", so a user hash recorded there turns their edit into a silent overwrite on the next update (#150).

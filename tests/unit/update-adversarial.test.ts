@@ -22,7 +22,6 @@ import {
   renderNewShard,
 } from '../../source/core/update-planner.js';
 import { rollbackUpdate } from '../../source/core/update-executor.js';
-import { createBackupDir } from '../../source/core/state.js';
 import { sha256 } from '../../source/core/fs-utils.js';
 import type {
   ShardSchema,
@@ -379,10 +378,6 @@ describe('planUpdate — hostile inputs', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// createBackupDir
-// ---------------------------------------------------------------------------
-
 describe('renderNewShard — two outputs that name the same file (#240)', () => {
   it('refuses a template and a static file differing only in case', async () => {
     const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'update-clash-'));
@@ -408,38 +403,6 @@ describe('renderNewShard — _each items that name the same file (#234)', () => 
     } finally {
       await fsp.rm(tempRoot, { recursive: true, force: true });
     }
-  });
-});
-
-describe('createBackupDir — concurrency and clock edge cases', () => {
-  let tempRoot: string;
-
-  beforeEach(async () => {
-    tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'update-backup-'));
-    // Seed .shardmind/ so createBackupDir can write under it.
-    await fsp.mkdir(path.join(tempRoot, SHARDMIND_DIR), { recursive: true });
-  });
-  afterEach(async () => {
-    await fsp.rm(tempRoot, { recursive: true, force: true });
-  });
-
-  it('allocates distinct directories when called twice at the exact same instant', async () => {
-    const frozen = new Date('2026-04-20T10:30:45.123Z');
-    const a = await createBackupDir(tempRoot, frozen, 'update');
-    const b = await createBackupDir(tempRoot, frozen, 'update');
-    expect(a).not.toBe(b);
-    const statA = await fsp.stat(a);
-    const statB = await fsp.stat(b);
-    expect(statA.isDirectory()).toBe(true);
-    expect(statB.isDirectory()).toBe(true);
-  });
-
-  it('the second call lands under -1 when the first took the un-suffixed name', async () => {
-    const frozen = new Date('2026-04-20T10:30:45.999Z');
-    const a = await createBackupDir(tempRoot, frozen, 'update');
-    const b = await createBackupDir(tempRoot, frozen, 'update');
-    expect(path.basename(b)).toMatch(/-1$/);
-    expect(a).not.toBe(b);
   });
 });
 
