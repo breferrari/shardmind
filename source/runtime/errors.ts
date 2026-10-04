@@ -103,6 +103,7 @@ export type ErrorCode =
   | 'JSON_REQUIRES_DRY_RUN'
   | 'UPDATE_CACHE_MISSING'
   | 'UPDATE_WRITE_FAILED'
+  | 'VAULT_LOCKED'
 
   // Adopt
   | 'ADOPT_EXISTING_INSTALL'

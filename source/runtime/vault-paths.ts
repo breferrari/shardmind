@@ -36,6 +36,8 @@ export function hookLogRelPath(slot: string): string {
 
 /** User-authored values file. Engine creates it on install, never overwrites. */
 export const VALUES_FILE = 'shard-values.yaml';
+/** One run per vault (#253): held by install, update and adopt for the whole run. At the root: a run moves or deletes `.shardmind/`. */
+export const LOCK_FILE = '.shardmind.lock';
 
 /** Claude Code namespace inside the vault (commands, agents, settings). */
 export const CLAUDE_DIR = '.claude';

@@ -235,6 +235,16 @@ describe('detectDrift — orphan detection', () => {
     expect(report.orphaned).not.toContain('shard-values.yaml');
   });
 
+  it("never reports the engine's run lock as an orphan (#253)", async () => {
+    await writeFile('CLAUDE.md', '# shard\n');
+    await writeFile('.shardmind.lock', '{"pid":1}\n');
+    const state = makeShardState({ files: {
+      'CLAUDE.md': { template: 'CLAUDE.md.njk', rendered_hash: sha256('# shard\n'), ownership: 'managed' },
+    } });
+    const report = await detectDrift(vaultRoot, state);
+    expect(report.orphaned).not.toContain('.shardmind.lock');
+  });
+
   it('never scans .shardmind/, .git/, or .obsidian/', async () => {
     await writeFile('CLAUDE.md', '# shard\n');
     await writeFile('.shardmind/state.json', '{}');

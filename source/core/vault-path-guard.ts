@@ -23,8 +23,7 @@ import {
   HOOK_LOGS_DIR,
   SHARDMIND_DIR,
   STATE_FILE,
-  VALUES_FILE,
-} from '../runtime/vault-paths.js';
+  VALUES_FILE, LOCK_FILE } from '../runtime/vault-paths.js';
 import { mapConcurrent } from './fs-utils.js';
 
 export type UnsafeVaultPathReason = 'symlink' | 'symlinked-folder' | 'hard-link' | 'case-mismatch';
@@ -38,6 +37,8 @@ export interface UnsafeVaultPath {
 /** The engine's own files and folders, which install, update and adopt write into. */
 const ENGINE_WRITE_PATHS: readonly string[] = [
   VALUES_FILE,
+  // The run lock at the vault root (#253).
+  LOCK_FILE,
   STATE_FILE,
   CACHED_MANIFEST,
   CACHED_SCHEMA,

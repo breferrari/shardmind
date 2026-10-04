@@ -26,6 +26,8 @@ export const TIER1 = Object.freeze({
     '.obsidian/workspace.json',
     '.obsidian/workspace-mobile.json',
     '.obsidian/graph.json',
+    // The engine's run lock at the vault root (#253).
+    '.shardmind.lock',
   ] as const,
 });
 
