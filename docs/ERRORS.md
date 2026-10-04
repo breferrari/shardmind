@@ -550,6 +550,14 @@ These are **not** thrown `ShardMindError`s — they don't appear in the `ErrorCo
 
 **Remedy:** Move the artifact creation to the `bootstrap` hook, which is permitted to write unmanaged paths and can re-run on update via a `fingerprint` bump.
 
+### `HOOK_BOUNDARY_INCOMPLETE`
+
+**Meaning:** The vault walk behind the `personalize` check could not read one or more folders, so the check may have missed files the hook created. The warning names the folders (`.` is the vault root). A folder that was busy or permission-denied was read a second time before it was reported. When the hook also created files, those are reported as `HOOK_PERSONALIZE_UNMANAGED_CREATE` with the unreadable folders listed alongside.
+
+**Typical cause:** A virus scanner or search indexer holding a freshly written folder on Windows, or a folder without read permission.
+
+**Remedy:** None needed for the install, which succeeded. If it recurs, check the named folders' permissions, or exclude the vault from real-time scanning while you develop the shard.
+
 ### `HOOK_POST_INSTALL_DEPRECATED`
 
 **Meaning:** The shard declares the deprecated combined `hooks.post-install` slot. It still runs (once, on install/adopt, with the legacy context and no boundary enforcement), but the slot is on a deprecation path.
@@ -567,7 +575,7 @@ If you're a shard author and hit a code that feels authoring-side, the specifica
 - `COMPUTED_DEFAULT_FAILED`, `COMPUTED_DEFAULT_INVALID`
 - `RENDER_FAILED`, `RENDER_FRONTMATTER_ERROR`, `RENDER_ITERATOR_ERROR`
 - `DOWNLOAD_MISSING_MANIFEST`, `DOWNLOAD_MISSING_SCHEMA`
-- `HOOK_SLOT_CONFLICT` (thrown), plus the non-fatal hook warnings `HOOK_BOOTSTRAP_MANAGED_WRITE`, `HOOK_PERSONALIZE_UNMANAGED_CREATE`, `HOOK_POST_INSTALL_DEPRECATED`
+- `HOOK_SLOT_CONFLICT` (thrown), plus the non-fatal hook warnings `HOOK_BOOTSTRAP_MANAGED_WRITE`, `HOOK_PERSONALIZE_UNMANAGED_CREATE`, `HOOK_BOUNDARY_INCOMPLETE`, `HOOK_POST_INSTALL_DEPRECATED`
 
 If you're an end user, the most common ones you'll see are:
 - `SHARD_NOT_FOUND`, `VERSION_NOT_FOUND`, `REGISTRY_NETWORK`

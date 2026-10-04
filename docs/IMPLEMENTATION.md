@@ -1175,16 +1175,18 @@ interface HookOutcome { slot: HookStage; summary: HookSummary | null; }
 **Purpose**: Pure detection of write-boundary violations (detect-and-warn). No Ink; reuses `tier1.ts::isTier1Excluded` and the `.shardmindignore` `IgnoreFilter`. The walk is path-only — it reads directory entries, never file content (no hashing here; managed-file hashes come from `rehashManagedFiles`).
 
 ```typescript
-snapshotUnmanaged(vaultRoot, ignore): Promise<Set<string>>        // path-only walk, ignore + Tier-1 filtered, symlinks skipped
+snapshotUnmanaged(vaultRoot, ignore): Promise<UnmanagedSnapshot>  // path-only walk, ignore + Tier-1 filtered, symlinks skipped
 detectManagedWrites(touched: readonly string[]): HookViolation | null          // bootstrap: managed file modified OR removed
-detectUnmanagedCreates(after, before, state): HookViolation | null             // personalize: path in after \ before, not managed
+detectUnmanagedCreates(after, before, state): HookViolation | null             // personalize: path in after \ before, not managed; or the walk was incomplete
 
-interface HookViolation { slot: HookSlot; kind: 'managed-write' | 'unmanaged-create'; paths: string[]; }
+interface UnmanagedSnapshot { paths: Set<string>; unreadable: string[]; }  // unreadable: folders the walk could not read ('.' = vault root)
+interface HookViolation { slot: HookSlot; kind: 'managed-write' | 'unmanaged-create' | 'incomplete'; paths: string[]; unreadable?: string[]; }
 ```
 
 - **bootstrap → managed-write**: the pre-hook hashes come from the orchestrator's snapshot (not from `state.files`, whose hash for a user-edited file is the engine's baseline, not the bytes on disk); after bootstrap the orchestrator runs `rehashManagedFiles` against that snapshot and passes the union of its `changed` (modified) and `missing` (deleted) paths to `detectManagedWrites`. Any tracked path bootstrap touched — modified or removed — is the violation. One extra hash pass (the snapshot) per hook phase.
 - **personalize → unmanaged-create**: the only case needing a vault walk. Path-only (no content hashing), ignore-filtered + Tier-1-filtered so bootstrap's own `.qmd/` artifacts and `.obsidian/workspace.json` churn don't register. Runs install/adopt only — never on the recurring update path — so the twice-walk happens at most once per vault per shard.
-- Violations are returned, not thrown; the orchestrator maps them onto `HookOutcome.summary.violation` and the UI renders a non-fatal warning (`HOOK_BOOTSTRAP_MANAGED_WRITE` / `HOOK_PERSONALIZE_UNMANAGED_CREATE`). The detector returns the offending paths (and, for managed-write, the pre-hook bytes are recoverable from the merge-base cache) so a future detect-and-revert mode is a localized follow-on.
+- **An unreadable folder is never an empty one.** `readdir` `ENOENT` (the folder vanished) reads as empty. `EBUSY` / `EPERM` / `EACCES` retry once after a short pause; a folder that still fails, or fails with any other error, goes into `unreadable` and contributes no paths. `detectUnmanagedCreates` drops created paths under a folder unreadable in `before` (they may have existed all along), and attaches the union of both snapshots' `unreadable` to its result: `unmanaged-create` with `unreadable` when files were created, `incomplete` with `paths` = the folders when none were.
+- Violations are returned, not thrown; the orchestrator maps them onto `HookOutcome.summary.violation` and the UI renders a non-fatal warning (`HOOK_BOOTSTRAP_MANAGED_WRITE` / `HOOK_PERSONALIZE_UNMANAGED_CREATE` / `HOOK_BOUNDARY_INCOMPLETE`). The detector returns the offending paths (and, for managed-write, the pre-hook bytes are recoverable from the merge-base cache) so a future detect-and-revert mode is a localized follow-on.
 
 ---
 
