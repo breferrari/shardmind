@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ShardMindError } from '../../source/runtime/types.js';
 import {
+  attemptRollback,
   formatRollbackFailures,
   rollbackDetail,
   rollbackFailuresOf,
@@ -49,5 +50,18 @@ describe('rollbackDetail (#247)', () => {
   it('says rolled back only when the rollback reported nothing', () => {
     expect(rollbackDetail(new Error('x'), 'Rolled back partial adopt.')).toBe('Rolled back partial adopt.');
     expect(rollbackDetail(withRollbackFailures(new Error('x'), [failure]), 'Rolled back partial adopt.')).toBeUndefined();
+  });
+});
+
+describe('attemptRollback (#247)', () => {
+  it("returns the rollback's own failures", async () => {
+    expect(await attemptRollback(async () => [failure])).toEqual([failure]);
+  });
+
+  it('reports a rollback that throws partway as a failure, never as clean', async () => {
+    const failures = await attemptRollback(async () => {
+      throw new Error('EIO on the snapshot');
+    });
+    expect(failures).toEqual([{ path: '(the rollback)', reason: 'stopped partway: EIO on the snapshot' }]);
   });
 });
