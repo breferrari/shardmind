@@ -102,6 +102,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ⬜ | Keep the user's .shardmind/ files and empty folders when a fresh install rolls back | [#215](https://github.com/breferrari/shardmind/issues/215) |
 | ⬜ | Name an _each file after a string list item, not unknown.md | [#227](https://github.com/breferrari/shardmind/issues/227) |
 | ⬜ | Remove the files a reinstall no longer plans | [#228](https://github.com/breferrari/shardmind/issues/228) |
+| ⬜ | Refuse an update --json run that would need answers | [#230](https://github.com/breferrari/shardmind/issues/230) |
 
 ## Phase 6 — docs match the code
 
@@ -137,6 +138,7 @@ Each authoring and CLI proposal is built, or declined with a reason that survive
 | ⬜ | Decide what a bare owner/repo install does while shardmind/registry is empty | [#200](https://github.com/breferrari/shardmind/issues/200) |
 | ⬜ | Decide who keeps .shardmind/logs/ out of a vault's git history | [#201](https://github.com/breferrari/shardmind/issues/201) |
 | ⬜ | Show a stack trace and a report link for an unexpected error | [#225](https://github.com/breferrari/shardmind/issues/225) |
+| ⬜ | End every --json document with a single newline | [#231](https://github.com/breferrari/shardmind/issues/231) |
 
 ## Phase 8 — release and test tooling
 
