@@ -79,10 +79,15 @@ describe.skipIf(process.platform === 'win32')('--json in a real terminal (#198)'
     expect(() => JSON.parse(terminal)).not.toThrow();
   }, 90_000);
 
-  it('adopt --dry-run --json on an unmanaged clone is byte-identical to the piped run', async () => {
+  it.each([
+    ['with --yes', ['--yes']],
+    // Without values a terminal would offer the wizard, which --json never
+    // renders; the piped run refuses, and so must the terminal run.
+    ['without values', []],
+  ])('adopt --dry-run --json on an unmanaged clone %s is byte-identical to the piped run', async (_name, extra) => {
     const vault = await installed('json-pty-adopt');
     await stripShardmindMetadata(vault);
-    const { piped, terminal } = await bothWays(vault.root, ['adopt', REF, '--dry-run', '--json']);
+    const { piped, terminal } = await bothWays(vault.root, ['adopt', REF, '--dry-run', '--json', ...extra]);
     expect(terminal).not.toContain(ESC);
     expect(terminal).toBe(piped);
   }, 90_000);

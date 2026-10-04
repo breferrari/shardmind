@@ -109,7 +109,7 @@ describe('load order in source/cli.ts', () => {
       (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
       (ts.forEachChild(node, hasDynamicImport) ?? false);
     const markIndex = statements.findIndex(
-      (s) => ts.isIfStatement(s) && s.getText().includes('isJsonRun(') && s.getText().includes('markStdoutNonInteractive('),
+      (s) => ts.isIfStatement(s) && s.getText().includes('isJsonRun(') && s.getText().includes('markNonInteractive('),
     );
     const firstImportIndex = statements.findIndex(hasDynamicImport);
     expect(markIndex).toBeGreaterThan(-1);

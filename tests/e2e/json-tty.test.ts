@@ -50,7 +50,6 @@ function run(args: string[], tty: boolean): { stdout: string; stderr: string; st
 describe('--json in a terminal', () => {
   it.each([
     ['update', ['update', '--dry-run', '--json']],
-    ['adopt', ['adopt', 'github:acme/demo', '--dry-run', '--json']],
     ['status', ['--json']],
   ])('%s writes one document with no terminal control codes', (_name, args) => {
     const { stdout } = runInTerminal(args);
