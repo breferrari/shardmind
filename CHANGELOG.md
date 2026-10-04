@@ -16,6 +16,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **Reinstalling a release that dropped files now removes them, unless you edited them.** A reinstall (`install --force`, or Reinstall at the prompt) left any file the old install wrote and the new one doesn't, such as an `_each` item you removed from the list. It was no longer tracked, so status and update treated it as yours. Now an untouched one is removed (and put back if the reinstall fails), and one you edited is kept as yours. The summary lists both.
 
+### Fixed (a failed update no longer leaves new templates behind — #264)
+
+- **A failed update now leaves `.shardmind/templates/` exactly as it was.** When an update failed after refreshing shardmind's copy of the shard's templates, the rollback put the old templates back but kept the ones the new version had added. The vault was no longer quite as it was before the update. The rollback now restores that folder exactly, or removes it if it wasn't there before.
+
 ### Fixed (stdout closed early — #252)
 
 - **Piping shardmind into `head` no longer reports a bug.** When the reader closed stdout before shardmind finished writing (`shardmind --json | head -1`), shardmind said "This is a bug in shardmind" and exited 1. It now finishes the run (an update finishes or rolls back as usual) and exits quietly with 141, as a shell reports for any tool cut off by `head`. A run that fails on its own keeps its exit code.

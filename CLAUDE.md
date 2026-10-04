@@ -208,6 +208,7 @@ shardmind/
 │   │   ├── color-env.ts               # NO_COLOR → chalk level 0 before Ink loads; FORCE_COLOR wins (#37)
 │   │   ├── bug-report.ts              # describeError (known / environment / bug), report link, top-level crash handler (#225)
 │   │   ├── rollback-report.ts         # ROLLBACK_INCOMPLETE: what a failed rollback left behind (#247)
+│   │   ├── restore-tree.ts            # Put a snapshot back: copy over, or a whole-replaced folder exactly (#264)
 │   │   ├── json-run.ts                # A terminal --json run behaves as piped: stdout non-interactive before Ink (#198)
 │   │   ├── editor.ts                  # Open in editor: $VISUAL/$EDITOR, temp copy, raw-mode handoff (#50)
 │   │   ├── created-folders.ts         # The folders a run created, removed by its rollback (#258)
@@ -381,6 +382,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `hook-orchestrator.ts` | §4.16a | Hook lifecycle: slot selection/order, per-slot ctx, write-boundary checks, re-hash, fingerprint persist |
 | `hook-boundary.ts` | §4.16b | Pure detect-and-warn write-boundary detector (managed-write / unmanaged-create) |
 | `bug-report.ts` | §7.2a | `describeError` (known / environment / bug), the version-only report link, the plain-text top-level crash handler (#225) |
+| `restore-tree.ts` | §4.12 step 7 | `restoreTree` (copy a snapshot over, skipping paths restored another way) and `restoreDirExactly` (a folder the run replaced whole, made equal to its snapshot) (#264) |
 | `rollback-report.ts` | §4.11b (Reporting the rollback) | `ROLLBACK_INCOMPLETE` for a rollback that left files behind, shared by install / update / adopt (#247) |
 | `editor.ts` | §4.24 | Open a conflict in `$VISUAL` / `$EDITOR`: temp copy, outcome (saved / cancelled), raw-mode handoff, marker check (#50) |
 | `vault-lock.ts` | §4.25 | One run per vault: `<vault>/.shardmind.lock` (wx), `VAULT_LOCKED`, stale same-host takeover, release + exit backstop (#253) |
