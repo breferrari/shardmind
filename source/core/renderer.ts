@@ -257,6 +257,24 @@ function showItem(item: unknown): string {
   return JSON.stringify(label.length > 60 ? `${label.slice(0, 57)}...` : label);
 }
 
+/**
+ * The list item an `_each` template expanded into `outputPath`, or undefined
+ * when no item names that file (the list changed, or isn't a list). Uses the
+ * same naming rule as the render, so the merge of an `_each` file can render
+ * each side with the item it was made from (#233).
+ */
+export function eachItemFor(templateOutputPath: string, list: unknown, outputPath: string): unknown {
+  if (!Array.isArray(list)) return undefined;
+  for (const item of list) {
+    try {
+      if (eachOutputPaths(templateOutputPath, [item])[0] === outputPath) return item;
+    } catch {
+      // An item that names no file (null, say) can't be this file's.
+    }
+  }
+  return undefined;
+}
+
 function renderContent(
   source: string,
   context: RenderContext,

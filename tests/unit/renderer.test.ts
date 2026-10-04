@@ -10,6 +10,7 @@ import {
   buildRenderContext,
   slugifyVaultName,
   eachOutputPaths,
+  eachItemFor,
 } from '../../source/core/renderer.js';
 import type { FileEntry, RenderContext, ShardManifest } from '../../source/runtime/types.js';
 
@@ -120,6 +121,14 @@ describe('renderFile', () => {
   });
 
   describe('_each iterator', () => {
+    it('eachItemFor finds the item an _each file was rendered from (#233)', () => {
+      const people = ['Alice', { slug: 'bob', name: 'Bob' }];
+      expect(eachItemFor('people/_each.md', people, 'people/Alice.md')).toBe('Alice');
+      expect(eachItemFor('people/_each.md', people, 'people/bob.md')).toEqual({ slug: 'bob', name: 'Bob' });
+      expect(eachItemFor('people/_each.md', people, 'people/Carol.md')).toBeUndefined();
+      expect(eachItemFor('people/_each.md', 'not a list', 'people/Alice.md')).toBeUndefined();
+    });
+
     it('eachOutputPaths names one path per item, as the render does (#214)', () => {
       expect(eachOutputPaths('people/_each.md', [])).toEqual([]);
       expect(

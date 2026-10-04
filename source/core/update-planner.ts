@@ -33,7 +33,7 @@ import { computeMergeAction } from './differ.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { isCaseOnlyRename } from './rename-migrations.js';
 import { resolveModules } from './modules.js';
-import { renderFile, createRenderer } from './renderer.js';
+import { renderFile, createRenderer, eachItemFor } from './renderer.js';
 import { isBinaryForMerge, sha256, mapConcurrent } from './fs-utils.js';
 import { CACHED_TEMPLATES } from '../runtime/vault-paths.js';
 
@@ -647,6 +647,20 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       }
 
       const newTemplate = await fsp.readFile(target.entry.sourcePath, 'utf-8');
+      // An `_each` file renders each side with its own item (#233): the old
+      // one from the old values (found through the cached template's path),
+      // the new one from the new values.
+      const iteratorKey = target.entry.iterator;
+      const items = iteratorKey
+        ? {
+            oldItem: eachItemFor(
+              (fileState.template ?? target.entry.outputPath).replace(/\.njk$/, ''),
+              oldValues[fileState.iterator_key ?? iteratorKey],
+              entry.path,
+            ),
+            newItem: eachItemFor(target.entry.outputPath, newValues[iteratorKey], entry.path),
+          }
+        : {};
       const mergeAction = await computeMergeAction({
         path: entry.path,
         ownership: 'modified',
@@ -660,6 +674,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
         // Rendering them through Nunjucks crashes on a literal `{{` and would
         // substitute any real `{{ expr }}` as data, so merge raw bytes (#132).
         literal: target.copyFromSourcePath !== undefined,
+        ...items,
       });
 
       const keys = targetKeys(target, newTempDir);
