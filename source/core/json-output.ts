@@ -18,6 +18,14 @@
  */
 
 import { ShardMindError } from '../runtime/types.js';
+import type {
+  StatusEnvironmentReport,
+  StatusFrontmatterSummary,
+  StatusModuleSummary,
+  StatusReport,
+  StatusWarning,
+  UpdateStatus,
+} from '../runtime/types.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
 import type { UpdateAction, UpdatePlan } from './update-planner.js';
 
@@ -253,5 +261,121 @@ export function updatePlanResult(
     files: plan.actions
       .map(updateFile)
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Status report (#139) — `shardmind --json`. Spec: ARCHITECTURE §10.3a.
+//
+// The read-side counterpart of the plans above: is this a managed vault,
+// installed vs latest, and which files diverge. Built from a report produced
+// with `uncapped: true`, so every list is whole. Relative times ("3 days
+// ago") and per-file state bookkeeping are rendering and engine detail, and
+// stay out.
+// ---------------------------------------------------------------------------
+
+export interface StatusModifiedFile {
+  readonly path: string;
+  /** `--verbose` only: lines on disk that the shard's render does not have. */
+  readonly linesAdded?: number;
+  /** `--verbose` only: lines of the shard's render missing on disk. */
+  readonly linesRemoved?: number;
+  /** `--verbose` only: why the line diff could not run for this file. */
+  readonly diffSkipped?: 'no-template' | 'render-failed' | 'read-failed';
+}
+
+export type StatusResult =
+  | { readonly installed: false }
+  | {
+      readonly installed: true;
+      readonly shard: string;
+      readonly source: string;
+      readonly version: string;
+      /** Only for a `github:owner/repo#<ref>` install. */
+      readonly ref?: string;
+      readonly resolvedSha?: string;
+      readonly installedAt: string;
+      readonly updatedAt: string;
+      readonly update: UpdateStatus;
+      readonly files: {
+        readonly counts: {
+          readonly managed: number;
+          readonly modified: number;
+          readonly volatile: number;
+          readonly missing: number;
+          readonly orphaned: number;
+        };
+        readonly modified: readonly StatusModifiedFile[];
+        readonly missing: readonly string[];
+        readonly orphaned: readonly string[];
+      };
+      readonly modules: StatusModuleSummary;
+      readonly values: {
+        readonly valid: boolean;
+        readonly total: number;
+        readonly invalidKeys: readonly string[];
+        readonly fileMissing: boolean;
+      };
+      /** `--verbose` only; null otherwise. */
+      readonly frontmatter: {
+        readonly valid: number;
+        readonly total: number;
+        readonly issues: StatusFrontmatterSummary['issues'];
+      } | null;
+      /** `--verbose` only; null otherwise. */
+      readonly environment: StatusEnvironmentReport | null;
+      readonly warnings: readonly StatusWarning[];
+    };
+
+/** `report` is null when the directory has no `.shardmind/state.json`. */
+export function statusResult(report: StatusReport | null): StatusResult {
+  if (report === null) return { installed: false };
+  const { state, drift } = report;
+  // `modifiedChanges` is index-aligned with `modifiedPaths` when present.
+  const modified = drift.modifiedPaths.map((p, i): StatusModifiedFile => {
+    const change = drift.modifiedChanges?.[i];
+    if (!change) return { path: p };
+    return 'skipped' in change
+      ? { path: p, diffSkipped: change.reason }
+      : { path: p, linesAdded: change.linesAdded, linesRemoved: change.linesRemoved };
+  });
+  return {
+    installed: true,
+    shard: state.shard,
+    source: state.source,
+    version: state.version,
+    ...(state.ref === undefined ? {} : { ref: state.ref }),
+    ...(state.resolvedSha === undefined ? {} : { resolvedSha: state.resolvedSha }),
+    installedAt: state.installed_at,
+    updatedAt: state.updated_at,
+    update: report.update,
+    files: {
+      counts: {
+        managed: drift.managed,
+        modified: drift.modified,
+        volatile: drift.volatile,
+        missing: drift.missing,
+        orphaned: drift.orphaned,
+      },
+      modified,
+      missing: drift.missingPaths,
+      orphaned: drift.orphanedPaths,
+    },
+    modules: report.modules,
+    values: {
+      valid: report.values.valid,
+      total: report.values.total,
+      invalidKeys: report.values.invalidKeys,
+      fileMissing: report.values.fileMissing,
+    },
+    frontmatter: report.frontmatter
+      ? {
+          valid: report.frontmatter.valid,
+          total: report.frontmatter.total,
+          issues: report.frontmatter.issues,
+        }
+      : null,
+    environment: report.environment,
+    warnings: report.warnings,
   };
 }
