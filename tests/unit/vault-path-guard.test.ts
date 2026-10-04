@@ -116,6 +116,30 @@ describe('findUnsafeVaultPaths (#163)', () => {
     expect(await findUnsafeVaultPaths(vault, [], ['Foo.md'])).toEqual([{ path: 'Foo.md', reason: 'case-mismatch' }]);
   });
 
+  it.skipIf(!caseFolds)("does not read a case-only rename's own names as a case-mismatch (#169)", async () => {
+    // Before the move, disk spells the old name; after a user's own rename, the new one.
+    await fsp.writeFile(path.join(vault, 'Foo.md'), 'x');
+    expect(await findUnsafeVaultPaths(vault, ['foo.md'], ['Foo.md'], [['Foo.md', 'foo.md']])).toEqual([]);
+    await fsp.rename(path.join(vault, 'Foo.md'), path.join(vault, 'foo.md'));
+    expect(await findUnsafeVaultPaths(vault, ['foo.md'], ['Foo.md'], [['Foo.md', 'foo.md']])).toEqual([]);
+  });
+
+  it.skipIf(!caseFolds)("still flags a third spelling on disk, which is not the pair's (#169)", async () => {
+    await fsp.writeFile(path.join(vault, 'FOO.md'), 'x');
+    expect(await findUnsafeVaultPaths(vault, ['foo.md'], ['Foo.md'], [['Foo.md', 'foo.md']])).toEqual([
+      { path: 'foo.md', reason: 'case-mismatch' },
+      { path: 'Foo.md', reason: 'case-mismatch' },
+    ]);
+  });
+
+  it.skipIf(!caseFolds || !canSymlink)('still refuses a case-only rename whose file is a symlink (#169)', async () => {
+    await fsp.writeFile(path.join(outside, 'target.md'), 'x');
+    await fsp.symlink(path.join(outside, 'target.md'), path.join(vault, 'Foo.md'));
+    expect(await findUnsafeVaultPaths(vault, ['foo.md'], ['Foo.md'], [['Foo.md', 'foo.md']])).toEqual([
+      { path: 'foo.md', reason: 'symlink' },
+    ]);
+  });
+
   it('skips the case check for a folder it cannot list, rather than failing', async () => {
     await fsp.mkdir(path.join(vault, 'locked'));
     const readdir = vi.spyOn(fsp, 'readdir').mockRejectedValue(Object.assign(new Error('denied'), { code: 'EACCES' }));

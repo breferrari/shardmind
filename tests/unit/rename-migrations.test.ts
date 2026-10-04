@@ -3,9 +3,15 @@
  * old → new path map an update applies.
  */
 
-import { describe, it, expect } from 'vitest';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ShardManifestSchema } from '../../source/core/manifest.js';
-import { parseFromVersion, renamesBetween } from '../../source/core/rename-migrations.js';
+import { caseOnlyRenames, parseFromVersion, renamesBetween, sameFile } from '../../source/core/rename-migrations.js';
+import { foldsCase } from '../helpers/fs-capabilities.js';
+
+const caseFolds = await foldsCase();
 
 const base = { apiVersion: 'v1', name: 'demo', namespace: 'acme', version: '6.2.0' };
 
@@ -87,5 +93,77 @@ describe('parseFromVersion (#179)', () => {
 
   it.each(['five', '5.1', '', '>=5.0.0'])('refuses %j with ADOPT_FROM_VERSION_INVALID', (value) => {
     expect(() => parseFromVersion(value)).toThrow(expect.objectContaining({ code: 'ADOPT_FROM_VERSION_INVALID' }));
+  });
+});
+
+describe('caseOnlyRenames (#169)', () => {
+  const pairs = (tracked: string[], shipped: string[], declared: Record<string, string> = {}) =>
+    Object.fromEntries(caseOnlyRenames(tracked, new Set(shipped), new Map(Object.entries(declared))));
+
+  it('pairs a tracked file no longer shipped with the new path that differs only in case', () => {
+    expect(pairs(['Foo.md', 'Home.md'], ['foo.md', 'Home.md'])).toEqual({ 'Foo.md': 'foo.md' });
+    expect(pairs(['brain/North Star.md'], ['brain/north star.md'])).toEqual({ 'brain/North Star.md': 'brain/north star.md' });
+  });
+
+  it('pairs nothing when two new paths fold to the old name', () => {
+    expect(pairs(['Foo.md'], ['foo.md', 'FOO.md'])).toEqual({});
+  });
+
+  it('pairs nothing when two old files fold to the new name', () => {
+    expect(pairs(['Foo.md', 'FOO.md'], ['foo.md'])).toEqual({});
+  });
+
+  it('pairs nothing when a folder changes case (#195)', () => {
+    expect(pairs(['Notes/Foo.md'], ['notes/Foo.md'])).toEqual({});
+    expect(pairs(['Notes/Foo.md'], ['notes/foo.md'])).toEqual({});
+  });
+
+  it('pairs nothing when the old path is still shipped or the new one is already tracked', () => {
+    expect(pairs(['Foo.md'], ['Foo.md', 'foo.md'])).toEqual({});
+    expect(pairs(['Foo.md', 'foo.md'], ['foo.md'])).toEqual({});
+  });
+
+  it('pairs nothing for names that differ by more than case', () => {
+    expect(pairs(['Foo.md'], ['Foo.txt'])).toEqual({});
+  });
+
+  it('leaves a declared rename of the old path, or into the new one, to the declaration', () => {
+    expect(pairs(['Foo.md'], ['foo.md'], { 'Foo.md': 'bar.md' })).toEqual({});
+    expect(pairs(['Foo.md', 'Old.md'], ['foo.md'], { 'Old.md': 'foo.md' })).toEqual({});
+  });
+
+  it('pairs a change of Unicode normalization alone, which macOS folds like case', () => {
+    expect(pairs(['caf\u00e9.md'], ['cafe\u0301.md'])).toEqual({ 'caf\u00e9.md': 'cafe\u0301.md' });
+  });
+
+  it('treats a Unicode normalization difference as the same name', () => {
+    // NFD "e\u0301" vs NFC "\u00e9": the same name to a user, folded by macOS.
+    expect(pairs(['Caf\u00e9.md'], ['cafe\u0301.md'])).toEqual({ 'Caf\u00e9.md': 'cafe\u0301.md' });
+  });
+});
+
+describe('sameFile (#169)', () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'shardmind-169-'));
+  });
+  afterEach(async () => {
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it.skipIf(!caseFolds)('is true for two spellings of one file on a case-folding filesystem', async () => {
+    await fsp.writeFile(path.join(dir, 'Foo.md'), 'x');
+    expect(await sameFile(dir, 'Foo.md', 'foo.md')).toBe(true);
+    expect(await sameFile(dir, 'foo.md', 'Foo.md')).toBe(true);
+  });
+
+  it.skipIf(caseFolds)('is false for two files whose names differ only in case', async () => {
+    await fsp.writeFile(path.join(dir, 'Foo.md'), 'x');
+    await fsp.writeFile(path.join(dir, 'foo.md'), 'y');
+    expect(await sameFile(dir, 'Foo.md', 'foo.md')).toBe(false);
+  });
+
+  it('is false when either path reaches nothing', async () => {
+    expect(await sameFile(dir, 'Foo.md', 'foo.md')).toBe(false);
   });
 });

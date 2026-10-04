@@ -236,7 +236,7 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 - `symlink`: the path is a symbolic link, dangling or not. Writing would follow it.
 - `symlinked-folder`: a folder on the way to the path is a symbolic link, so the write would land wherever it points.
 - `hard-link`: the file has another hard link, so rewriting it in place would change the other copy too.
-- `case-mismatch`: on a case-folding filesystem (macOS, Windows), a folder or file exists only under a different case, so the write would land in it while the engine recorded the shard's casing.
+- `case-mismatch`: on a case-folding filesystem (macOS, Windows), a folder or file exists only under a different case, so the write would land in it while the engine recorded the shard's casing. An update that renames a file by case alone (#169) is not refused for that file's own two spellings.
 
 **Remedy:** Replace the link with a regular file or folder (copy its content in), remove it, or rename the folder to the shard's casing, then run the command again.
 
