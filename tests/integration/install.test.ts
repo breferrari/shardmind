@@ -314,6 +314,22 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       }
     });
 
+    it('planOutputs refuses a static file and an _each expansion that name one file (#240)', async () => {
+      const dir = path.join(os.tmpdir(), `shardmind-each-${crypto.randomUUID()}`);
+      const shard = await makeShardSource(dir, {
+        'people/_each.md.njk': '# {{ item }}\n',
+        'people/alice.md': 'a static page\n',
+      });
+      try {
+        const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+        await expect(
+          planOutputs(schema, shard, defaultModuleSelections(schema), { people: ['Alice'] }),
+        ).rejects.toMatchObject({ code: 'OUTPUT_PATH_CLASH' });
+      } finally {
+        await fsp.rm(shard, { recursive: true, force: true });
+      }
+    });
+
     it('planOutputs refuses two items that name the same file, before anything is written (#234)', async () => {
       const shard = await eachShard();
       try {

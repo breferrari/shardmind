@@ -85,6 +85,21 @@ describe('classifyAdoption', () => {
     await harness.cleanup();
   });
 
+  it('refuses two outputs that name the same file before classifying (#240)', async () => {
+    await makeShardSource(harness.tempShard, { 'Home.md.njk': '# home\n', 'home.md': 'static\n' });
+    await expect(
+      classifyAdoption({
+        vaultRoot: harness.vault,
+        schema: emptySchema(),
+        manifest: manifest(),
+        tempDir: harness.tempShard,
+        values: {},
+        selections: {},
+        now: FIXED_DATE,
+      }),
+    ).rejects.toMatchObject({ code: 'OUTPUT_PATH_CLASH' });
+  });
+
   it('refuses _each items that name the same file before classifying (#234)', async () => {
     await makeShardSource(harness.tempShard, { 'people/_each.md.njk': '# {{ item }}\n' });
     await expect(

@@ -53,6 +53,17 @@ describe('lintShard (#34)', () => {
     expect(result.findings).toEqual([]);
   });
 
+  it('reports two files that name one output, before anyone installs (#240)', async () => {
+    // A template and a static file whose outputs differ only in case.
+    await write('brain/Ideas.md.njk', '# ideas\n');
+    await write('brain/ideas.md', 'static\n');
+    const result = await lintShard(shard, {});
+    const clash = errors(result).filter((f) => f.code === 'OUTPUT_PATH_CLASH');
+    expect(clash).toHaveLength(1);
+    expect(clash[0]!.message).toContain('brain/Ideas.md.njk');
+    expect(clash[0]!.message).toContain('brain/ideas.md');
+  });
+
   it('reports an unparseable schema and stops there', async () => {
     await write('.shardmind/shard-schema.yaml', 'schema_version: 1\nvalues: [not, a, map]\n');
     const result = await lintShard(shard, {});

@@ -78,6 +78,7 @@ export type ErrorCode =
   | 'RENDER_FRONTMATTER_ERROR'
   | 'RENDER_ITERATOR_ERROR'
   | 'RENDER_ITERATOR_NAME_CLASH'
+  | 'OUTPUT_PATH_CLASH'
   | 'RENDER_FAILED'
 
   // Install planner / executor

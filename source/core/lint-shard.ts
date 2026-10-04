@@ -15,7 +15,9 @@ import { assertEngineCompatible, parseManifest } from './manifest.js';
 import { buildValuesValidator, parseSchema } from './schema.js';
 import { resolveComputedDefaults } from './install-planner.js';
 import { resolveModules } from './modules.js';
-import { buildRenderContext, compileTemplate, createRenderer, renderFile } from './renderer.js';
+import { assertNoOutputClashes, type OutputRef } from './output-clash.js';
+import { toPosix } from './fs-utils.js';
+import { buildRenderContext, compileTemplate, createRenderer, eachOutputPaths, renderFile } from './renderer.js';
 
 export interface LintFinding {
   severity: 'error' | 'warning';
@@ -139,6 +141,28 @@ export async function lintShard(
     } catch (err) {
       error(err, entry.outputPath);
     }
+  }
+
+  // Two files naming one output (#240), with the lint's values for `_each`
+  // expansions. A list whose own items clash was reported by its render.
+  const refs: OutputRef[] = resolution.copy.map((e) => ({ outputPath: e.outputPath, origin: toPosix(shardDir, e.sourcePath) }));
+  for (const entry of resolution.render) {
+    const origin = toPosix(shardDir, entry.sourcePath);
+    const list = entry.iterator ? values[entry.iterator] : undefined;
+    let paths = [entry.outputPath];
+    if (Array.isArray(list)) {
+      try {
+        paths = eachOutputPaths(entry.outputPath, list);
+      } catch {
+        paths = [];
+      }
+    }
+    for (const outputPath of paths) refs.push({ outputPath, origin });
+  }
+  try {
+    assertNoOutputClashes(refs);
+  } catch (err) {
+    error(err);
   }
 
   const modulesWithFiles = new Set(

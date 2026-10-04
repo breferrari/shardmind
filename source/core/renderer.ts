@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { stripNjk } from './modules.js';
+import { foldOutputPath } from './output-clash.js';
 import nunjucks from 'nunjucks';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type {
@@ -222,7 +223,7 @@ function refuseNameClashes(outputPath: string, list: readonly unknown[], paths: 
   for (let i = 0; i < paths.length; i++) {
     // The same fold the vault-path guard and rename migrations use: NFC,
     // then case, so `Café` in either Unicode form is one name.
-    const key = paths[i]!.normalize('NFC').toLowerCase();
+    const key = foldOutputPath(paths[i]!);
     const first = seen.get(key);
     if (first === undefined) {
       seen.set(key, i);

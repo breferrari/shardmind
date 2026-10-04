@@ -30,11 +30,12 @@ import type {
 import { ShardMindError } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { computeMergeAction } from './differ.js';
+import { assertNoOutputClashes } from './output-clash.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { isCaseOnlyRename } from './rename-migrations.js';
 import { resolveModules } from './modules.js';
 import { renderFile, createRenderer, itemForTemplate } from './renderer.js';
-import { isBinaryForMerge, sha256, mapConcurrent } from './fs-utils.js';
+import { isBinaryForMerge, sha256, mapConcurrent, toPosix } from './fs-utils.js';
 import { CACHED_TEMPLATES } from '../runtime/vault-paths.js';
 
 /** Cap fan-out when reading templates + user files during merge planning. */
@@ -383,7 +384,12 @@ export async function renderNewShard(
     }),
   ]);
 
-  return { outputs: [...renderedPairs.flat(), ...copiedPairs] };
+  const outputs = [...renderedPairs.flat(), ...copiedPairs];
+  // Two outputs naming one vault file are refused before any write (#240).
+  assertNoOutputClashes(
+    outputs.map((o) => ({ outputPath: o.outputPath, origin: toPosix(newTempDir, o.entry.sourcePath) })),
+  );
+  return { outputs };
 }
 
 /** The `noop` reason for an untracked file adopted because it already matches (#62). */
