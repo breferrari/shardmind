@@ -16,6 +16,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **A failed or cancelled fresh install no longer deletes your files under `.shardmind/`, or folders you had already made.** The rollback deleted the whole `.shardmind/` folder, which since #190 can hold your `boundary-ignore`, and removed any empty folder the install had written into. It now removes only what the install itself created.
 
+### Changed (an unexpected error is reported as a bug — #225)
+
+- **An error that is a bug in shardmind now says so, with what you need to report it.** It used to show its message alone. Now every command shows the message, the line "This is a bug in shardmind. Please report it:" with a link that opens a new issue, and the stack trace. The link carries only the shardmind version and the error's first line, with quoted text and file paths removed. The stack stays on your screen, and you decide what to paste. Errors shardmind expects (a missing shard, a bad values file) look as before, with their code and hint.
+- `--json`: the `error` object gains `stack`. It is the stack trace for such a bug and `null` for every other error.
+
 ### Changed (`_each` files from a string list — #227)
 
 - **An `_each` template now names each file after its list item when the list holds strings or numbers.** A `list` value entered in the wizard is a list of strings, and every item used to be written to the same `<folder>/unknown.md`, so only the last one survived. Now `people: [Alice, Bob]` writes `people/Alice.md` and `people/Bob.md`. Object items are still named by `slug`, else `name`.
