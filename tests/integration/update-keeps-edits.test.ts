@@ -1099,7 +1099,7 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     });
   });
 
-  it('a rolled-back update leaves the template cache exactly as it was, with no template from the new version', async () => {
+  it('a rolled-back update leaves the template cache exactly as it was, with no template from the new version (#264)', async () => {
     await install();
     const cacheDir = path.join(vault, '.shardmind', 'templates');
     const tree = async (dir: string): Promise<Record<string, string>> => {
@@ -1123,6 +1123,20 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       await fsp.chmod(valuesPath, 0o644);
     }
     expect(await tree(cacheDir)).toEqual(before);
+  });
+
+  it('a rolled-back update leaves no template cache where there was none before (#264)', async () => {
+    await install();
+    const cacheDir = path.join(vault, '.shardmind', 'templates');
+    await fsp.rm(cacheDir, { recursive: true, force: true });
+    const valuesPath = path.join(vault, 'shard-values.yaml');
+    await fsp.chmod(valuesPath, 0o444);
+    try {
+      await expect(update(await shardAt('0.2.0', { 'brain/Added In 0.2.md.njk': () => '# Added\n' }))).rejects.toThrow();
+    } finally {
+      await fsp.chmod(valuesPath, 0o644);
+    }
+    await expect(fsp.access(cacheDir)).rejects.toThrow();
   });
 
   it('a pristine copy-origin file is still overwritten silently when its source changes', async () => {

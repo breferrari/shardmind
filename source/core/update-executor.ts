@@ -29,6 +29,7 @@ import {
 } from './created-folders.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent, toPosix } from './fs-utils.js';
+import { restoreDirExactly, restoreTree } from './restore-tree.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { throwIfCancelled } from './run-cancel.js';
@@ -806,7 +807,13 @@ export async function rollbackUpdate(
   await restoreTree(filesDir, vaultRoot, failures);
 
   const cacheDir = path.join(backupDir, 'cache');
-  await restoreTree(cacheDir, vaultRoot, failures);
+  await restoreTree(cacheDir, vaultRoot, failures, { skip: [CACHED_TEMPLATES] });
+  // `cacheTemplates` rewrote the template cache whole: replace it, so the
+  // new version's added templates go, and so does a cache there was none
+  // of before (#264).
+  await restoreDirExactly(path.join(cacheDir, CACHED_TEMPLATES), path.join(vaultRoot, CACHED_TEMPLATES), failures, {
+    label: CACHED_TEMPLATES,
+  });
 
   // Folders the run created (a new file's folder, a rename's new folder on a
   // case-sensitive filesystem, #195), once nothing is left in them (#258).
@@ -815,44 +822,6 @@ export async function rollbackUpdate(
   );
 
   return failures;
-}
-
-async function restoreTree(
-  srcRoot: string,
-  destRoot: string,
-  failures: RollbackFailure[],
-): Promise<void> {
-  if (!(await pathExists(srcRoot))) return;
-  // Never throws: an unreadable snapshot folder is a failure like any
-  // other, and the ones collected so far must reach the user (#247).
-  const walk = async (dir: string): Promise<string[]> => {
-    let entries;
-    try {
-      entries = await fsp.readdir(dir, { withFileTypes: true });
-    } catch (err) {
-      failures.push({ path: path.relative(srcRoot, dir) || '.', reason: `readdir failed: ${reasonOf(err)}`, backup: dir });
-      return [];
-    }
-    const out: string[] = [];
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) out.push(...(await walk(full)));
-      else out.push(full);
-    }
-    return out;
-  };
-  const files = await walk(srcRoot);
-  for (const abs of files) {
-    const rel = path.relative(srcRoot, abs);
-    const dst = path.join(destRoot, rel);
-    try {
-      await fsp.mkdir(path.dirname(dst), { recursive: true });
-      await fsp.copyFile(abs, dst);
-    } catch (err) {
-      // The update's snapshot is never removed, so `abs` is still there.
-      failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}`, backup: abs });
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
