@@ -1091,12 +1091,14 @@ The update-check cache (`.shardmind/update-check.json`, 24h TTL) is stable-only.
 
 **`source/ui-kit/`** holds the vendored components, as a module built to be extracted into its own package later at the cost of a `git mv` and a `package.json`:
 - **Its own entry point.** `source/ui-kit/index.ts` is the only public path. ShardMind imports it only through that index (`components/ui.ts` re-exports it), never through a deep path.
-- **One-way dependencies.** It imports only `ink`, `react`, `node:` built-ins and its own files: never ShardMind's `core/`, `components/`, `runtime/` or `commands/`, and not `@inkjs/ui`. That is why it carries its own theme (`ui-kit/theme.tsx`, cut to its two components) rather than reading `@inkjs/ui`'s. `tests/ui-kit/boundary.test.ts` scans every import in the folder and fails on anything else.
+- **One-way dependencies.** It imports only `ink`, `react`, `node:` built-ins and its own files: never ShardMind's `core/`, `components/`, `runtime/` or `commands/`, and not `@inkjs/ui`. That is why it carries its own theme (`ui-kit/theme.tsx`, cut to the components it holds) rather than reading `@inkjs/ui`'s. `tests/ui-kit/boundary.test.ts` scans every import in the folder and fails on anything else.
 - **Its own tests.** `tests/ui-kit/` uses no ShardMind fixtures.
 - **Provenance.** The upstream MIT `LICENSE` and a provenance header (upstream `@inkjs/ui` 2.0.0, commit `14b1145`) live in the folder, so they move with it.
 - **History.** Upstream went in byte-for-byte in one commit; each fix is its own commit naming the upstream issue, so ShardMind's patches read as a diff from upstream.
 
-`Alert`, `Badge`, `ProgressBar`, `Spinner` and `StatusMessage` stay on `@inkjs/ui` (no local workaround). `MultiSelect` is no longer used (`ScrollableMultiSelect`, #100). Ink 8.0.0 (2026-10-03) is a separate decision; this change stays on Ink 7.
+`MultiSelect` is no longer used (`ScrollableMultiSelect`, #100). Ink 8.0.0 (2026-10-03) is a separate decision (#270).
+
+**Decision (2026-10-05, #273): vendor the rest and drop `@inkjs/ui`.** `Alert`, `Badge`, `ProgressBar`, `Spinner` and `StatusMessage` moved into the ui-kit under the same rules, and `@inkjs/ui` left `package.json`. It depends on `chalk ^5`, so while it was installed Ink 8's `chalk ^6` could not be the only chalk, and #37 needs one chalk deciding the colour level. `figures` glyphs come from `ui-kit/lib/figures.ts`, and `Spinner`'s `dots` frames from `ui-kit/lib/spinners.ts`, inlined from `cli-spinners`. `Spinner`'s `type` is a union, `'dots'` only for now, so adding a frame set later is a non-breaking widening. The MIT notices of `figures`, `is-unicode-supported` and `cli-spinners` (one copyright holder) are in `ui-kit/LICENSE-sindresorhus`. The boundary test fails on any `@inkjs/ui` import in `source/` or `tests/`.
 
 **Revisit cadence.** Re-evaluate at v0.2 scope freeze. Do not pre-emptively migrate.
 

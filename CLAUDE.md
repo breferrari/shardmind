@@ -100,7 +100,7 @@ Every PR for a v6 issue must demonstrate in its description:
 | Tool | Purpose |
 |------|---------|
 | **Pastel** | CLI framework — file-system routing, zod arg parsing, Commander under the hood |
-| **Ink** + **@inkjs/ui** | React terminal renderer + pre-built components |
+| **Ink** | React terminal renderer. Prompts and status widgets come from `source/ui-kit/`, vendored from `@inkjs/ui` 2.0.0 (#43, #273) |
 | **React** | Required peer dep for Ink |
 | **chalk** | The colour decision Ink already makes; read `chalk.level`, don't re-derive it. Same range as Ink's (^5), one deduped copy (#37) |
 | **Nunjucks** | Template engine (`{{ }}` syntax). Config: `autoescape: false` |
@@ -169,7 +169,7 @@ shardmind/
 │   │   ├── ValueInput.tsx             # Typed input widget (string/number/select…)
 │   │   ├── Header.tsx                 # Branded header
 │   │   ├── use-once-per-key.ts        # Per-iteration dedup hook for state-machine-iterated prompts (see docs/COMPONENTS.md Pattern B)
-│   │   └── ui.ts                      # Barrel: Select/TextInput from ui-kit, the rest from @inkjs/ui
+│   │   └── ui.ts                      # Barrel re-export of the ui-kit
 │   ├── core/
 │   │   ├── manifest.ts                # Parse + validate shard.yaml
 │   │   ├── schema.ts                  # Parse shard-schema.yaml → zod validator
@@ -217,7 +217,7 @@ shardmind/
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   └── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
-│   ├── ui-kit/                        # Vendored Select + TextInput from @inkjs/ui 2.0.0 (#43); index.ts is the only entry, LICENSE + PROVENANCE.md inside
+│   ├── ui-kit/                        # Components vendored from @inkjs/ui 2.0.0 (#43, #273); index.ts is the only entry, licences + PROVENANCE.md inside
 │   ├── runtime/                       # Exported for hook scripts
 │   │   ├── index.ts                   # Re-exports
 │   │   ├── values.ts                  # loadValues(), validateValues()
@@ -316,7 +316,7 @@ Use `npm ci` for routine syncing after `git pull` — it installs exactly what t
 - `source/runtime/` — exported for hook scripts. **Zero dependency on Ink, React, or Pastel.** If you import from `ink` or `react` here, the build is broken.
 - `source/internal/` — NOT public API. Contains the hook-runner subprocess entry (`hook-runner.ts`) that `core/hook.ts` spawns via `node --import tsx`. Must not be imported at module scope by anything in `source/`; only spawn-paths touch it. Exported from package.json's `exports` under `./internal/hook-runner` so `createRequire` can resolve it at runtime.
 - `source/types/` — re-exports from `runtime/types.ts`. Both CLI and runtime import from here.
-- `source/ui-kit/` — vendored `Select` / `TextInput` from `@inkjs/ui` 2.0.0 (#43), self-contained for later extraction: imports only `ink`, `react`, `node:` built-ins and its own files (`tests/ui-kit/boundary.test.ts` enforces it); ShardMind imports it only through `ui-kit/index.ts`, via `components/ui.ts`. See ARCHITECTURE §11.4.
+- `source/ui-kit/` — the TUI components (`Select`, `TextInput`, `Alert`, `Badge`, `ProgressBar`, `Spinner`, `StatusMessage`) vendored from `@inkjs/ui` 2.0.0 (#43, #273), self-contained for later extraction: imports only `ink`, `react`, `node:` built-ins and its own files (`tests/ui-kit/boundary.test.ts` enforces it); ShardMind imports it only through `ui-kit/index.ts`, via `components/ui.ts`. See ARCHITECTURE §11.4.
 
 Do not cross these boundaries:
 - Core must not import from components or commands.
