@@ -20,6 +20,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **A shard can declare the command-line tools it needs, with version ranges.** `external_tools` in `shard.yaml` names each tool, its npm package and the range the shard needs. Install, adopt, and an update that installs a new version run each tool's version command before writing anything. A required tool that is missing or too old refuses the run (`EXTERNAL_TOOL_UNMET`) and names the install command for a version in range. An optional one is listed in the summary. A tool can be gated on a value (`when: qmd_enabled`). A dry run and `shardmind validate` never run a tool.
 
+### Changed (no direct `@inkjs/ui` dependency — #273)
+
+- **shardmind no longer depends on `@inkjs/ui`.** Its last five components (alerts, status lines, the version badge, the progress bar and the spinner) now come from ShardMind's own copy, and they draw exactly as before. This removes the dependency that stood in the way of Ink 8 (#270).
+
 ### Changed (prompts keep their order — #43)
 
 - **A choice prompt lists its options in the shard's order, with the default focused.** To work around a bug in `@inkjs/ui`, the wizard moved the default option to the top of the list, so the list order changed with the default. ShardMind now carries its own copy of `@inkjs/ui`'s `Select` and `TextInput` with that bug fixed, and the workaround is gone. A Yes/No prompt now always shows Yes first.
