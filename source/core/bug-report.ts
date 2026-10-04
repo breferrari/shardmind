@@ -44,17 +44,17 @@ export type ErrorDescription =
   | { kind: 'bug'; message: string; url: string; stack: string | null };
 
 /**
- * `cwd` defaults to the working directory, read only for an ENOENT and
- * guarded: it throws when the vault folder itself has been removed.
+ * `cwd` defaults to the working directory, read only for an ENOENT. Once
+ * the vault folder itself is removed, reading it throws, so the directory
+ * shardmind started in stands in.
  */
 export function describeError(error: unknown, version: string | undefined, cwd?: string): ErrorDescription {
-  const message = error instanceof Error ? error.message : String(error);
-  const known = asShardMindError(error);
-  if (known) {
-    return { kind: 'known', message, code: known.code, hint: known.hint ?? null };
+  const message = error instanceof Error ? error.message : safeString(error);
+  if (error instanceof ShardMindError) {
+    return { kind: 'known', message, code: error.code, hint: error.hint ?? null };
   }
   const code = errnoCode(error);
-  if (code !== undefined && code in ENVIRONMENT_HINTS && (code !== 'ENOENT' || isInside(errnoPath(error), cwd ?? currentDir()))) {
+  if (code !== undefined && Object.hasOwn(ENVIRONMENT_HINTS, code) && (code !== 'ENOENT' || isInside(errnoPath(error), cwd ?? currentDir()))) {
     return { kind: 'environment', message, code, hint: ENVIRONMENT_HINTS[code]! };
   }
   return {
@@ -89,8 +89,8 @@ export function formatErrorPlain(error: unknown, version: string | undefined, cw
  */
 export function installCrashHandlers(
   proc: { on(event: 'uncaughtException' | 'unhandledRejection', listener: (error: unknown) => void): unknown },
-  opts: { version: string | undefined; write: (text: string) => void; exit: (code: number) => void },
-): void {
+  opts: { readonly version: string | undefined; write: (text: string) => void; exit: (code: number) => void },
+): (error: unknown) => void {
   let crashed = false;
   const crash = (error: unknown): void => {
     if (crashed) return;
@@ -100,6 +100,8 @@ export function installCrashHandlers(
   };
   proc.on('uncaughtException', crash);
   proc.on('unhandledRejection', crash);
+  // The top-level catch reports through the same function, so it shares the once-guard.
+  return crash;
 }
 
 function errnoPath(error: unknown): string | undefined {
@@ -111,27 +113,30 @@ function errnoPath(error: unknown): string | undefined {
 function isInside(target: string | undefined, dir: string | undefined): boolean {
   if (target === undefined || dir === undefined) return false;
   const rel = path.relative(path.resolve(dir), path.resolve(target));
-  return !path.isAbsolute(rel) && rel.split(/[\\/]/)[0] !== '..';
+  return !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`);
 }
 
-function currentDir(): string | undefined {
+const START_DIR = (() => {
   try {
     return process.cwd();
   } catch {
     return undefined;
   }
+})();
+
+function currentDir(): string | undefined {
+  try {
+    return process.cwd();
+  } catch {
+    return START_DIR;
+  }
 }
 
-/**
- * A ShardMindError by its name and a string code, not only `instanceof`:
- * `dist/cli.js` and `dist/commands/*` each bundle their own copy of the
- * class, so an error a command throws fails `instanceof` in the top-level
- * handler.
- */
-function asShardMindError(error: unknown): { code: string; hint?: string | undefined } | undefined {
-  if (error instanceof ShardMindError) return error;
-  if (!(error instanceof Error) || error.name !== 'ShardMindError') return undefined;
-  const { code, hint } = error as { code?: unknown; hint?: unknown };
-  if (typeof code !== 'string') return undefined;
-  return { code, hint: typeof hint === 'string' ? hint : undefined };
+/** String(value), which throws for a null-prototype object or a throwing toString. */
+function safeString(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
 }

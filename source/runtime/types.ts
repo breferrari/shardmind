@@ -611,15 +611,28 @@ export interface StatusWarning {
 import type { ErrorCode } from './errors.js';
 export type { ErrorCode } from './errors.js';
 
+const SHARDMIND_ERROR_BRAND: unique symbol = Symbol.for('shardmind.ShardMindError') as never;
+
 export class ShardMindError extends Error {
   readonly code: ErrorCode;
   readonly hint?: string;
+  readonly [SHARDMIND_ERROR_BRAND] = true;
 
   constructor(message: string, code: ErrorCode, hint?: string) {
     super(message);
     this.name = 'ShardMindError';
     this.code = code;
     this.hint = hint;
+  }
+
+  /**
+   * `instanceof` by brand, not by class identity: `dist/cli.js`,
+   * `dist/commands/*` and the runtime each bundle their own copy of this
+   * class, so an error one throws must still be a ShardMindError to the
+   * others (#225). The brand is a `Symbol.for` key, shared across copies.
+   */
+  static override [Symbol.hasInstance](value: unknown): boolean {
+    return typeof value === 'object' && value !== null && (value as { [SHARDMIND_ERROR_BRAND]?: unknown })[SHARDMIND_ERROR_BRAND] === true;
   }
 }
 

@@ -12,7 +12,7 @@ applyNoColor(process.env);
 // rejection nobody awaited) is printed as plain text, since Ink may not be
 // mounted, and exits 1 (#225). The SIGINT path is not touched: Ctrl+C still
 // exits 130.
-const { formatErrorPlain, installCrashHandlers } = await import('./core/bug-report.js');
+const { installCrashHandlers } = await import('./core/bug-report.js');
 const { resolveEngineVersion } = await import('./commands/hooks/cli-version.js');
 const crash = {
   // Read when needed (cached after the first read), not on every launch.
@@ -27,7 +27,7 @@ const crash = {
     process.stderr.write('', () => process.exit(code));
   },
 };
-installCrashHandlers(process, crash);
+const reportCrash = installCrashHandlers(process, crash);
 
 try {
   // `<command> --json` for the commands listed here runs before Pastel loads
@@ -95,6 +95,5 @@ try {
 
   await app.run();
 } catch (err) {
-  crash.write(formatErrorPlain(err, crash.version));
-  crash.exit(1);
+  reportCrash(err);
 }

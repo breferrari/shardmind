@@ -72,4 +72,26 @@ describe('a bug no error view catches (#225)', () => {
     expect(result.stdout).toContain('This is a bug in shardmind. Please report it:');
     expect(result.stdout).toContain(`issues/new?body=shardmind+${version}`);
   }, 60_000);
+
+  it('writes a throw while a --json command renders as one failure document with the stack', async () => {
+    await fs.writeFile(
+      path.join(root, 'dist', 'commands', 'index.js'),
+      [
+        "import zod from 'zod';",
+        "export const options = zod.object({ json: zod.boolean().default(false) });",
+        "export default function Index() { throw new TypeError('boom while rendering json'); }",
+        '',
+      ].join('\n'),
+    );
+    const result = spawnSync(process.execPath, [path.join(root, 'dist', 'cli.js'), '--json'], {
+      cwd: root,
+      env: { ...process.env, CI: '1', NO_COLOR: '1' },
+      encoding: 'utf-8',
+      timeout: 60_000,
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    const doc = JSON.parse(result.stdout) as { ok: boolean; command: string; error: { code: null; stack: string } };
+    expect(doc).toMatchObject({ ok: false, command: 'status', error: { code: null } });
+    expect(doc.error.stack).toContain('boom while rendering json');
+  }, 60_000);
 });

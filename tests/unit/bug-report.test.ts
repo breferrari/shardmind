@@ -58,24 +58,6 @@ describe('describeError (#225)', () => {
     },
   );
 
-  it('knows a ShardMindError from another bundle by its name and code, as the top-level handler sees it', () => {
-    // dist/cli.js and dist/commands/* each bundle their own ShardMindError class.
-    class ShardMindError extends Error {
-      constructor(message: string, readonly code: string, readonly hint?: string) {
-        super(message);
-        this.name = 'ShardMindError';
-      }
-    }
-    expect(describeError(new ShardMindError('nope', 'SHARD_NOT_FOUND', 'spell it'), '0.1.9', VAULT)).toEqual({
-      kind: 'known',
-      message: 'nope',
-      code: 'SHARD_NOT_FOUND',
-      hint: 'spell it',
-    });
-    const impostor = Object.assign(new Error('x'), { name: 'ShardMindError' });
-    expect(describeError(impostor, '0.1.9', VAULT).kind).toBe('bug');
-  });
-
   it('treats ENOENT inside the working directory (the vault) as the environment', () => {
     const at = path.join(VAULT, 'brain', 'note.md');
     expect(describeError(errno('ENOENT', `ENOENT: no such file, open '${at}'`, at), '0.1.9', VAULT)).toMatchObject({

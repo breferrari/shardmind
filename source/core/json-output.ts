@@ -55,6 +55,16 @@ export interface JsonEnvelope {
   readonly result?: unknown;
 }
 
+/**
+ * The `--json` command a run is for, from its arguments: the first that is
+ * not a flag, when it names one, else `status` (the root command). For a
+ * crash report that has only `process.argv` to go on (#225).
+ */
+export function jsonCommandOf(argv: readonly string[]): JsonCommand {
+  const first = argv.find((arg) => !arg.startsWith('-'));
+  return first === 'adopt' || first === 'update' || first === 'validate' ? first : 'status';
+}
+
 export function jsonSuccess(command: JsonCommand, result: unknown): JsonEnvelope {
   return { schemaVersion: JSON_SCHEMA_VERSION, command, ok: true, result };
 }
