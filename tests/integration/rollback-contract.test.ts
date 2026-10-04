@@ -13,7 +13,7 @@
  * with its recorded bytes.
  *
  * A row that fails is a defect: it is filed in Phase 5 and listed in
- * `KNOWN_DEFECTS` as the differences it leaves, with its issue. Those
+ * `KNOWN_DEFECTS` as the exact paths it leaves, with its issue. Those
  * differences are allowed, and every use is counted; the last test fails
  * when a known defect no longer shows up, so a fix turns the suite red
  * until its entry goes. Keyed by what the defect leaves, not by row number:
@@ -272,36 +272,37 @@ const PIPELINES = [install, update, adopt];
 interface Row {
   id: string;
   pipeline: Pipeline;
+  fault: KnownDefect['fault'];
   plan: (abort: AbortController) => FaultPlan;
 }
 
-/** A filed defect: the differences it leaves after a rollback, where they are allowed. */
+/**
+ * A filed defect: exactly the paths it leaves changed after a rollback, for
+ * one pipeline and one kind of fault. An entry is a hole in the net, so it is
+ * as narrow as the defect: listed paths, never a pattern, and the last tests
+ * fail when the defect no longer shows up or when a listed path is never one
+ * it leaves.
+ */
 interface KnownDefect {
   issue: string;
   pipeline: Pipeline['name'];
-  /** The paths it leaves changed. */
-  leaves: RegExp;
-  /** Only after an error like this one. */
-  error?: RegExp;
+  /** The rows it shows up in: their fault. */
+  fault: 'write' | 'rename' | 'mkdir' | 'restore' | 'ctrl-c';
+  /** Every path it leaves changed, vault-relative POSIX. */
+  leaves: string[];
 }
 
 const KNOWN_DEFECTS: KnownDefect[] = [
   {
-    // Update's rollback copies the old template cache back but keeps what
-    // the new release added to it.
-    issue: '#264',
-    pipeline: 'update',
-    leaves: /^\.shardmind\/templates\/Fresh(\/.*)?$/,
-  },
-  {
     // A failed snapshot folder leaves the folders made on the way to it.
     issue: '#269',
     pipeline: 'adopt',
-    leaves: /^\.shardmind(\/backups)?$/,
-    error: /backup directory/,
+    fault: 'mkdir',
+    leaves: ['.shardmind', '.shardmind/backups'],
   },
 ];
-const knownDefectsSeen = new Set<string>();
+/** Per issue, the listed paths a row actually met. */
+const knownDefectsSeen = new Map<string, Set<string>>();
 
 async function freshWork(): Promise<string> {
   return fsp.mkdtemp(path.join(os.tmpdir(), 'rollback-contract-'));
@@ -329,18 +330,20 @@ for (const pipeline of PIPELINES) {
   const counts = await countCalls(pipeline);
   for (const kind of ['write', 'rename', 'mkdir'] as const) {
     for (let nth = 1; nth <= counts[kind]; nth++) {
-      rows.push({ id: `${pipeline.name}: fail ${kind} #${nth}`, pipeline, plan: () => ({ fail: { kind, nth } }) });
+      rows.push({ id: `${pipeline.name}: fail ${kind} #${nth}`, pipeline, fault: kind, plan: () => ({ fail: { kind, nth } }) });
     }
   }
   for (let nth = 1; nth <= counts.write; nth++) {
     rows.push({
       id: `${pipeline.name}: fail write #${nth}, then the first restore`,
       pipeline,
+      fault: 'restore',
       plan: () => ({ fail: { kind: 'write', nth }, failRestore: { nth: 1 } }),
     });
     rows.push({
       id: `${pipeline.name}: Ctrl+C at write #${nth}`,
       pipeline,
+      fault: 'ctrl-c',
       plan: (abort) => ({ beforeWrite: { nth, hook: () => abort.abort() } }),
     });
   }
@@ -415,9 +418,13 @@ describe('rollback contract (#267)', () => {
           );
         const known = (p: string) => {
           const defect = KNOWN_DEFECTS.find(
-            (d) => d.pipeline === row.pipeline.name && d.leaves.test(p) && (!d.error || d.error.test(String(error))),
+            (d) => d.pipeline === row.pipeline.name && d.fault === row.fault && d.leaves.includes(p),
           );
-          if (defect) knownDefectsSeen.add(defect.issue);
+          if (defect) {
+            const seen = knownDefectsSeen.get(defect.issue) ?? new Set<string>();
+            seen.add(p);
+            knownDefectsSeen.set(defect.issue, seen);
+          }
           return defect !== undefined;
         };
         const unexplained = differences(before, await treeOf(vault)).filter((p) => !allowed(p) && !known(p));
@@ -431,7 +438,15 @@ describe('rollback contract (#267)', () => {
   // Last: each known defect must still show up, or its fix has landed and
   // its entry must go (with the issue closed).
   it('still meets every known defect it allows', () => {
-    expect([...knownDefectsSeen].sort()).toEqual(KNOWN_DEFECTS.map((d) => d.issue).sort());
+    expect([...knownDefectsSeen.keys()].sort()).toEqual(KNOWN_DEFECTS.map((d) => d.issue).sort());
+  });
+
+  // And each entry allows no more than its defect leaves: a listed path no
+  // row met would let a new defect at that path pass unseen.
+  it('allows no path a known defect does not leave', () => {
+    for (const defect of KNOWN_DEFECTS) {
+      expect([...(knownDefectsSeen.get(defect.issue) ?? [])].sort(), defect.issue).toEqual([...defect.leaves].sort());
+    }
   });
 });
 
