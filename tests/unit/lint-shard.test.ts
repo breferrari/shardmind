@@ -110,3 +110,14 @@ describe('lintShard (#34)', () => {
     await expect(fsp.access(marker)).rejects.toBeTruthy();
   });
 });
+
+describe('parseValidateArgv (#34)', () => {
+  it('reads the target, --values in both forms, and ignores other flags', async () => {
+    const { parseValidateArgv } = await import('../../source/core/validate-shard.js');
+    expect(parseValidateArgv([])).toEqual({ target: '.' });
+    expect(parseValidateArgv(['--json'])).toEqual({ target: '.' });
+    expect(parseValidateArgv(['shard', '--json'])).toEqual({ target: 'shard' });
+    expect(parseValidateArgv(['--values', 'v.yaml', 'shard'])).toEqual({ target: 'shard', valuesFile: 'v.yaml' });
+    expect(parseValidateArgv(['shard', '--values=v.yaml', '--verbose'])).toEqual({ target: 'shard', valuesFile: 'v.yaml' });
+  });
+});

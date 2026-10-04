@@ -8,6 +8,17 @@ import { applyNoColor } from './core/color-env.js';
 // dynamically below, never statically above this line.
 applyNoColor(process.env);
 
+// `validate --json` runs here, before Pastel loads Ink: a mounted Ink app
+// writes terminal control codes around the document even when it renders
+// nothing (#198), and validate's JSON must be one clean document (#34).
+const [subcommand, ...subArgs] = process.argv.slice(2);
+if (subcommand === 'validate' && subArgs.includes('--json')) {
+  const { runValidateJson } = await import('./core/validate-shard.js');
+  const { resolveEngineVersion } = await import('./commands/hooks/cli-version.js');
+  process.exitCode = await runValidateJson(subArgs, resolveEngineVersion());
+  process.exit();
+}
+
 const { default: Pastel } = await import('pastel');
 const { enablePositionalOptions, pastelCommander } = await import('./cli-options.js');
 
