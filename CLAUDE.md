@@ -205,7 +205,7 @@ shardmind/
 │   │   ├── color-env.ts               # NO_COLOR → chalk level 0 before Ink loads; FORCE_COLOR wins (#37)
 │   │   ├── bug-report.ts              # describeError (known / environment / bug), report link, top-level crash handler (#225)
 │   │   ├── rollback-report.ts         # ROLLBACK_INCOMPLETE: what a failed rollback left behind (#247)
-│   │   ├── json-run.ts                # A terminal --json run behaves as piped: stdout/stdin non-interactive before Ink (#198)
+│   │   ├── json-run.ts                # A terminal --json run behaves as piped: stdout non-interactive before Ink (#198)
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   └── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
@@ -365,7 +365,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `self-update-check.ts` | §4.19 | 24h cached npm-registry check for newer shardmind engine versions; powers `<SelfUpdateBanner>` |
 | `vault-path-guard.ts` | §4.20 | Refuses install / update / adopt over a symlinked, hard-linked or case-folded vault path (`VAULT_PATH_UNSAFE`, #163) |
 | `color-env.ts` | §4.21 | Applies `NO_COLOR` to the environment before chalk loads; `FORCE_COLOR` wins when both are set (#37) |
-| `json-run.ts` | §4.23 | Detects a `--json` run of update / adopt / status and marks stdout and stdin non-interactive before Ink loads, so a terminal run equals the piped one (#198) |
+| `json-run.ts` | §4.23 | Detects a `--json` run of update / adopt / validate / status and marks stdout non-interactive before Ink loads, so a terminal run equals the piped one; a crash in it answers on stdout too (#198) |
 
 | `lint-shard.ts` | §4.22 | Install's checks in check mode, collecting every finding; used by `validate` (#34) and the pre-install check (#35) |
 | `validate-shard.ts` | ARCHITECTURE §10.5b | `validate`'s target resolution (dir or downloaded ref) and its headless `--json` runner |
