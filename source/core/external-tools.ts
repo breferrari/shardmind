@@ -37,12 +37,26 @@ function installHint(tool: ExternalTool): string {
   return `npm i -g ${tool.package}@"${tool.version}"`;
 }
 
+// A full version, with an optional prerelease: `2.5.3`, `v2.6.0-beta.1`.
+const FULL_VERSION = /\bv?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/;
+
+/**
+ * The version a tool printed: the first full `x.y.z` in its output, so a
+ * year or a "Node.js 22" banner before it does not win; only when there is
+ * none, the first number `semver.coerce` finds (`qmd 3` → 3.0.0).
+ */
+function readVersion(stdout: string): string | undefined {
+  const full = FULL_VERSION.exec(stdout)?.[1];
+  const parsed = full === undefined ? null : semver.parse(full);
+  return parsed?.version ?? semver.coerce(stdout, { includePrerelease: true })?.version;
+}
+
 /** What one probe outcome means for one tool. */
 function judge(name: string, tool: ExternalTool, outcome: ProbeOutcome): ToolResult {
   const unmet = (reason: string): ToolResult => ({ name, status: 'unmet', reason, hint: installHint(tool), optional: tool.optional });
   if (outcome.kind === 'not-found') return unmet('not found on PATH');
   if (outcome.kind === 'failed') return unmet(outcome.reason);
-  const version = semver.coerce(outcome.stdout, { includePrerelease: true })?.version;
+  const version = readVersion(outcome.stdout);
   if (version === undefined) return unmet('printed no version');
   if (!semver.satisfies(version, tool.version, { includePrerelease: true })) return unmet(`found ${version}, needs ${tool.version}`);
   return { name, status: 'met', version };
@@ -105,6 +119,9 @@ const STDOUT_CAP = 64 * 1024;
 // needs it on PATH.
 const UNSAFE_PATH = /[%"^&|<>!]/;
 
+/** What spawn can start on Windows: the rest of PATHEXT cannot be run here. */
+const RUNNABLE_EXTENSIONS = new Set(['.com', '.exe', '.bat', '.cmd']);
+
 /** An environment variable by name, matched without case on Windows. */
 function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
   if (env[name] !== undefined) return env[name];
@@ -129,14 +146,18 @@ export function resolveExecutable(name: string, env: NodeJS.ProcessEnv): string 
   // against the working directory, which is the vault, so a file the shard
   // shipped there could run as the tool.
   const dirs = (envValue(env, 'PATH') ?? '').split(path.delimiter).filter((dir) => path.isAbsolute(dir));
-  const extensions =
-    process.platform === 'win32'
-      ? ['', ...(envValue(env, 'PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)]
-      : [''];
+  // On Windows only what spawn can start: PATHEXT's .JS, .VBS or .MSC would
+  // be found and then fail, hiding a real .exe in a later directory. A name
+  // that already carries one of these extensions is tried as it is.
+  const windows = process.platform === 'win32';
+  const extensions = windows
+    ? (envValue(env, 'PATHEXT') ?? '.COM;.EXE;.BAT;.CMD')
+        .split(';')
+        .filter((ext) => RUNNABLE_EXTENSIONS.has(ext.toLowerCase()))
+    : [''];
+  const named = windows && RUNNABLE_EXTENSIONS.has(path.extname(name).toLowerCase());
   for (const dir of dirs) {
-    for (const extension of extensions) {
-      // On Windows a bare name with no extension is not runnable by itself.
-      if (process.platform === 'win32' && extension === '' && path.extname(name) === '') continue;
+    for (const extension of named ? [''] : extensions) {
       const candidate = path.join(dir, name + extension);
       if (isRunnableFile(candidate)) return candidate;
     }

@@ -60,6 +60,17 @@ describe('the production probe', () => {
     await expect(fs.stat(marker)).rejects.toThrow();
   });
 
+  // The default PATHEXT also lists .JS, .VBS and .MSC, which no probe can run.
+  it.runIf(isWindows)('takes only .com, .exe, .bat and .cmd from PATHEXT', async () => {
+    const dir = path.join(root, 'pathext');
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'multi.js'), 'console.log("not me")\n');
+    const cmd = await writeTool(dir, 'multi', { win: 'echo multi 1.2.3', posix: 'echo multi 1.2.3' });
+    const env = { ...envWithSearchPath([dir]), PATHEXT: '.JS;.VBS;.CMD' };
+    expect(resolveExecutable('multi', env)?.toLowerCase()).toBe(cmd.toLowerCase());
+    expect(await makeProbe({ env })('multi', ['--version'])).toEqual({ kind: 'output', stdout: expect.stringContaining('multi 1.2.3') });
+  });
+
   it('reports a tool missing from PATH as not found', async () => {
     expect(await probeOn(path.join(root, 'empty'))('shardmind-no-such-tool', ['--version'])).toEqual({ kind: 'not-found' });
   });

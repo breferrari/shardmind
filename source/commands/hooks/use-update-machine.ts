@@ -463,6 +463,9 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       pendingModules: readonly string[] = [],
     ) => {
       try {
+        // With the values final, before the removed-files prompt, the render
+        // and any conflict prompt (#138).
+        externalToolsRef.current = await checkExternalToolsForRun({ manifest: ctx.newManifest, values, dryRun });
         // Render the new shard once and thread the result through to
         // `runPlanAndResolve`. The planner reuses this plan instead of
         // rendering a second time.
@@ -549,8 +552,6 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       precomputed?: { renamed?: AppliedRenames; newFilePlan?: NewFilePlan },
     ) => {
       try {
-        // With the values final, before the plan and any conflict prompt (#138).
-        externalToolsRef.current = await checkExternalToolsForRun({ manifest: ctx.newManifest, values, dryRun });
         setPhase({ kind: 'loading', message: 'Planning update…' });
         const newRenderContext = buildRenderContext(ctx.newManifest, values, selections, undefined, vaultRoot);
         const newFilePlan =

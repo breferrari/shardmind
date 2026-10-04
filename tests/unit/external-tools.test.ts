@@ -48,6 +48,21 @@ describe('checkExternalTools', () => {
     expect((await checkExternalTools(manifestWith({ qmd }), {}, probe))[0]).toMatchObject({ status: 'met', version: '2.6.0-beta.1' });
   });
 
+  it.each([
+    ['a year before the version', 'qmd (c) 2024 Acme, version 2.5.3', '2.5.3'],
+    ['a major-only word before the version', 'Built on Node.js 22 - qmd v2.0.1', '2.0.1'],
+    ['a date before the version', 'released 2024-01-02, qmd 2.5.3', '2.5.3'],
+  ])('reads the first full version, not %s', async (_name, stdout, version) => {
+    const probe = probeOf({ qmd: { kind: 'output', stdout } });
+    const [result] = await checkExternalTools(manifestWith({ qmd: { ...qmd, version: '>=1.0.0' } }), {}, probe);
+    expect(result).toMatchObject({ status: 'met', version });
+  });
+
+  it('falls back to a short version when no full one is printed', async () => {
+    const probe = probeOf({ qmd: { kind: 'output', stdout: 'qmd 3' } });
+    expect((await checkExternalTools(manifestWith({ qmd }), {}, probe))[0]).toMatchObject({ status: 'met', version: '3.0.0' });
+  });
+
   it('is unmet when the version is below the range, with an install hint inside the range', async () => {
     const probe = probeOf({ qmd: { kind: 'output', stdout: 'qmd 2.0.1' } });
     expect(await checkExternalTools(manifestWith({ qmd }), {}, probe)).toEqual([

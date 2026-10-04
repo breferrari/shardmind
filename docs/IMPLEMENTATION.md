@@ -1791,7 +1791,7 @@ spawnProbe: ToolProbe;   // makeProbe() with process.env and 5 s
    - Otherwise it runs `probe(command, args)`:
      - `not-found` → unmet, "not found on PATH";
      - `failed` → unmet with its reason;
-     - `output` → the first semver in it (`semver.coerce` with `includePrerelease`, which drops build metadata):
+     - `output` → its version: the first full `x.y.z` (with an optional prerelease) in stdout, so a year or a "Node.js 22" banner before it does not win; only when there is none, the first number `semver.coerce` finds (`qmd 3` → 3.0.0). stderr is not read.
        - none → unmet, "printed no version";
        - a version that fails `semver.satisfies(v, range, { includePrerelease: true })` → unmet, "found <v>, needs <range>";
        - otherwise met.
@@ -1802,7 +1802,7 @@ spawnProbe: ToolProbe;   // makeProbe() with process.env and 5 s
    - Otherwise it returns one line per unmet optional tool, `<name>: <reason>. Install: <hint>`. Met and skipped tools give no line.
 3. `makeProbe`:
    - It checks `command` and every arg against the manifest patterns again (`TOOL_NAME_PATTERN`, `TOOL_ARG_PATTERN`), failing with "unsafe command name" / "unsafe argument" before anything runs.
-   - It looks up `command` on `PATH`. On Windows it tries each `PATHEXT` extension (default `.COM;.EXE;.BAT;.CMD`) in each directory; elsewhere it takes the first executable file. Nothing found → `not-found`.
+   - It looks up `command` in the absolute `PATH` entries only: a relative one (`.`, an empty segment) would resolve against the vault, where a shard file could run as the tool. On Windows it tries each `PATHEXT` extension that spawn can start (`.com`, `.exe`, `.bat`, `.cmd`; default `.COM;.EXE;.BAT;.CMD`) in each directory, and a name that already ends in one is tried as it is; elsewhere it takes the first executable file. Nothing found → `not-found`.
    - A found path containing any of `% " ^ & | < > !` → `failed`, "unsafe path <path>".
    - A `.cmd` or `.bat` path runs as `cmd.exe /d /s /c ""<path>" <args>"` with `windowsVerbatimArguments`. Node refuses to spawn one directly since the CVE-2024-27980 fix (`EINVAL`). Anything else is spawned directly. Never `shell: true`.
    - stdin is ignored. stdout is capped at 64 KiB and the run at 5 s: a timeout kills the child → `failed`, "timed out after 5s". A non-zero exit → `failed`, "exited <code>". A spawn error → `not-found` for `ENOENT`, otherwise `failed`, "could not start (<code>)". On a timeout the probe stops reading at once, since a child of cmd.exe can outlive it and hold the pipe.

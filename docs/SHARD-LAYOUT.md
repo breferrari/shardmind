@@ -394,7 +394,7 @@ external_tools:
 
 **When it is checked.** An install, an adopt, and an update that installs a new version check every declared tool after the values are final and before anything is written. An update that is already up to date checks nothing. A dry run never runs a tool: its summary says "external tools not checked (dry run)". `shardmind validate` never runs one either: it checks only the declaration. No shard-supplied command runs in a dry run or in `validate`.
 
-**How it is checked.** The engine finds `command` on `PATH` (through `PATHEXT` on Windows) and runs it with `args` and no shell, for at most 5 seconds, then reads the first semver in its output. The tool is:
+**How it is checked.** The engine finds `command` in the absolute directories on `PATH` (on Windows as a `.com`, `.exe`, `.bat` or `.cmd` file) and runs it with `args` and no shell, for at most 5 seconds. It then reads the version from standard output: the first full `x.y.z`, so a year or a banner before it does not count, or else the first number. A tool that prints its version only on standard error is read as printing none. The tool is:
 - met when that version satisfies `version` (a prerelease above the floor counts, as for `requires.shardmind`);
 - unmet otherwise, with the reason named: not found on `PATH`, exited non-zero, timed out, printed no version, or the version found and the range it misses.
 

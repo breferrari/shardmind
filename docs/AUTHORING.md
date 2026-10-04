@@ -146,7 +146,7 @@ external_tools:
     when: qmd_enabled        # optional; skip the check when this boolean value is false
 ```
 
-The engine finds `command` on `PATH`, runs it with `args`, and reads the first version in its output. A required tool that is missing or out of range refuses the run with `EXTERNAL_TOOL_UNMET`. An optional one is listed in the summary. Either way the hint is `npm i -g <package>@"<range>"`, which installs a version inside your range. The engine never installs the tool itself.
+The engine finds `command` on `PATH`, runs it with `args`, and reads the first full version (`x.y.z`) it prints on standard output. A required tool that is missing or out of range refuses the run with `EXTERNAL_TOOL_UNMET`. An optional one is listed in the summary. Either way the hint is `npm i -g <package>@"<range>"`, which installs a version inside your range. The engine never installs the tool itself.
 
 Keep `command` and `args` plain: an executable name, and arguments made of letters, digits, `.`, `_`, `=` and `-`. The tool runs without a shell, and anything else is refused when `shard.yaml` is read. A dry run and `shardmind validate` never run the tool. `validate` does check that `when` names a boolean value. See [`SHARD-LAYOUT.md §External tools`](SHARD-LAYOUT.md#external-tools) for the full contract.
 
