@@ -38,6 +38,22 @@ describe('vendor:check (#280)', () => {
     expect(formatReport([status!])).toMatch(/up to date/);
   });
 
+  it('does not call a kit ahead of npm latest behind', async () => {
+    const { root, source } = await fixture();
+    const [status] = await checkKits({ root, source: { ...source, latestVersion: async () => '0.9.0' } });
+    expect(status).toMatchObject({ behind: false });
+  });
+
+  it('reads a CRLF checkout of the kit by its content, not its line ends', async () => {
+    const { root, kitDir, source } = await fixture();
+    for (const f of ['a.ts', 'b.ts']) {
+      const p = path.join(kitDir, f);
+      await fsp.writeFile(p, (await fsp.readFile(p, 'utf-8')).replace(/\n/g, '\r\n'));
+    }
+    const [status] = await checkKits({ root, source });
+    expect(status).toMatchObject({ wrongModified: [] });
+  });
+
   it("reports a file whose recorded `modified` disagrees with its bytes", async () => {
     const { root, kitDir, source } = await fixture();
     const record = await readRecord(kitDir);

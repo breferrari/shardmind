@@ -7,10 +7,19 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { isEnoent } from '../../source/runtime/errno.js';
+
+/** A relative POSIX path that stays inside its folder: no `..`, no root, no backslash. */
+const RelativePath = z
+  .string()
+  .refine(
+    (p) => !p.startsWith('/') && !/^[A-Za-z]:/.test(p) && !p.includes('\\') && !p.split('/').includes('..'),
+    'a relative path inside its folder',
+  );
 
 const FileSchema = z
   .object({
-    upstream: z.string().min(1),
+    upstream: RelativePath.pipe(z.string().min(1)),
     modified: z.boolean(),
     change: z.string().min(1).regex(/^[^\n]*$/, 'one line').optional(),
   })
@@ -28,11 +37,11 @@ export const VendorRecordSchema = z
     tagPattern: z.string().includes('{version}').optional(),
     commit: z.string().regex(/^[0-9a-f]{40}$/, 'a full 40-character commit'),
     tarball: z.object({ url: z.string().url(), integrity: z.string().min(1) }).strict(),
-    sourceRoot: z.string(),
+    sourceRoot: RelativePath,
     license: z.string().min(1),
     copyright: z.string().min(1),
     modifiedBy: z.string().min(1),
-    files: z.record(z.string(), FileSchema),
+    files: z.record(RelativePath.pipe(z.string().min(1)), FileSchema),
   })
   .strict();
 
@@ -60,6 +69,21 @@ export async function writeRecord(kitDir: string, record: VendorRecord): Promise
         : value;
   }
   await fsp.writeFile(path.join(kitDir, RECORD_FILE), `${JSON.stringify(ordered, null, 2)}\n`, 'utf-8');
+}
+
+/** Text with CRLF line ends read as LF, so a checkout's line-end setting never reads as a change. */
+export function toLf(text: string): string {
+  return text.replace(/\r\n/g, '\n');
+}
+
+/** A vendored file of the kit, as LF text; names the file when it is missing. */
+export async function readKitFile(kitDir: string, record: VendorRecord, file: string): Promise<string> {
+  try {
+    return toLf(await fsp.readFile(path.join(kitDir, file), 'utf-8'));
+  } catch (err) {
+    if (isEnoent(err)) throw new Error(`${record.kit}/${file} is in VENDOR.json but not on disk`);
+    throw err;
+  }
 }
 
 /** The tag a version of the package is released under. */

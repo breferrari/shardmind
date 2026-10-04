@@ -32,6 +32,17 @@ export const RECORD: VendorRecord = {
 };
 
 describe('vendor record (#280)', () => {
+  it.each([
+    ['a file key that climbs out of the kit', { files: { '../x.ts': { upstream: 'lib/x.ts', modified: false } } }],
+    ['an upstream path that climbs out', { files: { 'x.ts': { upstream: '../../etc/x', modified: false } } }],
+    ['an absolute upstream path', { files: { 'x.ts': { upstream: '/etc/x', modified: false } } }],
+    ['a drive-letter path', { files: { 'C:/x.ts': { upstream: 'lib/x.ts', modified: false } } }],
+    ['a backslash path', { files: { 'x.ts': { upstream: 'lib\\x.ts', modified: false } } }],
+    ['a sourceRoot that climbs out', { sourceRoot: '..' }],
+  ])('refuses %s', (_name, patch) => {
+    expect(() => parseRecord({ ...RECORD, ...patch })).toThrow(/relative path inside its folder/);
+  });
+
   const dirs: string[] = [];
   afterEach(async () => {
     for (const d of dirs.splice(0)) await fsp.rm(d, { recursive: true, force: true });

@@ -11,7 +11,9 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readRecord, stripHeader, RECORD_FILE } from './record.js';
+import semver from 'semver';
+import { isEnoent } from '../../source/runtime/errno.js';
+import { readKitFile, readRecord, stripHeader, toLf, RECORD_FILE } from './record.js';
 import { networkSource, type UpstreamSource } from './upstream.js';
 
 export interface KitStatus {
@@ -45,17 +47,22 @@ async function checkKit(kitDir: string, source: UpstreamSource): Promise<KitStat
   const tree = await source.checkout(record.repository, record.commit);
   try {
     const wrongModified: string[] = [];
-    for (const [file, entry] of Object.entries(record.files).sort(([a], [b]) => a.localeCompare(b))) {
-      const ours = stripHeader(await fsp.readFile(path.join(kitDir, file), 'utf-8'), record, file);
-      const upstream = await fsp.readFile(path.join(tree.root, record.sourceRoot, entry.upstream), 'utf-8').catch(() => null);
-      if ((ours !== upstream) !== entry.modified) wrongModified.push(file);
+    for (const file of Object.keys(record.files).sort()) {
+      const ours = stripHeader(await readKitFile(kitDir, record, file), record, file);
+      const upstream = await fsp
+        .readFile(path.join(tree.root, record.sourceRoot, record.files[file]!.upstream), 'utf-8')
+        .then(toLf, (err: unknown) => {
+          if (isEnoent(err)) return null;
+          throw err;
+        });
+      if ((ours !== upstream) !== record.files[file]!.modified) wrongModified.push(file);
     }
     return {
       kit: record.kit,
       package: record.package,
       version: record.version,
       latest,
-      behind: latest !== record.version,
+      behind: semver.valid(latest) && semver.valid(record.version) ? semver.gt(latest, record.version) : latest !== record.version,
       wrongModified,
     };
   } finally {
@@ -63,10 +70,17 @@ async function checkKit(kitDir: string, source: UpstreamSource): Promise<KitStat
   }
 }
 
-export async function checkKits(opts: { root: string; source?: UpstreamSource }): Promise<KitStatus[]> {
+/** Every kit's report; a kit that cannot be checked reports why, and the others still run. */
+export async function checkKits(opts: { root: string; source?: UpstreamSource }): Promise<KitReport[]> {
   const source = opts.source ?? networkSource;
-  const out: KitStatus[] = [];
-  for (const dir of await kitDirs(opts.root)) out.push(await checkKit(dir, source));
+  const out: KitReport[] = [];
+  for (const dir of await kitDirs(opts.root)) {
+    try {
+      out.push(await checkKit(dir, source));
+    } catch (err) {
+      out.push({ kit: path.basename(dir), error: err instanceof Error ? err.message : String(err) });
+    }
+  }
   return out;
 }
 
@@ -95,17 +109,7 @@ export async function main(
   argv: string[],
   opts: { root?: string; source?: UpstreamSource } = {},
 ): Promise<number> {
-  const root = opts.root ?? process.cwd();
-  const source = opts.source ?? networkSource;
-  const reports: KitReport[] = [];
-  for (const dir of await kitDirs(root)) {
-    try {
-      reports.push(await checkKit(dir, source));
-    } catch (err) {
-      reports.push({ kit: path.basename(dir), error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-  const report = formatReport(reports);
+  const report = formatReport(await checkKits({ root: opts.root ?? process.cwd(), source: opts.source }));
   console.log(report);
   const at = argv.indexOf('--summary');
   if (at >= 0 && argv[at + 1]) await fsp.appendFile(argv[at + 1]!, report, 'utf-8');

@@ -12,8 +12,10 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 import { threeWayMerge } from '../../source/core/differ.js';
-import { headerFor, readRecord, stripHeader, tagFor, writeRecord, type VendorRecord } from './record.js';
+import { isEnoent } from '../../source/runtime/errno.js';
+import { headerFor, readKitFile, readRecord, stripHeader, tagFor, toLf, writeRecord, type VendorRecord } from './record.js';
 import { networkSource, type UpstreamSource } from './upstream.js';
 
 export interface UpdateConflict {
@@ -40,15 +42,16 @@ export interface UpdateOptions {
   commit?: { author: string };
 }
 
-/** Every file under `dir`, POSIX, sorted; none when `dir` is missing. */
+/** Every file under `dir`, POSIX, sorted; none when `dir` itself is missing. */
 async function filesUnder(dir: string): Promise<string[]> {
   const out: string[] = [];
   const walk = async (rel: string) => {
     let entries;
     try {
       entries = await fsp.readdir(path.join(dir, rel), { withFileTypes: true });
-    } catch {
-      return;
+    } catch (err) {
+      if (rel === '' && isEnoent(err)) return;
+      throw err;
     }
     for (const e of entries) {
       const child = rel ? `${rel}/${e.name}` : e.name;
@@ -60,12 +63,37 @@ async function filesUnder(dir: string): Promise<string[]> {
   return out.sort();
 }
 
+/** An upstream file as LF text, or null when that version has no such file. */
 async function readOptional(file: string): Promise<string | null> {
   try {
-    return await fsp.readFile(file, 'utf-8');
-  } catch {
-    return null;
+    return toLf(await fsp.readFile(file, 'utf-8'));
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw err;
   }
+}
+
+/**
+ * Git for `--commit`, refused up front: the author must be `Name <email>`, and
+ * the kit and the index must be clean, so the two commits hold the update and
+ * nothing else.
+ */
+function gitFor(kitDir: string, author: string): { git: (...args: string[]) => string; dirty: () => boolean } {
+  const who = /^(.+) <([^<>]+)>$/.exec(author);
+  if (!who) throw new Error(`--commit needs an author as "Name <email>", not ${JSON.stringify(author)}`);
+  const repo = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: kitDir, encoding: 'utf-8' }).trim();
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-c', `user.name=${who[1]}`, '-c', `user.email=${who[2]}`, ...args], {
+      cwd: repo,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
+  const dirty = () => git('status', '--porcelain', '--', kitDir).trim() !== '';
+  if (dirty()) throw new Error(`--commit needs a clean ${path.basename(kitDir)}; commit or stash its changes first`);
+  if (git('diff', '--cached', '--name-only').trim() !== '') {
+    throw new Error('--commit needs an empty index; commit or unstage what is staged first');
+  }
+  return { git, dirty };
 }
 
 /** The engine's markers, named for this merge: ours is ShardMind's, the other side is upstream. */
@@ -79,19 +107,23 @@ export async function updateKit(opts: UpdateOptions): Promise<UpdateResult> {
   const source = opts.source ?? networkSource;
   const record = await readRecord(opts.kitDir);
   const files = Object.keys(record.files).sort();
+  const vcs = opts.commit ? gitFor(opts.kitDir, opts.commit.author) : null;
 
   // Every header is checked before anything is written.
   const ours = new Map<string, string>();
   for (const file of files) {
-    ours.set(file, stripHeader(await fsp.readFile(path.join(opts.kitDir, file), 'utf-8'), record, file));
+    ours.set(file, stripHeader(await readKitFile(opts.kitDir, record, file), record, file));
   }
 
   const tag = tagFor(record, opts.version);
   const commit = await source.commitForTag(record.repository, tag);
   const tarball = await source.versionInfo(record.package, opts.version);
-  const oldTree = await source.checkout(record.repository, record.commit);
-  const newTree = await source.checkout(record.repository, commit);
+  const trees: Array<{ cleanup: () => Promise<void> }> = [];
   try {
+    const oldTree = await source.checkout(record.repository, record.commit);
+    trees.push(oldTree);
+    const newTree = await source.checkout(record.repository, commit);
+    trees.push(newTree);
     const oldRoot = path.join(oldTree.root, record.sourceRoot);
     const newRoot = path.join(newTree.root, record.sourceRoot);
     const next: VendorRecord = { ...record, version: opts.version, tag, commit, tarball, files: { ...record.files } };
@@ -138,18 +170,15 @@ export async function updateKit(opts: UpdateOptions): Promise<UpdateResult> {
     };
 
     if (result.conflicts.length > 0) {
-      // Left for a person: the merges, markers included, under the new
-      // version's header; the record stays at the version it describes.
-      await write(final, { ...next, files: { ...record.files, ...next.files } });
+      // Left for a person: the merges, markers included. The record stays at
+      // the version it describes, and so do the headers, so vendor:check still
+      // reads the kit; once the markers are resolved, `--resolved` finishes it.
+      await write(final, record);
       return result;
     }
 
-    if (opts.commit) {
-      const repo = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: opts.kitDir, encoding: 'utf-8' }).trim();
-      const author = /^(.*) <(.*)>$/.exec(opts.commit.author);
-      if (!author) throw new Error(`--commit needs an author as "Name <email>", not ${opts.commit.author}`);
-      const git = (...args: string[]) =>
-        execFileSync('git', ['-c', `user.name=${author[1]}`, '-c', `user.email=${author[2]}`, ...args], { cwd: repo, stdio: 'pipe' });
+    if (vcs) {
+      const { git, dirty } = vcs;
       const plain: VendorRecord = {
         ...next,
         files: Object.fromEntries(files.map((f) => [f, { upstream: record.files[f]!.upstream, modified: false }])),
@@ -157,11 +186,14 @@ export async function updateKit(opts: UpdateOptions): Promise<UpdateResult> {
       await write(asIs, plain);
       await writeRecord(opts.kitDir, plain);
       git('add', '-A', '--', opts.kitDir);
-      git('commit', '-q', '-m', `chore: vendor ${record.package}@${opts.version} as-is into ${record.kit}`);
+      git('commit', '-q', '-m', `chore: vendor ${record.package}@${opts.version} as-is into ${record.kit}`, '--', opts.kitDir);
       await write(final, next);
       await writeRecord(opts.kitDir, next);
-      git('add', '-A', '--', opts.kitDir);
-      git('commit', '-q', '-m', `chore: re-apply ShardMind's changes to ${record.kit}`);
+      // No ShardMind change survived the merge: the as-is commit is the update.
+      if (dirty()) {
+        git('add', '-A', '--', opts.kitDir);
+        git('commit', '-q', '-m', `chore: re-apply ShardMind's changes to ${record.kit}`, '--', opts.kitDir);
+      }
       return result;
     }
 
@@ -169,25 +201,86 @@ export async function updateKit(opts: UpdateOptions): Promise<UpdateResult> {
     await writeRecord(opts.kitDir, next);
     return result;
   } finally {
-    await oldTree.cleanup();
-    await newTree.cleanup();
+    for (const tree of trees) await tree.cleanup();
   }
 }
 
-/** The command: `vendor:update <kit> <version> [--commit "Name <email>"]`. */
+const MARKER = /^(<<<<<<< shardmind|>>>>>>> \S+@\S+)$/m;
+
+/**
+ * Finishes an update a person resolved (`--resolved`): each file as it stands
+ * is the result, so the record advances to `version` with `modified` measured
+ * against the new upstream. A re-run of `updateKit` cannot do this, since a
+ * resolution that keeps ShardMind's line conflicts with the old base again.
+ */
+export async function finishKit(opts: { kitDir: string; version: string; source?: UpstreamSource }): Promise<void> {
+  const source = opts.source ?? networkSource;
+  const record = await readRecord(opts.kitDir);
+  const files = Object.keys(record.files).sort();
+  const resolved = new Map<string, string>();
+  for (const file of files) {
+    const text = stripHeader(await readKitFile(opts.kitDir, record, file), record, file);
+    if (MARKER.test(text)) throw new Error(`${record.kit}/${file} still holds a conflict marker; resolve it first`);
+    resolved.set(file, text);
+  }
+
+  const tag = tagFor(record, opts.version);
+  const commit = await source.commitForTag(record.repository, tag);
+  const tarball = await source.versionInfo(record.package, opts.version);
+  const tree = await source.checkout(record.repository, commit);
+  try {
+    const next: VendorRecord = { ...record, version: opts.version, tag, commit, tarball, files: {} };
+    for (const file of files) {
+      const entry = record.files[file]!;
+      const incoming = await readOptional(path.join(tree.root, record.sourceRoot, entry.upstream));
+      if (incoming === null) {
+        throw new Error(`${record.kit}/${file}: ${entry.upstream} is gone in ${opts.version}; drop it from the kit and VENDOR.json first`);
+      }
+      next.files[file] =
+        resolved.get(file) === incoming
+          ? { upstream: entry.upstream, modified: false }
+          : { upstream: entry.upstream, modified: true, change: entry.change ?? 'kept from the previous version.' };
+    }
+    for (const [file, text] of resolved) await fsp.writeFile(path.join(opts.kitDir, file), headerFor(next, file) + text);
+    await writeRecord(opts.kitDir, next);
+  } finally {
+    await tree.cleanup();
+  }
+}
+
+/** The command: `vendor:update <kit> <version> [--commit "Name <email>"] [--resolved]`. */
 export async function main(argv: string[], root = process.cwd()): Promise<number> {
-  const args = argv.filter((a) => a !== '--commit');
-  const commitAt = argv.indexOf('--commit');
-  const [kit, version] = args;
-  if (!kit || !version) {
-    console.error('usage: npm run vendor:update -- <kit> <version> [--commit "Name <email>"]');
+  const usage = 'usage: npm run vendor:update -- <kit> <version> [--commit "Name <email>"] [--resolved]';
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: argv,
+      options: { commit: { type: 'string' }, resolved: { type: 'boolean' } },
+      allowPositionals: true,
+    });
+  } catch (err) {
+    console.error(`${err instanceof Error ? err.message : String(err)}\n${usage}`);
     return 2;
   }
-  const author = commitAt >= 0 ? argv[commitAt + 1] : undefined;
+  const [kit, version, ...extra] = parsed.positionals;
+  if (!kit || !version || extra.length > 0) {
+    console.error(usage);
+    return 2;
+  }
+  const author = parsed.values.commit;
+  if (parsed.values.resolved) {
+    if (author !== undefined) {
+      console.error(`--resolved does not commit; commit the kit yourself.\n${usage}`);
+      return 2;
+    }
+    await finishKit({ kitDir: path.join(root, 'source', kit), version });
+    console.log(`${kit} is at ${version}.`);
+    return 0;
+  }
   const result = await updateKit({
     kitDir: path.join(root, 'source', kit),
     version,
-    commit: author ? { author } : undefined,
+    commit: author === undefined ? undefined : { author },
   });
   for (const f of result.updated) console.log(`updated   ${f}`);
   for (const f of result.merged) console.log(`merged    ${f}`);
@@ -195,6 +288,7 @@ export async function main(argv: string[], root = process.cwd()): Promise<number
   for (const f of result.addedUpstream) console.log(`new upstream file, not vendored: ${f}`);
   if (result.conflicts.length > 0) {
     console.log(`\n${result.conflicts.length} file(s) need a person; VENDOR.json was not advanced.`);
+    console.log(`Resolve them, then run: npm run vendor:update -- ${kit} ${version} --resolved`);
     return 1;
   }
   console.log(`\n${kit} is at ${version}.`);

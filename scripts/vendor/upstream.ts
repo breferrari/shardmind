@@ -29,12 +29,15 @@ function githubSlug(repository: string): string {
   return m[1]!;
 }
 
+/** No upstream call may hang the weekly job. */
+const TIMEOUT_MS = 60_000;
+
 async function getJson(url: string): Promise<unknown> {
   const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'shardmind-vendor' };
   if (url.startsWith('https://api.github.com/') && process.env['GITHUB_TOKEN']) {
     headers['authorization'] = `Bearer ${process.env['GITHUB_TOKEN']}`;
   }
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!res.ok) throw new Error(`GET ${url}: ${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -58,7 +61,7 @@ export const networkSource: UpstreamSource = {
   },
   async commitForTag(repository, tag) {
     const slug = githubSlug(repository);
-    let ref = (await getJson(`https://api.github.com/repos/${slug}/git/ref/tags/${encodeURIComponent(tag)}`)) as {
+    let ref = (await getJson(`https://api.github.com/repos/${slug}/git/ref/tags/${tag.split('/').map(encodeURIComponent).join('/')}`)) as {
       object: { type: string; sha: string };
     };
     // An annotated tag points at a tag object; follow it to the commit.
@@ -70,7 +73,7 @@ export const networkSource: UpstreamSource = {
   },
   async checkout(repository, commit) {
     const slug = githubSlug(repository);
-    const res = await fetch(`https://codeload.github.com/${slug}/tar.gz/${commit}`);
+    const res = await fetch(`https://codeload.github.com/${slug}/tar.gz/${commit}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
     if (!res.ok || !res.body) throw new Error(`${repository} at ${commit}: ${res.status} ${res.statusText}`);
     const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'shardmind-vendor-'));
     // The archive's single top folder is `<repo>-<commit>/`.
