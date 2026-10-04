@@ -18,7 +18,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Changed (an unexpected error is reported as a bug — #225)
 
-- **An error that is a bug in shardmind now says so, with what you need to report it.** It used to show its message alone. Now every command shows the message, the line "This is a bug in shardmind. Please report it:" with a link that opens a new issue, and the stack trace. The link carries only the shardmind version and the error's first line, with quoted text and file paths removed. The stack stays on your screen, and you decide what to paste. Errors shardmind expects (a missing shard, a bad values file) look as before, with their code and hint.
+- **An error that is a bug in shardmind now says so, with what you need to report it.** It used to show its message alone. Now every command shows the message, the line "This is a bug in shardmind. Please report it:" with a link that opens a new issue, and the stack trace. The link carries only the shardmind version, nothing from the error itself. The message and stack stay on your screen, and you decide what to paste. Errors shardmind expects (a missing shard, a bad values file) look as before, with their code and hint.
 - `--json`: the `error` object gains `stack`. It is the stack trace for such a bug and `null` for every other error.
 
 ### Changed (`_each` files from a string list — #227)

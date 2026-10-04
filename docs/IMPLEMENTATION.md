@@ -1787,10 +1787,10 @@ Commands catch errors and render them in Ink with `StatusMessage variant="error"
 
 Every command's error view is one component, `components/ErrorView.tsx` (install, update, adopt, status and validate). A `ShardMindError` keeps its view: message, `code: <CODE>`, hint, and any detail. Anything else is an engine error:
 
-1. The message, then "This is a bug in shardmind. Please report it:" and a new-issue link built by `bugReportUrl(error, version)` (`core/bug-report.ts`).
+1. The message, then "This is a bug in shardmind. Please report it:" and a new-issue link built by `bugReportUrl(version)` (`core/bug-report.ts`).
 2. The stack, dimmed, printed locally only.
 
-The link carries the shardmind version and at most the error's first line, scrubbed by `scrubFirstLine`: the first line only, every quoted string and every path-like token (one holding `/` or `\`, or starting with a drive letter) replaced by `…`, capped at 120 characters. It never carries values, vault paths or file contents. The body asks the user to paste the stack and the command if they choose to.
+The link carries the shardmind version (`?body=shardmind <version>`; the bare new-issue URL when the version cannot be read) and nothing from the error, so no value, vault path or file content can leave the machine through it; the user pastes the message and stack if they choose to. It is kept to about 70 characters on purpose: Ink wraps a line at the terminal width with real line breaks, and a link broken across lines can be neither clicked nor copied whole, so a title carrying the error's first line (which #225 allowed) would break the link on an 80-column terminal.
 
 `--json`: `error.stack` is the stack for an error that is not a `ShardMindError`, and `null` otherwise (additive; `schemaVersion` stays 1). The document stays free of terminal codes. The stack is not scrubbed: it can name local paths, so a caller that publishes the document (a CI log) should treat it as it would the terminal output. Nothing sends it anywhere.
 

@@ -38,7 +38,7 @@ export default function ErrorView({ error, version, detail, lead }: ErrorViewPro
       {detail && <Text dimColor>{detail}</Text>}
       <Box flexDirection="column">
         <Text>This is a bug in shardmind. Please report it:</Text>
-        <Text color="cyan">{bugReportUrl(error, version)}</Text>
+        <Text color="cyan">{bugReportUrl(version)}</Text>
       </Box>
       {stack && <Text dimColor>{stack}</Text>}
     </Box>

@@ -31,6 +31,8 @@ describe('ErrorView (#225)', () => {
     expect(frame).toContain('This is a bug in shardmind');
     expect(frame).toContain('github.com/breferrari/shardmind/issues/new');
     expect(frame).toContain('at planUpdate (update-planner.js:10:5)');
+    // The link carries nothing from the error.
+    expect(frame).toMatch(/issues\/new\?body=shardmind\+0\.1\.9(?!\S)/);
   });
 
   it('shows a thrown non-Error as a bug too, without a stack', () => {
