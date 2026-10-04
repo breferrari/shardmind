@@ -30,7 +30,7 @@ import {
 } from './state.js';
 import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
-import { assertSafeVaultPaths } from './vault-path-guard.js';
+import { assertSafeVaultPaths, ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
 import {
   SHARDMIND_DIR,
   VALUES_FILE,
@@ -153,36 +153,13 @@ export async function backupCollisions(
 }
 
 /**
- * Move the `backups/` of an old `.shardmind/` that a reinstall set aside
- * into the new one, before the old one is deleted (#55). An update's or
- * an adopt's snapshot can be the only copy of the user's earlier files.
- * Entries already in the new `backups/` are kept; an old entry whose
- * name is taken moves under `<name>-<n>`, so nothing is dropped.
- */
-/**
- * The `.shardmind/` entries an install writes, by name. A rollback removes
- * these (and only these, besides what it recorded); see `rollbackInstall`.
- */
-const INSTALL_ENGINE_ENTRIES = ['shard.yaml', 'shard-schema.yaml', 'state.json', 'templates'] as const;
-
-/**
- * Every `.shardmind/` entry the engine owns. Anything else in the folder is
- * the vault owner's (such as `boundary-ignore`, #190): a rollback never
- * removes it (#215) and a reinstall carries it forward (#237).
- */
-export const ENGINE_SHARDMIND_ENTRIES: ReadonlySet<string> = new Set([
-  ...INSTALL_ENGINE_ENTRIES,
-  'logs',
-  'backups',
-]);
-
-/**
  * Move the vault owner's own entries (everything not in
  * `ENGINE_SHARDMIND_ENTRIES`) from a reinstall's old `.shardmind/` into the
- * new one, so a reinstall keeps them (#237). An entry the new folder
- * already has is left where it is.
+ * new one, so a reinstall keeps them (#237). An entry whose name the new
+ * folder already has moves under `<name>-<n>`, as `carryOverBackups` does,
+ * so nothing is dropped when the old folder is deleted.
  */
-async function carryOverUserEntries(oldStateDir: string, vaultRoot: string): Promise<void> {
+export async function carryOverUserEntries(oldStateDir: string, vaultRoot: string): Promise<void> {
   let entries: string[];
   try {
     entries = await fsp.readdir(oldStateDir);
@@ -190,16 +167,24 @@ async function carryOverUserEntries(oldStateDir: string, vaultRoot: string): Pro
     if (isEnoent(err)) return;
     throw err;
   }
+  const own = entries.filter((entry) => !ENGINE_SHARDMIND_ENTRIES.has(entry.toLowerCase()));
+  if (own.length === 0) return;
   const to = path.join(vaultRoot, SHARDMIND_DIR);
-  for (const entry of entries) {
-    if (ENGINE_SHARDMIND_ENTRIES.has(entry)) continue;
-    const target = path.join(to, entry);
-    if (await pathExists(target)) continue;
-    await fsp.mkdir(to, { recursive: true });
+  await fsp.mkdir(to, { recursive: true });
+  for (const entry of own) {
+    let target = path.join(to, entry);
+    for (let n = 1; await pathExists(target); n++) target = path.join(to, `${entry}-${n}`);
     await fsp.rename(path.join(oldStateDir, entry), target);
   }
 }
 
+/**
+ * Move the `backups/` of an old `.shardmind/` that a reinstall set aside
+ * into the new one, before the old one is deleted (#55). An update's or
+ * an adopt's snapshot can be the only copy of the user's earlier files.
+ * Entries already in the new `backups/` are kept; an old entry whose
+ * name is taken moves under `<name>-<n>`, so nothing is dropped.
+ */
 export async function carryOverBackups(oldStateDir: string, vaultRoot: string): Promise<void> {
   const from = path.join(oldStateDir, 'backups');
   let entries: string[];
@@ -446,8 +431,8 @@ export async function rollbackInstall(
   // The engine's own entries are removed whether or not they were recorded:
   // a Ctrl+C rollback snapshots the lists while `runInstall` may still be
   // writing them. Nothing else under `.shardmind/` is touched.
-  const engineEntries = INSTALL_ENGINE_ENTRIES.map((name) => toPosixRel(path.join(SHARDMIND_DIR, name)));
-  const files = new Set([...writtenPaths.map(toPosixRel), ...engineEntries]);
+  const engineFiles = [CACHED_MANIFEST, CACHED_SCHEMA, STATE_FILE].map(toPosixRel);
+  const files = new Set([...writtenPaths.map(toPosixRel), ...engineFiles]);
   files.delete(toPosixRel(CACHED_TEMPLATES));
   for (const rel of deepestFirst(files)) {
     try {
