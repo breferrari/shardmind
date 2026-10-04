@@ -16,6 +16,11 @@ applyNoColor(process.env);
 const jsonRun = isJsonRun(process.argv.slice(2));
 if (jsonRun) markNonInteractive(process.stdout);
 
+// A reader that closes stdout early (`shardmind --json | head -1`) ends the run
+// quietly with 141 once it has finished, not with a bug report (#252).
+const { exitQuietlyWhenStdoutCloses } = await import('./core/stdout-closed.js');
+exitQuietlyWhenStdoutCloses(process);
+
 // A throw that escapes every command (a command module that fails to load, a
 // rejection nobody awaited) is printed as plain text, since Ink may not be
 // mounted, and exits 1 (#225). The SIGINT path is not touched: Ctrl+C still
