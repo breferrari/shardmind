@@ -384,9 +384,9 @@ The engine refuses rather than falling back to schema defaults, because a silent
 
 ### `INSTALL_SHARD_INVALID`
 
-**Meaning:** Before asking anything, install checks the downloaded shard the way `shardmind validate` does: every module included, every template rendered with the schema defaults, or with your `--values` over them. At least one check failed, so the install stopped before the wizard and before any write to the vault. The message lists every problem with its code and the file it is about. A template that fails here is a bug in the shard, even when it sits in a module you meant to leave out.
+**Meaning:** Before asking anything, install checks the downloaded shard the way `shardmind validate` does: every module included, every template rendered with the schema defaults, or with your `--values` over them (a `--values` answer the schema rejects is left to the wizard, and the shard is checked with the defaults instead). At least one check failed, so the install stopped before the wizard and before any write to the vault. The message lists every problem with its code and the file it is about. A template that fails here is a bug in the shard, even when it sits in a module you meant to leave out.
 
-**Remedy:** Shard author: run `shardmind validate` on the shard and fix what it reports. User: if a `--values` file is passed, check the values it names; otherwise report the problem to the shard's author, or install an earlier version of the shard (`owner/repo@<version>`).
+**Remedy:** Shard author: run `shardmind validate` on the shard (with the same `--values` file, if one was passed) and fix what it reports. User: a template that fails only with your `--values` answers is still the shard's to fix, since the schema accepted them; report the problem to the shard's author, or install an earlier version of the shard (`owner/repo@<version>`).
 
 ### `INSTALL_GATE_NON_INTERACTIVE`
 

@@ -160,7 +160,6 @@ function isComputed(value: unknown): boolean {
   return typeof value === 'string' && value.includes('{{');
 }
 
-
 /** The error findings, warnings dropped. */
 export function errorFindings(findings: readonly LintFinding[]): LintFinding[] {
   return findings.filter((f) => f.severity === 'error');

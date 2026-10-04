@@ -614,6 +614,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await cleanupVault(vault);
     }
   }, 45_000);
+
   // ───── A broken shard is refused before the wizard, every problem listed (#35) ─────
 
   it('broken templates → INSTALL_SHARD_INVALID before the wizard, each path listed, no vault write (#35)', async () => {
