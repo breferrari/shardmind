@@ -1660,6 +1660,41 @@ stdin and stderr are never touched.
 
 ---
 
+### 4.23 `editor.ts`
+
+Open a conflict in the user's editor (#50). Pure of Ink. The caller releases the terminal's raw mode around `editInEditor` with `withTerminalReleased`, which restores it on every exit path.
+
+```typescript
+resolveEditorCommand(env: NodeJS.ProcessEnv): string | undefined
+editInEditor(content: string, fileName: string, opts: { command: string; dir: string; platform?: NodeJS.Platform }): EditOutcome
+withTerminalReleased<T>(setRawMode: ((on: boolean) => void) | undefined, fn: () => T): T
+hasConflictMarkers(content: string): boolean
+
+type EditOutcome =
+  | { kind: 'saved'; content: string }
+  | { kind: 'cancelled'; reason: 'not-started' | 'exit' | 'unchanged'; detail: string }
+```
+
+1. `resolveEditorCommand`: the first non-blank of `env.VISUAL` and `env.EDITOR`, else `undefined`. With no editor set, the prompt does not offer Open in editor; shardmind never guesses one. The option is also absent where no prompt is shown (`--yes`, `--json`, no interactive terminal).
+2. `editInEditor` writes `content` to `<dir>/shardmind-edit-<random>/<fileName>`. `dir` is the run's temp directory (the downloaded shard's, removed when the command ends). `fileName` is the vault file's basename, so the editor sees its extension.
+3. It runs `<command> <quoted path>` through the shell (`spawnSync`, `stdio: 'inherit'`), so a command with arguments such as `code --wait` works. The path is double-quoted on Windows and single-quoted elsewhere, with embedded quotes escaped.
+4. Outcomes:
+   - an editor that cannot start is `cancelled: not-started`;
+   - a signal or a non-zero exit is `cancelled: exit`;
+   - a file saved byte-identical to what was written is `cancelled: unchanged`;
+   - anything else is `saved`, with the content as saved.
+
+   A cancel returns to the same prompt with a note; it is never an accept.
+5. The `shardmind-edit-*` directory is removed on every path.
+6. `hasConflictMarkers`: a line that starts with `<<<<<<< ` or `>>>>>>> `, or is exactly `=======`.
+
+**In the prompt.** A `saved` result with markers left returns to the prompt, saying so, with three choices:
+- Edit again;
+- Use my edit as is, markers included, which is the only way markers reach the vault;
+- Keep mine.
+
+A `saved` result without markers resolves the conflict as `{ kind: 'edited', content }`. The vault is never written here: the update executor's write pass writes the edited text under its snapshot and rollback (§4.12), and records it `modified` at the shard's hash.
+
 ## 5. Runtime Module: `shardmind/runtime`
 
 ### 5.1 `resolveVaultRoot()`
