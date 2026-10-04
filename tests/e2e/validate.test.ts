@@ -51,6 +51,8 @@ afterAll(async () => {
 
 interface Run {
   stdout: string;
+  /** stdout with whitespace collapsed, for matching the human view's lines. */
+  text: string;
   status: number | null;
 }
 
@@ -66,7 +68,8 @@ async function run(args: string[], opts: { tty?: boolean; tmp?: string; env?: Re
     let stdout = '';
     child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf-8')));
     child.on('error', reject);
-    child.on('close', (status) => resolve({ stdout, status }));
+    // A long path wraps the human summary at the pipe's width: read it as text.
+    child.on('close', (status) => resolve({ stdout, text: stdout.replace(/\s+/g, ' '), status }));
   });
 }
 
@@ -80,7 +83,7 @@ describe('shardmind validate (#34)', () => {
   it('finds nothing in the minimal shard and exits 0', async () => {
     const result = await run(['validate', MINIMAL_SHARD]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/0 errors, 0 warnings/);
+    expect(result.text).toMatch(/0 errors, 0 warnings/);
   });
 
   it('reports every broken template with its code and path, and exits 1', async () => {
@@ -88,8 +91,8 @@ describe('shardmind validate (#34)', () => {
     await fs.writeFile(path.join(dir, 'brain', 'Broken.md.njk'), '{% if %}\n');
     const result = await run(['validate', dir]);
     expect(result.status).toBe(1);
-    expect(result.stdout).toMatch(/brain\/Broken\.md/);
-    expect(result.stdout).toMatch(/RENDER_/);
+    expect(result.text).toMatch(/brain\/Broken\.md/);
+    expect(result.text).toMatch(/RENDER_/);
   });
 
   it('writes --json with no terminal control codes even in a terminal', async () => {
@@ -143,7 +146,7 @@ describe('shardmind validate (#34)', () => {
   it('prints help for --help even with --json', async () => {
     const result = await run(['validate', '--help', '--json']);
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/Usage: shardmind validate/);
+    expect(result.text).toMatch(/Usage: shardmind validate/);
   });
 
   it('reports a reference it cannot fetch as ok: false and exits 1', async () => {
