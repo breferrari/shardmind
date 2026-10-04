@@ -13,6 +13,7 @@ import { cleanup } from 'ink-testing-library';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { createHash } from 'node:crypto';
 
 import {
   setupFlowSuite,
@@ -439,7 +440,7 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         }
         const frame = await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.2\.0/.test(f), 30_000);
         const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
-          files: Record<string, { ownership: string }>;
+          files: Record<string, { ownership: string; rendered_hash: string }>;
         };
         return { frame, prompt, entry: state.files[NOTE], content: await vault.readFile(NOTE) };
       } finally {
@@ -485,6 +486,8 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     expect(prompt).toContain('Keep mine and track it');
     expect(content).toBe('My own note.\n');
     expect(entry?.ownership).toBe('modified');
+    // The shard's hash, never yours (#150): yours would read as pristine.
+    expect(entry?.rendered_hash).toBe(createHash('sha256').update('The shard note.\n').digest('hex'));
     // Tracked, so the summary does not report it kept untracked.
     expect(frame).not.toContain('kept untracked');
   }, 90_000);

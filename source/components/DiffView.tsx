@@ -5,9 +5,9 @@ import { useOncePerKey } from './use-once-per-key.js';
 import type { ConflictRegion, MergeResult } from '../runtime/types.js';
 import type { ConflictResolution } from '../core/update-planner.js';
 
-/** Conflict-resolution choices returned to the state machine. */
 /**
- * The update planner's conflict resolutions, one set for both.
+ * Conflict-resolution choices returned to the state machine: the update
+ * planner's conflict resolutions, one set for both.
  * `keep_and_track` is offered only for an add-collision, without
  * --adopt-preexisting (#165).
  */
