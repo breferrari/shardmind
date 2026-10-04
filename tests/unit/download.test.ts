@@ -26,11 +26,25 @@ describe('downloadShard', () => {
   const originalFetch = globalThis.fetch;
   let cleanupFns: Array<() => Promise<void>>;
 
-  beforeEach(() => {
+  // A private temp dir, so the leftover checks below see only this suite's
+  // downloads, not other suites' `shardmind-*` dirs created in parallel.
+  const savedTmp = { TMPDIR: process.env['TMPDIR'], TEMP: process.env['TEMP'], TMP: process.env['TMP'] };
+  let privateTmp = '';
+
+  beforeEach(async () => {
     cleanupFns = [];
+    privateTmp = await fs.mkdtemp(path.join(os.tmpdir(), 'dl-test-'));
+    process.env['TMPDIR'] = privateTmp;
+    process.env['TEMP'] = privateTmp;
+    process.env['TMP'] = privateTmp;
   });
 
   afterEach(async () => {
+    for (const [k, v] of Object.entries(savedTmp)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    await fs.rm(privateTmp, { recursive: true, force: true });
     globalThis.fetch = originalFetch;
     for (const fn of cleanupFns) {
       await fn().catch(() => {});
@@ -96,26 +110,21 @@ describe('downloadShard', () => {
     }).catch((e: unknown) => e);
     await started;
     expect(handedOver).toBeTypeOf('function');
-    const dirs = (await fs.readdir(os.tmpdir())).filter((n) => n.startsWith('shardmind-'));
+    expect((await fs.readdir(privateTmp)).filter((n) => n.startsWith('shardmind-'))).toHaveLength(1);
     await handedOver!();
-    expect(await download).toBeInstanceOf(Error);
-    const after = (await fs.readdir(os.tmpdir())).filter((n) => n.startsWith('shardmind-'));
-    // The dir this download made is gone (others may belong to parallel tests).
-    expect(after.filter((n) => !dirs.includes(n))).toEqual([]);
-    expect(dirs.length - after.length).toBeGreaterThanOrEqual(1);
+    const err = await download;
+    expect((err as Error).name).toBe('DownloadCancelledError');
+    expect((await fs.readdir(privateTmp)).filter((n) => n.startsWith('shardmind-'))).toEqual([]);
   });
 
   it('removes its temp dir when the callback throws', async () => {
     globalThis.fetch = vi.fn();
-    const before = (await fs.readdir(os.tmpdir())).filter((n) => n.startsWith('shardmind-'));
     const err = await downloadShard('https://example.com/tarball', () => {
       throw new Error('callback failed');
     }).catch((e: unknown) => e);
     expect((err as Error).message).toBe('callback failed');
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    const after = (await fs.readdir(os.tmpdir())).filter((n) => n.startsWith('shardmind-'));
-    // No dir of its own left behind (others may belong to parallel tests).
-    expect(after.filter((n) => !before.includes(n))).toEqual([]);
+    expect(await fs.readdir(privateTmp)).toEqual([]);
   });
 
   it('throws DOWNLOAD_HTTP_ERROR on non-200 response', async () => {

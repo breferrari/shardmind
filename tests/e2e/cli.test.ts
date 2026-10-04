@@ -813,6 +813,8 @@ describe('shardmind install', () => {
         // The handler ran, not the bridge's fallback: its cleanup removed
         // the shard download dir, which existed when the signal fired.
         expect(await tmp.leftovers()).toEqual([]);
+        // A cancel is not reported as a failed download (#57).
+        expect(result.stdout).not.toMatch(/DOWNLOAD_|not a valid tarball/);
       } finally {
         stub.setTarballDelay(0);
         if (tmp) await fs.rm(tmp.dir, { recursive: true, force: true });
@@ -1306,6 +1308,8 @@ describe('shardmind update', () => {
         const afterState = await vault.readFile('.shardmind/state.json');
         expect(afterState).toBe(beforeState);
         expect(await tmp.leftovers()).toEqual([]);
+        // A cancel is not reported as a failed download (#57).
+        expect(result.stdout).not.toMatch(/DOWNLOAD_|not a valid tarball/);
       } finally {
         stub.setTarballDelay(0);
         if (tmp) await fs.rm(tmp.dir, { recursive: true, force: true });
@@ -1737,6 +1741,8 @@ describe('shardmind adopt', () => {
       expect(await vault.readFile('Home.md')).toBe('# My own home\n');
       // The handler's cleanup removed the download dir.
       expect(await tmp.leftovers()).toEqual([]);
+        // A cancel is not reported as a failed download (#57).
+        expect(result.stdout).not.toMatch(/DOWNLOAD_|not a valid tarball/);
     } finally {
       stub.setTarballDelay(0);
       await fs.rm(tmp.dir, { recursive: true, force: true });

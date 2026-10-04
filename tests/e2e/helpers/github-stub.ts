@@ -138,7 +138,7 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
     shards.set(slug.toLowerCase(), { ...spec });
   }
   let tarballDelayMs = options.tarballDelayMs ?? 0;
-  const tarballWaiters: Array<() => void> = [];
+  const tarballWaiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
   // Outstanding tarball-delay timers. Tracked so `close()` can clear them
   // synchronously — otherwise a slow test firing SIGINT mid-download
   // leaves pending timers that keep the vitest worker alive past
@@ -203,8 +203,7 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
         if (!fs.existsSync(tarPath)) {
           return sendJson(res, 500, { message: `Fixture missing on disk: ${tarPath}` });
         }
-        const waiters = tarballWaiters.splice(0);
-        for (const resolve of waiters) resolve();
+        for (const waiter of tarballWaiters.splice(0)) waiter.resolve();
         const sendTarball = () => {
           // Client may have disconnected during the delay (test signalled
           // SIGINT, download tempdir torn down). Don't try to write
@@ -279,13 +278,17 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
     setTarballDelay: (ms) => {
       tarballDelayMs = Math.max(0, ms);
     },
-    waitForTarballRequest: () => new Promise<void>((resolve) => tarballWaiters.push(resolve)),
+    waitForTarballRequest: () =>
+      new Promise<void>((resolve, reject) => tarballWaiters.push({ resolve, reject })),
     close: () =>
       new Promise<void>((resolve, reject) => {
         // Drain any tarball-delay timers first so the close callback isn't
         // blocked on an in-flight delayed send.
         for (const t of pendingTimers) clearTimeout(t);
         pendingTimers.clear();
+        for (const waiter of tarballWaiters.splice(0)) {
+          waiter.reject(new Error('stub closed before the tarball was requested'));
+        }
         server.close((err) => (err ? reject(err) : resolve()));
       }),
   };
