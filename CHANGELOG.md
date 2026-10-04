@@ -12,6 +12,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **A shard can declare the command-line tools it needs, with version ranges.** `external_tools` in `shard.yaml` names each tool, its npm package and the range the shard needs. Install, adopt, and an update that installs a new version run each tool's version command before writing anything. A required tool that is missing or too old refuses the run (`EXTERNAL_TOOL_UNMET`) and names the install command for a version in range. An optional one is listed in the summary. A tool can be gated on a value (`when: qmd_enabled`). A dry run and `shardmind validate` never run a tool.
 
+### Changed (prompts keep their order — #43)
+
+- **A choice prompt lists its options in the shard's order, with the default focused.** To work around a bug in `@inkjs/ui`, the wizard moved the default option to the top of the list, so the list order changed with the default. ShardMind now carries its own copy of `@inkjs/ui`'s `Select` and `TextInput` with that bug fixed, and the workaround is gone. A Yes/No prompt now always shows Yes first.
+
 ### Fixed (a failed adopt leaves no empty folders — #258)
 
 - **A failed or cancelled adopt now removes the folders it created.** It removed the files it wrote but left their folders behind, such as `.claude/` and `brain/`, empty. Install, update and adopt now track the folders a run creates the same way. A rollback removes those folders once they are empty again. A folder that was there before, or that holds your files, stays.

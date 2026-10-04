@@ -2,7 +2,7 @@
 
 `Select` and `TextInput` from [`@inkjs/ui`](https://github.com/vadimdemedes/ink-ui) 2.0.0, tag `v2.0.0`, commit `14b1145da0123a48cfc2f0ec9ff33dff0633f464`, MIT (see `LICENSE`).
 
-Vendored into ShardMind on 2026-10-04 (#43), because upstream has been frozen since 2024-05-22 and two of its bugs needed local workarounds. The git history of this folder reads as a diff from upstream:
+Vendored into ShardMind on 2026-10-04 (#43), because upstream has been frozen since 2024-05-22 and its bugs needed local workarounds. The git history of this folder reads as a diff from upstream:
 
 1. Upstream, byte for byte: `components/select`, `components/text-input`, `lib/option-map.ts`, `theme.tsx`, `types.ts`.
 2. Adapted to stand alone:
@@ -13,6 +13,7 @@ Vendored into ShardMind on 2026-10-04 (#43), because upstream has been frozen si
    - `index.ts` is the entry point.
 3. Fixes, each its own commit, named by issue:
    - `Select` fires `onChange` on Enter for the seeded default (ShardMind #103);
-   - `TextInput` does not fire `onChange` on a parent re-render (vadimdemedes/ink-ui#26).
+   - `TextInput` does not fire `onChange` on a parent re-render (vadimdemedes/ink-ui#26);
+   - `Select` starts with focus on its `defaultValue`, scrolled into view (upstream always focused the first option).
 
 Imports allowed: `ink`, `react`, `node:` built-ins, and files in this folder.
