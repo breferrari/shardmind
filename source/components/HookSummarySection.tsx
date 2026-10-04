@@ -2,8 +2,7 @@ import type { ReactElement } from 'react';
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import { headLines, type HookStage, type HookSummary } from '../core/hook.js';
-import { hookOutputForDisplay } from './hook-output.js';
-import { sanitizeHookText } from '../core/color-env.js';
+import { hookOutputForDisplay, hookPathForDisplay } from './hook-output.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
 import { assertNever } from '../runtime/types.js';
 
@@ -151,7 +150,7 @@ function violationMessage(
   violation: NonNullable<HookSummary['violation']>,
 ): string {
   // The hook chose these file names, so they are hook output too (#204).
-  const paths = violation.paths.map((p) => sanitizeHookText(p, false)).join(', ');
+  const paths = violation.paths.map(hookPathForDisplay).join(', ');
   switch (violation.kind) {
     case 'managed-write':
       return `${HOOK_NAME[stage]} modified or removed managed file(s): ${paths}. Bootstrap may only write unmanaged paths — move managed-file edits to the personalize hook.`;

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { applyNoColor, sanitizeHookText } from '../../source/core/color-env.js';
+import { applyNoColor, sanitizeHookLine, sanitizeHookPath, sanitizeHookText } from '../../source/core/color-env.js';
 
 function applied(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const copy = { ...env };
@@ -170,6 +170,9 @@ describe('sanitizeHookText', () => {
   it.each([
     ['a colour set before the CR', '\x1b[31m\rERROR: disk full', '\x1b[31mERROR: disk full', 'ERROR: disk full'],
     ['a style on the overwritten text', '\x1b[1;33mwarn 10%\rwarn 100%', '\x1b[1;33mwarn 100%', 'warn 100%'],
+    ['a reset after the shown text', '\x1b[1mBuilding 50%\r\x1b[0m', '\x1b[1mBuilding 50%\x1b[0m', 'Building 50%'],
+    ['a colour per update, reduced at each reset', '\x1b[32m1%\x1b[0m\r\x1b[32m2%\x1b[0m\r\x1b[32m3%\x1b[0m', '\x1b[32m3%\x1b[0m', '3%'],
+    ['an erase after the text', 'done\r\x1b[2K', 'done', 'done'],
   ])('carries SGR across a CR, as a terminal keeps its pen: %s', (_name, input, coloured, plain) => {
     expect(sanitizeHookText(input, true)).toBe(coloured);
     expect(sanitizeHookText(input, false)).toBe(plain);
@@ -205,8 +208,37 @@ describe('sanitizeHookText', () => {
     ['a tab mid-word', 'ab\tc', 'ab      c'],
     ['a tab on a stop', 'abcdefgh\tx', 'abcdefgh        x'],
     ['a tab after kept colour', '\x1b[32mab\x1b[0m\tc', '\x1b[32mab\x1b[0m      c'],
+    ['a tab after wide characters', '日本\tx', '日本    x'],
+    ['a tab after a combining mark', 'é\tx', 'é       x'],
+    ['a tab after an astral emoji', '\u{1F389}\tx', '\u{1F389}      x'],
   ])('expands %s to spaces, to the next multiple of 8', (_name, input, expected) => {
     expect(sanitizeHookText(input, true)).toBe(expected);
+  });
+
+  it.each([
+    ['only colour codes', '\x1b[0m'],
+    ['colour codes around a CR', '\x1b[31m\r'],
+    ['only removed controls', '\x07\x08'],
+  ])('reduces a line of %s to nothing', (_name, line) => {
+    expect(sanitizeHookLine(line, true)).toBe('');
+    expect(sanitizeHookLine(line, false)).toBe('');
+  });
+});
+
+describe('sanitizeHookPath', () => {
+  it.each([
+    ['a CR that would hide the real name', 'secrets-dump.sh\rnotes.md', 'secrets-dump.sh\\rnotes.md'],
+    ['an LF that would forge a line', 'x.md\n✔ Bootstrap completed.', 'x.md\\n✔ Bootstrap completed.'],
+    ['a tab', 'a\tb.md', 'a\\tb.md'],
+    ['OSC 52 and OSC 8', '\x1b]52;c;aGk=\x07\x1b]8;;https://evil.example\x07notes.md\x1b]8;;\x07', 'notes.md'],
+    ['colour, which a path never keeps', '\x1b[31mred.md\x1b[0m', 'red.md'],
+    ['BEL and BS', 'a\x07\x08b.md', 'ab.md'],
+  ])('shows %s safely', (_name, input, expected) => {
+    expect(sanitizeHookPath(input)).toBe(expected);
+  });
+
+  it('leaves an ordinary path alone', () => {
+    expect(sanitizeHookPath('brain/North Star.md')).toBe('brain/North Star.md');
   });
 
   it.each([

@@ -81,4 +81,32 @@ describe.each([0, 1] as const)('hook output control sequences, chalk level %i', 
     expect(frame).not.toContain(SEQUENCES['OSC 52 clipboard write']);
     expect(frame).not.toContain(SEQUENCES['OSC 8 hyperlink open']);
   });
+
+  it('the write-boundary warning cannot hide a path behind a CR or forge a line with an LF', () => {
+    chalk.level = level;
+    const frame =
+      render(
+        <HookSummarySection
+          outcomes={[
+            {
+              slot: 'personalize',
+              summary: {
+                exitCode: 0,
+                violation: { kind: 'unmanaged-create', paths: ['secrets-dump.sh\rnotes.md', 'x.md\nForged line'] },
+              },
+            },
+          ]}
+        />,
+      ).lastFrame() ?? '';
+    expect(frame).toContain('secrets-dump.sh\\rnotes.md');
+    expect(frame).toContain('x.md\\nForged line');
+    expect(frame).not.toMatch(/^Forged line/m);
+  });
+
+  it('the live tail skips a line that is only colour codes', () => {
+    chalk.level = level;
+    const frame = render(<HookProgress stage="post-install" output={'one\n\x1b[0m\ntwo\n'} shardLabel="acme/demo" />).lastFrame() ?? '';
+    const lines = frame.split('\n').slice(2);
+    expect(lines.filter((l) => l.replace(/\x1b\[[0-9;]*m/g, '').trim() === '')).toHaveLength(0);
+  });
 });
