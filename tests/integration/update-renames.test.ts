@@ -533,4 +533,105 @@ describe('update applies rename migrations (#178)', () => {
     expect(await read(COPY)).toBe('My edit.\n');
     expect(await exists('AGENTS.md')).toBe(false);
   });
+
+  describe('a case-only rename needs no migration (#169)', () => {
+    const LOWER = 'claude.md';
+    /** The release that renames CLAUDE.md to claude.md, with no `migrations` entry. */
+    const caseCopy = (version: string, edits: SourceEdits = {}) =>
+      shardAt(version, { moves: { [COPY]: LOWER }, edits });
+    /** The vault root's entries as the filesystem spells them: `exists` cannot tell case apart. */
+    const rootNames = async () => (await fsp.readdir(vault)).filter((n) => n.toLowerCase() === LOWER);
+    /** Whether the test filesystem folds case, probed beside the vault. */
+    const foldsCase = async () => {
+      await fsp.writeFile(path.join(root, 'Case-Probe'), '');
+      return fsp.access(path.join(root, 'case-probe')).then(() => true, () => false);
+    };
+
+    it('runs on a case-folding filesystem on macOS and Windows', async () => {
+      // The scenarios below matter where names fold; prove CI's macOS and
+      // Windows jobs exercise that path rather than the Linux one.
+      if (process.platform === 'darwin' || process.platform === 'win32') expect(await foldsCase()).toBe(true);
+    });
+
+    it('moves an unchanged file to its new case, keeping its bytes and its state entry', async () => {
+      await install();
+      const before = await read(COPY);
+      const { result } = await update(await caseCopy('0.2.0'));
+      expect(await rootNames()).toEqual([LOWER]);
+      expect(await read(LOWER)).toBe(before);
+      const state = await files();
+      expect(state[COPY]).toBeUndefined();
+      expect(state[LOWER]?.ownership).toBe('managed');
+      expect(result.summary.renamedFiles).toEqual([{ from: COPY, to: LOWER }]);
+    });
+
+    it('writes a changed file under its new case and does not delete it', async () => {
+      // On a case-folding filesystem, writing claude.md writes into CLAUDE.md:
+      // deleting the old path afterwards would delete the new content.
+      await install();
+      await update(await caseCopy('0.2.0', { [LOWER]: (s) => s.replace(COPY_LINE, 'Changed in 0.2.0.') }));
+      expect(await rootNames()).toEqual([LOWER]);
+      expect(await read(LOWER)).toContain('Changed in 0.2.0.');
+      expect((await files())[LOWER]?.ownership).toBe('managed');
+    });
+
+    it("merges the user's edits with the shard's change under the new case", async () => {
+      await install();
+      const note = await read(NOTE);
+      await write(NOTE, note.replace('## Goals\n\n-', '## Goals\n\n- Ship v6'));
+      const v2 = await shardAt('0.2.0', {
+        moves: { [NOTE_SRC]: 'brain/north star.md.njk' },
+        edits: { 'brain/north star.md.njk': (src) => src.replace('# North Star', '# North Star (v2)') },
+      });
+      const { plan } = await update(v2);
+      expect(plan.pendingConflicts).toEqual([]);
+      expect((await fsp.readdir(path.join(vault, 'brain'))).filter((n) => n.toLowerCase() === 'north star.md')).toEqual(['north star.md']);
+      const merged = await read('brain/north star.md');
+      expect(merged).toContain('- Ship v6');
+      expect(merged).toContain('# North Star (v2)');
+      expect((await files())['brain/north star.md']?.ownership).toBe('modified');
+    });
+
+    it('applies when the user already renamed the file to the new case', async (ctx) => {
+      if (!(await foldsCase())) ctx.skip(); // On Linux the two names are two files: see the next test.
+      await install();
+      const before = await read(COPY);
+      await fsp.rename(path.join(vault, COPY), path.join(vault, LOWER));
+      await update(await caseCopy('0.2.0'));
+      expect(await rootNames()).toEqual([LOWER]);
+      expect(await read(LOWER)).toBe(before);
+      expect(Object.keys(await files())).toContain(LOWER);
+    });
+
+    it('falls back to remove-and-add when both names exist as two files', async (ctx) => {
+      if (await foldsCase()) ctx.skip(); // Only a case-sensitive filesystem holds both.
+      await install();
+      await write(LOWER, 'My own lower-case notes.\n');
+      const { plan } = await update(await caseCopy('0.2.0'));
+      expect(plan.actions.some((a) => a.renamedFrom !== undefined)).toBe(false);
+      // The user's file at the new path is a preexisting add-collision, kept as theirs.
+      expect(plan.pendingConflicts.map((c) => c.path)).toEqual([LOWER]);
+      expect(await read(LOWER)).toBe('My own lower-case notes.\n');
+    });
+
+    it('a failure between the two renames restores the old name and leaves no temporary file', async () => {
+      await install();
+      const before = await read(COPY);
+      const v2 = await caseCopy('0.2.0');
+      // The last hop into the new name fails: on a case-folding filesystem the
+      // file is then at its temporary name, on a case-sensitive one still at
+      // the old path.
+      const realRename = fsp.rename;
+      vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+        if (path.basename(String(to)) === LOWER) throw new Error('rename interrupted');
+        return realRename(from, to);
+      });
+      await expect(update(v2)).rejects.toThrow(/rename interrupted/);
+      vi.restoreAllMocks();
+      expect(await rootNames()).toEqual([COPY]);
+      expect(await read(COPY)).toBe(before);
+      expect((await fsp.readdir(vault)).filter((n) => n.includes('shardmind-case'))).toEqual([]);
+      expect(Object.keys(await files())).toContain(COPY);
+    });
+  });
 });

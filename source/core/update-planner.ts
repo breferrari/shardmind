@@ -31,6 +31,7 @@ import { ShardMindError } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { computeMergeAction } from './differ.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
+import { isCaseOnlyRename } from './rename-migrations.js';
 import { resolveModules } from './modules.js';
 import { renderFile, createRenderer } from './renderer.js';
 import { isBinaryForMerge, sha256, mapConcurrent } from './fs-utils.js';
@@ -402,7 +403,12 @@ const WRITE_ACTIONS = new Set<UpdateAction['kind']>([
  * starts tracking — including an untracked file adopted because it is
  * already the new version (#62) — and `deletes` it removes.
  */
-export function pathsTheUpdateTouches(actions: readonly UpdateAction[]): { writes: string[]; deletes: string[] } {
+export function pathsTheUpdateTouches(actions: readonly UpdateAction[]): {
+  writes: string[];
+  deletes: string[];
+  /** Renames that only change a name's case (#169): the guard reads neither name as a case-mismatch. */
+  caseRenames: Array<[string, string]>;
+} {
   const writes = actions.filter(
     (a) =>
       WRITE_ACTIONS.has(a.kind) ||
@@ -417,6 +423,9 @@ export function pathsTheUpdateTouches(actions: readonly UpdateAction[]): { write
       // A rename removes or moves its old path (#178).
       ...actions.flatMap((a) => (a.renamedFrom === undefined ? [] : [a.renamedFrom])),
     ],
+    caseRenames: actions.flatMap((a) =>
+      a.renamedFrom !== undefined && isCaseOnlyRename(a.renamedFrom, a.path) ? [[a.renamedFrom, a.path] as [string, string]] : [],
+    ),
   };
 }
 
@@ -805,7 +814,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   // Refuse before any prompt or `--json` plan, so a dry run reports what
   // the run would do (#163). The executor checks again before it writes.
   const touched = pathsTheUpdateTouches(actions);
-  await assertSafeVaultPaths(vaultRoot, touched.writes, touched.deletes);
+  await assertSafeVaultPaths(vaultRoot, touched.writes, touched.deletes, touched.caseRenames);
 
   return { actions, pendingConflicts, counts };
 }

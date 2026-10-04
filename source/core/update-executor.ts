@@ -24,7 +24,7 @@ import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
-import { assertRenameTargetFree, moveToFreePath } from './rename-migrations.js';
+import { assertRenameTargetFree, isCaseOnlyRename, moveToFreePath, renameCaseInPlace } from './rename-migrations.js';
 import { hashValues } from './install-planner.js';
 import {
   cacheTemplates,
@@ -179,7 +179,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // Checked again at write time (#163): planning may have been a while
   // ago, behind prompts. Before the snapshot or any write, dry run included.
   const touched = pathsTheUpdateTouches(plan.actions);
-  await assertSafeVaultPaths(vaultRoot, touched.writes, touched.deletes);
+  await assertSafeVaultPaths(vaultRoot, touched.writes, touched.deletes, touched.caseRenames);
   // A rename's new path was free when planned; refuse before any write if
   // something arrived there during the prompts (#178).
   for (const action of plan.actions) {
@@ -654,7 +654,14 @@ async function completeRename(
   // What the write pass did, not a re-derivation of it.
   const wroteNewPath = ctx.written.has(to);
   if (!ctx.dryRun) {
-    if (wroteNewPath) await fsp.rm(path.join(ctx.vaultRoot, from), { force: true });
+    // A case-only rename on a case-folding filesystem wrote into the old
+    // file itself: unlinking the old path would delete the new content, so
+    // it is renamed in place (#169).
+    if (wroteNewPath) {
+      if (!(await renameCaseInPlace(ctx.vaultRoot, from, to, ctx.addedPaths))) {
+        await fsp.rm(path.join(ctx.vaultRoot, from), { force: true });
+      }
+    }
     // Checked at the top of the run; something may still arrive during the
     // write pass. A volatile file the user deleted has no file to move.
     else await moveToFreePath(ctx.vaultRoot, from, to, ctx.addedPaths, 'update');
@@ -708,6 +715,11 @@ async function snapshotForRollback(
       toSnapshot.add(action.renamedFrom);
       toSnapshot.add(action.path);
     }
+  }
+  // A case-only rename's two paths can be one file (#169): back it up once,
+  // under its old name, which a rollback restores.
+  for (const action of plan.actions) {
+    if (action.renamedFrom !== undefined && isCaseOnlyRename(action.renamedFrom, action.path)) toSnapshot.delete(action.path);
   }
 
   const filesBackupDir = path.join(backupDir, 'files');
