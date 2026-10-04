@@ -8,7 +8,7 @@
  * #109 (firedRef leaked across files in DiffView).
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { cleanup } from 'ink-testing-library';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -532,6 +532,53 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   }, 90_000);
+
+  // ───── Scenario 17g: --dry-run --json at the removed-files decision → one refusal document (#230) ─────
+
+  it('17g. --dry-run --json at a removed-files decision writes a refusal document, not a hidden prompt (#230)', async () => {
+    const { stub } = getCtx();
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rmj-'));
+    const written: string[] = [];
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    });
+    try {
+      const manifestOverrides = { hooks: {}, name: 'removed-file-json', namespace: 'flowtest' };
+      const v01 = await buildCustomTarball({ version: '0.1.0', prefix: 'removed-json-0.1.0', manifestOverrides, outDir: tmpDir });
+      const v02 = await buildCustomTarball({
+        version: '0.2.0',
+        prefix: 'removed-json-0.2.0',
+        manifestOverrides,
+        outDir: tmpDir,
+        mutate: async (work) => {
+          await fs.rm(path.join(work, 'CLAUDE.md'), { force: true });
+        },
+      });
+      stub.setVersion(REMOVED_FILE_SLUG, '0.1.0', v01);
+      stub.setLatest(REMOVED_FILE_SLUG, '0.1.0');
+      const vault = await createInstalledVault({ stub, shardRef: REMOVED_FILE_REF, values: DEFAULT_VALUES, prefix: 's17g-removed-json' });
+      try {
+        await vault.writeFile('CLAUDE.md', `${await vault.readFile('CLAUDE.md')}\nUser edit.\n`);
+        stub.setVersion(REMOVED_FILE_SLUG, '0.2.0', v02);
+        stub.setLatest(REMOVED_FILE_SLUG, '0.2.0');
+
+        const r = mountUpdate({ vaultRoot: vault.root, options: { dryRun: true, json: true } });
+        const deadline = Date.now() + 30_000;
+        while (!written.join('').includes('"schemaVersion"') && Date.now() < deadline) await tick(50);
+        const doc = JSON.parse(written.join('')) as { ok: boolean; error: { code: string; message: string } };
+        expect(doc.ok).toBe(false);
+        expect(doc.error.code).toBe('UPDATE_JSON_NEEDS_ANSWERS');
+        expect(doc.error.message).toContain('CLAUDE.md');
+        expect(r.lastFrame() ?? '').not.toContain('Removed by new shard');
+      } finally {
+        await vault.cleanup();
+      }
+    } finally {
+      spy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   // ───── Scenario 18: upgrade target declares an unsatisfiable engine → refuse (#121) ─────
 

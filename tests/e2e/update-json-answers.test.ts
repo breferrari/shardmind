@@ -60,7 +60,18 @@ async function updateJson(vault: Vault, extra: string[] = []): Promise<{ doc: Re
 
 let newModule: Fixture;
 let removedFile: Fixture;
+let bothPending: Fixture;
 let plainBump: Fixture;
+
+/** Adds a removable `notes` module with one file. */
+async function addNotesModule(work: string): Promise<void> {
+  const schemaPath = path.join(work, '.shardmind', 'shard-schema.yaml');
+  const schema = parseYaml(await fs.readFile(schemaPath, 'utf-8')) as { modules: Record<string, unknown> };
+  schema.modules['notes'] = { label: 'Notes', paths: ['notes/'], removable: true };
+  await fs.writeFile(schemaPath, stringifyYaml(schema), 'utf-8');
+  await fs.mkdir(path.join(work, 'notes'), { recursive: true });
+  await fs.writeFile(path.join(work, 'notes', 'Inbox.md'), '# Inbox\n', 'utf-8');
+}
 
 beforeAll(async () => {
   await ensureBuilt();
@@ -69,18 +80,16 @@ beforeAll(async () => {
     shards: {
       'jsontest/new-module': { versions: {}, latest: '0.1.0' },
       'jsontest/removed-file': { versions: {}, latest: '0.1.0' },
+      'jsontest/both-pending': { versions: {}, latest: '0.1.0' },
       'jsontest/plain-bump': { versions: {}, latest: '0.1.0' },
     },
   });
-  newModule = await fixture('jsontest/new-module', async (work) => {
-    const schemaPath = path.join(work, '.shardmind', 'shard-schema.yaml');
-    const schema = parseYaml(await fs.readFile(schemaPath, 'utf-8')) as { modules: Record<string, unknown> };
-    schema.modules['notes'] = { label: 'Notes', paths: ['notes/'], removable: true };
-    await fs.writeFile(schemaPath, stringifyYaml(schema), 'utf-8');
-    await fs.mkdir(path.join(work, 'notes'), { recursive: true });
-    await fs.writeFile(path.join(work, 'notes', 'Inbox.md'), '# Inbox\n', 'utf-8');
-  });
+  newModule = await fixture('jsontest/new-module', addNotesModule);
   removedFile = await fixture('jsontest/removed-file', async (work) => {
+    await fs.rm(path.join(work, 'CLAUDE.md'), { force: true });
+  });
+  bothPending = await fixture('jsontest/both-pending', async (work) => {
+    await addNotesModule(work);
     await fs.rm(path.join(work, 'CLAUDE.md'), { force: true });
   });
   plainBump = await fixture('jsontest/plain-bump', async (work) => {
@@ -98,29 +107,59 @@ afterAll(async () => {
   if (outDir) await fs.rm(outDir, { recursive: true, force: true, maxRetries: 5 });
 });
 
+interface Refusal {
+  ok: false;
+  error: { code: string; message: string; hint?: string };
+}
+interface Plan {
+  ok: true;
+  result: { counts: Record<string, number>; files: Array<{ path: string; action: string }> };
+}
+
+const editClaude = async (v: Vault): Promise<void> => {
+  await v.writeFile('CLAUDE.md', `${await v.readFile('CLAUDE.md')}\nMy edit.\n`);
+};
+
+function actionOf(plan: Plan, file: string): string | undefined {
+  return plan.result.files.find((f) => f.path === file)?.action;
+}
+
 describe('update --dry-run --json that would need answers', () => {
-  it('names a new optional module instead of writing nothing, and --yes answers it', async () => {
+  it('names a new optional module instead of writing nothing, and --yes includes it', async () => {
     const vault = await installedThenBumped(newModule);
     const refused = await updateJson(vault);
     expect(refused.exitCode).toBe(1);
-    expect(refused.doc).toMatchObject({ ok: false, error: { code: 'UPDATE_JSON_NEEDS_ANSWERS' } });
-    expect(JSON.stringify(refused.doc)).toContain('notes');
+    const { error } = refused.doc as unknown as Refusal;
+    expect(error.code).toBe('UPDATE_JSON_NEEDS_ANSWERS');
+    expect(error.message).toMatch(/new optional modules \(notes\)/);
+    expect(error.hint).toContain('--yes');
 
-    const answered = await updateJson(vault, ['--yes']);
-    expect(answered.doc).toMatchObject({ ok: true });
+    const answered = (await updateJson(vault, ['--yes'])).doc as unknown as Plan;
+    expect(answered.ok).toBe(true);
+    expect(actionOf(answered, 'notes/Inbox.md')).toBe('add');
   }, 120_000);
 
-  it('names a removed file the user edited instead of writing nothing, and --yes answers it', async () => {
-    const vault = await installedThenBumped(removedFile, async (v) => {
-      await v.writeFile('CLAUDE.md', `${await v.readFile('CLAUDE.md')}\nMy edit.\n`);
-    });
+  it('names a removed file the user edited instead of writing nothing, and --yes keeps it', async () => {
+    const vault = await installedThenBumped(removedFile, editClaude);
     const refused = await updateJson(vault);
     expect(refused.exitCode).toBe(1);
-    expect(refused.doc).toMatchObject({ ok: false, error: { code: 'UPDATE_JSON_NEEDS_ANSWERS' } });
-    expect(JSON.stringify(refused.doc)).toContain('CLAUDE.md');
+    const { error } = refused.doc as unknown as Refusal;
+    expect(error.code).toBe('UPDATE_JSON_NEEDS_ANSWERS');
+    expect(error.message).toMatch(/removed files you edited \(CLAUDE\.md\)/);
+    expect(error.hint).toContain('--yes');
 
-    const answered = await updateJson(vault, ['--yes']);
-    expect(answered.doc).toMatchObject({ ok: true });
+    const answered = (await updateJson(vault, ['--yes'])).doc as unknown as Plan;
+    expect(answered.ok).toBe(true);
+    expect(actionOf(answered, 'CLAUDE.md')).toBe('keep_as_user');
+  }, 120_000);
+
+  it('names both decisions when both are pending, so --yes decides nothing unannounced', async () => {
+    const vault = await installedThenBumped(bothPending, editClaude);
+    const refused = await updateJson(vault);
+    const { error } = refused.doc as unknown as Refusal;
+    expect(error.code).toBe('UPDATE_JSON_NEEDS_ANSWERS');
+    expect(error.message).toMatch(/new optional modules \(notes\)/);
+    expect(error.message).toMatch(/removed files you edited \(CLAUDE\.md\)/);
   }, 120_000);
 
   it('still emits the plan without --yes when nothing needs an answer', async () => {
@@ -128,5 +167,18 @@ describe('update --dry-run --json that would need answers', () => {
     const { doc, exitCode } = await updateJson(vault);
     expect(exitCode).toBe(0);
     expect(doc).toMatchObject({ ok: true });
+  }, 120_000);
+
+  it('answers an up-to-date vault with an empty plan instead of nothing', async () => {
+    stub.setVersion(plainBump.slug, '0.1.0', plainBump.v01);
+    stub.setLatest(plainBump.slug, '0.1.0');
+    const vault = await createInstalledVault({ stub, shardRef: `github:${plainBump.slug}`, values: VALUES, prefix: 'update-json-current' });
+    vaults.push(vault);
+    const { doc, exitCode } = await updateJson(vault);
+    expect(exitCode).toBe(0);
+    const plan = doc as unknown as Plan;
+    expect(plan.ok).toBe(true);
+    expect(plan.result.files).toEqual([]);
+    expect(Object.values(plan.result.counts).every((n) => n === 0)).toBe(true);
   }, 120_000);
 });

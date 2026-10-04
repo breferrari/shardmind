@@ -27,7 +27,7 @@ import type {
   UpdateStatus,
 } from '../runtime/types.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
-import type { UpdateAction, UpdatePlan } from './update-planner.js';
+import { emptyUpdatePlanCounts, type UpdateAction, type UpdatePlan } from './update-planner.js';
 
 /** Bumped only on a breaking reshape, never for additive fields. */
 export const JSON_SCHEMA_VERSION = 1;
@@ -280,6 +280,11 @@ export function updatePlanResult(
       .map(updateFile)
       .sort((a, b) => byPath(a.path, b.path)),
   };
+}
+
+/** An up-to-date vault's plan: the same shape, nothing to do (#230). */
+export function upToDatePlanResult(opts: { dryRun: boolean }): UpdatePlanResult {
+  return { dryRun: opts.dryRun, counts: emptyUpdatePlanCounts(), files: [] };
 }
 
 // ---------------------------------------------------------------------------
