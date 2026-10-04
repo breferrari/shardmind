@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
+import { SHARDMIND_DIR } from '../../source/runtime/vault-paths.js';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -12,6 +13,7 @@ import {
   rehashManagedFiles,
   snapshotTrackedHashes,
   removeEngineWrites,
+  createBackupDir,
 } from '../../source/core/state.js';
 import type { ShardState, ShardManifest, ShardSchema } from '../../source/runtime/types.js';
 import { ShardMindError } from '../../source/runtime/types.js';
@@ -711,5 +713,100 @@ describe('removeEngineWrites (#215, #243)', () => {
     await fsp.mkdir(path.join(snapshot, 'files'), { recursive: true });
     expect(await removeEngineWrites(vault, { snapshotDir: snapshot, removeEmptyDir: true })).toEqual([]);
     await expect(fsp.access(path.join(vault, '.shardmind'))).rejects.toThrow();
+  });
+});
+
+describe('createBackupDir (#248)', () => {
+  let vault: string;
+  beforeEach(() => {
+    vault = path.join(os.tmpdir(), `backup-dir-${crypto.randomUUID()}`);
+  });
+  afterEach(async () => {
+    await fsp.rm(vault, { recursive: true, force: true });
+  });
+
+  it('gives two adopts in the same instant their own folders, the second suffixed', async () => {
+    const now = new Date('2026-10-04T12:00:00.123Z');
+    const a = await createBackupDir(vault, now, 'adopt');
+    const b = await createBackupDir(vault, now, 'adopt');
+    expect(path.basename(a)).toBe('adopt-2026-10-04T12-00-00-123');
+    expect(path.basename(b)).toBe('adopt-2026-10-04T12-00-00-123-1');
+  });
+
+  it("throws the kind's write error, not a raw errno, when the folder cannot be made", async () => {
+    // A file where .shardmind/ should be.
+    await fsp.mkdir(vault, { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind'), 'not a folder');
+    await expect(createBackupDir(vault, new Date(), 'adopt')).rejects.toMatchObject({ code: 'ADOPT_WRITE_FAILED' });
+  });
+
+  it('wraps a failure creating the folder itself, such as EACCES', async () => {
+    const realMkdir = fsp.mkdir;
+    const spy = vi.spyOn(fsp, 'mkdir').mockImplementation((async (p: string, opts?: { recursive?: boolean }) => {
+      if (opts?.recursive === false) throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
+      return realMkdir(p, opts);
+    }) as typeof fsp.mkdir);
+    try {
+      await expect(createBackupDir(vault, new Date(), 'adopt')).rejects.toMatchObject({
+        code: 'ADOPT_WRITE_FAILED',
+        message: expect.stringMatching(/simulated EACCES/),
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('stops when the name keeps reporting ENOENT after its parents were made', async () => {
+    const realMkdir = fsp.mkdir;
+    const spy = vi.spyOn(fsp, 'mkdir').mockImplementation((async (p: string, opts?: { recursive?: boolean }) => {
+      if (opts?.recursive === false) throw Object.assign(new Error('simulated ENOENT'), { code: 'ENOENT' });
+      return realMkdir(p, opts);
+    }) as typeof fsp.mkdir);
+    try {
+      await expect(createBackupDir(vault, new Date(), 'update')).rejects.toMatchObject({ code: 'UPDATE_WRITE_FAILED' });
+      // Once for the name, once for the parents, once more for the name.
+      expect(spy.mock.calls.filter(([, o]) => (o as { recursive?: boolean })?.recursive === false)).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('never reuses a folder that is already there, even an empty one', async () => {
+    const now = new Date('2026-10-04T12:00:00.000Z');
+    const taken = path.join(vault, '.shardmind', 'backups', 'adopt-2026-10-04T12-00-00-000');
+    await fsp.mkdir(taken, { recursive: true });
+    expect(await createBackupDir(vault, now, 'adopt')).toBe(`${taken}-1`);
+  });
+});
+
+describe('createBackupDir — concurrency and clock edge cases', () => {
+  let tempRoot: string;
+
+  beforeEach(async () => {
+    tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'update-backup-'));
+    // Seed .shardmind/ so createBackupDir can write under it.
+    await fsp.mkdir(path.join(tempRoot, SHARDMIND_DIR), { recursive: true });
+  });
+  afterEach(async () => {
+    await fsp.rm(tempRoot, { recursive: true, force: true });
+  });
+
+  it('allocates distinct directories when called twice at the exact same instant', async () => {
+    const frozen = new Date('2026-04-20T10:30:45.123Z');
+    const a = await createBackupDir(tempRoot, frozen, 'update');
+    const b = await createBackupDir(tempRoot, frozen, 'update');
+    expect(a).not.toBe(b);
+    const statA = await fsp.stat(a);
+    const statB = await fsp.stat(b);
+    expect(statA.isDirectory()).toBe(true);
+    expect(statB.isDirectory()).toBe(true);
+  });
+
+  it('the second call lands under -1 when the first took the un-suffixed name', async () => {
+    const frozen = new Date('2026-04-20T10:30:45.999Z');
+    const a = await createBackupDir(tempRoot, frozen, 'update');
+    const b = await createBackupDir(tempRoot, frozen, 'update');
+    expect(path.basename(b)).toMatch(/-1$/);
+    expect(a).not.toBe(b);
   });
 });

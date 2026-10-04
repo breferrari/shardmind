@@ -663,6 +663,8 @@ interface RenderedFile {
 
 ### 4.7 `state.ts`
 
+`state.ts` also holds the two helpers for the rest of `.shardmind/`'s layout: `removeEngineWrites` (a rollback's cleanup, §4.11b, §4.18) and `createBackupDir(vaultRoot, now, kind)` (the run's snapshot folder, §4.12 step 1, §4.18 step 2, #248).
+
 **Purpose**: Read and write `.shardmind/state.json`. Create `.shardmind/` directory structure.
 
 **Baseline rule** (binding on every writer of `state.files`, see `docs/SHARD-LAYOUT.md §Re-hash + state`): `rendered_hash` is the hash of bytes the engine produced for the file (a render or a copy), or of bytes a hook wrote over a file the engine owned. It is never the hash of bytes the user authored. Drift (§4.8) reads "disk equals `rendered_hash`" as "engine-owned and unchanged", so a user hash recorded there turns their edit into a silent overwrite on the next update (#150).
@@ -1086,7 +1088,7 @@ interface PlanUpdateInput {
 **Purpose**: Apply an `UpdatePlan` against a real vault, with snapshot-based rollback.
 
 **Flow**:
-1. Allocate a unique backup directory under `.shardmind/backups/update-<ISO-timestamp>[-N]/`. The millisecond-precision timestamp and numeric suffix together guarantee no collisions between concurrent or near-simultaneous updates.
+1. Allocate a unique backup directory under `.shardmind/backups/update-<ISO-timestamp>[-N]/`. The millisecond-precision timestamp and numeric suffix together guarantee no collisions between concurrent or near-simultaneous updates. `createBackupDir(vaultRoot, now, kind)` in `state.ts` does this for update and adopt alike (#248).
 2. **Snapshot**: copy every file the plan touches (modified content + `.shardmind/state.json` + cached `manifest.yaml`/`shard-schema.yaml`/`templates/`) into `files/` and `cache/` subdirectories of the backup dir. Parallel copies bounded by `SNAPSHOT_CONCURRENCY=16`.
 3. **Write pass**: for each non-delete action, fire progress event, write content, update in-memory `nextFiles` map, record summary stat. `overwrite` never adds to `addedPaths` (rollback erasure list); `add` and `restore_missing` do. `keep_as_user` untracks the path from `nextFiles` so the engine stops considering it managed. A `preexisting` add-collision resolved `keep_mine` or `skip` is dropped from `nextFiles` (left untracked) and listed in `summary.keptUntracked`, unless the run sets `adoptPreexisting` (`--adopt-preexisting`, #61): then it is recorded `modified` at the shard's hash (`newContentHash`), the baseline rule of §4.7, so the user's bytes are merged on later updates and the collision is not raised again. The `add` branch also pushes the path to `summary.addedFiles` — the carve-out the update machine reads to populate `HookContext.newFiles` (Invariant 3, additive-only post-update hooks). `overwrite`, `auto_merge`, `restore_missing`, and `accept_new` are all excluded since those paths were already in `state.files` before this run. The `overwrite` branch and conflict `accept_new` (including a `preexisting` untracked collision) push the path to `summary.replacedFiles`: the files whose existing bytes were swapped wholesale for the shard's, which the update summary lists by path (#153). `auto_merge`, `restore_missing` and `add` are not replacements. Populated in dry run too, so the dry-run summary previews the same list. The Changes line's "N replaced · M unchanged" split reads the planner's `counts.overwritten` (the managed-overwrite part of `counts.silent`, incremented at the same site), never arithmetic over the summary's lists.
 4. **Delete pass**: runs after all writes so a rename-style move (delete + add at a different path) can't clobber the incoming file.
@@ -1459,7 +1461,7 @@ rollbackAdopt(vaultRoot: string, backupDir: string, addedPaths: string[])
 
 **Algorithm**:
 1. `assertAdoptable` runs first. `.shardmind/state.json` present → `ADOPT_EXISTING_INSTALL`. `shard-values.yaml` present without state.json → `VALUES_FILE_COLLISION` (existing code; partial-adoption inconsistent state). Both fire before any disk mutation.
-2. Create `backupDir = .shardmind/backups/adopt-<ISO-timestamp>/files/`.
+2. Create `backupDir = .shardmind/backups/adopt-<ISO-timestamp>[-N]/` (its copies go under `files/`) with `createBackupDir(vaultRoot, now, 'adopt')` (`state.ts`), the allocator update uses (§4.12 step 1): a millisecond timestamp and an exclusive `mkdir`, so two adopts started in the same instant never share a snapshot folder (#248). After 1000 taken names it throws `ADOPT_WRITE_FAILED`.
 3. `snapshotForRollback`: copy every `differs+use_shard` user file into the backup tree under `mapConcurrent(SNAPSHOT_CONCURRENCY = 16)`. Tolerate ENOENT (defensive — user file vanished between plan and execute). Surface the backup dir to the caller via `onBackupReady` *before* any vault write so a mid-write SIGINT can find it.
 4. Apply per classification (writes pass; deletes are not part of adopt by design — user-only files are never enumerated):
    - `matches` → record managed FileState; no disk write. `onFileTouched(path, false)`.

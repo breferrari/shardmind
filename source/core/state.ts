@@ -404,3 +404,56 @@ export async function removeEngineWrites(
   }
   return failures;
 }
+
+/**
+ * Allocate this run's snapshot folder, `.shardmind/backups/<kind>-<stamp>`,
+ * for update and adopt alike (#248). The stamp is to the millisecond and the
+ * folder is created exclusively (`recursive: false` surfaces EEXIST), with
+ * `-<n>` on a taken name, so two runs started in the same instant never
+ * share a snapshot: a rollback of one would overwrite or delete the other's
+ * copies. The suffix also guards against clock rewinds, coarse filesystem
+ * mtime granularity, and two concurrent runs that hit the exact same
+ * millisecond. Any other failure (a read-only vault, a file where a
+ * folder should be) is the kind's write-failed error, not a raw errno.
+ */
+export async function createBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt'): Promise<string> {
+  const stamp = now.toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
+  const base = path.join(vaultRoot, SHARDMIND_DIR, 'backups', `${kind}-${stamp}`);
+  const code = kind === 'update' ? 'UPDATE_WRITE_FAILED' : 'ADOPT_WRITE_FAILED';
+  let parentsCreated = false;
+  for (let i = 0; i < 1000; i++) {
+    const candidate = i === 0 ? base : `${base}-${i}`;
+    try {
+      await fsp.mkdir(candidate, { recursive: false });
+      return candidate;
+    } catch (err) {
+      const errno = errnoCode(err);
+      if (errno === 'ENOENT' && !parentsCreated) {
+        // Parent folders don't exist yet. Create them once, then retry this
+        // name; a second ENOENT is a real failure, not a reason to loop.
+        parentsCreated = true;
+        try {
+          await fsp.mkdir(path.dirname(base), { recursive: true });
+        } catch (mkdirErr) {
+          throw backupDirError(kind, code, mkdirErr);
+        }
+        i--;
+        continue;
+      }
+      if (errno !== 'EEXIST') throw backupDirError(kind, code, err);
+    }
+  }
+  throw new ShardMindError(
+    `Could not allocate a unique ${kind} backup directory under ${SHARDMIND_DIR}/backups/`,
+    code,
+    `Too many recent ${kind} runs with the same timestamp — clean up old ${kind}-* directories and retry.`,
+  );
+}
+
+function backupDirError(kind: 'update' | 'adopt', code: 'UPDATE_WRITE_FAILED' | 'ADOPT_WRITE_FAILED', err: unknown): ShardMindError {
+  return new ShardMindError(
+    `Could not create the ${kind} backup directory under ${SHARDMIND_DIR}/backups/: ${err instanceof Error ? err.message : String(err)}`,
+    code,
+    `Check that ${SHARDMIND_DIR}/ and ${SHARDMIND_DIR}/backups/ are writable folders, then retry.`,
+  );
+}

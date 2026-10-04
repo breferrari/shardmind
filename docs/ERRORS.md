@@ -493,7 +493,7 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 ### `UPDATE_WRITE_FAILED`
 
-**Meaning:** A write during the update executor failed (mkdir + writeFile on a planned output path). Typically filesystem-level (permissions, disk-full, antivirus lock). When the rollback that follows could not restore every file, the update fails with `ROLLBACK_INCOMPLETE` instead, naming this code in its message (#247).
+**Meaning:** A write during the update executor failed (mkdir + writeFile on a planned output path). Typically filesystem-level (permissions, disk-full, antivirus lock). When the rollback that follows could not restore every file, the update fails with `ROLLBACK_INCOMPLETE` instead, naming this code in its message (#247). Also thrown before any write when the run's snapshot folder under `.shardmind/backups/` cannot be created: the folder isn't writable, or a thousand `update-<timestamp>` names are already taken (#248). Nothing was snapshotted or written then; clean up old `update-*` folders or fix the permissions and retry.
 
 **Remedy:** Check filesystem permissions on the vault directory and the mentioned path; retry. A rollback that could not restore everything is `ROLLBACK_INCOMPLETE`.
 
@@ -527,7 +527,7 @@ Thrown by `source/core/adopt-executor.ts` (and surfaced through `source/commands
 
 ### `ADOPT_WRITE_FAILED`
 
-**Meaning:** A write during the adopt executor failed (mkdir + writeFile on a planned output, or the `shard-values.yaml` write at finish). Surfaces both for engine-side write failures and for the `Missing adopt resolution for <path>` invariant assertion when a `differs` classification reaches the executor without a `keep_mine` / `use_shard` decision.
+**Meaning:** A write during the adopt executor failed (mkdir + writeFile on a planned output, or the `shard-values.yaml` write at finish). Surfaces both for engine-side write failures and for the `Missing adopt resolution for <path>` invariant assertion when a `differs` classification reaches the executor without a `keep_mine` / `use_shard` decision. Also thrown before any write when the run's snapshot folder under `.shardmind/backups/` cannot be created: the folder isn't writable, or a thousand `adopt-<timestamp>` names are already taken (#248). Nothing was snapshotted or written then; clean up old `adopt-*` folders or fix the permissions and retry.
 
 **Remedy:** For filesystem-level failures, check permissions on the vault directory and the mentioned path. The snapshot-rollback restored any user content the executor had snapshotted before the failure; newly-written shard-only files were erased. If it could not restore a file, the adopt fails with `ROLLBACK_INCOMPLETE` instead (#247). For the missing-resolution case, that's a state-machine bug — open an issue.
 

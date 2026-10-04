@@ -42,9 +42,9 @@ import {
   writeState,
   initShardDir,
   STATE_SCHEMA_VERSION,
+  createBackupDir,
 } from './state.js';
 import {
-  SHARDMIND_DIR,
   VALUES_FILE,
   STATE_FILE,
   CACHED_MANIFEST,
@@ -196,7 +196,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     if (action.renamedFrom !== undefined) await assertRenameTargetFree(vaultRoot, action.renamedFrom, action.path, 'update');
   }
 
-  const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now);
+  const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now, 'update');
   const addedPaths: string[] = [];
   // In-place case renames (#169, #195), journaled so any rollback undoes them.
   const journal = backupDir === null ? undefined : caseJournal(backupDir);
@@ -590,43 +590,6 @@ function actionEmitsProgress(action: UpdateAction): boolean {
 // ---------------------------------------------------------------------------
 // Snapshot + rollback
 // ---------------------------------------------------------------------------
-
-/**
- * Create a unique per-run backup directory under `.shardmind/backups/`.
- *
- * The timestamp retains milliseconds so updates in the same wall-clock
- * second don't collide. A numeric suffix is probed afterward as a final
- * guard against clock rewinds, coarse filesystem mtime granularity, and
- * two concurrent `shardmind update` invocations that happen to hit the
- * exact same millisecond. Pattern mirrors `install-executor.uniqueBackupPath`.
- */
-export async function createBackupDir(vaultRoot: string, now: Date): Promise<string> {
-  const stamp = now.toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
-  const base = path.join(vaultRoot, SHARDMIND_DIR, 'backups', `update-${stamp}`);
-  for (let i = 0; i < 1000; i++) {
-    const candidate = i === 0 ? base : `${base}-${i}`;
-    try {
-      await fsp.mkdir(candidate, { recursive: false });
-      // recursive:false surfaces EEXIST, which is the collision signal.
-      // Still need to create any missing parents; do that above the loop.
-      return candidate;
-    } catch (err) {
-      const code = errnoCode(err);
-      if (code === 'ENOENT') {
-        // Parent directories don't exist yet. Create them, then retry.
-        await fsp.mkdir(path.dirname(base), { recursive: true });
-        i--;
-        continue;
-      }
-      if (code !== 'EEXIST') throw err;
-    }
-  }
-  throw new ShardMindError(
-    `Could not allocate a unique update backup directory under ${SHARDMIND_DIR}/backups/`,
-    'UPDATE_WRITE_FAILED',
-    'Too many recent updates with the same timestamp — clean up old update-* directories and retry.',
-  );
-}
 
 /**
  * Finish a rename migration's move once the write pass is done (#178). An
