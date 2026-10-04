@@ -762,7 +762,9 @@ describe('update pipeline (against examples/minimal-shard)', () => {
 
       expect(err).toBeInstanceOf(ShardMindError);
       const wrapped = err as ShardMindError & { rollbackFailures?: Array<{ path: string; reason: string }>; cause?: unknown };
-      expect(wrapped.code).toBe('UPDATE_WRITE_FAILED');
+      expect(wrapped.code).toBe('ROLLBACK_INCOMPLETE');
+      expect(wrapped.message).toMatch(/\(UPDATE_WRITE_FAILED\)/);
+      expect(wrapped.message).toMatch(/Home\.md: restore failed: simulated EACCES on restore; its backup is at .*update-[^\n]*Home\.md/);
       expect(wrapped.message).toMatch(/Rollback incomplete/);
       expect(wrapped.rollbackFailures?.length ?? 0).toBeGreaterThan(0);
       // `cause` chains back to the original thrown error — no mutation

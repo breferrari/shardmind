@@ -55,6 +55,7 @@ import {
   removeEngineWrites,
 } from './state.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
+import { withRollbackFailures, type RollbackFailure } from './rollback-report.js';
 
 /** Cap on parallel snapshot copies — same budget update-executor uses. */
 const SNAPSHOT_CONCURRENCY = 16;
@@ -416,11 +417,14 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     return { state, summary, backupDir };
   } catch (err) {
     if (!dryRun && backupDir) {
+      let failures: RollbackFailure[] = [];
       try {
-        await rollbackAdopt(vaultRoot, backupDir, addedPaths);
+        failures = await rollbackAdopt(vaultRoot, backupDir, addedPaths);
       } catch {
         // Don't mask the original failure with a rollback failure.
       }
+      // A file left unrestored is never reported as rolled back (#247).
+      throw withRollbackFailures(err, failures);
     }
     throw err;
   }
@@ -520,11 +524,6 @@ async function snapshotForRollback(
   });
 }
 
-export interface AdoptRollbackFailure {
-  path: string;
-  reason: string;
-}
-
 /**
  * Restore from an adopt snapshot. Best-effort: per-file failures are
  * collected and returned so the command layer can surface them rather
@@ -536,8 +535,8 @@ export async function rollbackAdopt(
   vaultRoot: string,
   backupDir: string,
   addedPaths: string[],
-): Promise<AdoptRollbackFailure[]> {
-  const failures: AdoptRollbackFailure[] = [];
+): Promise<RollbackFailure[]> {
+  const failures: RollbackFailure[] = [];
 
   // Erase newly-introduced files first so a restore can't spuriously
   // succeed by landing on top of a brand-new file we wrote.
@@ -582,7 +581,8 @@ export async function rollbackAdopt(
         await fsp.mkdir(path.dirname(dst), { recursive: true });
         await fsp.copyFile(full, dst);
       } catch (err) {
-        failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}` });
+        // The snapshot is kept when a restore fails, so `full` is still there.
+        failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}`, backup: full });
       }
     }
   }

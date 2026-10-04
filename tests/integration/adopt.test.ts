@@ -12,7 +12,7 @@
  * stay in `tests/unit/adopt-planner.test.ts`.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -474,6 +474,62 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     // `writeState` call, and rollback drops `.shardmind/` regardless.
     expect(await readState(vault)).toBeNull();
     await expect(fsp.access(path.join(vault, 'shard-values.yaml'))).rejects.toThrow();
+  });
+
+  it('a rollback that cannot restore a file fails with ROLLBACK_INCOMPLETE naming it and its snapshot (#247)', async () => {
+    const { manifest, schema } = await loadShard();
+    const selections = defaultModuleSelections(schema);
+    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+    const myHome = '# Home — pre-adopt user version\n';
+    await fsp.writeFile(path.join(vault, 'Home.md'), myHome, 'utf-8');
+    const adoptPlan = await classifyAdoption({
+      vaultRoot: vault,
+      schema,
+      manifest,
+      tempDir: MINIMAL_SHARD,
+      values: values as Record<string, unknown>,
+      selections,
+    });
+    // A folder at a later shard-only path makes the adopt fail after Home.md
+    // was overwritten with the shard's version.
+    const blocker = adoptPlan.shardOnly[1]!.path;
+    await fsp.mkdir(path.join(vault, blocker, 'x'), { recursive: true });
+
+    // The restore of Home.md from the snapshot fails.
+    const homeAbs = path.join(vault, 'Home.md');
+    const backups = path.join(vault, '.shardmind', 'backups');
+    const realCopy = fsp.copyFile;
+    const copySpy = vi.spyOn(fsp, 'copyFile').mockImplementation(async (src, dst, mode) => {
+      if (dst === homeAbs && String(src).startsWith(backups)) {
+        throw Object.assign(new Error('simulated EACCES on restore'), { code: 'EACCES' });
+      }
+      return realCopy(src, dst, mode);
+    });
+    try {
+      const err = await runAdopt({
+        vaultRoot: vault,
+        manifest,
+        schema,
+        tempDir: MINIMAL_SHARD,
+        resolved: RESOLVED,
+        tarballSha256: 'deadbeef',
+        values: values as Record<string, unknown>,
+        selections,
+        plan: adoptPlan,
+        resolutions: { 'Home.md': 'use_shard' },
+      }).catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: 'ROLLBACK_INCOMPLETE' });
+      const message = (err as Error).message;
+      // The original failure first, with its code, then the path and its copy.
+      expect(message).toMatch(/\(ADOPT_WRITE_FAILED\)/);
+      expect(message).toMatch(/Home\.md: restore failed: simulated EACCES on restore; its backup is at .*adopt-[^\n]*Home\.md/);
+      expect((err as Error & { cause?: unknown }).cause).toMatchObject({ code: 'ADOPT_WRITE_FAILED' });
+      // The snapshot named in the message still holds the user's bytes.
+      const backup = /its backup is at (.*)$/m.exec(message)![1]!;
+      expect(await fsp.readFile(backup, 'utf-8')).toBe(myHome);
+    } finally {
+      copySpy.mockRestore();
+    }
   });
 
   it('rejects symlinks in the shard source via the walk', async () => {

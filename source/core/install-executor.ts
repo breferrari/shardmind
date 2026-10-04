@@ -33,6 +33,7 @@ import {
 import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths, ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
+import type { RollbackFailure } from './rollback-report.js';
 import {
   SHARDMIND_DIR,
   VALUES_FILE,
@@ -415,8 +416,10 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
  * `.shardmind/` entries included), then the folders it created, then
  * restore any backups. Removes only what this install made: never
  * `.shardmind/` wholesale, and never a folder the user already had (#215).
- * Best-effort — errors during rollback are swallowed because the primary
- * failure is already being reported.
+ * Best-effort: it never throws. It returns each backup it could not move
+ * back (#247), with where that backup still is, so the caller reports the
+ * rollback as incomplete; a failure removing what the install wrote is not
+ * reported.
  *
  * `createdDirs` is what `runInstall` reported through `onDirCreated`; only
  * those folders are removed, and only when empty.
@@ -426,7 +429,7 @@ export async function rollbackInstall(
   writtenPaths: string[],
   backups: BackupRecord[],
   createdDirs: string[],
-): Promise<void> {
+): Promise<RollbackFailure[]> {
   const deepestFirst = (paths: Iterable<string>) =>
     [...paths].sort((a, b) => toPosixRel(b).split('/').length - toPosixRel(a).split('/').length);
 
@@ -458,9 +461,12 @@ export async function rollbackInstall(
 
   // Restore any backups last, so they land on paths that have been
   // freed by the file removal above.
-  if (backups.length > 0) {
-    await restoreBackups(backups);
-  }
+  const { failed } = await restoreBackups(backups);
+  return failed.map((f) => ({
+    path: toPosixRel(path.relative(vaultRoot, f.originalPath)),
+    reason: `restore failed: ${f.reason}`,
+    backup: f.backupPath,
+  }));
 }
 
 /** A vault-relative path in POSIX form, whichever separator it was built with. */

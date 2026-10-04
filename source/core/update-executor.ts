@@ -20,6 +20,7 @@ import type {
   MergeStats,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
+import { withRollbackFailures, type RollbackFailure } from './rollback-report.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
@@ -360,38 +361,8 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
         // Rollback itself crashed — swallow and fall through to rethrow
         // the original so we never mask the root-cause failure.
       }
-      if (rollbackFailures.length > 0) {
-        // Surface partial-rollback detail in a NEW error rather than
-        // mutating `err.message`. Mutation throws on frozen/sealed
-        // third-party errors (a rare but real case for wrapped native
-        // errors) and compounds if the same error is caught again
-        // further up the stack and logged twice. Preserve the code when
-        // we can so command-layer code-based branching still works;
-        // attach the failures list and the original as `cause`.
-        const summary = rollbackFailures
-          .slice(0, 5)
-          .map((f) => `  - ${f.path}: ${f.reason}`)
-          .join('\n');
-        const more = rollbackFailures.length > 5
-          ? `\n  …and ${rollbackFailures.length - 5} more`
-          : '';
-        const baseMessage = err instanceof Error ? err.message : String(err);
-        const wrapped = err instanceof ShardMindError
-          ? new ShardMindError(
-              `${baseMessage}\nRollback incomplete (${rollbackFailures.length} files):\n${summary}${more}`,
-              err.code,
-              err.hint,
-            )
-          : new ShardMindError(
-              `${baseMessage}\nRollback incomplete (${rollbackFailures.length} files):\n${summary}${more}`,
-              'UPDATE_WRITE_FAILED',
-              'The update failed AND the rollback could not restore every snapshot. Check the listed paths manually.',
-            );
-        (wrapped as Error & { rollbackFailures?: RollbackFailure[] }).rollbackFailures =
-          rollbackFailures;
-        (wrapped as Error & { cause?: unknown }).cause = err;
-        throw wrapped;
-      }
+      // A file left unrestored is never reported as rolled back (#247).
+      throw withRollbackFailures(err, rollbackFailures);
     }
     throw err;
   }
@@ -846,11 +817,6 @@ async function copyOptional(src: string, dst: string): Promise<void> {
   }
 }
 
-export interface RollbackFailure {
-  path: string;
-  reason: string;
-}
-
 /**
  * Restore from a snapshot. Returns a list of per-file failures so the
  * caller can surface them — silently swallowing rollback errors would
@@ -919,7 +885,8 @@ async function restoreTree(
       await fsp.mkdir(path.dirname(dst), { recursive: true });
       await fsp.copyFile(abs, dst);
     } catch (err) {
-      failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}` });
+      // The update's snapshot is never removed, so `abs` is still there.
+      failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}`, backup: abs });
     }
   }
 }
