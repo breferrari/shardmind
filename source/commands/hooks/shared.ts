@@ -105,7 +105,14 @@ export function useSigintRollback(opts: {
   cleanupRef.current = opts.cleanup;
 
   useEffect(() => {
+    // Once per process, whatever the source: a second Ctrl+C (a kernel
+    // SIGINT, or the stdin bridge's) while a rollback is running must not
+    // start a second one racing it on the same paths, nor cut it short.
+    // The first run ends in exit(130).
+    let running = false;
     const handler = async () => {
+      if (running) return;
+      running = true;
       try {
         if (isActiveRef.current()) await rollbackRef.current();
       } catch {

@@ -76,18 +76,19 @@ describe('attachStdinCancellation — TTY (raw mode, #155)', () => {
     expect(received.join('')).toBe(`ab${ETX}c`);
   });
 
-  it('starts one rollback; a second Ctrl+C forces exit 130', async () => {
+  it('detaches before switching raw mode off, even if that call throws', () => {
     const stdin = fakeStdin(true);
-    const d = deps(true);
-    attachStdinCancellation(stdin, d);
-    inkReader(stdin, []);
-    stdin.push(ETX);
-    await tick();
-    expect(d.exit).not.toHaveBeenCalled();
-    stdin.push(ETX);
-    await tick();
-    expect(d.emitSigint).toHaveBeenCalledTimes(1);
-    expect(d.exit).toHaveBeenCalledWith(130);
+    let fail = false;
+    stdin.setRawMode = () => {
+      if (fail) throw new Error('EIO');
+      return stdin;
+    };
+    attachStdinCancellation(stdin, deps(true));
+    stdin.setRawMode!(true);
+    expect(stdin.listenerCount('data')).toBe(1);
+    fail = true;
+    expect(() => stdin.setRawMode!(false)).toThrow('EIO');
+    expect(stdin.listenerCount('data')).toBe(0);
   });
 
   it('attaches nothing when switching raw mode on throws', () => {
@@ -155,7 +156,7 @@ describe('attachStdinCancellation — TTY (raw mode, #155)', () => {
   });
 });
 
-describe('attachStdinCancellation — pipe (unchanged)', () => {
+describe('attachStdinCancellation — pipe', () => {
   it('reads the pipe directly and turns Ctrl+C into SIGINT', async () => {
     const stdin = fakeStdin(false);
     const d = deps(true);
@@ -174,6 +175,18 @@ describe('attachStdinCancellation — pipe (unchanged)', () => {
     stdin.push(`y${ETX}`);
     await tick();
     expect(d.emitSigint).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits SIGINT for every Ctrl+C; the rollback handler absorbs repeats', async () => {
+    const stdin = fakeStdin(false);
+    const d = deps(true);
+    attachStdinCancellation(stdin, d);
+    stdin.push(ETX);
+    await tick();
+    stdin.push(ETX);
+    await tick();
+    expect(d.emitSigint).toHaveBeenCalledTimes(2);
+    expect(d.exit).not.toHaveBeenCalled();
   });
 
   it('exits 130 when no SIGINT handler is registered', async () => {

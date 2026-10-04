@@ -210,8 +210,8 @@ describe.skipIf(skipOnWindows)(
           env: { SHARDMIND_GITHUB_API_BASE: stub.url },
         });
         try {
-          // Every wizard step mounts a new prompt, so raw mode goes off and
-          // on between them: the observer must re-attach each time.
+          // Cancel after the whole wizard has run, not just at its first
+          // prompt: the same exit code at the last prompt before any write.
           await driveMinimalWizard(handle, 'Frank');
           handle.write(CTRL_C);
 

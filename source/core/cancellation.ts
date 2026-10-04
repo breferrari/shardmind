@@ -22,7 +22,7 @@
  * SIGINT handler runs and a cancelled install exits 0. In a TTY the bridge
  * therefore observes the bytes Ink reads. It wraps `stdin.setRawMode` and
  * attaches a passive `data` listener only while raw mode is on, which is
- * which is the span Ink's `readable` listener is attached for: Ink adds it
+ * the span Ink's `readable` listener is attached for: Ink adds it
  * right after `setRawMode(true)` and removes it right after
  * `setRawMode(false)` (ink/build/components/App.js, enable and
  * `disableRawMode`). Either order is safe: a `data` listener only flows the
@@ -36,10 +36,10 @@
  * consumers beyond that. In a pipe the listener stays alive for the
  * lifetime of the process; in a TTY it comes and goes with raw mode.
  *
- * A second Ctrl+C forces exit 130 at once: the first starts the rollback
- * handlers, which end in `exit(130)` themselves, and a second is the user
- * escalating (a wrapper writing ETX again, or a rollback stuck on a held
- * file), so it must not be swallowed or start a second rollback.
+ * Every Ctrl+C byte emits SIGINT. A repeat during a rollback is absorbed by
+ * `useSigintRollback`, which runs once whatever the source (this bridge or
+ * a kernel signal), so a second press never starts a second rollback or
+ * cuts the first one short.
  */
 
 const ETX = 0x03;
@@ -83,15 +83,9 @@ export function attachStdinCancellation(stdin: StdinLike, deps: CancellationDeps
   // always observable to the parent. (While Ink is mounted, its
   // signal-exit dependency always has a SIGINT listener, so in a TTY the
   // fallback is in practice the pipe's.)
-  let cancelled = false;
   const onData = (chunk: Buffer | string): void => {
     // Buffers unless someone set an encoding on stdin; both have includes().
     if (!(typeof chunk === 'string' ? chunk.includes(ETX_CHAR) : chunk.includes(ETX))) return;
-    if (cancelled) {
-      deps.exit(130);
-      return;
-    }
-    cancelled = true;
     if (!deps.emitSigint()) deps.exit(130);
   };
 
@@ -106,15 +100,17 @@ export function attachStdinCancellation(stdin: StdinLike, deps: CancellationDeps
     if (!setRawMode) return;
     let observing = false;
     stdin.setRawMode = (mode: boolean) => {
-      // The real call first: if it throws (a hung-up terminal), nothing is
-      // left attached to flow the stream.
+      // Detach before switching off and attach after switching on, so a
+      // throw from the real call (a hung-up terminal) never leaves the
+      // observer attached outside raw mode, where it would flow the stream.
+      if (!mode && observing) {
+        observing = false;
+        stdin.removeListener('data', onData);
+      }
       const result = setRawMode(mode);
       if (mode && !observing) {
         observing = true;
         stdin.on('data', onData);
-      } else if (!mode && observing) {
-        observing = false;
-        stdin.removeListener('data', onData);
       }
       return result;
     };
