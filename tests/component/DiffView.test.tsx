@@ -398,6 +398,53 @@ describe('DiffView', () => {
       expect(frame).toContain("Can't merge this file line by line");
     });
 
+    describe('Keep mine and track it (#165)', () => {
+      it('is offered, third, for a collision when the run does not track kept files', async () => {
+        const onChoice = vi.fn<(a: DiffAction) => void>();
+        const r = render(<DiffView path="a.md" index={1} total={1} result={makeResult()} preexisting onChoice={onChoice} />);
+        await tick(30);
+        expect(r.lastFrame() ?? '').toContain('Keep mine and track it');
+        r.stdin.write(ARROW_DOWN);
+        await tick(30);
+        r.stdin.write(ARROW_DOWN);
+        await tick(30);
+        r.stdin.write(ENTER);
+        await waitForCall(onChoice);
+        expect(onChoice).toHaveBeenCalledWith('keep_and_track');
+      });
+
+      it('is not offered with --adopt-preexisting, where Keep mine already tracks', () => {
+        const { lastFrame } = render(
+          <DiffView path="a.md" index={1} total={1} result={makeResult()} preexisting adoptPreexisting onChoice={() => {}} />,
+        );
+        expect(lastFrame() ?? '').not.toContain('track it');
+      });
+
+      it('is not offered for a conflict in a file shardmind already tracks', () => {
+        const { lastFrame } = render(<DiffView path="a.md" index={1} total={1} result={makeResult()} onChoice={() => {}} />);
+        expect(lastFrame() ?? '').not.toContain('track it');
+      });
+
+      it('takes a different choice for the next collision on the same mount', async () => {
+        const onChoice = vi.fn<(a: DiffAction) => void>();
+        const r = render(<DiffView path="one.md" index={1} total={2} result={makeResult()} preexisting onChoice={onChoice} />);
+        await tick(30);
+        r.stdin.write(ARROW_DOWN);
+        await tick(30);
+        r.stdin.write(ARROW_DOWN);
+        await tick(30);
+        r.stdin.write(ENTER);
+        await waitForCall(onChoice);
+        r.rerender(<DiffView path="two.md" index={2} total={2} result={makeResult()} preexisting onChoice={onChoice} />);
+        await tick(30);
+        r.stdin.write(ARROW_DOWN);
+        await tick(30);
+        r.stdin.write(ENTER);
+        await waitForCall(onChoice, 2);
+        expect(onChoice.mock.calls.map(([a]) => a)).toEqual(['keep_and_track', 'keep_mine']);
+      });
+    });
+
     it('switches heading per file on the same mount and still takes the next choice', async () => {
       const onChoice = vi.fn<(a: DiffAction) => void>();
       const r = render(

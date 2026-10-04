@@ -324,10 +324,12 @@ describe('UpdateSummary', () => {
       const frame = frameFor(['brain/New Note.md']);
       expect(frame).toContain('1 of your files sits at a path the new version adds');
       expect(frame).toContain('--adopt-preexisting to track it');
+      // The per-file choice is named too (#165).
+      expect(frame).toContain('Keep mine and track it');
     });
 
     it('pluralizes for several files', () => {
-      const frame = frameFor(['a.md', 'b.md']);
+      const frame = frameFor(['a.md', 'b.md']).replace(/\s+/g, ' ');
       expect(frame).toContain('2 of your files sit at paths the new version adds');
       expect(frame).toContain('to track them');
     });

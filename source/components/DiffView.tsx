@@ -5,7 +5,8 @@ import { useOncePerKey } from './use-once-per-key.js';
 import type { ConflictRegion, MergeResult } from '../runtime/types.js';
 
 /** Conflict-resolution choices returned to the state machine. */
-export type DiffAction = 'accept_new' | 'keep_mine' | 'skip';
+/** `keep_and_track` is offered only for an add-collision, without --adopt-preexisting (#165). */
+export type DiffAction = 'accept_new' | 'keep_mine' | 'keep_and_track' | 'skip';
 
 /** Matches differ.ts's canonical splitter: tolerate CR, accept LF. */
 const LINE_SPLIT = /\r?\n/;
@@ -18,7 +19,7 @@ const CONTEXT_LINES = 3;
  * lookup below to filter the disabled "Open in editor" placeholder so
  * no out-of-band value reaches `onChoice`.
  */
-const DIFF_ACTIONS = new Set<DiffAction>(['accept_new', 'keep_mine', 'skip']);
+const DIFF_ACTIONS = new Set<DiffAction>(['accept_new', 'keep_mine', 'keep_and_track', 'skip']);
 
 const SELECT_OPTIONS: Array<{ label: string; value: DiffAction | 'open_editor_disabled' }> = [
   { label: 'Accept new (use shard version)', value: 'accept_new' },
@@ -39,6 +40,17 @@ const PREEXISTING_OPTIONS = SELECT_OPTIONS.map((o) => ({
   ...o,
   label: PREEXISTING_LABELS[o.value] ?? o.label,
 }));
+
+/**
+ * Without --adopt-preexisting, Keep mine leaves the file untracked; this
+ * tracks it as the user's modified copy for this file alone (#165). With the
+ * flag, Keep mine already tracks, so the plain list is shown.
+ */
+const PREEXISTING_TRACKABLE_OPTIONS: Array<{ label: string; value: DiffAction | 'open_editor_disabled' }> = [
+  ...PREEXISTING_OPTIONS.slice(0, 2),
+  { label: 'Keep mine and track it (merge future updates into your file)', value: 'keep_and_track' },
+  ...PREEXISTING_OPTIONS.slice(2),
+];
 
 interface DiffViewProps {
   path: string;
@@ -83,7 +95,7 @@ export default function DiffView({
           <Text dimColor>
             {adoptPreexisting
               ? 'The new version adds this path. Keep mine or Skip keeps your file and tracks it as your modified copy.'
-              : 'The new version adds this path. Keep mine or Skip keeps your file untracked, so the next update asks again (--adopt-preexisting tracks it).'}
+              : 'The new version adds this path. Keep mine or Skip keeps your file untracked, so the next update asks again; Keep mine and track it tracks it (--adopt-preexisting tracks every one).'}
           </Text>
         )}
       </Box>
@@ -118,7 +130,7 @@ export default function DiffView({
 
       <Select
         key={filePath}
-        options={preexisting ? PREEXISTING_OPTIONS : SELECT_OPTIONS}
+        options={preexisting ? (adoptPreexisting ? PREEXISTING_OPTIONS : PREEXISTING_TRACKABLE_OPTIONS) : SELECT_OPTIONS}
         onChange={(choice) => {
           if (!DIFF_ACTIONS.has(choice as DiffAction)) return;
           if (!tryFire()) return;
