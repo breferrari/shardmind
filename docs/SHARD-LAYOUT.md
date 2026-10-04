@@ -401,6 +401,10 @@ Criterion: **obsidian-mind v6 does not need these to install, configure, or upgr
 | `shardmind eject` | Manual `rm -rf .shardmind/ shard-values.yaml` works per VISION's additive principle ("delete `.shardmind/` and `shard-values.yaml` — the vault continues to work ... ShardMind is additive, not load-bearing") | New command; orchestrates the manual delete + optional backup |
 | SOUL guided creation | Obsidian-mind product feature, not a shardmind engine concern | — |
 
+**Declined** (dated; reopen if the reason stops holding):
+
+- A shared `VaultFS` with built-in rollback for install and update (#33), declined 2026-10-04. The two rollbacks are different models: install restores collision backups and removes created paths; update restores a snapshot of touched paths and replays a case-rename journal and a created-folders record. One LIFO undo would express neither without becoming a second copy of both.
+
 ## Transition
 
 No shard migration required — zero shards published under the v0.1 `templates/` contract. obsidian-mind v6 is the first shard under this contract.

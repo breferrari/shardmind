@@ -121,7 +121,7 @@ Each authoring and CLI proposal is built, or declined with a reason that survive
 | | Task | Issue |
 |---|---|---|
 | ⬜ | Enforce tarball size cap in downloadShard | [#32](https://github.com/breferrari/shardmind/issues/32) |
-| ⬜ | VaultFS abstraction with built-in rollback tracking | [#33](https://github.com/breferrari/shardmind/issues/33) |
+| ✅ | VaultFS abstraction with built-in rollback tracking (declined) | [#33](https://github.com/breferrari/shardmind/issues/33) |
 | ⬜ | shardmind validate <shard> command | [#34](https://github.com/breferrari/shardmind/issues/34) |
 | ⬜ | Pre-install template syntax lint | [#35](https://github.com/breferrari/shardmind/issues/35) |
 | ⬜ | Debug logging (SHARDMIND_DEBUG env var) | [#36](https://github.com/breferrari/shardmind/issues/36) |
@@ -453,7 +453,7 @@ Tracked in [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-s
 
 Deferred items surfaced during the v0.1 polish-pass architecture audit. None are blockers for shipping v0.1; all are worth doing before v0.2 marketing.
 
-- [ ] VaultFS abstraction with built-in rollback tracking ([#33](https://github.com/breferrari/shardmind/issues/33))
+- [x] ~~VaultFS abstraction with built-in rollback tracking~~ declined ([#33](https://github.com/breferrari/shardmind/issues/33))
 - [ ] `shardmind validate <shard>` command ([#34](https://github.com/breferrari/shardmind/issues/34))
 - [ ] Pre-install template syntax lint ([#35](https://github.com/breferrari/shardmind/issues/35))
 - [ ] Debug logging (`SHARDMIND_DEBUG` env var) ([#36](https://github.com/breferrari/shardmind/issues/36))
