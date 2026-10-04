@@ -871,6 +871,24 @@ describe('update applies rename migrations (#178)', () => {
       expect(await vaultTree()).toEqual(before);
     });
 
+    it("a failure moving a file into the new folder leaves the vault as it was, where folders do not fold", async (ctx) => {
+      // A case-sensitive filesystem has no folder hop: each file moves on its
+      // own into a new folder, and that move is what can fail here.
+      if (await foldsCase()) ctx.skip();
+      await install();
+      await write('brain/mine.md', 'mine\n');
+      const before = await vaultTree();
+      const v2 = await folderCase('0.2.0');
+      const realRename = fsp.rename;
+      vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+        if (String(to).endsWith(path.join('Brain', 'North Star.md'))) throw new Error('rename interrupted');
+        return realRename(from, to);
+      });
+      await expect(update(v2)).rejects.toThrow();
+      vi.restoreAllMocks();
+      expect(await vaultTree()).toEqual(before);
+    });
+
     it('moves a nested folder whose case changes, and a failure mid-way leaves the vault as it was', async () => {
       // 0.1.0 ships brain/Sub/Deep.md; 0.2.0 renames brain/ to Brain/ and Sub/ to sub/.
       const v1 = await shardAt('0.1.0', { edits: { 'brain/Sub/Deep.md': () => 'deep\n' } });
