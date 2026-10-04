@@ -151,3 +151,12 @@ describe('Summary', () => {
     expect(none).not.toMatch(/no longer has/);
   });
 });
+
+describe('Summary: external tools (#138)', () => {
+  it('lists an unmet optional tool with its install hint', () => {
+    const line = 'qmd: not found on PATH. Install: npm i -g @tobilu/qmd@">=2.5.0"';
+    const { lastFrame } = render(<Summary {...baseProps} externalTools={[line]} />);
+    expect(lastFrame()).toContain('External tools:');
+    expect(lastFrame()).toContain(line);
+  });
+});

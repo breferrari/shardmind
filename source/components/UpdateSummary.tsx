@@ -1,6 +1,7 @@
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import HookSummarySection from './HookSummarySection.js';
+import ExternalToolsSection from './ExternalToolsSection.js';
 import MovedFilesList from './MovedFilesList.js';
 import type { UpdateSummary as Summary } from '../core/update-executor.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
@@ -24,6 +25,8 @@ interface UpdateSummaryProps {
   durationMs: number;
   migrationWarnings: string[];
   hooks: HookOutcome[];
+  /** Unmet optional tools, or the dry-run note (#138); from `summarizeExternalTools`. */
+  externalTools?: readonly string[];
   dryRun?: boolean;
   /** Vault-relative snapshot dir (previous bytes under its `files/`); `null` in a dry run. */
   backupDir?: string | null;
@@ -37,6 +40,7 @@ export default function UpdateSummary({
   durationMs,
   migrationWarnings,
   hooks,
+  externalTools = [],
   dryRun,
   backupDir,
 }: UpdateSummaryProps) {
@@ -124,6 +128,8 @@ export default function UpdateSummary({
           )}
         </Box>
       )}
+
+      <ExternalToolsSection lines={externalTools} />
 
       <HookSummarySection outcomes={hooks} />
     </Box>
