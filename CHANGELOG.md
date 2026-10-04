@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (a reinstall keeps your files under `.shardmind/` — #237)
+
+- **Reinstalling over an existing install keeps your own files under `.shardmind/`.** A reinstall (`install --force`, or Reinstall at the prompt) kept only the old install's backups and deleted everything else in the folder, including your `boundary-ignore`, which was also missing while the new install's hooks ran. Anything in `.shardmind/` that isn't the engine's own is now carried into the new install.
+
 ### Fixed (`_each` items that name the same file — #234)
 
 - **An `_each` list whose items name the same file is refused before anything is written.** `Alice` and `alice`, or `Bob/Ops` and `Bob-Ops`, used to write one file (the last item won), and on macOS or Windows the vault then tracked two names for it. Install, update and adopt now stop with `RENDER_ITERATOR_NAME_CLASH`, naming the value, both items and the file. A vault installed with such a list stops at its next update until you rename one of the items in `shard-values.yaml`.

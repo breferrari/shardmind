@@ -105,7 +105,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ⬜ | Refuse an update --json run that would need answers | [#230](https://github.com/breferrari/shardmind/issues/230) |
 | ⬜ | Merge an edited _each file against a base rendered with its own item | [#233](https://github.com/breferrari/shardmind/issues/233) |
 | ✅ | Refuse _each list items that name the same file | [#234](https://github.com/breferrari/shardmind/issues/234) |
-| ⬜ | Keep the user's .shardmind/ files through a successful reinstall | [#237](https://github.com/breferrari/shardmind/issues/237) |
+| ✅ | Keep the user's .shardmind/ files through a successful reinstall | [#237](https://github.com/breferrari/shardmind/issues/237) |
 | ⬜ | Refuse two shard outputs that name the same file | [#240](https://github.com/breferrari/shardmind/issues/240) |
 | ⬜ | Keep the user's .shardmind/ files when an adopt rolls back | [#243](https://github.com/breferrari/shardmind/issues/243) |
 
