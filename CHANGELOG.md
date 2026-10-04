@@ -50,6 +50,14 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **The `personalize` write-boundary check no longer reads an unreadable folder as empty.** A folder that is busy or permission-denied (on Windows, a virus scanner holding a fresh folder) is read once more. If it still fails, the check warns `HOOK_BOUNDARY_INCOMPLETE` and names it, instead of reporting that the hook created nothing. A folder that vanished still counts as empty.
 
+### Fixed (a release that only changes a folder's case — #195)
+
+- **`shardmind update` applies a shard release that only changes a folder's case** (`brain/` → `Brain/`), with no `migrations` entry.
+  - On macOS and Windows the folder is renamed in place, and files of your own in it move with it.
+  - On Linux the shard's files move to the new folder, yours stay under the old spelling, and the old folder is removed only once it is empty.
+  - A rollback, including Ctrl+C, puts every name back as it was.
+  - A folder that would only partly move, because a shipped file keeps the old spelling, is refused as before.
+
 ### Fixed (a release that only changes a file name's case — #169)
 
 - **`shardmind update` applies a shard release that only changes a file name's case** (`Foo.md` → `foo.md`), with no `migrations` entry. The file moves to its new name with the user's edits, on every filesystem.
