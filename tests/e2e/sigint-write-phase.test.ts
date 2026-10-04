@@ -30,6 +30,7 @@ import {
   type Vault,
 } from './helpers/vault.js';
 import { holdWriteNodeArgs, waitForHold } from './helpers/hold-write.js';
+import { treeOf } from '../helpers/vault-tree.js';
 import { stringify as stringifyYaml } from 'yaml';
 
 const SLUG = 'acme/demo';
@@ -43,24 +44,9 @@ let fixtures: TarballFixtures;
 let scratch: string;
 const vaults: Vault[] = [];
 
-/** Every file in the tree with its bytes' hash, and every folder, by POSIX path. */
+/** The vault tree, minus the paths `skip` names, for an equality check. */
 async function snapshot(root: string, skip: (rel: string) => boolean = () => false): Promise<Record<string, string>> {
-  const out: Record<string, string> = {};
-  async function walk(dir: string): Promise<void> {
-    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-      const abs = path.join(dir, entry.name);
-      const rel = path.relative(root, abs).split(path.sep).join('/');
-      if (skip(rel)) continue;
-      if (entry.isDirectory()) {
-        out[`${rel}/`] = 'dir';
-        await walk(abs);
-      } else {
-        out[rel] = crypto.createHash('sha256').update(await fs.readFile(abs)).digest('hex');
-      }
-    }
-  }
-  await walk(root);
-  return out;
+  return Object.fromEntries([...(await treeOf(root))].filter(([rel]) => !skip(rel)));
 }
 
 async function valuesFile(name: string): Promise<string> {
