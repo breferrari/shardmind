@@ -40,6 +40,7 @@ export const DIST_ARTIFACTS: readonly string[] = [
   'dist/commands/install.js',
   'dist/commands/update.js',
   'dist/commands/adopt.js',
+  'dist/commands/validate.js',
   'dist/runtime/index.js',
   'dist/internal/hook-runner.js',
 ];

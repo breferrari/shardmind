@@ -127,6 +127,7 @@ shardmind/
 │   │   ├── install.tsx                # shardmind install <shard>
 │   │   ├── update.tsx                 # shardmind update
 │   │   ├── adopt.tsx                  # shardmind adopt <shard>
+│   │   ├── validate.tsx               # shardmind validate [dir|shard] — author-facing check (#34)
 │   │   └── hooks/                     # State-machine + shared command hooks
 │   │       ├── use-install-machine.ts
 │   │       ├── use-update-machine.ts
@@ -195,6 +196,8 @@ shardmind/
 │   │   ├── hook-orchestrator.ts       # Hook lifecycle: slot selection/order, boundary checks, re-hash, fingerprint (#102)
 │   │   ├── hook-boundary.ts           # Pure detect-and-warn write-boundary detector — managed-write / unmanaged-create (#102)
 │   │   ├── vault-path-guard.ts        # Refuse writes through symlinks, hard links, case-folded names (#163)
+│   │   ├── lint-shard.ts              # Install's checks in check mode, collecting every finding (#34)
+│   │   ├── validate-shard.ts          # validate target (dir or ref) + headless --json runner (#34)
 │   │   ├── color-env.ts               # NO_COLOR → chalk level 0 before Ink loads; FORCE_COLOR wins (#37)
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
@@ -353,6 +356,8 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `self-update-check.ts` | §4.19 | 24h cached npm-registry check for newer shardmind engine versions; powers `<SelfUpdateBanner>` |
 | `vault-path-guard.ts` | §4.20 | Refuses install / update / adopt over a symlinked, hard-linked or case-folded vault path (`VAULT_PATH_UNSAFE`, #163) |
 | `color-env.ts` | §4.21 | Applies `NO_COLOR` to the environment before chalk loads; `FORCE_COLOR` wins when both are set (#37) |
+| `lint-shard.ts` | §4.22 | Install's checks in check mode, collecting every finding; used by `validate` (#34) and the pre-install check (#35) |
+| `validate-shard.ts` | ARCHITECTURE §10.5b | `validate`'s target resolution (dir or downloaded ref) and its headless `--json` runner |
 | `cancellation.ts` | ARCHITECTURE §19.7 | Cross-platform SIGINT bridge (Windows stdin-ETX → process.emit SIGINT) |
 | `state-migrator.ts` | §4.7 | Forward-migration framework for `.shardmind/state.json`; first rule (v1→v2, `bootstrap_fingerprint`) landed with #102 |
 | `hook.ts` | §4.16 | Slot-agnostic hook lookup + execute via bundled `tsx` subprocess (non-fatal) |

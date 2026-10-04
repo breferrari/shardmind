@@ -32,7 +32,7 @@ import type { UpdateAction, UpdatePlan } from './update-planner.js';
 /** Bumped only on a breaking reshape, never for additive fields. */
 export const JSON_SCHEMA_VERSION = 1;
 
-export type JsonCommand = 'status' | 'adopt' | 'update';
+export type JsonCommand = 'status' | 'adopt' | 'update' | 'validate';
 
 export interface JsonErrorPayload {
   /** Stable `ErrorCode` when the failure was a `ShardMindError`, else null. */

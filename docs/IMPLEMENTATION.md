@@ -1598,6 +1598,24 @@ Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` 
 
 ---
 
+### 4.22 `lint-shard.ts`
+
+Check a shard directory the way install would, collecting every finding (#34; #35's pre-install check calls the same function). Pure of Ink; never runs shard code.
+
+```typescript
+interface LintFinding { severity: 'error' | 'warning'; code: string; message: string; hint?: string; path?: string }
+lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: string }): Promise<{ findings: LintFinding[] }>
+```
+
+1. `parseManifest`; on a `ShardMindError`, record it and stop (nothing after can run). Steps 3 and 4 stop the same way after a failed computed default or invalid values, so one root cause is not echoed as an error per template. With `engineVersion`, `assertEngineCompatible`, recorded.
+2. `parseSchema`; on error, record and stop.
+3. Values: `opts.values` over each value's default, then `resolveComputedDefaults`. Every value declares a default (`parseSchema` refuses one that does not), so no value is made up. `buildValuesValidator(schema)` on the result; failures recorded.
+4. `resolveModules(schema, every module included, shardDir)`; on error, record and stop.
+5. `renderFile` for every render entry with `buildRenderContext(manifest, values, selections)`; each failure is recorded with the entry's output path.
+6. Warnings: a module whose paths match no file in the walk; a group no value belongs to.
+
+---
+
 ## 5. Runtime Module: `shardmind/runtime`
 
 ### 5.1 `resolveVaultRoot()`

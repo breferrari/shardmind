@@ -494,6 +494,14 @@ On Windows, `SIGTERM` is emulated as `TerminateProcess`, which skips the hook's 
 
 ## 7. Testing your shard locally
 
+### Validate before you push
+
+`shardmind validate` (in the shard's directory, or `shardmind validate <path>`) runs the checks an install would: it parses `shard.yaml` and `shard-schema.yaml`, checks the engine-version requirement and the values, resolves every module, and renders every template, then lists every problem it found with its error code, not just the first. It exits 1 when there is an error, so it fits a pre-push hook or CI. It never runs your hooks.
+
+It renders with your schema's defaults; pass `--values <file>` to check the templates against other values, such as the ones a user would type. `shardmind validate github:<user>/<shard>#<branch>` checks what a user would download. `--json` gives the findings as one document.
+
+### Iterate on a branch
+
 The fastest dev loop avoids cutting a tag for every change. Install once from a branch or commit SHA via the `#<ref>` syntax, then push and run `shardmind update` to pull each new commit.
 
 1. Push your work-in-progress to a branch on your GitHub account (default branch is fine; a feature branch is fine).
