@@ -609,6 +609,57 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await cleanupVault(vault);
     }
   }, 45_000);
+  // ───── A user file at an `_each`-expanded path is backed up, not overwritten (#214) ─────
+
+  it('install backs up a user file at a path an _each template expands to (#214)', async () => {
+    const { stub } = getCtx();
+    const vault = await makeVaultDir('s214-each-backup');
+    const work = await makeVaultDir('s214-tarball');
+    try {
+      const tarPath = await buildCustomTarball({
+        version: '0.1.0',
+        prefix: 'each-0.1.0',
+        manifestOverrides: { hooks: {}, name: 'minimal', namespace: 'shardmind' },
+        outDir: work,
+        mutate: async (dir) => {
+          const schemaPath = path.join(dir, '.shardmind', 'shard-schema.yaml');
+          const schema = await fs.readFile(schemaPath, 'utf-8');
+          await fs.writeFile(
+            schemaPath,
+            schema.replace(
+              'values:\n',
+              'values:\n  people:\n    type: list\n    message: "People"\n    default: []\n    group: setup\n\n',
+            ),
+          );
+          await fs.mkdir(path.join(dir, 'people'), { recursive: true });
+          await fs.writeFile(path.join(dir, 'people', '_each.md.njk'), '# {{ item.name }}\n');
+        },
+      });
+      stub.setRef(SLUG_BROKEN, 'v0.1.0', STUB_SHA, tarPath);
+      await fs.mkdir(path.join(vault, 'people'), { recursive: true });
+      await fs.writeFile(path.join(vault, 'people', 'alice.md'), 'my own notes on alice\n');
+      const valuesPath = path.join(work, 'values.yaml');
+      await fs.writeFile(
+        valuesPath,
+        'user_name: Alice\nvault_purpose: engineering\npeople:\n  - { name: Alice, slug: alice }\n',
+      );
+      const r = mountInstall({
+        shardRef: `github:${SLUG_BROKEN}#v0.1.0`,
+        vaultRoot: vault,
+        options: { values: valuesPath, yes: true },
+      });
+      await waitFor(() => r.frames.join('\n'), (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 30_000);
+      const backups = (await leftoverBackups(vault)).map((p) => p.replace(/\\/g, '/'));
+      expect(backups).toHaveLength(1);
+      expect(backups[0]).toMatch(/^people\/alice\.md\.shardmind-backup-/);
+      expect(await fs.readFile(path.join(vault, backups[0]!), 'utf-8')).toBe('my own notes on alice\n');
+      expect(await fs.readFile(path.join(vault, 'people', 'alice.md'), 'utf-8')).toBe('# Alice\n');
+    } finally {
+      await cleanupVault(vault);
+      await cleanupVault(work);
+    }
+  }, 60_000);
+
   // Every `.shardmind-backup-*` path anywhere under the vault.
   async function leftoverBackups(root: string): Promise<string[]> {
     const entries = await fs.readdir(root, { recursive: true });

@@ -147,13 +147,32 @@ function renderEach(
     );
   }
 
-  return list.map((item: Record<string, unknown>) => {
+  const outputPaths = eachOutputPaths(entry.outputPath, list);
+  return list.map((item: Record<string, unknown>, i) => {
     const itemContext = { ...context.values, ...context, item };
-    const rawSlug = String(item['slug'] ?? item['name'] ?? 'unknown');
-    const slug = sanitizeSlug(rawSlug);
-    const outputPath = entry.outputPath.replace('_each', slug);
+    const outputPath = outputPaths[i]!;
     const content = renderContent(source, itemContext, env, outputPath);
     return buildRenderedFile(outputPath, content, volatile);
+  });
+}
+
+/**
+ * The paths an `_each` template expands to, one per list item: `_each` in
+ * the template's output path replaced by the item's sanitized `slug` (or
+ * `name`). The install plan calls this too, so it can back up a user file
+ * at an expanded path before the write (#214); sharing it keeps the plan
+ * and the write from ever naming different files.
+ */
+export function eachOutputPaths(outputPath: string, list: readonly unknown[]): string[] {
+  const dir = path.posix.dirname(outputPath);
+  const base = path.posix.basename(outputPath);
+  return list.map((item) => {
+    const fields = item as Record<string, unknown>;
+    const slug = sanitizeSlug(String(fields['slug'] ?? fields['name'] ?? 'unknown'));
+    // Only the basename's `_each`, and a replacer function, so a `$&` or
+    // `$'` in the slug is taken literally rather than as a pattern.
+    const named = base.replace('_each', () => slug);
+    return dir === '.' ? named : `${dir}/${named}`;
   });
 }
 

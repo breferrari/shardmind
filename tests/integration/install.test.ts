@@ -21,6 +21,7 @@ import {
 } from '../../source/core/install-executor.js';
 import { runPostInstallHook } from '../../source/core/hook.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
+import { makeShardSource } from '../helpers/make-shard-source.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -290,6 +291,66 @@ describe('install pipeline (against examples/minimal-shard)', () => {
 
     expect(collisions.length).toBeGreaterThan(0);
     expect(collisions.some((c) => c.outputPath === 'Home.md')).toBe(true);
+  });
+
+  describe('_each templates (#214)', () => {
+    async function eachShard(): Promise<string> {
+      const dir = path.join(os.tmpdir(), `shardmind-each-${crypto.randomUUID()}`);
+      return makeShardSource(dir, { 'people/_each.md.njk': '# {{ item.name }}\n' });
+    }
+
+    it('planOutputs with values lists the paths an _each template expands to', async () => {
+      const shard = await eachShard();
+      try {
+        const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+        const selections = defaultModuleSelections(schema);
+        const values = { people: [{ name: 'Alice', slug: 'alice' }, { name: 'Bob/Ops.' }] };
+        const { outputs } = await planOutputs(schema, shard, selections, values);
+        const paths = outputs.map((o) => o.outputPath).sort();
+        // Bob/Ops. has no slug: the name, sanitized as renderEach does.
+        expect(paths).toEqual(['people/Bob-Ops.md', 'people/alice.md']);
+      } finally {
+        await fsp.rm(shard, { recursive: true, force: true });
+      }
+    });
+
+    it('planOutputs lists a path two items share once, so its collision is backed up once', async () => {
+      const shard = await eachShard();
+      try {
+        const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+        const values = { people: [{ name: 'Alice' }, { name: 'Alice' }] };
+        const { outputs } = await planOutputs(schema, shard, defaultModuleSelections(schema), values);
+        expect(outputs.map((o) => o.outputPath)).toEqual(['people/Alice.md']);
+      } finally {
+        await fsp.rm(shard, { recursive: true, force: true });
+      }
+    });
+
+    it('planOutputs without values keeps the template path (module review, before values exist)', async () => {
+      const shard = await eachShard();
+      try {
+        const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+        const { outputs } = await planOutputs(schema, shard, defaultModuleSelections(schema));
+        expect(outputs.map((o) => o.outputPath)).toEqual(['people/_each.md']);
+      } finally {
+        await fsp.rm(shard, { recursive: true, force: true });
+      }
+    });
+
+    it('detectCollisions finds a user file at an _each-expanded path, so it gets backed up', async () => {
+      const shard = await eachShard();
+      try {
+        await fsp.mkdir(path.join(vault, 'people'), { recursive: true });
+        await fsp.writeFile(path.join(vault, 'people', 'alice.md'), 'my own notes on alice\n', 'utf-8');
+        const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+        const values = { people: [{ name: 'Alice', slug: 'alice' }] };
+        const { outputs } = await planOutputs(schema, shard, defaultModuleSelections(schema), values);
+        const collisions = await detectCollisions(vault, outputs.map((o) => o.outputPath));
+        expect(collisions.map((c) => c.outputPath)).toEqual(['people/alice.md']);
+      } finally {
+        await fsp.rm(shard, { recursive: true, force: true });
+      }
+    });
   });
 
   it('backupCollisions renames existing files out of the way', async () => {

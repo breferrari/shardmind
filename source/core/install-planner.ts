@@ -19,6 +19,7 @@ import { ShardMindError, assertNever } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { isComputedDefault } from './schema.js';
 import { resolveModules } from './modules.js';
+import { eachOutputPaths } from './renderer.js';
 import { sha256, mapConcurrent } from './fs-utils.js';
 
 export interface Collision {
@@ -236,6 +237,13 @@ export async function planOutputs(
   schema: ShardSchema,
   tempDir: string,
   selections: ModuleSelections,
+  /**
+   * The install's values, once known. With them, an `_each` template is
+   * listed under the paths it expands to rather than its own, so collision
+   * detection sees a user file at an expanded path (#214). Without them
+   * (module review, before the values exist) it stays the template path.
+   */
+  values?: Record<string, unknown>,
 ): Promise<{
   outputs: PlannedOutput[];
   moduleFileCounts: Record<string, number>;
@@ -258,7 +266,20 @@ export async function planOutputs(
       alwaysIncludedFileCount++;
     }
   };
-  for (const entry of resolution.render) tally(entry, 'render');
+  for (const entry of resolution.render) {
+    const list = entry.iterator && values ? values[entry.iterator] : undefined;
+    // A non-array value keeps the template path; the render then fails
+    // with RENDER_ITERATOR_ERROR, as it always has.
+    if (Array.isArray(list)) {
+      // Two items can name the same file; the render writes it once (the
+      // last wins), so plan it once, or its collision is backed up twice.
+      for (const outputPath of new Set(eachOutputPaths(entry.outputPath, list))) {
+        tally({ outputPath, module: entry.module }, 'render');
+      }
+    } else {
+      tally(entry, 'render');
+    }
+  }
   for (const entry of resolution.copy) tally(entry, 'copy');
 
   return { outputs, moduleFileCounts, alwaysIncludedFileCount };
