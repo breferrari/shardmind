@@ -64,7 +64,7 @@ import { buildRenderContext } from '../../core/renderer.js';
 import { rollbackDetail } from '../../core/rollback-report.js';
 import { VALUES_FILE } from '../../runtime/vault-paths.js';
 import type { DiffAction } from '../../components/DiffView.js';
-import { editInEditor, hasConflictMarkers, resolveEditorCommand, withTerminalReleased } from '../../core/editor.js';
+import { editInEditor, hasConflictMarkers, resolveEditorCommand, withSigintHeld, withTerminalReleased } from '../../core/editor.js';
 
 export interface UseUpdateMachineInput {
   vaultRoot: string;
@@ -710,7 +710,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     [runPlanAndResolve],
   );
 
-  const { setRawMode, isRawModeSupported } = useStdin();
+  const { stdin, isRawModeSupported } = useStdin();
+  // The stream's own raw mode, not Ink's setter: Ink counts its users and
+  // would leave raw mode on while the prompt holds it (#50).
+  const setStreamRawMode = isRawModeSupported && typeof stdin.setRawMode === 'function'
+    ? (on: boolean) => void stdin.setRawMode(on)
+    : undefined;
   // $VISUAL, then $EDITOR; with neither, the prompt offers no editor (#50).
   const [editorCommand] = useState(() => resolveEditorCommand(process.env));
 
@@ -740,9 +745,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       if (action === 'open_editor' || action === 'edit_again') {
         if (!editorCommand) return;
         const start = action === 'edit_again' && edit.pendingContent !== undefined ? edit.pendingContent : pc.result.content;
-        // The editor owns the terminal meanwhile; raw mode comes back on every path.
-        const outcome = withTerminalReleased(isRawModeSupported ? setRawMode : undefined, () =>
-          editInEditor(start, path.basename(pc.path), { command: editorCommand, dir: current.ctx.newTempDir }),
+        // The editor owns the terminal meanwhile; raw mode comes back on every
+        // path, and a Ctrl+C in the editor cancels the edit, not the update.
+        const outcome = withSigintHeld(() =>
+          withTerminalReleased(setStreamRawMode, () =>
+            editInEditor(start, path.basename(pc.path), { command: editorCommand, dir: current.ctx.newTempDir }),
+          ),
         );
         if (outcome.kind === 'saved' && !hasConflictMarkers(outcome.content)) {
           resolve({ kind: 'edited', content: outcome.content });
@@ -755,13 +763,13 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           edit:
             outcome.kind === 'saved'
               ? { attempt: edit.attempt + 1, pendingContent: outcome.content }
-              : { ...edit, attempt: edit.attempt + 1, note: `${outcome.detail} Nothing was changed; choose again.` },
+              : { ...edit, attempt: edit.attempt + 1, note: `${outcome.detail} Nothing was written; choose again.` },
         });
         return;
       }
       resolve(action);
     },
-    [executeWrite, editorCommand, isRawModeSupported, setRawMode],
+    [executeWrite, editorCommand, setStreamRawMode],
   );
 
   const onCancel = useCallback(
@@ -771,7 +779,8 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 
   return {
     phase,
-    canEdit: editorCommand !== undefined,
+    // Only with an editor set and a terminal to hand it (#50).
+    canEdit: editorCommand !== undefined && setStreamRawMode !== undefined,
     onNewValuesComplete,
     onNewModulesComplete,
     onRemovedFilesComplete,

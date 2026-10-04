@@ -13,6 +13,7 @@ import {
   editInEditor,
   hasConflictMarkers,
   resolveEditorCommand,
+  withSigintHeld,
   withTerminalReleased,
 } from '../../source/core/editor.js';
 
@@ -32,6 +33,7 @@ beforeEach(async () => {
       "if (mode === 'fail') process.exit(3);",
       "if (mode === 'resolve') fs.writeFileSync(file, 'resolved by hand\\n');",
       "if (mode === 'record') fs.writeFileSync(process.argv[3], file);",
+      "if (mode === 'delete') fs.rmSync(file);",
       '',
     ].join('\n'),
   );
@@ -76,12 +78,12 @@ describe('editInEditor (#50)', () => {
   });
 
   it('is a cancel, not an accept, when the file is saved unchanged', async () => {
-    expect(editInEditor(CONFLICT, 'Note.md', { command: editor('noop'), dir })).toMatchObject({ kind: 'cancelled', reason: 'unchanged' });
+    expect(editInEditor(CONFLICT, 'Note.md', { command: editor('noop'), dir })).toMatchObject({ kind: 'cancelled', detail: expect.stringMatching(/unchanged/) });
     expect(await leftovers()).toEqual([]);
   });
 
   it('is a cancel when the editor exits non-zero', async () => {
-    expect(editInEditor(CONFLICT, 'Note.md', { command: editor('fail'), dir })).toMatchObject({ kind: 'cancelled', reason: 'exit' });
+    expect(editInEditor(CONFLICT, 'Note.md', { command: editor('fail'), dir })).toMatchObject({ kind: 'cancelled', detail: expect.stringMatching(/exited with code 3/) });
     expect(await leftovers()).toEqual([]);
   });
 
@@ -89,6 +91,33 @@ describe('editInEditor (#50)', () => {
     const outcome = editInEditor(CONFLICT, 'Note.md', { command: 'shardmind-no-such-editor-xyz', dir });
     expect(outcome.kind).toBe('cancelled');
     expect(await leftovers()).toEqual([]);
+  });
+
+  it('is a cancel, not a crash, when the editor removes the file', async () => {
+    expect(editInEditor(CONFLICT, 'Note.md', { command: editor('delete'), dir })).toMatchObject({ kind: 'cancelled' });
+    expect(await leftovers()).toEqual([]);
+  });
+
+  it('says how to make a window editor wait when the file comes back unchanged', () => {
+    const outcome = editInEditor(CONFLICT, 'Note.md', { command: editor('noop'), dir });
+    expect(outcome.kind === 'cancelled' && outcome.detail).toMatch(/--wait/);
+  });
+
+  it('ends every cancel note with a full stop, so the prompt can append to it', () => {
+    for (const mode of ['noop', 'fail']) {
+      const outcome = editInEditor(CONFLICT, 'Note.md', { command: editor(mode), dir });
+      expect(outcome.kind === 'cancelled' && outcome.detail).toMatch(/\.$/);
+    }
+    const missing = editInEditor(CONFLICT, 'Note.md', { command: 'shardmind-no-such-editor-xyz', dir });
+    expect(missing.kind === 'cancelled' && missing.detail).toMatch(/\.$/);
+  });
+
+  it('keeps a name cmd.exe would expand out of the command on Windows', async () => {
+    const out = path.join(dir, 'seen.txt');
+    editInEditor(CONFLICT, '100%PATH%.md', { command: `${editor('record')} "${out}"`, dir, platform: 'win32' });
+    const seen = path.basename(await fsp.readFile(out, 'utf-8'));
+    expect(seen).not.toContain('%');
+    expect(seen.endsWith('.md')).toBe(true);
   });
 
   it('quotes a file name with spaces and quotes for the shell', () => {
@@ -100,10 +129,49 @@ describe('editInEditor (#50)', () => {
 describe('hasConflictMarkers (#50)', () => {
   it('finds the markers the merge writes, at line starts only', () => {
     expect(hasConflictMarkers('a\n<<<<<<< yours\nx\n=======\ny\n>>>>>>> shard update\n')).toBe(true);
-    expect(hasConflictMarkers('=======\n')).toBe(true);
+    // A lone ======= is a Markdown setext underline, not a marker.
+    expect(hasConflictMarkers('Title\n=======\n')).toBe(false);
     expect(hasConflictMarkers('a\nb\n')).toBe(false);
     expect(hasConflictMarkers('text with ======= inside\nand <<<<<<< too\n')).toBe(false);
     expect(hasConflictMarkers('========\nSetext heading underline is longer\n')).toBe(false);
+  });
+});
+
+describe('withSigintHeld (#50)', () => {
+  it("swallows a Ctrl+C that arrives while the editor runs, then gives SIGINT back to its listeners", async () => {
+    const handler = vi.fn();
+    process.on('SIGINT', handler);
+    try {
+      await new Promise<void>((done) => {
+        withSigintHeld(() => {
+          // A Ctrl+C in the editor reaches node too; it must not end the update.
+          process.emit('SIGINT');
+        }, done);
+      });
+      expect(handler).not.toHaveBeenCalled();
+      process.emit('SIGINT');
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      process.off('SIGINT', handler);
+    }
+  });
+
+  it('gives SIGINT back even when the call throws', async () => {
+    const handler = vi.fn();
+    process.on('SIGINT', handler);
+    try {
+      await new Promise<void>((done) => {
+        expect(() =>
+          withSigintHeld(() => {
+            throw new Error('editor crashed');
+          }, done),
+        ).toThrow('editor crashed');
+      });
+      process.emit('SIGINT');
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      process.off('SIGINT', handler);
+    }
   });
 });
 
