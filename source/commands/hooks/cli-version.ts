@@ -78,6 +78,12 @@ export function resolvePkgVersion(startUrl: string): string {
  * shardmind's `package.json` regardless of which bundled chunk starts it.
  */
 export function resolveEngineVersion(): string | undefined {
-  const version = resolvePkgVersion(import.meta.url);
-  return version === PKG_VERSION_FALLBACK ? undefined : version;
+  // Constant for the process: walked once, since error views call this on render (#225).
+  if (cachedEngineVersion === null) {
+    const version = resolvePkgVersion(import.meta.url);
+    cachedEngineVersion = version === PKG_VERSION_FALLBACK ? undefined : version;
+  }
+  return cachedEngineVersion;
 }
+
+let cachedEngineVersion: string | undefined | null = null;

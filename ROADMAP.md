@@ -145,7 +145,7 @@ Each authoring and CLI proposal is built, or declined with a reason that survive
 | ⬜ | Decide whether adopt gets --skip-hooks | [#199](https://github.com/breferrari/shardmind/issues/199) |
 | ⬜ | Decide what a bare owner/repo install does while shardmind/registry is empty | [#200](https://github.com/breferrari/shardmind/issues/200) |
 | ⬜ | Decide who keeps .shardmind/logs/ out of a vault's git history | [#201](https://github.com/breferrari/shardmind/issues/201) |
-| ⬜ | Show a stack trace and a report link for an unexpected error | [#225](https://github.com/breferrari/shardmind/issues/225) |
+| ✅ | Show a stack trace and a report link for an unexpected error | [#225](https://github.com/breferrari/shardmind/issues/225) |
 | ⬜ | End every --json document with a single newline | [#231](https://github.com/breferrari/shardmind/issues/231) |
 
 ## Phase 8 — release and test tooling

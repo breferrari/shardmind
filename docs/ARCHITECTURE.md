@@ -804,7 +804,7 @@ Full diagnostic output. Replaces the old `doctor` command concept.
   - `modules` (`included`, `excluded`), `values` (`valid`, `total`, `invalidKeys`, `fileMissing`). `valid` and `total` are `null` when the cached schema could not be loaded, so the values were never validated. `frontmatter` is likewise `null` when drift detection failed, since the lint walks drift's files.
   - `frontmatter` and `environment`: `null` without `--verbose`, the §10.3 sections with it.
   - `warnings`: the findings the human view shows, each with `severity`, `message` and, when present, `hint`.
-- **Failure** (for example, a corrupt `state.json`): `ok: false`, `error` (`code`, `message`, `hint`), **exit 1**. The human status view is ambient and exits 0 on an error it can show; a document saying `ok: false` exits non-zero so `$?` and the body agree.
+- **Failure** (for example, a corrupt `state.json`): `ok: false`, `error` (`code`, `message`, `hint`, and `stack`, which is set only for an unexpected error that is not a `ShardMindError` and is otherwise `null`, #225), **exit 1**. The human status view is ambient and exits 0 on an error it can show; a document saying `ok: false` exits non-zero so `$?` and the body agree.
 
 Lists are uncapped and sorted by path. The terminal views sample at 20 entries, and the document never does.
 

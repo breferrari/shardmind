@@ -17,7 +17,7 @@
  * bump it, but a removal or a reshape will.
  */
 
-import { ShardMindError } from '../runtime/types.js';
+import { describeError } from './bug-report.js';
 import type {
   StatusEnvironmentReport,
   StatusFrontmatterSummary,
@@ -40,6 +40,8 @@ export interface JsonErrorPayload {
   readonly message: string;
   /** Remediation text; null when the error carried none. */
   readonly hint: string | null;
+  /** The stack of a bug in shardmind (#225); null for a known or environment error. */
+  readonly stack: string | null;
 }
 
 export interface JsonEnvelope {
@@ -51,6 +53,16 @@ export interface JsonEnvelope {
   readonly error?: JsonErrorPayload;
   /** Command-specific body. Absent on failure. */
   readonly result?: unknown;
+}
+
+/**
+ * The `--json` command a run is for, from its arguments: the first that is
+ * not a flag, when it names one, else `status` (the root command). For a
+ * crash report that has only `process.argv` to go on (#225).
+ */
+export function jsonCommandOf(argv: readonly string[]): JsonCommand {
+  const first = argv.find((arg) => !arg.startsWith('-'));
+  return first === 'adopt' || first === 'update' || first === 'validate' ? first : 'status';
 }
 
 export function jsonSuccess(command: JsonCommand, result: unknown): JsonEnvelope {
@@ -67,17 +79,12 @@ export function jsonFailure(command: JsonCommand, error: unknown): JsonEnvelope 
 }
 
 function toJsonError(error: unknown): JsonErrorPayload {
-  if (error instanceof ShardMindError) {
-    return {
-      code: error.code,
-      message: error.message,
-      hint: error.hint ?? null,
-    };
-  }
-  if (error instanceof Error) {
-    return { code: null, message: error.message, hint: null };
-  }
-  return { code: null, message: String(error), hint: null };
+  // The version only reaches the report link, which --json does not carry.
+  const d = describeError(error, undefined);
+  // `code` stays a registry code or null: an environment error's errno code
+  // is in its message, and its hint says what to do.
+  if (d.kind === 'bug') return { code: null, message: d.message, hint: null, stack: d.stack };
+  return { code: d.kind === 'known' ? d.code : null, message: d.message, hint: d.hint, stack: null };
 }
 
 /**

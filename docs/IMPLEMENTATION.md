@@ -1783,6 +1783,28 @@ Update + migration codes (added in Milestone 4):
 
 Commands catch errors and render them in Ink with `StatusMessage variant="error"`.
 
+### 7.2a Unexpected errors (#225)
+
+One classifier, `describeError(error, version, cwd)` (`core/bug-report.ts`), sorts every error a command shows into three kinds, and every surface renders from it: `components/ErrorView.tsx` (the error view of install, update, adopt, status and validate), `formatErrorPlain` (the top-level handler below), and `toJsonError` (`--json`).
+
+`ShardMindError` answers `instanceof` by a `Symbol.for('shardmind.ShardMindError')` brand (`static [Symbol.hasInstance]`), not by class identity: `dist/cli.js`, `dist/commands/*` and the runtime each bundle their own copy of the class, and an error one throws must still be a `ShardMindError` to the others. An `Error` merely named `ShardMindError` is not one.
+
+| Kind | Which errors | Shown |
+|------|--------------|-------|
+| `known` | A `ShardMindError` | Message, `code: <CODE>`, hint, any detail. Unchanged. |
+| `environment` | A Node errno error the user's machine causes, not shardmind: `EACCES`, `EPERM`, `ENOSPC`, `EBUSY`, `EROFS`, `EMFILE`, and `ENOENT` on a path inside the working directory (the vault, which the user owns and can change under a running command) | Message (Node's names the operation and the path), `code: <ERRNO>`, a hint for that code. No bug framing, no link: telling a user to report a full disk is wrong, and it teaches them to ignore the prompt. |
+| `bug` | Anything else: an unrecognised errno code, an `ENOENT` outside the working directory (shardmind's own temp or cache), a raw `ZodError` (input validation should already have wrapped it in a `ShardMindError`; its arriving raw is the defect), a thrown non-`Error` | Message, "This is a bug in shardmind. Please report it:", a new-issue link from `bugReportUrl(version)`, and the stack, printed locally only. |
+
+The link carries the shardmind version (`?body=shardmind <version>`; the bare new-issue URL when the version cannot be read) and nothing from the error, so no value, vault path or file content can leave the machine through it; the user pastes the message and stack if they choose to. It is kept to about 70 characters on purpose: Ink wraps a line at the terminal width with real line breaks, and a link broken across lines can be neither clicked nor copied whole, so a title carrying the error's first line (which #225 allowed) would break the link on an 80-column terminal.
+
+**Top level.** `cli.ts` runs the headless `--json` path and Pastel inside one `try`, and installs `uncaughtException` / `unhandledRejection` handlers first (`installCrashHandlers`). A throw that escapes every command (a command module that fails to load, a rejection nobody awaited) is printed by `formatErrorPlain` to stderr as plain text, the same three kinds without Ink (Ink may not be mounted), and the process exits 1: the exit code is set at once, and the exit waits for stderr to drain. Only the first such throw is printed, whichever path reports it: the `try`'s catch reports through the function `installCrashHandlers` returns, so it shares the handlers' once-guard. The version is read only when something crashes. The SIGINT path is untouched: a Ctrl+C still exits 130 with no bug framing.
+
+**While rendering.** A throw while a command renders never reaches either: Ink's own error boundary would print its overview, with no report link, and exit 0. Pastel's custom app, `commands/_app.tsx`, wraps every command in `components/CrashBoundary.tsx`, which shows the error through `ErrorView`, sets exit code 1 and ends the app. Under `--json` it writes the command's failure document instead (`jsonFailure`, the command named by `jsonCommandOf(argv)`: the first argument that is not a flag, else `status`), so stdout stays one document carrying the stack.
+
+`describeError` reads the working directory only for an `ENOENT`. `process.cwd()` throws once the vault folder itself is removed, so the directory shardmind started in stands in, and a missing file in a deleted vault is still the environment. The vault folder itself counts as inside it. A value whose `String()` throws (a null-prototype object) is described without throwing, and only the table's own keys are environment codes (`Object.hasOwn`).
+
+`--json`: `error.stack` is the stack for a `bug`, and `null` otherwise (additive; `schemaVersion` stays 1). `error.code` keeps its meaning: an `ErrorCode` from the registry, or `null`. An `environment` error's `code` is `null` (its errno code is in its message) and its `hint` is the table's. The document stays free of terminal codes. The stack is not scrubbed: it can name local paths, so a caller that publishes the document (a CI log) should treat it as it would the terminal output. Nothing sends it anywhere.
+
 ### 7.3 Rollback on Install Failure
 
 If install fails mid-render (e.g., template error on file 23 of 47):

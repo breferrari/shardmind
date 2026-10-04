@@ -5,9 +5,11 @@ import { updateCheckOption } from './hooks/update-check-option.js';
 
 import { emitJson, jsonFailure } from '../core/json-output.js';
 
-import { ShardMindError, assertNever } from '../runtime/types.js';
+import { assertNever } from '../runtime/types.js';
+import ErrorView from '../components/ErrorView.js';
+import { resolveEngineVersion } from './hooks/cli-version.js';
 
-import { Spinner, StatusMessage, Alert } from '../components/ui.js';
+import { Spinner, Alert } from '../components/ui.js';
 import AdoptValuesGate from '../components/AdoptValuesGate.js';
 import AdoptModePicker from '../components/AdoptModePicker.js';
 import AdoptDiffView from '../components/AdoptDiffView.js';
@@ -221,21 +223,12 @@ export default function Adopt({ args, options }: Props) {
           </Box>
         </CommandFrame>
       );
-    case 'error': {
-      const err = phase.error;
-      const code = err instanceof ShardMindError ? err.code : null;
-      const hint = err instanceof ShardMindError ? err.hint : null;
+    case 'error':
       return (
         <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
-          <Box flexDirection="column" gap={1}>
-            <StatusMessage variant="error">{err.message}</StatusMessage>
-            {code && <Text dimColor>code: {code}</Text>}
-            {hint && <Text>{hint}</Text>}
-            {phase.detail && <Text dimColor>{phase.detail}</Text>}
-          </Box>
+          <ErrorView error={phase.error} detail={phase.detail} version={resolveEngineVersion()} />
         </CommandFrame>
       );
-    }
     default:
       return assertNever(phase);
   }

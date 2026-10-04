@@ -7,7 +7,7 @@ import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 import { resolveEngineVersion } from './hooks/cli-version.js';
 import { useSigintRollback } from './hooks/shared.js';
 import { validateShard, type ValidateReport } from '../core/validate-shard.js';
-import { ShardMindError } from '../runtime/types.js';
+import ErrorView from '../components/ErrorView.js';
 
 export const args = zod.tuple([
   zod
@@ -93,7 +93,7 @@ export default function Validate({ args, options }: Props) {
           <Text>Checking {target}…</Text>
         </Box>
       )}
-      {phase.kind === 'error' && <CouldNotCheck error={phase.error} />}
+      {phase.kind === 'error' && <ErrorView error={phase.error} lead="Could not check the shard" version={resolveEngineVersion()} />}
       {phase.kind === 'done' && <Findings report={phase.report} verbose={verbose} />}
     </Box>
   );
@@ -123,17 +123,3 @@ function Findings({ report, verbose }: { report: ValidateReport; verbose: boolea
   );
 }
 
-function CouldNotCheck({ error }: { error: unknown }) {
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    <Box flexDirection="column">
-      <Text color="red">✗ Could not check the shard: {message}</Text>
-      {error instanceof ShardMindError ? (
-        <Text dimColor>
-          {error.code}
-          {error.hint ? ` — ${error.hint}` : ''}
-        </Text>
-      ) : null}
-    </Box>
-  );
-}

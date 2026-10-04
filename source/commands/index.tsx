@@ -9,7 +9,7 @@
  * The command is a thin dispatcher on top of `useStatusReport`:
  *   booting / loading → Spinner
  *   not-in-vault      → install-hint message
- *   error             → error box with ShardMindError code + hint when present
+ *   error             → ErrorView: code + hint for a ShardMindError, else the stack + a report link (#225)
  *   ready             → StatusView (quick) or VerboseView (full)
  *
  * Deliberately does not wrap in `CommandFrame`. CommandFrame exists to host
@@ -25,10 +25,12 @@ import { Box, Text } from 'ink';
 import zod from 'zod';
 import { updateCheckOption } from './hooks/update-check-option.js';
 
-import { Spinner, StatusMessage } from '../components/ui.js';
+import { Spinner } from '../components/ui.js';
 import StatusView from '../components/StatusView.js';
 import VerboseView from '../components/VerboseView.js';
-import { ShardMindError, assertNever } from '../runtime/types.js';
+import { assertNever } from '../runtime/types.js';
+import ErrorView from '../components/ErrorView.js';
+import { resolveEngineVersion } from './hooks/cli-version.js';
 import { emitJson, jsonFailure, jsonSuccess, statusResult } from '../core/json-output.js';
 import { useStatusReport } from './hooks/use-status-report.js';
 import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
@@ -100,7 +102,7 @@ export default function Index({ options }: Props) {
       case 'not-in-vault':
         return <NotInVault />;
       case 'error':
-        return <ErrorBox error={phase.error} />;
+        return <ErrorView error={phase.error} version={resolveEngineVersion()} />;
       case 'ready':
         return verbose ? (
           <VerboseView report={phase.report} />
@@ -139,18 +141,6 @@ function NotInVault() {
           <Text bold>shardmind install breferrari/obsidian-mind</Text>
         </Text>
       </Box>
-    </Box>
-  );
-}
-
-function ErrorBox({ error }: { error: ShardMindError | Error }) {
-  const code = error instanceof ShardMindError ? error.code : null;
-  const hint = error instanceof ShardMindError ? error.hint : null;
-  return (
-    <Box flexDirection="column" gap={1}>
-      <StatusMessage variant="error">{error.message}</StatusMessage>
-      {code && <Text dimColor>code: {code}</Text>}
-      {hint && <Text>{hint}</Text>}
     </Box>
   );
 }
