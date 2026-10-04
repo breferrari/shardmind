@@ -35,7 +35,7 @@ import {
   removedFilesNeedingDecision,
   renderNewShard,
 } from '../../source/core/update-planner.js';
-import { runUpdate } from '../../source/core/update-executor.js';
+import { runUpdate, rollbackUpdate } from '../../source/core/update-executor.js';
 import { runPostUpdateHook } from '../../source/core/hook.js';
 import {
   defaultModuleSelections,
@@ -762,7 +762,9 @@ describe('update pipeline (against examples/minimal-shard)', () => {
 
       expect(err).toBeInstanceOf(ShardMindError);
       const wrapped = err as ShardMindError & { rollbackFailures?: Array<{ path: string; reason: string }>; cause?: unknown };
-      expect(wrapped.code).toBe('UPDATE_WRITE_FAILED');
+      expect(wrapped.code).toBe('ROLLBACK_INCOMPLETE');
+      expect(wrapped.message).toMatch(/\(UPDATE_WRITE_FAILED\)/);
+      expect(wrapped.message).toMatch(/Home\.md: restore failed: simulated EACCES on restore; its backup is at .*update-[^\n]*Home\.md/);
       expect(wrapped.message).toMatch(/Rollback incomplete/);
       expect(wrapped.rollbackFailures?.length ?? 0).toBeGreaterThan(0);
       // `cause` chains back to the original thrown error — no mutation
@@ -772,6 +774,27 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       writeSpy.mockRestore();
       copySpy.mockRestore();
     }
+  });
+
+  it('rollbackUpdate reports a snapshot folder it could not read instead of throwing (#247)', async () => {
+    const backupDir = path.join(vault, '.shardmind', 'backups', 'update-isolated');
+    const brain = path.join(backupDir, 'files', 'brain');
+    await fsp.mkdir(brain, { recursive: true });
+    await fsp.writeFile(path.join(backupDir, 'files', 'Home.md'), 'home\n', 'utf-8');
+    await fsp.writeFile(path.join(brain, 'a.md'), 'a\n', 'utf-8');
+    const realReaddir = fsp.readdir;
+    const spy = vi.spyOn(fsp, 'readdir').mockImplementation((async (dir: string, opts: unknown) => {
+      if (dir === brain) throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
+      return (realReaddir as (d: string, o: unknown) => Promise<unknown>)(dir, opts);
+    }) as typeof fsp.readdir);
+    try {
+      const failures = await rollbackUpdate(vault, backupDir, []);
+      expect(failures).toContainEqual({ path: 'brain', reason: 'readdir failed: simulated EACCES', backup: brain });
+    } finally {
+      spy.mockRestore();
+    }
+    // The readable part is still restored.
+    expect(await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('home\n');
   });
 
   it('preexisting add-collision + accept_new writes shard bytes and adopts as managed', async () => {

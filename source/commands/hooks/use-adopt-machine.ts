@@ -64,6 +64,7 @@ import {
 } from '../../core/install-planner.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
+import { rollbackDetail } from '../../core/rollback-report.js';
 import {
   appendHookOutput,
   useSigintRollback,
@@ -202,11 +203,8 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
   // /tmp/. Mirrors `useUpdateMachine`'s rollback wiring.
   useSigintRollback({
     isActive: () => !dryRun && writingRef.current && backupDirRef.current !== null,
-    rollback: async () => {
-      if (backupDirRef.current) {
-        await rollbackAdopt(vaultRoot, backupDirRef.current, addedPathsRef.current);
-      }
-    },
+    rollback: async () =>
+      backupDirRef.current ? rollbackAdopt(vaultRoot, backupDirRef.current, addedPathsRef.current) : [],
     cleanup: async () => {
       hookAbortRef.current?.abort();
       if (ctxCleanupRef.current) await ctxCleanupRef.current();
@@ -531,7 +529,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         finish({
           kind: 'error',
           error: err as Error,
-          detail: dryRun ? undefined : 'Rolled back partial adopt.',
+          detail: dryRun ? undefined : rollbackDetail(err, 'Rolled back partial adopt.'),
         });
       }
     },

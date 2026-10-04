@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -474,6 +474,45 @@ describe('install pipeline (against examples/minimal-shard)', () => {
 
     const restored = await fsp.readFile(original, 'utf-8');
     expect(restored).toBe('user content');
+  });
+
+  it('rollback returns each backup it could not move back, with where it is (#247)', async () => {
+    const original = path.join(vault, 'Home.md');
+    const backupPath = path.join(vault, 'Home.md.shardmind-backup-1');
+    await fsp.writeFile(backupPath, 'user content', 'utf-8');
+    await fsp.writeFile(original, 'shard content', 'utf-8');
+    const realRename = fsp.rename;
+    const renameSpy = vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      if (from === backupPath) throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
+      return realRename(from, to);
+    });
+    try {
+      const failures = await rollbackInstall(vault, [], [{ originalPath: original, backupPath }], []);
+      expect(failures).toEqual([
+        { path: 'Home.md', reason: 'restore failed: simulated EBUSY', backup: backupPath },
+      ]);
+      expect(await fsp.readFile(backupPath, 'utf-8')).toBe('user content');
+    } finally {
+      renameSpy.mockRestore();
+    }
+  });
+
+  it("rollback reports a written file it could not remove, never a folder that is the user's (#247)", async () => {
+    await fsp.writeFile(path.join(vault, 'Locked.md'), 'shard content', 'utf-8');
+    await fsp.mkdir(path.join(vault, 'Theirs.md', 'inside'), { recursive: true });
+    const lockedAbs = path.join(vault, 'Locked.md');
+    const realUnlink = fsp.unlink;
+    const spy = vi.spyOn(fsp, 'unlink').mockImplementation(async (p) => {
+      if (p === lockedAbs) throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
+      return realUnlink(p);
+    });
+    try {
+      const failures = await rollbackInstall(vault, ['Locked.md', 'Theirs.md'], [], []);
+      expect(failures).toEqual([{ path: 'Locked.md', reason: 'unlink failed: simulated EBUSY' }]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await fsp.stat(path.join(vault, 'Theirs.md'))).isDirectory()).toBe(true);
   });
 
   it('rollback removes all written files and the .shardmind directory', async () => {

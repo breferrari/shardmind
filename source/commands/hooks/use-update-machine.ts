@@ -61,6 +61,7 @@ import {
   useSigintRollback,
 } from './shared.js';
 import { buildRenderContext } from '../../core/renderer.js';
+import { rollbackDetail } from '../../core/rollback-report.js';
 import { VALUES_FILE } from '../../runtime/vault-paths.js';
 import type { DiffAction } from '../../components/DiffView.js';
 
@@ -206,16 +207,11 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
   // If we're mid-write, walk the executor's snapshot back before exiting.
   // Tempdir cleanup fires on every Ctrl-C — otherwise cancelling during the
   // download/plan phase would leak the extracted shard on disk.
-  // `rollbackUpdate` returns a failure list; we ignore it here (the
-  // process is about to exit), but SIGINT-mid-write is rare enough that
-  // the silent path is acceptable — the disk state is best-effort anyway.
+  // What `rollbackUpdate` could not restore is printed before the exit (#247).
   useSigintRollback({
     isActive: () => !dryRun && writingRef.current && backupDirRef.current !== null,
-    rollback: async () => {
-      if (backupDirRef.current) {
-        await rollbackUpdate(vaultRoot, backupDirRef.current, addedPathsRef.current);
-      }
-    },
+    rollback: async () =>
+      backupDirRef.current ? rollbackUpdate(vaultRoot, backupDirRef.current, addedPathsRef.current) : [],
     cleanup: async () => {
       // Abort any in-flight post-update hook subprocess. Runs on every
       // Ctrl+C regardless of `isActive` — during the running-hook phase
@@ -668,7 +664,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         finish({
           kind: 'error',
           error: err as Error,
-          detail: dryRun ? undefined : 'Rolled back partial update.',
+          detail: dryRun ? undefined : rollbackDetail(err, 'Rolled back partial update.'),
         });
       }
     },

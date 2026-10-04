@@ -55,6 +55,7 @@ import {
   removeEngineWrites,
 } from './state.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
+import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
 
 /** Cap on parallel snapshot copies — same budget update-executor uses. */
 const SNAPSHOT_CONCURRENCY = 16;
@@ -416,11 +417,9 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     return { state, summary, backupDir };
   } catch (err) {
     if (!dryRun && backupDir) {
-      try {
-        await rollbackAdopt(vaultRoot, backupDir, addedPaths);
-      } catch {
-        // Don't mask the original failure with a rollback failure.
-      }
+      // A file left unrestored is never reported as rolled back (#247).
+      const failures = await attemptRollback(() => rollbackAdopt(vaultRoot, backupDir, addedPaths));
+      throw withRollbackFailures(err, failures);
     }
     throw err;
   }
@@ -520,11 +519,6 @@ async function snapshotForRollback(
   });
 }
 
-export interface AdoptRollbackFailure {
-  path: string;
-  reason: string;
-}
-
 /**
  * Restore from an adopt snapshot. Best-effort: per-file failures are
  * collected and returned so the command layer can surface them rather
@@ -536,8 +530,8 @@ export async function rollbackAdopt(
   vaultRoot: string,
   backupDir: string,
   addedPaths: string[],
-): Promise<AdoptRollbackFailure[]> {
-  const failures: AdoptRollbackFailure[] = [];
+): Promise<RollbackFailure[]> {
+  const failures: RollbackFailure[] = [];
 
   // Erase newly-introduced files first so a restore can't spuriously
   // succeed by landing on top of a brand-new file we wrote.
@@ -567,7 +561,7 @@ export async function rollbackAdopt(
       // ENOENT on a subdir is a vanished mid-walk dir — also tolerable.
       // Anything else (EACCES, EBUSY, …) is a real failure.
       if (isEnoent(err)) continue;
-      failures.push({ path: dir, reason: `readdir failed: ${reasonOf(err)}` });
+      failures.push({ path: path.relative(filesDir, dir) || '.', reason: `readdir failed: ${reasonOf(err)}`, backup: dir });
       continue;
     }
     for (const entry of entries) {
@@ -582,7 +576,8 @@ export async function rollbackAdopt(
         await fsp.mkdir(path.dirname(dst), { recursive: true });
         await fsp.copyFile(full, dst);
       } catch (err) {
-        failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}` });
+        // The snapshot is kept when a restore fails, so `full` is still there.
+        failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}`, backup: full });
       }
     }
   }
@@ -592,10 +587,11 @@ export async function rollbackAdopt(
   // nothing else: `assertAdoptable` allows a `.shardmind/` without
   // state.json, which may hold the vault owner's own files (`boundary-ignore`,
   // #190, #243). The folder itself goes only if that leaves it empty. The
-  // snapshot is kept when a restore from it failed: it then holds the only
-  // copy of those files. `shard-values.yaml` is in `addedPaths` once the
-  // adopt has written it, and was removed with them above.
-  const restoreFailed = failures.some((f) => f.reason.startsWith('restore failed'));
+  // snapshot is kept when any part of the restore failed (a file, or a
+  // folder it could not read): it then holds the only copy of those files.
+  // `shard-values.yaml` is in `addedPaths` once the adopt has written it,
+  // and was removed with them above.
+  const restoreFailed = failures.some((f) => /^(restore|readdir) failed/.test(f.reason));
   for (const failure of await removeEngineWrites(vaultRoot, {
     snapshotDir: restoreFailed ? null : backupDir,
     removeEmptyDir: true,
@@ -604,11 +600,6 @@ export async function rollbackAdopt(
   }
 
   return failures;
-}
-
-function reasonOf(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
 }
 
 async function writeVaultFileBuffer(

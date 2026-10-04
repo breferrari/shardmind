@@ -20,6 +20,7 @@ import type {
   MergeStats,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
+import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
@@ -353,45 +354,9 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     return { state: nextState, summary, backupDir };
   } catch (err) {
     if (!dryRun && backupDir) {
-      let rollbackFailures: RollbackFailure[] = [];
-      try {
-        rollbackFailures = await rollbackUpdate(vaultRoot, backupDir, addedPaths);
-      } catch {
-        // Rollback itself crashed — swallow and fall through to rethrow
-        // the original so we never mask the root-cause failure.
-      }
-      if (rollbackFailures.length > 0) {
-        // Surface partial-rollback detail in a NEW error rather than
-        // mutating `err.message`. Mutation throws on frozen/sealed
-        // third-party errors (a rare but real case for wrapped native
-        // errors) and compounds if the same error is caught again
-        // further up the stack and logged twice. Preserve the code when
-        // we can so command-layer code-based branching still works;
-        // attach the failures list and the original as `cause`.
-        const summary = rollbackFailures
-          .slice(0, 5)
-          .map((f) => `  - ${f.path}: ${f.reason}`)
-          .join('\n');
-        const more = rollbackFailures.length > 5
-          ? `\n  …and ${rollbackFailures.length - 5} more`
-          : '';
-        const baseMessage = err instanceof Error ? err.message : String(err);
-        const wrapped = err instanceof ShardMindError
-          ? new ShardMindError(
-              `${baseMessage}\nRollback incomplete (${rollbackFailures.length} files):\n${summary}${more}`,
-              err.code,
-              err.hint,
-            )
-          : new ShardMindError(
-              `${baseMessage}\nRollback incomplete (${rollbackFailures.length} files):\n${summary}${more}`,
-              'UPDATE_WRITE_FAILED',
-              'The update failed AND the rollback could not restore every snapshot. Check the listed paths manually.',
-            );
-        (wrapped as Error & { rollbackFailures?: RollbackFailure[] }).rollbackFailures =
-          rollbackFailures;
-        (wrapped as Error & { cause?: unknown }).cause = err;
-        throw wrapped;
-      }
+      // A file left unrestored is never reported as rolled back (#247).
+      const failures = await attemptRollback(() => rollbackUpdate(vaultRoot, backupDir, addedPaths));
+      throw withRollbackFailures(err, failures);
     }
     throw err;
   }
@@ -846,11 +811,6 @@ async function copyOptional(src: string, dst: string): Promise<void> {
   }
 }
 
-export interface RollbackFailure {
-  path: string;
-  reason: string;
-}
-
 /**
  * Restore from a snapshot. Returns a list of per-file failures so the
  * caller can surface them — silently swallowing rollback errors would
@@ -901,8 +861,16 @@ async function restoreTree(
   failures: RollbackFailure[],
 ): Promise<void> {
   if (!(await pathExists(srcRoot))) return;
+  // Never throws: an unreadable snapshot folder is a failure like any
+  // other, and the ones collected so far must reach the user (#247).
   const walk = async (dir: string): Promise<string[]> => {
-    const entries = await fsp.readdir(dir, { withFileTypes: true });
+    let entries;
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      failures.push({ path: path.relative(srcRoot, dir) || '.', reason: `readdir failed: ${reasonOf(err)}`, backup: dir });
+      return [];
+    }
     const out: string[] = [];
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
@@ -919,14 +887,10 @@ async function restoreTree(
       await fsp.mkdir(path.dirname(dst), { recursive: true });
       await fsp.copyFile(abs, dst);
     } catch (err) {
-      failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}` });
+      // The update's snapshot is never removed, so `abs` is still there.
+      failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}`, backup: abs });
     }
   }
-}
-
-function reasonOf(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
 }
 
 // ---------------------------------------------------------------------------
