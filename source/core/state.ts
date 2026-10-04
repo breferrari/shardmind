@@ -350,12 +350,20 @@ export async function rehashManagedFiles(
 }
 
 /**
+ * The `.shardmind/` entries an install or adopt writes (a subset of the
+ * engine's entries in `vault-path-guard.ts`). `removeEngineWrites` removes
+ * exactly these on a rollback.
+ */
+export const ENGINE_INSTALL_WRITES: readonly string[] = [STATE_FILE, CACHED_MANIFEST, CACHED_SCHEMA, CACHED_TEMPLATES];
+
+/**
  * Remove what an install or an adopt wrote under `.shardmind/`, and nothing
  * else, when it rolls back (#215, #243). The engine's own entries go
  * (`state.json`, `shard.yaml`, `shard-schema.yaml`, `templates/`, and the
- * run's own snapshot folder when given); `backups/` goes only if that left it
- * empty, and `.shardmind/` itself only when `removeEmptyDir` is set and it
- * is empty. The vault owner's files there (`boundary-ignore`, #190) are never
+ * run's own snapshot folder when given); `backups/` goes only with that
+ * snapshot and only if it is then empty, and `.shardmind/` itself only when
+ * `removeEmptyDir` is set and it is empty. `ENGINE_INSTALL_WRITES` lists the
+ * entries, so install's rollback can leave them to this one place. The vault owner's files there (`boundary-ignore`, #190) are never
  * touched. Best effort: each failure is returned, never thrown.
  */
 export async function removeEngineWrites(
@@ -372,7 +380,7 @@ export async function removeEngineWrites(
       }
     }
   };
-  for (const rel of [STATE_FILE, CACHED_MANIFEST, CACHED_SCHEMA]) {
+  for (const rel of ENGINE_INSTALL_WRITES.filter((r) => r !== CACHED_TEMPLATES)) {
     await attempt(rel, () => fsp.unlink(path.join(vaultRoot, rel)), (code) => code === 'ENOENT');
   }
   await attempt(CACHED_TEMPLATES, () => removePath(path.join(vaultRoot, CACHED_TEMPLATES)), () => false);
@@ -381,11 +389,18 @@ export async function removeEngineWrites(
     await attempt(path.relative(vaultRoot, snapshot), () => removePath(snapshot), () => false);
   }
   // Only empty folders: rmdir refuses one that still holds the user's files.
-  const notEmpty = (code: string | undefined) => code === 'ENOENT' || code === 'ENOTEMPTY' || code === 'EEXIST';
-  const backups = path.join(SHARDMIND_DIR, 'backups');
-  await attempt(backups, () => fsp.rmdir(path.join(vaultRoot, backups)), notEmpty);
+  // A folder that can't go for any other reason (a Windows lock, or not a
+  // folder) is left where it is; it is not this rollback's to force.
+  const leaveIt = (code: string | undefined) =>
+    code !== undefined && ['ENOENT', 'ENOTEMPTY', 'EEXIST', 'EPERM', 'EBUSY', 'ENOTDIR'].includes(code);
+  // `backups/` only when this run's snapshot was in it: install never
+  // creates one, and an empty one the user kept is theirs.
+  if (opts.snapshotDir) {
+    const backups = path.join(SHARDMIND_DIR, 'backups');
+    await attempt(backups, () => fsp.rmdir(path.join(vaultRoot, backups)), leaveIt);
+  }
   if (opts.removeEmptyDir) {
-    await attempt(SHARDMIND_DIR, () => fsp.rmdir(path.join(vaultRoot, SHARDMIND_DIR)), notEmpty);
+    await attempt(SHARDMIND_DIR, () => fsp.rmdir(path.join(vaultRoot, SHARDMIND_DIR)), leaveIt);
   }
   return failures;
 }

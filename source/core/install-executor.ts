@@ -28,6 +28,7 @@ import {
   writeState,
   STATE_SCHEMA_VERSION,
   removeEngineWrites,
+  ENGINE_INSTALL_WRITES,
 } from './state.js';
 import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
@@ -429,8 +430,9 @@ export async function rollbackInstall(
   const deepestFirst = (paths: Iterable<string>) =>
     [...paths].sort((a, b) => toPosixRel(b).split('/').length - toPosixRel(a).split('/').length);
 
+  // The engine's own entries are `removeEngineWrites`' (below), not unlinked here.
   const files = new Set(writtenPaths.map(toPosixRel));
-  for (const rel of [CACHED_MANIFEST, CACHED_SCHEMA, STATE_FILE, CACHED_TEMPLATES]) files.delete(toPosixRel(rel));
+  for (const rel of ENGINE_INSTALL_WRITES) files.delete(toPosixRel(rel));
   for (const rel of deepestFirst(files)) {
     try {
       // unlink, not a recursive remove: a folder the user put at a planned

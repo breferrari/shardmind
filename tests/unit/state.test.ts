@@ -11,6 +11,7 @@ import {
   cacheManifest,
   rehashManagedFiles,
   snapshotTrackedHashes,
+  removeEngineWrites,
 } from '../../source/core/state.js';
 import type { ShardState, ShardManifest, ShardSchema } from '../../source/runtime/types.js';
 import { ShardMindError } from '../../source/runtime/types.js';
@@ -676,5 +677,39 @@ describe('core/state', () => {
         }
       },
     );
+  });
+});
+
+describe('removeEngineWrites (#215, #243)', () => {
+  let vault: string;
+  beforeEach(async () => {
+    vault = path.join(os.tmpdir(), `engine-writes-${crypto.randomUUID()}`);
+    const sm = path.join(vault, '.shardmind');
+    await fsp.mkdir(path.join(sm, 'templates', 'brain'), { recursive: true });
+    await fsp.writeFile(path.join(sm, 'templates', 'brain', 'a.md'), 'x');
+    for (const f of ['state.json', 'shard.yaml', 'shard-schema.yaml']) await fsp.writeFile(path.join(sm, f), 'x');
+    await fsp.writeFile(path.join(sm, 'boundary-ignore'), 'archive/\n');
+  });
+  afterEach(async () => {
+    await fsp.rm(vault, { recursive: true, force: true });
+  });
+
+  it("removes the engine's entries and keeps the owner's, and the folder holding them", async () => {
+    expect(await removeEngineWrites(vault, { removeEmptyDir: true })).toEqual([]);
+    expect(await fsp.readdir(path.join(vault, '.shardmind'))).toEqual(['boundary-ignore']);
+  });
+
+  it("leaves an empty backups/ alone without a snapshot: it isn't this run's", async () => {
+    await fsp.mkdir(path.join(vault, '.shardmind', 'backups'));
+    await removeEngineWrites(vault, { removeEmptyDir: false });
+    expect((await fsp.readdir(path.join(vault, '.shardmind'))).sort()).toEqual(['backups', 'boundary-ignore']);
+  });
+
+  it('removes the run snapshot, then backups/ and the folder once empty', async () => {
+    await fsp.rm(path.join(vault, '.shardmind', 'boundary-ignore'));
+    const snapshot = path.join(vault, '.shardmind', 'backups', 'adopt-1');
+    await fsp.mkdir(path.join(snapshot, 'files'), { recursive: true });
+    expect(await removeEngineWrites(vault, { snapshotDir: snapshot, removeEmptyDir: true })).toEqual([]);
+    await expect(fsp.access(path.join(vault, '.shardmind'))).rejects.toThrow();
   });
 });

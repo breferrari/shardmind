@@ -610,6 +610,27 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     await expect(fsp.access(path.join(vault, '.shardmind'))).rejects.toThrow();
   });
 
+  it("rollbackAdopt keeps a shard-values.yaml the adopt never wrote (#243)", async () => {
+    // The user's own values file, not in addedPaths: the adopt failed
+    // before (or at) its exclusive write, so the file is theirs.
+    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
+    await fsp.mkdir(path.join(backupDir, 'files'), { recursive: true });
+    await fsp.writeFile(path.join(vault, 'shard-values.yaml'), 'user_name: mine\n', 'utf-8');
+    expect(await rollbackAdopt(vault, backupDir, [])).toEqual([]);
+    expect(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')).toBe('user_name: mine\n');
+  });
+
+  it('rollbackAdopt keeps the snapshot when restoring from it failed (#243)', async () => {
+    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
+    await fsp.mkdir(path.join(backupDir, 'files'), { recursive: true });
+    await fsp.writeFile(path.join(backupDir, 'files', 'Notes.md'), 'the only copy\n', 'utf-8');
+    // A folder where the file must be restored: the copy fails.
+    await fsp.mkdir(path.join(vault, 'Notes.md', 'blocker'), { recursive: true });
+    const failures = await rollbackAdopt(vault, backupDir, []);
+    expect(failures.some((f) => f.reason.startsWith('restore failed'))).toBe(true);
+    expect(await fsp.readFile(path.join(backupDir, 'files', 'Notes.md'), 'utf-8')).toBe('the only copy\n');
+  });
+
   it('runAdopt with a zero-classification plan still writes engine metadata', async () => {
     // Pin the empty-plan path: a shard whose every file is excluded
     // ends up with `matches=[], differs=[], shardOnly=[]`. Adopt

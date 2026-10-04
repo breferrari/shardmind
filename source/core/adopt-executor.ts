@@ -406,6 +406,10 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
       await cacheTemplates(vaultRoot, tempDir);
       await cacheManifest(vaultRoot, manifest, schema, tempDir);
       await writeValuesFile(vaultRoot, values);
+      // Recorded only once written: the exclusive write fails on a values
+      // file the user put there mid-adopt, which the rollback must keep.
+      addedPaths.push(VALUES_FILE);
+      onFileTouched?.(VALUES_FILE, true);
       await writeState(vaultRoot, state);
     }
 
@@ -587,14 +591,16 @@ export async function rollbackAdopt(
   // manifest and schema, the templates cache, this run's snapshot) and
   // nothing else: `assertAdoptable` allows a `.shardmind/` without
   // state.json, which may hold the vault owner's own files (`boundary-ignore`,
-  // #190, #243). The folder itself goes only if that leaves it empty.
-  for (const failure of await removeEngineWrites(vaultRoot, { snapshotDir: backupDir, removeEmptyDir: true })) {
+  // #190, #243). The folder itself goes only if that leaves it empty. The
+  // snapshot is kept when a restore from it failed: it then holds the only
+  // copy of those files. `shard-values.yaml` is in `addedPaths` once the
+  // adopt has written it, and was removed with them above.
+  const restoreFailed = failures.some((f) => f.reason.startsWith('restore failed'));
+  for (const failure of await removeEngineWrites(vaultRoot, {
+    snapshotDir: restoreFailed ? null : backupDir,
+    removeEmptyDir: true,
+  })) {
     failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
-  }
-  try {
-    await fsp.rm(path.join(vaultRoot, VALUES_FILE), { force: true });
-  } catch (err) {
-    failures.push({ path: VALUES_FILE, reason: `cleanup failed: ${reasonOf(err)}` });
   }
 
   return failures;
