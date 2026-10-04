@@ -59,6 +59,7 @@ The suite fails only on real defects, on all three operating systems.
 | ⬜ | E2E: bridge SIGINT delivery reliably on GH Actions Windows runner | [#57](https://github.com/breferrari/shardmind/issues/57) |
 | ⬜ | Fix the write-boundary A2 test flaking under load | [#175](https://github.com/breferrari/shardmind/issues/175) |
 | ⬜ | Stop dist/ changing while E2E tests spawn the CLI | [#176](https://github.com/breferrari/shardmind/issues/176) |
+| ⬜ | Read a fast-exiting CLI's last output in the PTY harness | [#177](https://github.com/breferrari/shardmind/issues/177) |
 
 ## Shelf
 
