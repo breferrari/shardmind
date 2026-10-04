@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (failed install cleanup — #207)
+
+- **A failed install now removes the files it had already written.** When a fresh install failed partway, for example on a render error or a stray `shard-values.yaml`, the files written before the failure stayed in the directory, under an error that said "Rolled back partial install". The rollback now removes every file the install wrote, as a cancelled install already did.
+
 ### Fixed (files an `_each` template writes — #214)
 
 - **Install now backs up a file of yours at a path an `_each` template writes.** A template like `people/_each.md.njk` writes one file per list item (`people/alice.md`). Those names weren't known when install checked for existing files, so a file of yours at one was overwritten with no prompt and no backup. They are now checked like every other path.
