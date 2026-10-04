@@ -57,6 +57,8 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
 
   afterEach(() => {
     cleanup();
+    // A Ctrl+C sets a once-per-process latch (#155); reset it between tests (#249).
+    resetSigintRollbackForTests();
   });
 
   /**

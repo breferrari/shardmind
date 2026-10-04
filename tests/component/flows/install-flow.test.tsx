@@ -87,6 +87,8 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   afterEach(() => {
     cleanup();
+    // A Ctrl+C sets a once-per-process latch (#155); reset it between tests (#249).
+    resetSigintRollbackForTests();
   });
 
   // ───── Scenario 1: select default = first option, Enter advances (#103 regression) ─────
