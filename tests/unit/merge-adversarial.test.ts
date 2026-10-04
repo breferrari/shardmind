@@ -612,11 +612,11 @@ describe('drift adversarial — performance and scale', () => {
   });
 });
 
-describe('merge adversarial — token interning stress', () => {
-  it('2K lines with many duplicates tokenize correctly and merge is identity', () => {
-    // Interner should deduplicate repeated lines so Map/Array stay
-    // bounded by unique-line count, not total line count. 2K lines of 100
-    // distinct ones prove that through diff3 in tens of milliseconds. At
+describe('merge adversarial — duplicate-density stress', () => {
+  it('2K lines with many duplicates merge as identity', () => {
+    // node-diff3 keys its LCS lookup by line content, so repeated lines share
+    // one entry. 2K lines of 100 distinct ones run through diff3 in tens of
+    // milliseconds. At
     // 10K the test measured node-diff3 instead: its LCS slows toward cubic
     // time on repeated lines (about 8x per doubling), and the test timed
     // out under parallel load (#114). That cost is tracked in #170.
@@ -627,13 +627,13 @@ describe('merge adversarial — token interning stress', () => {
     expect(result.stats.linesConflicted).toBe(0);
   });
 
-  it('all lines identical is the densest interning case', () => {
+  it('all lines identical is the densest duplicate case', () => {
     const content = Array.from({ length: 1000 }, () => 'same').join('\n') + '\n';
     const result = threeWayMerge(content, content, content);
     expect(result.content).toBe(content);
   });
 
-  it('all lines unique is the sparsest interning case', () => {
+  it('all lines unique is the sparsest duplicate case', () => {
     const lines = Array.from({ length: 500 }, (_, i) => crypto.randomUUID());
     const content = lines.join('\n') + '\n';
     const result = threeWayMerge(content, content, content);

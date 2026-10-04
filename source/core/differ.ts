@@ -184,7 +184,7 @@ export function threeWayMerge(
     stats.linesConflicted += resolution.conflictedLines;
   }
 
-  // Correct stats for the trailing-newline token. When all three inputs end
+  // Correct stats for the trailing empty line. When all three inputs end
   // with `\n`, `split` produced a trailing "" on each, diff3 emitted it as
   // part of a stable unchanged region, and it's padded `linesUnchanged` by 1.
   // Subtract it so stats match user-visible line counts.
