@@ -100,7 +100,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ✅ | Decide whether update skips volatile files that install recorded as managed | [#210](https://github.com/breferrari/shardmind/issues/210) |
 | ✅ | Back up user files at the paths an _each template expands to | [#214](https://github.com/breferrari/shardmind/issues/214) |
 | ⬜ | Keep the user's .shardmind/ files and empty folders when a fresh install rolls back | [#215](https://github.com/breferrari/shardmind/issues/215) |
-| ⬜ | Name an _each file after a string list item, not unknown.md | [#227](https://github.com/breferrari/shardmind/issues/227) |
+| ✅ | Name an _each file after a string list item, not unknown.md | [#227](https://github.com/breferrari/shardmind/issues/227) |
 | ⬜ | Remove the files a reinstall no longer plans | [#228](https://github.com/breferrari/shardmind/issues/228) |
 | ⬜ | Refuse an update --json run that would need answers | [#230](https://github.com/breferrari/shardmind/issues/230) |
 | ⬜ | Merge an edited _each file against a base rendered with its own item | [#233](https://github.com/breferrari/shardmind/issues/233) |

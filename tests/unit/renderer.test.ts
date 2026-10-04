@@ -127,6 +127,44 @@ describe('renderFile', () => {
       ).toEqual(['people/alice.md', 'people/Bob-Ops.md', 'people/unknown.md']);
     });
 
+    it('eachOutputPaths names a string or number item after itself (#227)', () => {
+      expect(eachOutputPaths('people/_each.md', ['Alice', 'Bob/Ops.', 3, true])).toEqual([
+        'people/Alice.md',
+        'people/Bob-Ops.md',
+        'people/3.md',
+        'people/true.md',
+      ]);
+    });
+
+    it('eachOutputPaths refuses a null item with RENDER_ITERATOR_ERROR, not a crash', () => {
+      expect(() => eachOutputPaths('people/_each.md', ['Alice', null])).toThrow(
+        expect.objectContaining({ code: 'RENDER_ITERATOR_ERROR' }),
+      );
+    });
+
+    it('renders one file per string item, with {{ item }} the string (#227)', async () => {
+      const os = await import('node:os');
+      const tmpDir = path.join(os.tmpdir(), `renderer-test-${crypto.randomUUID()}`);
+      await fs.mkdir(tmpDir, { recursive: true });
+      await fs.writeFile(path.join(tmpDir, '_each.md.njk'), '# {{ item }}\n');
+      try {
+        const env = createRenderer(tmpDir);
+        const entry = makeEntry({
+          sourcePath: path.join(tmpDir, '_each.md.njk'),
+          outputPath: 'people/_each.md',
+          iterator: 'people',
+        });
+        const ctx = makeContext({ values: { people: ['Alice', 'Bob'] } });
+        const results = (await renderFile(entry, ctx, env)) as import('../../source/runtime/types.js').RenderedFile[];
+        expect(results.map((r) => [r.outputPath, r.content])).toEqual([
+          ['people/Alice.md', '# Alice\n'],
+          ['people/Bob.md', '# Bob\n'],
+        ]);
+      } finally {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("eachOutputPaths takes a $ in a slug literally and renames only the basename's _each", () => {
       expect(eachOutputPaths('people/_each.md', [{ name: "Q$'" }])).toEqual(["people/Q$'.md"]);
       expect(eachOutputPaths('my_each_notes/people/_each.md', [{ slug: 'alice' }])).toEqual([

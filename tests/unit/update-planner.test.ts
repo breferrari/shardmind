@@ -203,6 +203,68 @@ describe('planUpdate', () => {
     return vault;
   }
 
+  // A vault installed before #227 tracks one `people/unknown.md` for a string
+  // list: every item collapsed to it. The new render names a file per item;
+  // unknown.md is no longer produced, so it takes the removed-file path, with
+  // no rename (it holds whichever item won, so it has no single new name).
+  describe('a vault with the pre-#227 people/unknown.md', () => {
+    async function planFor(ownership: 'managed' | 'modified') {
+      const schema = baseSchema();
+      const selections: ModuleSelections = { brain: 'included' };
+      const values = { user_name: 'brenno', people: ['Alice', 'Bob'] };
+      const old = '# Bob\n';
+      const vault = await buildVault({
+        vaultFiles: { 'people/unknown.md': ownership === 'managed' ? old : '# Bob, my notes\n' },
+        cachedTemplates: { 'people/_each.md.njk': '# {{ item }}\n' },
+      });
+      const shardDir = await buildShardTempDir({ 'people/_each.md.njk': '# {{ item }}\n' });
+      const state = makeShardState({
+        version: '1.0.0',
+        modules: selections,
+        files: {
+          'people/unknown.md': makeFileState({ template: 'people/_each.md.njk', rendered_hash: sha256(old), ownership: 'managed', iterator_key: 'people' }),
+        },
+      });
+      const entry = { sourcePath: path.join(shardDir, 'people/_each.md.njk'), outputPath: 'people/_each.md', module: null, volatile: false, iterator: 'people' };
+      const drift: DriftReport = {
+        managed: ownership === 'managed'
+          ? [{ path: 'people/unknown.md', template: 'people/_each.md.njk', renderedHash: sha256(old), actualHash: sha256(old), ownership: 'managed' }]
+          : [],
+        modified: ownership === 'modified'
+          ? [{ path: 'people/unknown.md', template: 'people/_each.md.njk', renderedHash: sha256(old), actualHash: 'x', ownership: 'modified' }]
+          : [],
+        volatile: [],
+        missing: [],
+        orphaned: [],
+      };
+      const outputs = ['Alice', 'Bob'].map((name) => ({
+        outputPath: `people/${name}.md`,
+        entry,
+        content: `# ${name}\n`,
+        hash: sha256(`# ${name}\n`),
+      }));
+      const plan = await planUpdate({
+        vault: { root: vault, state, drift },
+        values: { old: values, new: values },
+        newShard: { schema, selections, tempDir: shardDir, renderContext: renderCtx(values), filePlan: { outputs } },
+        removedFileDecisions: {},
+      });
+      return { plan, drift, newPaths: new Set(outputs.map((o) => o.outputPath)) };
+    }
+
+    it('deletes an untouched unknown.md and adds a file per item', async () => {
+      const { plan } = await planFor('managed');
+      const byPath = Object.fromEntries(plan.actions.map((a) => [a.path, a.kind]));
+      expect(byPath).toEqual({ 'people/unknown.md': 'delete', 'people/Alice.md': 'add', 'people/Bob.md': 'add' });
+    });
+
+    it("offers an edited unknown.md in the removed-files prompt, and keeps it unless told to delete", async () => {
+      const { plan, drift, newPaths } = await planFor('modified');
+      expect(removedFilesNeedingDecision(drift, newPaths)).toEqual(['people/unknown.md']);
+      expect(plan.actions.find((a) => a.path === 'people/unknown.md')?.kind).toBe('keep_as_user');
+    });
+  });
+
   it('overwrites a managed file whose template has changed', async () => {
     const schema = baseSchema({
       modules: { brain: { label: 'Brain', paths: ['brain/'], removable: false } },

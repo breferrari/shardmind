@@ -494,7 +494,7 @@ Under the v6 contract, `CLAUDE.md` (and `AGENTS.md`, `GEMINI.md`) is a plain fil
 
 ### 7.4 Dynamic File Generation
 
-Templates prefixed with `_each` iterate over list values. For each item in the corresponding list, renders a separate file named from `item.slug`. Files track individually in state.json.
+Templates prefixed with `_each` iterate over list values. For each item in the corresponding list, renders a separate file named after the item (a string or number) or its `slug`/`name` (an object). Files track individually in state.json.
 
 ### 7.5 Module-Gated Rendering
 
