@@ -135,6 +135,13 @@ describe('adoptPlanResult', () => {
     expect(out.files.find((f) => f.path === 'm-new.md')!.userHash).toBeUndefined();
   });
 
+  it('names the old path of a file adopt would move (#179)', () => {
+    const moved: AdoptPlan = { ...plan, matches: [{ ...matches('AGENTS.md'), movedFrom: 'CLAUDE.md' } as AdoptClassification] };
+    const out = adoptPlanResult(moved, { dryRun: true, mode: null });
+    expect(out.files.find((f) => f.path === 'AGENTS.md')!.movedFrom).toBe('CLAUDE.md');
+    expect(out.files.find((f) => f.path === 'a-mine.md')!.movedFrom).toBeUndefined();
+  });
+
   it('preserves the volatile flag', () => {
     const out = adoptPlanResult(plan, { dryRun: true, mode: null });
     expect(out.files.find((f) => f.path === 'm-new.md')!.volatile).toBe(true);

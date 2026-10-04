@@ -36,6 +36,9 @@ interface AdoptSummaryProps {
   dryRun?: boolean;
 }
 
+/** Moved files listed before the rest is summed up as "…and N more". */
+const PATHS_VISIBLE = 10;
+
 export default function AdoptSummary({
   manifest,
   vaultRoot,
@@ -92,6 +95,18 @@ export default function AdoptSummary({
           <Text dimColor>  (no files adopted — empty plan)</Text>
         )}
       </Box>
+
+      {summary.renamedFiles.length > 0 && (
+        <Box flexDirection="column">
+          <Text dimColor>{dryRun ? 'Would move' : 'Moved'} to a new path:</Text>
+          {summary.renamedFiles.slice(0, PATHS_VISIBLE).map(({ from, to }) => (
+            <Text key={to}>  · {from} → {to}</Text>
+          ))}
+          {summary.renamedFiles.length > PATHS_VISIBLE && (
+            <Text dimColor>  …and {summary.renamedFiles.length - PATHS_VISIBLE} more</Text>
+          )}
+        </Box>
+      )}
 
       <HookSummarySection outcomes={hooks} />
 

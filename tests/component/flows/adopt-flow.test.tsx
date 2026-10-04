@@ -34,6 +34,7 @@ import { tick, waitFor, ENTER, ARROW_DOWN } from '../helpers.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
 
 const SLUG_VERSION_MISMATCH = 'acme/adopt-future-engine';
+const SLUG_RENAMED = 'acme/adopt-renamed';
 
 describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)', () => {
   const getCtx = setupFlowSuite({
@@ -45,6 +46,10 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
       [SLUG_VERSION_MISMATCH]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
+      },
+      [SLUG_RENAMED]: {
+        versions: {} as Record<string, string>,
+        latest: '0.2.0',
       },
     },
   });
@@ -516,6 +521,56 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
       await cleanupVault(vault);
     }
   }, 60_000);
+
+  // ───── Scenario 32: --from-version moves a file cloned at its old path (#179) ─────
+
+  it('32. --from-version → a file at a renamed path is kept and moved to the new one', async () => {
+    const { stub } = getCtx();
+    const vault = await makeVaultDir('s32-from-version');
+    try {
+      await writeRel(vault, 'CLAUDE.md', 'My agent notes.\n');
+      const tarPath = await buildCustomTarball({
+        version: '0.2.0',
+        prefix: 'adopt-renamed-0.2.0',
+        manifestOverrides: { migrations: [{ from: '0.1.0', to: '0.2.0', renames: { 'CLAUDE.md': 'AGENTS.md' } }] },
+        mutate: (dir) => fs.rename(path.join(dir, 'CLAUDE.md'), path.join(dir, 'AGENTS.md')),
+        outDir: vault,
+      });
+      stub.setRef(SLUG_RENAMED, 'v0.2.0', STUB_SHA, tarPath);
+      const valuesFile = path.join(vault, 'values.yaml');
+      await fs.writeFile(valuesFile, stringifyYaml(DEFAULT_VALUES), 'utf-8');
+      const r = mountAdopt({
+        shardRef: `github:${SLUG_RENAMED}#v0.2.0`,
+        vaultRoot: vault,
+        options: { yes: true, values: valuesFile, fromVersion: '0.1.0' },
+      });
+      const frame = await waitFor(r.lastFrame, (f) => /Adopted shardmind\/minimal/.test(f), 30_000);
+      expect(frame).toContain('CLAUDE.md → AGENTS.md');
+      expect(await fs.readFile(path.join(vault, 'AGENTS.md'), 'utf-8')).toBe('My agent notes.\n');
+      await expect(fs.access(path.join(vault, 'CLAUDE.md'))).rejects.toThrow();
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  // ───── Scenario 33: --from-version that is not a version → refused before the fetch (#179) ─────
+
+  it('33. --from-version not semver → ADOPT_FROM_VERSION_INVALID, nothing fetched', async () => {
+    const vault = await makeVaultDir('s33-from-version-invalid');
+    try {
+      // A shard the stub never serves: any network step would fail with
+      // another code, so this one can only come from before the fetch.
+      const r = mountAdopt({
+        shardRef: 'github:acme/never-served#v0.2.0',
+        vaultRoot: vault,
+        options: { fromVersion: 'five' },
+      });
+      const frame = await waitFor(r.lastFrame, (f) => /ADOPT_FROM_VERSION_INVALID/.test(f), 30_000);
+      expect(frame).toContain("'five'");
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
 });
 
 async function writeRel(vault: string, rel: string, content: string): Promise<void> {

@@ -39,6 +39,12 @@ export const options = zod.object({
     .describe(
       'Resolve divergent files in bulk, skipping the mode picker. keep-all-mine/use-all-theirs/auto-merge are non-interactive (auto-merge still prompts on conflicts unless --yes); decide-per-file is the per-file prompt. auto-merge is best-effort (keeps your bytes, ignores shard deletions, may duplicate — review after)',
     ),
+  fromVersion: zod
+    .string()
+    .optional()
+    .describe(
+      "The shard release the vault was cloned from; adopt applies the shard's renames since then, so files at old paths are adopted at their new ones",
+    ),
   verbose: zod.boolean().default(false).describe('Show per-file action history during adopt'),
   dryRun: zod
     .boolean()
@@ -58,7 +64,7 @@ type Props = {
 
 export default function Adopt({ args, options }: Props) {
   const [shardRef] = args;
-  const { values: valuesFile, yes, mode, verbose, dryRun, updateCheck, json } = options;
+  const { values: valuesFile, yes, mode, fromVersion, verbose, dryRun, updateCheck, json } = options;
   const { exit: exitApp } = useApp();
 
   const {
@@ -73,6 +79,7 @@ export default function Adopt({ args, options }: Props) {
     valuesFile,
     yes,
     mode,
+    fromVersion,
     verbose,
     dryRun,
     vaultRoot: process.cwd(),

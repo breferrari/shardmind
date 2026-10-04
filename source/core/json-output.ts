@@ -116,6 +116,8 @@ export interface AdoptPlanFile {
   readonly userBytes?: number;
   readonly binary?: boolean;
   readonly volatile: boolean;
+  /** The old path the user's file sits at and moves from (`--from-version`, #179). */
+  readonly movedFrom?: string;
 }
 
 function adoptFile(
@@ -127,6 +129,7 @@ function adoptFile(
     classification,
     shardHash: entry.shardHash,
     volatile: entry.volatile,
+    ...(entry.kind !== 'shard-only' && entry.movedFrom !== undefined ? { movedFrom: entry.movedFrom } : {}),
   };
   if (entry.kind === 'differs') {
     return {

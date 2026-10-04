@@ -25,6 +25,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp, useStdin } from 'ink';
+import semver from 'semver';
 
 
 import type {
@@ -46,6 +47,7 @@ import {
   type AdoptClassification,
 } from '../../core/adopt-planner.js';
 import { twoWayUnionMerge } from '../../core/adopt-merge.js';
+import { renamesBetween } from '../../core/rename-migrations.js';
 import { sha256 } from '../../core/fs-utils.js';
 import {
   assertAdoptable,
@@ -78,6 +80,8 @@ export interface UseAdoptMachineInput {
   yes: boolean;
   /** Non-interactive batch mode from `--mode`; overrides the picker. */
   mode: AdoptMode | undefined;
+  /** `--from-version`: the release the vault was cloned from (#179). */
+  fromVersion?: string;
   verbose: boolean;
   dryRun: boolean;
   vaultRoot: string;
@@ -160,7 +164,7 @@ export interface UseAdoptMachineOutput {
 }
 
 export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOutput {
-  const { shardRef, valuesFile, yes, mode, verbose, dryRun, vaultRoot, json } = input;
+  const { shardRef, valuesFile, yes, mode, fromVersion, verbose, dryRun, vaultRoot, json } = input;
   const { exit } = useApp();
 
   // See use-install-machine.ts for the full rationale. Short version: without
@@ -227,6 +231,15 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
             '--json is only supported together with --dry-run',
             'JSON_REQUIRES_DRY_RUN',
             'Add --dry-run to get the machine-readable plan. Executing with --json is not supported yet — run without --json to execute.',
+          );
+        }
+
+        // Refused before the network call: nothing downloaded can fix it.
+        if (fromVersion !== undefined && semver.valid(fromVersion) === null) {
+          throw new ShardMindError(
+            `--from-version is not a version: '${fromVersion}'`,
+            'ADOPT_FROM_VERSION_INVALID',
+            "Pass the release the vault was cloned from as MAJOR.MINOR.PATCH (e.g. --from-version 5.1.0), as in that release's shard.yaml.",
           );
         }
 
@@ -306,7 +319,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shardRef, valuesFile, yes, vaultRoot, isRawModeSupported, json, dryRun]);
+  }, [shardRef, valuesFile, yes, vaultRoot, isRawModeSupported, json, dryRun, fromVersion]);
 
   const runNonInteractive = useCallback(
     async (ctx: PreparedContext) => {
@@ -357,6 +370,11 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           tempDir: ctx.tempDir,
           values: validated,
           selections: validatedResult.selections,
+          // Rename migrations since the cloned release (#179).
+          renames:
+            fromVersion === undefined
+              ? undefined
+              : renamesBetween(ctx.manifest.migrations, fromVersion, ctx.manifest.version),
         });
 
         // `--json --dry-run` is the agent's decision step: emit the per-file
@@ -397,7 +415,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
     // verbose, finish — are fixed CLI flags / process.cwd), so a captured
     // binding is never stale. Listing them here would be a TDZ ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [vaultRoot, yes, mode, finish],
+    [vaultRoot, yes, mode, fromVersion, finish],
   );
 
   const executeAdopt = useCallback(
