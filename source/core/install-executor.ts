@@ -264,8 +264,9 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   const createdDirs: string[] = [];
   // Report a path before its write, with every folder the write will create,
   // so a rollback removes exactly what this install made (#207, #215).
+  const knownDirs = new Set<string>();
   const recordWrite = async (rel: string): Promise<void> => {
-    for (const dir of await missingAncestors(vaultRoot, rel)) {
+    for (const dir of await missingAncestors(vaultRoot, rel, knownDirs)) {
       createdDirs.push(dir);
       onDirCreated?.(dir);
     }
@@ -388,41 +389,40 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
  * Best-effort — errors during rollback are swallowed because the primary
  * failure is already being reported.
  *
- * `createdDirs` is what `runInstall` reported through `onDirCreated`. A
- * caller without it gets a best-effort sweep of the written paths' empty
- * parents, which can also remove an empty folder the user had made.
+ * `createdDirs` is what `runInstall` reported through `onDirCreated`; only
+ * those folders are removed, and only when empty.
  */
 export async function rollbackInstall(
   vaultRoot: string,
   writtenPaths: string[],
-  backups: BackupRecord[] = [],
-  createdDirs?: string[],
+  backups: BackupRecord[],
+  createdDirs: string[],
 ): Promise<void> {
   const deepestFirst = (paths: Iterable<string>) =>
     [...paths].sort((a, b) => toPosixRel(b).split('/').length - toPosixRel(a).split('/').length);
 
-  for (const rel of deepestFirst(writtenPaths)) {
+  // The engine's own entries are removed whether or not they were recorded:
+  // a Ctrl+C rollback snapshots the lists while `runInstall` may still be
+  // writing them. Nothing else under `.shardmind/` is touched.
+  const engineFiles = [CACHED_MANIFEST, CACHED_SCHEMA, STATE_FILE].map(toPosixRel);
+  const files = new Set([...writtenPaths.map(toPosixRel), ...engineFiles]);
+  files.delete(toPosixRel(CACHED_TEMPLATES));
+  for (const rel of deepestFirst(files)) {
     try {
-      // removePath, not unlink: `.shardmind/templates` is a folder.
-      await removePath(path.join(vaultRoot, rel));
+      // unlink, not a recursive remove: a folder the user put at a planned
+      // file path is theirs, and unlink leaves it alone.
+      await fsp.unlink(path.join(vaultRoot, rel));
     } catch {
-      // already gone
+      // already gone, or not a file
     }
+  }
+  try {
+    await removePath(path.join(vaultRoot, CACHED_TEMPLATES));
+  } catch {
+    // already gone
   }
 
-  let dirs: Iterable<string> | undefined = createdDirs;
-  if (!dirs) {
-    const parents = new Set<string>();
-    for (const rel of writtenPaths) {
-      let dir = path.posix.dirname(toPosixRel(rel));
-      while (dir && dir !== '.' && dir !== '/') {
-        parents.add(dir);
-        dir = path.posix.dirname(dir);
-      }
-    }
-    dirs = parents;
-  }
-  for (const rel of deepestFirst(dirs)) {
+  for (const rel of deepestFirst(createdDirs)) {
     try {
       await fsp.rmdir(path.join(vaultRoot, rel));
     } catch {
@@ -442,15 +442,29 @@ function toPosixRel(rel: string): string {
   return rel.split(path.sep).join('/');
 }
 
-/** The folders (POSIX, shallowest first) that writing `rel` will create. */
-async function missingAncestors(vaultRoot: string, rel: string): Promise<string[]> {
+/**
+ * The folders (POSIX, shallowest first) that writing `rel` will create.
+ * Only ENOENT counts as missing: a folder `lstat` cannot read for another
+ * reason (EACCES, a Windows lock) exists, and must never be recorded as
+ * the install's to remove. `known` memoizes folders seen this run; each
+ * one recorded here is created by the write that follows.
+ */
+async function missingAncestors(vaultRoot: string, rel: string, known: Set<string>): Promise<string[]> {
   const parts = toPosixRel(rel).split('/').slice(0, -1);
   const missing: string[] = [];
   let current = '';
   for (const part of parts) {
     current = current ? `${current}/${part}` : part;
-    if (missing.length > 0 || !(await pathExists(path.join(vaultRoot, current)))) {
+    if (known.has(current)) continue;
+    known.add(current);
+    if (missing.length > 0) {
       missing.push(current);
+      continue;
+    }
+    try {
+      await fsp.lstat(path.join(vaultRoot, current));
+    } catch (err) {
+      if (isEnoent(err)) missing.push(current);
     }
   }
   return missing;
