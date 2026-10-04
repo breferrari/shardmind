@@ -92,6 +92,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ⬜ | Apply a shard release that only changes a file's case | [#169](https://github.com/breferrari/shardmind/issues/169) |
 | ⬜ | Align the RELEASE-SMOKE cancellation rows with the engine | [#155](https://github.com/breferrari/shardmind/issues/155) |
 | ⬜ | Apply a shard release that only changes a folder's case | [#195](https://github.com/breferrari/shardmind/issues/195) |
+| ⬜ | Strip non-colour terminal control sequences from rendered hook output | [#204](https://github.com/breferrari/shardmind/issues/204) |
 
 ## Phase 6 — docs match the code
 
