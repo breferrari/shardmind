@@ -25,7 +25,7 @@ interface UpdateSummaryProps {
   durationMs: number;
   migrationWarnings: string[];
   hooks: HookOutcome[];
-  /** Unmet optional tools, or the dry-run note (#138); from `summarizeExternalTools`. */
+  /** Unmet optional tools, or the dry-run note (#138); from `checkExternalToolsForRun`. */
   externalTools?: readonly string[];
   dryRun?: boolean;
   /** Vault-relative snapshot dir (previous bytes under its `files/`); `null` in a dry run. */

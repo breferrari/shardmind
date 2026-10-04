@@ -1,7 +1,7 @@
 /**
  * The "External tools" block shared by Summary, UpdateSummary and
  * AdoptSummary (#138): one line per unmet optional tool with its install
- * hint, or the dry-run note. The lines come from `summarizeExternalTools`
+ * hint, or the dry-run note. The lines come from `checkExternalToolsForRun`
  * in core/external-tools.ts; nothing renders when there are none.
  */
 

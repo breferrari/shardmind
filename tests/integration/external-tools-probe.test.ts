@@ -42,6 +42,24 @@ describe('the production probe', () => {
     expect(outcome).toEqual({ kind: 'output', stdout: expect.stringContaining('version --format=json') });
   });
 
+  // A relative entry would resolve against the working directory, which is
+  // the vault: a file the shard shipped there must never run as the tool.
+  it('ignores relative PATH entries, so a file in the working directory never runs', async () => {
+    const vault = path.join(root, 'vault');
+    const marker = path.join(root, 'ran-relative');
+    await writeTool(vault, 'planted', { win: `echo ran > "${marker}"`, posix: `touch '${marker}'` });
+    const previous = process.cwd();
+    process.chdir(vault);
+    try {
+      const env = envWithSearchPath(['.', '']);
+      expect(resolveExecutable('planted', env)).toBeUndefined();
+      expect(await makeProbe({ env })('planted', ['--version'])).toEqual({ kind: 'not-found' });
+    } finally {
+      process.chdir(previous);
+    }
+    await expect(fs.stat(marker)).rejects.toThrow();
+  });
+
   it('reports a tool missing from PATH as not found', async () => {
     expect(await probeOn(path.join(root, 'empty'))('shardmind-no-such-tool', ['--version'])).toEqual({ kind: 'not-found' });
   });

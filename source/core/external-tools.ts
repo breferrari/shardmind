@@ -125,7 +125,10 @@ function isRunnableFile(file: string): boolean {
 
 /** The absolute path `name` runs from on `PATH` (through `PATHEXT` on Windows). */
 export function resolveExecutable(name: string, env: NodeJS.ProcessEnv): string | undefined {
-  const dirs = (envValue(env, 'PATH') ?? '').split(path.delimiter).filter(Boolean);
+  // Absolute entries only: a relative one (`.`, an empty segment) resolves
+  // against the working directory, which is the vault, so a file the shard
+  // shipped there could run as the tool.
+  const dirs = (envValue(env, 'PATH') ?? '').split(path.delimiter).filter((dir) => path.isAbsolute(dir));
   const extensions =
     process.platform === 'win32'
       ? ['', ...(envValue(env, 'PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)]

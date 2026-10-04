@@ -34,7 +34,7 @@ interface SummaryProps {
   /** The same, edited by the user: kept, and theirs from now on (#228). */
   keptStale?: string[];
   hooks: HookOutcome[];
-  /** Unmet optional tools, or the dry-run note (#138); from `summarizeExternalTools`. */
+  /** Unmet optional tools, or the dry-run note (#138); from `checkExternalToolsForRun`. */
   externalTools?: readonly string[];
   dryRun?: boolean;
 }

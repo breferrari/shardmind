@@ -35,7 +35,7 @@ interface AdoptSummaryProps {
   summary: AdoptSummaryData;
   durationMs: number;
   hooks: HookOutcome[];
-  /** Unmet optional tools, or the dry-run note (#138); from `summarizeExternalTools`. */
+  /** Unmet optional tools, or the dry-run note (#138); from `checkExternalToolsForRun`. */
   externalTools?: readonly string[];
   dryRun?: boolean;
 }
