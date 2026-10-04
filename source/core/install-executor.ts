@@ -159,6 +159,47 @@ export async function backupCollisions(
  * Entries already in the new `backups/` are kept; an old entry whose
  * name is taken moves under `<name>-<n>`, so nothing is dropped.
  */
+/**
+ * The `.shardmind/` entries an install writes, by name. A rollback removes
+ * these (and only these, besides what it recorded); see `rollbackInstall`.
+ */
+const INSTALL_ENGINE_ENTRIES = ['shard.yaml', 'shard-schema.yaml', 'state.json', 'templates'] as const;
+
+/**
+ * Every `.shardmind/` entry the engine owns. Anything else in the folder is
+ * the vault owner's (such as `boundary-ignore`, #190): a rollback never
+ * removes it (#215) and a reinstall carries it forward (#237).
+ */
+export const ENGINE_SHARDMIND_ENTRIES: ReadonlySet<string> = new Set([
+  ...INSTALL_ENGINE_ENTRIES,
+  'logs',
+  'backups',
+]);
+
+/**
+ * Move the vault owner's own entries (everything not in
+ * `ENGINE_SHARDMIND_ENTRIES`) from a reinstall's old `.shardmind/` into the
+ * new one, so a reinstall keeps them (#237). An entry the new folder
+ * already has is left where it is.
+ */
+async function carryOverUserEntries(oldStateDir: string, vaultRoot: string): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(oldStateDir);
+  } catch (err) {
+    if (isEnoent(err)) return;
+    throw err;
+  }
+  const to = path.join(vaultRoot, SHARDMIND_DIR);
+  for (const entry of entries) {
+    if (ENGINE_SHARDMIND_ENTRIES.has(entry)) continue;
+    const target = path.join(to, entry);
+    if (await pathExists(target)) continue;
+    await fsp.mkdir(to, { recursive: true });
+    await fsp.rename(path.join(oldStateDir, entry), target);
+  }
+}
+
 export async function carryOverBackups(oldStateDir: string, vaultRoot: string): Promise<void> {
   const from = path.join(oldStateDir, 'backups');
   let entries: string[];
@@ -180,8 +221,8 @@ export async function carryOverBackups(oldStateDir: string, vaultRoot: string): 
 /**
  * Delete what an install set aside only to restore on failure, once it
  * has succeeded (#55). The old `.shardmind/` (`oldState`) first hands its
- * `backups/` to the new one; if that fails it stays set aside, so nothing
- * is lost. Best effort: it never throws, because the install it follows
+ * `backups/` and the vault owner's own entries (#237) to the new one; if
+ * that fails it stays set aside, so nothing is lost. Best effort: it never throws, because the install it follows
  * is already committed.
  */
 export async function discardSetAside(
@@ -193,6 +234,7 @@ export async function discardSetAside(
     if (record === oldState) {
       try {
         await carryOverBackups(record.backupPath, vaultRoot);
+        await carryOverUserEntries(record.backupPath, vaultRoot);
       } catch {
         continue;
       }
@@ -404,8 +446,8 @@ export async function rollbackInstall(
   // The engine's own entries are removed whether or not they were recorded:
   // a Ctrl+C rollback snapshots the lists while `runInstall` may still be
   // writing them. Nothing else under `.shardmind/` is touched.
-  const engineFiles = [CACHED_MANIFEST, CACHED_SCHEMA, STATE_FILE].map(toPosixRel);
-  const files = new Set([...writtenPaths.map(toPosixRel), ...engineFiles]);
+  const engineEntries = INSTALL_ENGINE_ENTRIES.map((name) => toPosixRel(path.join(SHARDMIND_DIR, name)));
+  const files = new Set([...writtenPaths.map(toPosixRel), ...engineEntries]);
   files.delete(toPosixRel(CACHED_TEMPLATES));
   for (const rel of deepestFirst(files)) {
     try {
