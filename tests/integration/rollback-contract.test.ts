@@ -269,25 +269,26 @@ const PIPELINES = [install, update, adopt];
 // Rows
 // ---------------------------------------------------------------------------
 
+type Fault = 'write' | 'rename' | 'mkdir' | 'restore' | 'ctrl-c';
+
 interface Row {
   id: string;
   pipeline: Pipeline;
-  fault: KnownDefect['fault'];
+  fault: Fault;
   plan: (abort: AbortController) => FaultPlan;
 }
 
 /**
  * A filed defect: exactly the paths it leaves changed after a rollback, for
  * one pipeline and one kind of fault. An entry is a hole in the net, so it is
- * as narrow as the defect: listed paths, never a pattern, and the last tests
- * fail when the defect no longer shows up or when a listed path is never one
- * it leaves.
+ * as narrow as the defect: a row passes on it only when its unexplained
+ * differences are exactly `leaves`, and the last tests fail when the defect no
+ * longer shows up or a listed path is never one it leaves.
  */
 interface KnownDefect {
   issue: string;
   pipeline: Pipeline['name'];
-  /** The rows it shows up in: their fault. */
-  fault: 'write' | 'rename' | 'mkdir' | 'restore' | 'ctrl-c';
+  fault: Fault;
   /** Every path it leaves changed, vault-relative POSIX. */
   leaves: string[];
 }
@@ -301,8 +302,10 @@ const KNOWN_DEFECTS: KnownDefect[] = [
     leaves: ['.shardmind', '.shardmind/backups'],
   },
 ];
-/** Per issue, the listed paths a row actually met. */
+/** Per issue, the paths a row passed on it with. */
 const knownDefectsSeen = new Map<string, Set<string>>();
+/** Pipelines with a row whose restore fault actually fired. */
+const restoreFaultsFired = new Set<Pipeline['name']>();
 
 async function freshWork(): Promise<string> {
   return fsp.mkdtemp(path.join(os.tmpdir(), 'rollback-contract-'));
@@ -349,12 +352,32 @@ for (const pipeline of PIPELINES) {
   }
 }
 
+/** The error and every cause under it. */
+function causes(err: unknown): unknown[] {
+  const chain: unknown[] = [];
+  for (let e: unknown = err; e !== undefined && e !== null && chain.length < 10; e = (e as { cause?: unknown }).cause) {
+    chain.push(e);
+  }
+  return chain;
+}
+
+/** Bookkeeping a Ctrl+C lets its step finish (#249); state.json, the commit, is never one. */
+function isStepBookkeeping(rel: string): boolean {
+  return (
+    rel.startsWith('.shardmind/backups/') ||
+    rel.startsWith('.shardmind/templates/') ||
+    rel === '.shardmind/templates' ||
+    rel === '.shardmind/shard.yaml' ||
+    rel === '.shardmind/shard-schema.yaml' ||
+    rel === 'shard-values.yaml'
+  );
+}
+
 describe('rollback contract (#267)', () => {
   it('covers every pipeline with rows of every fault kind', () => {
     for (const pipeline of PIPELINES) {
-      const ids = rows.filter((r) => r.pipeline === pipeline).map((r) => r.id);
-      expect(ids.some((id) => id.includes('fail write'))).toBe(true);
-      expect(ids.some((id) => id.includes('Ctrl+C'))).toBe(true);
+      const faults = new Set(rows.filter((r) => r.pipeline === pipeline).map((r) => r.fault));
+      expect([...faults].sort()).toEqual(['ctrl-c', 'mkdir', 'restore', 'write', ...(faults.has('rename') ? ['rename'] : [])].sort());
     }
   });
 
@@ -375,24 +398,26 @@ describe('rollback contract (#267)', () => {
           injector.uninstall();
         }
 
-        if (row.id.includes('Ctrl+C')) {
+        // The row's fault really happened: a row whose fault never fired
+        // would pass for the wrong reason.
+        if (row.fault === 'ctrl-c') expect(injector.fired.hook, 'Ctrl+C fired').toBe(true);
+        else if (row.fault !== 'restore') expect(injector.fired.fail, `${row.fault} fault fired`).toBe(true);
+        if (injector.fired.restore) restoreFaultsFired.add(row.pipeline.name);
+
+        if (row.fault === 'ctrl-c') {
           // A Ctrl+C stops the vault writes before the rollback (#249): none
-          // starts after it besides the one under way, and state.json, which
-          // commits the run, is never written. The engine's bookkeeping in the
-          // step under way finishes it: the snapshot and template cache under
-          // `.shardmind/`, and shard-values.yaml in the metadata step.
+          // starts after it besides the one under way and the bookkeeping its
+          // step finishes, and state.json, which commits the run, never.
           const late = injector.writtenAfterHook
             .map((p) => path.relative(vault, p).split(path.sep).join('/'))
-            .filter(
-              (rel) =>
-                rel === '.shardmind/state.json' ||
-                (!rel.startsWith('.shardmind/') && rel !== 'shard-values.yaml'),
-            );
+            .filter((rel) => !isStepBookkeeping(rel));
           expect(late, 'written after Ctrl+C').toEqual([]);
         }
 
         if (error === null) {
           // The fault was tolerated: the run finished, and the vault is whole.
+          // Only a fault in a best-effort step (or a Ctrl+C after the last
+          // check, #249) may end here.
           const state = (await readState(vault)) as ShardState;
           const drift = await detectDrift(vault, state);
           expect(drift.missing.map((e) => e.path)).toEqual([]);
@@ -400,34 +425,56 @@ describe('rollback contract (#267)', () => {
           return;
         }
 
+        // The run failed because of this row's fault, not anything else.
+        const chain = causes(error);
+        const ours =
+          row.fault === 'ctrl-c'
+            ? chain.some((e) => (e as { code?: unknown }).code === 'CANCELLED')
+            : chain.some((e) =>
+                // The executors wrap an fs error and keep its message in the hint.
+                /injected EIO/.test(`${String((e as Error).message ?? e)} ${String((e as { hint?: unknown }).hint ?? '')}`),
+              );
+        expect(ours, `failed with the injected fault, not: ${String(error)}`).toBe(true);
+
         const failures = rollbackFailuresOf(error);
+        // A named path may differ, and so may the folders on its way (as
+        // folders, never their other contents).
         const named = new Set<string>();
+        const namedFolders = new Set<string>();
         for (const f of failures) {
           for (const p of [f.path, f.backup ? path.relative(vault, f.backup) : null]) {
             if (!p) continue;
-            const posix = p.split(path.sep).join('/');
-            const segments = posix.split('/');
-            for (let i = 1; i <= segments.length; i++) named.add(segments.slice(0, i).join('/'));
+            const segments = p.split(path.sep).join('/').split('/');
+            named.add(segments.join('/'));
+            for (let i = 1; i < segments.length; i++) namedFolders.add(segments.slice(0, i).join('/'));
           }
         }
+        const after = await treeOf(vault);
+        const isFolder = (p: string) => before.get(p) === 'dir' || after.get(p) === 'dir';
+        // Adopt keeps its snapshot only when a restore from it, or its folder
+        // record, failed (#246, #258).
+        const keptSnapshot = failures.some((f) => /^(restore|readdir) failed|^folder record unreadable/.test(f.reason));
         const allowed = (p: string) =>
           named.has(p) ||
-          [...named].some((n) => p.startsWith(`${n}/`)) ||
-          row.pipeline.exceptions.some(
-            (e) => e.prefix.test(p) && (row.pipeline.name !== 'adopt' || failures.length > 0),
-          );
-        const known = (p: string) => {
+          (namedFolders.has(p) && isFolder(p)) ||
+          row.pipeline.exceptions.some((e) => e.prefix.test(p) && (row.pipeline.name !== 'adopt' || keptSnapshot));
+        const unexplained = differences(before, after).filter((p) => !allowed(p));
+
+        if (unexplained.length > 0) {
           const defect = KNOWN_DEFECTS.find(
-            (d) => d.pipeline === row.pipeline.name && d.fault === row.fault && d.leaves.includes(p),
+            (d) =>
+              d.pipeline === row.pipeline.name &&
+              d.fault === row.fault &&
+              d.leaves.length === unexplained.length &&
+              d.leaves.every((p) => unexplained.includes(p)),
           );
           if (defect) {
             const seen = knownDefectsSeen.get(defect.issue) ?? new Set<string>();
-            seen.add(p);
+            for (const p of unexplained) seen.add(p);
             knownDefectsSeen.set(defect.issue, seen);
+            return;
           }
-          return defect !== undefined;
-        };
-        const unexplained = differences(before, await treeOf(vault)).filter((p) => !allowed(p) && !known(p));
+        }
         expect(unexplained, `rolled back with ${String(error)}`).toEqual([]);
       } finally {
         await fsp.rm(work, { recursive: true, force: true });
@@ -435,14 +482,17 @@ describe('rollback contract (#267)', () => {
     });
   }
 
-  // Last: each known defect must still show up, or its fix has landed and
-  // its entry must go (with the issue closed).
+  // Last: the restore rows reached a restore in every pipeline, each known
+  // defect still shows up (or its fix has landed and its entry must go), and
+  // no entry lists a path its defect does not leave.
+  it('failed a restore in every pipeline', () => {
+    expect([...restoreFaultsFired].sort()).toEqual(PIPELINES.map((p) => p.name).sort());
+  });
+
   it('still meets every known defect it allows', () => {
     expect([...knownDefectsSeen.keys()].sort()).toEqual(KNOWN_DEFECTS.map((d) => d.issue).sort());
   });
 
-  // And each entry allows no more than its defect leaves: a listed path no
-  // row met would let a new defect at that path pass unseen.
   it('allows no path a known defect does not leave', () => {
     for (const defect of KNOWN_DEFECTS) {
       expect([...(knownDefectsSeen.get(defect.issue) ?? [])].sort(), defect.issue).toEqual([...defect.leaves].sort());
@@ -454,11 +504,26 @@ describe('rollback contract (#267)', () => {
 // The seam's reach: nothing in the write paths touches the vault around `fsp`
 // ---------------------------------------------------------------------------
 
+/** The `fsp` methods the injector wraps (`tests/helpers/fault-fs.ts`). */
+const WRAPPED = ['writeFile', 'copyFile', 'cp', 'rename', 'mkdir', 'rm', 'unlink', 'rmdir'];
+/** The `fsp` methods that only read, and so need no fault. */
+const READ_ONLY = ['readFile', 'readdir', 'lstat', 'stat', 'access', 'readlink', 'realpath'];
+
 /**
- * Files in the write paths' import closure that may touch the filesystem
- * outside the injected `fsp`, each with why it cannot reach the vault.
+ * Files in the write paths' import closure allowed to use the filesystem in a
+ * way the injector does not see, each with why it cannot change the vault.
+ * The closure is install's, update's and adopt's executors and planners; the
+ * vault lock (`vault-lock.ts`) and the hook runner (`hook.ts`) are the
+ * command layer's, outside it, and outside the rollback.
  */
-const OUTSIDE_FSP_ALLOWED: Record<string, string> = {};
+const OUTSIDE_FSP_ALLOWED: Record<string, { finding: string; why: string }> = {
+  'source/core/modules.ts': {
+    finding: 'fsp.open(',
+    why: "opens a shard source file read-only ('r') to sniff whether it is binary; it never writes",
+  },
+};
+
+const FS_SPEC = String.raw`(?:node:)?fs(?:\/promises)?|fs-extra|graceful-fs|(?:node:)?child_process|tar`;
 
 describe('fault injection reaches every vault write (#267)', () => {
   it('the write paths reach the filesystem only through the default fsp', async () => {
@@ -473,7 +538,7 @@ describe('fault injection reaches every vault write (#267)', () => {
       if (seen.has(file)) continue;
       seen.add(file);
       const text = await fsp.readFile(path.join(ROOT, file), 'utf-8');
-      for (const m of text.matchAll(/^import\s+(?!type\b)[^;]*?from\s+'(\.[^']+)'/gm)) {
+      for (const m of text.matchAll(/^(?:import|export)\s+(?!type\b)[^;]*?from\s+'(\.[^']+)'/gm)) {
         const next = path.posix.join(path.posix.dirname(file), m[1]!).replace(/\.js$/, '.ts');
         if (await fsp.access(path.join(ROOT, next)).then(() => true, () => false)) queue.push(next);
       }
@@ -481,19 +546,39 @@ describe('fault injection reaches every vault write (#267)', () => {
     expect(seen.size).toBeGreaterThan(entries.length);
 
     const escapes: string[] = [];
+    const allowedHits = new Set<string>();
     for (const file of [...seen].sort()) {
       const text = await fsp.readFile(path.join(ROOT, file), 'utf-8');
       const found: string[] = [];
-      for (const m of text.matchAll(/^import\s+(?!type\b)(.*?)\s+from\s+'((?:node:)?fs(?:\/promises)?|fs-extra|graceful-fs|node:child_process|child_process|tar)'/gm)) {
-        const [, clause, spec] = m;
+      // Static imports and re-exports, over several lines too.
+      for (const m of text.matchAll(new RegExp(String.raw`^(import|export)\s+(?!type\b)([^;]*?)\s+from\s+'(${FS_SPEC})'`, 'gm'))) {
+        const [, keyword, clause, spec] = m;
         // Only a default import of fs/promises is the shared object the
-        // injector wraps; a named one would be bound before it, and escape.
-        if (/fs\/promises$/.test(spec!) && /^\w+$/.test(clause!.trim())) continue;
-        found.push(`import ${clause} from '${spec}'`);
+        // injector wraps; a named or namespace one would escape it.
+        if (keyword === 'import' && /fs\/promises$/.test(spec!) && /^\w+$/.test(clause!.trim())) continue;
+        found.push(`${keyword} ${clause!.replace(/\s+/g, ' ')} from '${spec}'`);
       }
+      for (const m of text.matchAll(new RegExp(String.raw`^import\s+'(${FS_SPEC})'`, 'gm'))) found.push(`import '${m[1]}'`);
+      for (const m of text.matchAll(new RegExp(String.raw`\b(require|import)\(\s*'(${FS_SPEC})'\s*\)`, 'g'))) found.push(`${m[1]}('${m[2]}')`);
       for (const m of text.matchAll(/\b(\w+Sync|createWriteStream|createReadStream)\s*\(/g)) found.push(`${m[1]}(`);
-      if (found.length > 0 && !OUTSIDE_FSP_ALLOWED[file]) escapes.push(`${file}: ${found.join(', ')}`);
+      for (const m of text.matchAll(/\bfsp\.(\w+)\s*\(/g)) {
+        if (!WRAPPED.includes(m[1]!) && !READ_ONLY.includes(m[1]!)) found.push(`fsp.${m[1]}(`);
+      }
+      const allowed = OUTSIDE_FSP_ALLOWED[file];
+      const rest = found.filter((f) => {
+        if (allowed && f === allowed.finding) {
+          allowedHits.add(file);
+          return false;
+        }
+        return true;
+      });
+      if (rest.length > 0) escapes.push(`${file}: ${rest.join(', ')}`);
     }
     expect(escapes).toEqual([]);
+    // Every allowance is still needed, and says why.
+    for (const [file, entry] of Object.entries(OUTSIDE_FSP_ALLOWED)) {
+      expect(entry.why.length, file).toBeGreaterThan(20);
+      expect(allowedHits.has(file), `${file} no longer needs its allowance`).toBe(true);
+    }
   });
 });

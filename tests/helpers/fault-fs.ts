@@ -57,10 +57,13 @@ export function injectFaults(plan: FaultPlan = {}): {
    * hook ran (the write it ran before is not one).
    */
   writtenAfterHook: string[];
+  /** Which of the plan's faults happened: a row whose fault never fired proves nothing. */
+  fired: { fail: boolean; restore: boolean; hook: boolean };
   uninstall: () => void;
 } {
   const counts: FaultCounts = { write: 0, rename: 0, mkdir: 0, remove: 0, restore: 0 };
   let hooked = false;
+  const fired = { fail: false, restore: false, hook: false };
   const writtenAfterHook: string[] = [];
   const target = fsp as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
   const originals = new Map<string, (...args: unknown[]) => Promise<unknown>>();
@@ -76,16 +79,24 @@ export function injectFaults(plan: FaultPlan = {}): {
       }
       if (kind === 'write' && plan.beforeWrite?.nth === n) {
         hooked = true;
+        fired.hook = true;
         plan.beforeWrite.hook();
       }
-      if (plan.fail?.kind === kind && plan.fail.nth === n) throw injectedError(kind, n);
-      if (kind === 'restore' && plan.failRestore?.nth === n) throw injectedError(kind, n);
+      if (plan.fail?.kind === kind && plan.fail.nth === n) {
+        fired.fail = true;
+        throw injectedError(kind, n);
+      }
+      if (kind === 'restore' && plan.failRestore?.nth === n) {
+        fired.restore = true;
+        throw injectedError(kind, n);
+      }
       return original.apply(fsp, args);
     };
   }
   return {
     counts,
     writtenAfterHook,
+    fired,
     uninstall: () => {
       for (const [method, original] of originals) target[method] = original;
     },
