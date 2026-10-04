@@ -24,6 +24,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
   - `--json` writes the findings as one document, with no terminal control codes even in a terminal.
   - An author-facing command: the three commands a vault owner uses (status, install, update), plus adopt, are unchanged.
 
+### Changed (install checks the shard first — #35)
+
+- **Install now checks the shard before asking you anything.** A template in the shard that can't render used to fail only after you had answered every question and reviewed the modules. Install now renders every template with the defaults, or with your `--values`, as soon as the shard is downloaded. If any fails, it stops with `INSTALL_SHARD_INVALID` and lists every problem, before the wizard and before anything is written. That includes a template in a module you would have left out: the shard is broken either way. A `--values` answer the schema rejects is still yours to fix in the wizard.
+
 ### Fixed (Ctrl+C at a prompt — #155)
 
 - **Ctrl+C at a wizard or review prompt now exits 130, not 0.** In a terminal, Ink's prompts run in raw mode, where Ctrl+C arrives as a keystroke rather than a signal. Ink then closed the app on its own, the engine's cancellation handler never ran, and a cancelled `install`, `update` or `adopt` reported success to `$?`. The cancellation bridge now sees that keystroke and cancels the same way a signal does: in-flight writes roll back and the exit code is 130. Nothing on disk changes for a cancel at a wizard prompt, which was already the case.
