@@ -962,7 +962,8 @@ interface InstallRunnerOptions {
   values: Record<string, unknown>;
   selections: ModuleSelections;
   onProgress?: (event: ProgressEvent) => void;
-  onFileWritten?: (outputPath: string) => void;   // after each successful write; feeds the SIGINT rollback list
+  onFileWritten?: (outputPath: string) => void;   // before each write; feeds the rollback list
+  signal?: AbortSignal;                            // Ctrl+C: checked before every write, stops with CANCELLED (#249)
   dryRun?: boolean;
 }
 
@@ -1004,7 +1005,7 @@ rollbackInstall(vaultRoot: string, writtenPaths: string[], backups?: BackupRecor
    6. Emit `done`. Build `ShardState`: `schema_version: STATE_SCHEMA_VERSION`, `shard: <namespace>/<name>`, `source`, `version: manifest.version`, `tarball_sha256`, `installed_at` / `updated_at`, `values_hash: hashValues(values)`, `modules: selections`, `files`, and `ref` / `resolvedSha` from `resolved.ref` (undefined on tag installs, so `JSON.stringify` leaves them out).
    7. Unless dry run, in this order: `initShardDir` (creates `.shardmind/templates/`); `cacheTemplates(vaultRoot, tempDir)` (§4.7: the walked shard source, without module gating, as the next update's merge base); `cacheManifest(vaultRoot, manifest, schema, tempDir)` (verbatim copies of the source `shard.yaml` / `shard-schema.yaml`, re-serialized only if the copy fails); `writeState`; then `writeValuesFile`, which serializes `values` as YAML and writes with `flag: 'wx'`, so an existing `shard-values.yaml` is never overwritten. `shard-values.yaml` is appended to `writtenPaths`.
    8. Dry run: every step above runs except the vault writes and the `.shardmind/` / values writes. The returned `state` is what a real run would record, and `writtenPaths` is empty.
-3. **Hook hand-off** (in `use-install-machine`, not this module): once `runInstall` returns, state.json is on disk and the install is committed. The machine clears its SIGINT rollback guard, calls `discardSetAside`, then `runHooks({ command: 'install', state: runResult.state, … })` (§4.16a), which owns slot selection, write-boundary checks, the post-hook re-hash and the fingerprint. A hook failure is reported in the summary and never rolls the install back.
+3. **Hook hand-off** (in `use-install-machine`, not this module): once `runInstall` returns, state.json is on disk and the install is committed. The machine ends its run in flight (so a Ctrl+C no longer rolls back, #249), calls `discardSetAside`, then `runHooks({ command: 'install', state: runResult.state, … })` (§4.16a), which owns slot selection, write-boundary checks, the post-hook re-hash and the fingerprint. A hook failure is reported in the summary and never rolls the install back.
 4. **`discardSetAside`** (after success, best effort, never throws): for the old `.shardmind/` record, `carryOverBackups` first moves its `backups/` entries into the new `.shardmind/backups/` (a taken name gets `-<n>`), since an update's or adopt's snapshot can be the only copy of a file. Then `carryOverUserEntries` moves every entry not in `ENGINE_SHARDMIND_ENTRIES` (`state.json`, `shard.yaml`, `shard-schema.yaml`, `templates`, `logs`, `backups`) into the new `.shardmind/`, leaving any name the new folder already has. These are the vault owner's files, such as `boundary-ignore` (#190, #237), and they arrive before the hooks run. If either step throws, the old `.shardmind/` stays where it was set aside. Every other set-aside path is removed.
 
 **Rollback semantics**:
@@ -1445,6 +1446,7 @@ runAdopt(opts: {
   resolutions: Record<string, 'keep_mine' | 'use_shard'>;  // one per `differs`
   now?: Date;
   dryRun?: boolean;
+  signal?: AbortSignal;      // Ctrl+C: checked before every write, stops with CANCELLED (#249)
   onProgress?: (event: AdoptProgressEvent) => void;
   onBackupReady?: (backupDir: string) => void;
   onFileTouched?: (outputPath: string, introduced: boolean) => void;
@@ -1908,7 +1910,7 @@ If install fails mid-render (e.g., template error on file 23 of 47):
 3. Show error with the specific template that failed
 4. Exit cleanly — vault is in pre-install state
 
-The error path (a throw from `runInstall`) and a SIGINT rollback both remove every file the install wrote, through the same `rollbackPartialInstall` (#207; see §4.11b).
+The error path (a throw from `runInstall`, including the `CANCELLED` a Ctrl+C causes) removes every file the install wrote through `rollbackPartialInstall` (#207, #249; see §4.11b). It is the only rollback: the Ctrl+C handler waits for it.
 
 ---
 

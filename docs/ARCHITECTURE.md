@@ -1696,7 +1696,9 @@ staying hermetic. No test reaches the public internet.
   prompt. `useSigintRollback` runs once per process whatever the source, and
   keeps its listener after Ink unmounts while that run is in progress, so
   a second Ctrl+C during a rollback neither starts another nor cuts the
-  first short. Escalating past a stuck rollback takes a real kill. Outside raw mode the kernel delivers a
+  first short. The handler itself never rolls back while a run is writing:
+  it aborts the run, which stops before its next write, and waits for the
+  run's own rollback (#249). Escalating past a stuck rollback takes a real kill. Outside raw mode the kernel delivers a
   real SIGINT, as before.
 
   The **test harness** delivers ETX on Windows and a real signal on POSIX.
