@@ -59,11 +59,17 @@ export function injectFaults(plan: FaultPlan = {}): {
   writtenAfterHook: string[];
   /** Which of the plan's faults happened: a row whose fault never fired proves nothing. */
   fired: { fail: boolean; restore: boolean; hook: boolean };
+  /** Mark the run as over: every fs mutation from now on is recorded (#274). */
+  settle: () => void;
+  /** What was written, renamed, made or removed after `settle`: a run still going. */
+  touchedAfterSettle: string[];
   uninstall: () => void;
 } {
   const counts: FaultCounts = { write: 0, rename: 0, mkdir: 0, remove: 0, restore: 0 };
   let hooked = false;
   const fired = { fail: false, restore: false, hook: false };
+  let settled = false;
+  const touchedAfterSettle: string[] = [];
   const writtenAfterHook: string[] = [];
   const target = fsp as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
   const originals = new Map<string, (...args: unknown[]) => Promise<unknown>>();
@@ -74,6 +80,7 @@ export function injectFaults(plan: FaultPlan = {}): {
       const isRestore = (method === 'copyFile' || method === 'rename') && BACKUP.test(String(args[0]));
       const kind: FaultKind = isRestore ? 'restore' : base;
       const n = ++counts[kind];
+      if (settled) touchedAfterSettle.push(`${method} ${String(method === 'copyFile' || method === 'cp' || method === 'rename' ? args[1] : args[0])}`);
       if (hooked && (kind === 'write' || kind === 'rename')) {
         writtenAfterHook.push(String(method === 'writeFile' ? args[0] : args[1]));
       }
@@ -97,6 +104,10 @@ export function injectFaults(plan: FaultPlan = {}): {
     counts,
     writtenAfterHook,
     fired,
+    settle: () => {
+      settled = true;
+    },
+    touchedAfterSettle,
     uninstall: () => {
       for (const [method, original] of originals) target[method] = original;
     },

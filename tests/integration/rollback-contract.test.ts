@@ -394,9 +394,13 @@ describe('rollback contract (#267)', () => {
           await run(abort.signal);
         } catch (err) {
           error = err;
-        } finally {
-          injector.uninstall();
         }
+        // Once the run has returned or thrown, nothing of it is still going:
+        // no write lands after its rollback, or after it reported (#274).
+        injector.settle();
+        await new Promise((r) => setTimeout(r, 50));
+        injector.uninstall();
+        expect(injector.touchedAfterSettle, 'fs calls after the run settled').toEqual([]);
 
         // The row's fault really happened: a row whose fault never fired
         // would pass for the wrong reason.
