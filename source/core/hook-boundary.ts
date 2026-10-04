@@ -197,9 +197,13 @@ export function detectUnmanagedCreates(
   return null;
 }
 
-/** Two names no vault owner means to exclude: a list that matches both matches everything. */
-const PROBE_FILE = 'shardmind-boundary-probe.md';
-const PROBE_FOLDER = 'shardmind-boundary-probe';
+/**
+ * Two names no vault owner means to exclude, sharing no prefix or leading dot
+ * a real pattern would use (`shardmind-*`, `.*`): a list that matches both
+ * matches every name at the vault root.
+ */
+const PROBE_FILE = 'zq7x9-probe.md';
+const PROBE_FOLDER = 'zq7x9-probe';
 
 /**
  * The vault owner's exclusions for the personalize boundary walk (#190), read

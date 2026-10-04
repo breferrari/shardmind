@@ -377,14 +377,15 @@ function summarize(
   // Nothing to render: the hook produced no summary (e.g. the script vanished
   // between lookup and run → `absent`) and there's no violation/deprecation
   // note to surface on its own.
-  if (!summary && !extra.violation && !extra.deprecated && !extra.ignoreProblem) return null;
+  if (!summary && !extra.violation && !extra.deprecated) return null;
   const merged: HookSummary = summary ? { ...summary } : {};
   if (extra.violation) {
     merged.violation = { kind: extra.violation.kind, paths: extra.violation.paths };
     if (extra.violation.unreadable) merged.violation.unreadable = extra.violation.unreadable;
   }
   if (extra.deprecated) merged.deprecated = true;
-  if (extra.ignoreProblem) merged.ignoreProblem = extra.ignoreProblem;
+  // Only beside a hook that ran: a vanished script has no walk to qualify.
+  if (extra.ignoreProblem && summary) merged.ignoreProblem = extra.ignoreProblem;
   return merged;
 }
 

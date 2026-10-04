@@ -562,7 +562,7 @@ These are **not** thrown `ShardMindError`s — they don't appear in the `ErrorCo
 
 **Meaning:** `.shardmind/boundary-ignore`, the vault owner's list of folders the `personalize` boundary walk skips, was not applied. It could not be read, it could not be parsed (for example a `!` negation, not supported yet), or it matches every name at the vault root (`*`, `**`), which would switch the whole check off. The check ran without it.
 
-**Remedy:** Fix the file: list folders by name (`.cache/`, `scratch/`), one per line. To turn the boundary check off for good is not supported; exclude the folders you mean.
+**Remedy:** Fix the file: list the folders you mean by name (`.cache/`, `scratch/`), one per line. The check cannot be switched off as a whole.
 
 ### `HOOK_POST_INSTALL_DEPRECATED`
 

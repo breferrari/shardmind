@@ -305,6 +305,13 @@ describe('loadBoundaryIgnore (#190)', () => {
     expect(problem).toBeTruthy();
   });
 
+  it.each([['shardmind-*\n'], ['.*\n'], ['*.bin\n']])('applies %j, which excludes some names, not all', async (body) => {
+    await own(body);
+    const { filter, problem } = await loadBoundaryIgnore(dir);
+    expect(problem).toBeUndefined();
+    expect(filter).not.toBeNull();
+  });
+
   it('reports a file it cannot read, rather than treating it as empty', async () => {
     await fsp.mkdir(path.join(dir, '.shardmind', 'boundary-ignore'));
     const { filter, problem } = await loadBoundaryIgnore(dir);
