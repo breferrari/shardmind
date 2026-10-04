@@ -10,7 +10,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Fixed (`_each` items that name the same file — #234)
 
-- **An `_each` list whose items name the same file is refused before anything is written.** `Alice` and `alice`, or `Bob/Ops` and `Bob-Ops`, used to write one file (the last item won), and on macOS or Windows the vault then tracked two names for it. Install, update and adopt now stop with `RENDER_ITERATOR_NAME_CLASH`, naming both items and the file.
+- **An `_each` list whose items name the same file is refused before anything is written.** `Alice` and `alice`, or `Bob/Ops` and `Bob-Ops`, used to write one file (the last item won), and on macOS or Windows the vault then tracked two names for it. Install, update and adopt now stop with `RENDER_ITERATOR_NAME_CLASH`, naming the value, both items and the file. A vault installed with such a list stops at its next update until you rename one of the items in `shard-values.yaml`.
 
 ### Fixed (a failed install keeps your files under `.shardmind/` — #215)
 

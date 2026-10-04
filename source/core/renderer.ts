@@ -219,19 +219,42 @@ export function eachOutputPaths(outputPath: string, list: readonly unknown[]): s
 function refuseNameClashes(outputPath: string, list: readonly unknown[], paths: readonly string[]): void {
   const seen = new Map<string, number>();
   for (let i = 0; i < paths.length; i++) {
-    const key = paths[i]!.toLowerCase();
+    // The same fold the vault-path guard and rename migrations use: NFC,
+    // then case, so `Café` in either Unicode form is one name.
+    const key = paths[i]!.normalize('NFC').toLowerCase();
     const first = seen.get(key);
     if (first === undefined) {
       seen.set(key, i);
       continue;
     }
-    const show = (item: unknown) => JSON.stringify(item);
+    // The iterator is the template's folder (modules.ts extractIterator).
+    const listKey = path.posix.basename(path.posix.dirname(outputPath));
+    const nameless = [list[first], list[i]].some((item) => itemLabel(item) === null);
     throw new ShardMindError(
-      `Items ${first + 1} (${show(list[first])}) and ${i + 1} (${show(list[i])}) of the list for ${outputPath} both name ${paths[i]}`,
+      `Items ${first + 1} (${showItem(list[first])}) and ${i + 1} (${showItem(list[i])}) of values.${listKey} both name ${paths[i]}`,
       'RENDER_ITERATOR_NAME_CLASH',
-      'Give each list item a name that differs by more than case or by characters a file name cannot hold (such as / or a trailing dot).',
+      nameless
+        ? `Give every item of values.${listKey} a slug or name (in shard-values.yaml, or at the wizard's prompt): items without one are all named "unknown".`
+        : `Give each item of values.${listKey} a name that differs by more than case or by characters a file name cannot hold (such as / or a trailing dot). Edit it in shard-values.yaml, or at the wizard's prompt.`,
     );
   }
+}
+
+/** The name an item gives its file before sanitizing, or null when it has none. */
+function itemLabel(item: unknown): string | null {
+  if (typeof item === 'object' && item !== null) {
+    const fields = item as Record<string, unknown>;
+    const raw = fields['slug'] ?? fields['name'];
+    return raw === undefined || raw === null ? null : String(raw);
+  }
+  return String(item);
+}
+
+/** An item for an error message: its name, quoted and capped, never the whole object. */
+function showItem(item: unknown): string {
+  const label = itemLabel(item);
+  if (label === null) return 'no slug or name';
+  return JSON.stringify(label.length > 60 ? `${label.slice(0, 57)}...` : label);
 }
 
 function renderContent(

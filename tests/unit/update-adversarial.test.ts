@@ -385,6 +385,20 @@ describe('planUpdate — hostile inputs', () => {
 // createBackupDir
 // ---------------------------------------------------------------------------
 
+describe('renderNewShard — _each items that name the same file (#234)', () => {
+  it('refuses the list while planning, before the update writes anything', async () => {
+    const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'update-clash-'));
+    try {
+      const shardDir = await makeShardDir(tempRoot, { 'people/_each.md.njk': '# {{ item }}\n' });
+      await expect(
+        renderNewShard(baseSchema(), shardDir, { brain: 'included' }, renderCtx({ people: ['alice', 'Alice'] })),
+      ).rejects.toMatchObject({ code: 'RENDER_ITERATOR_NAME_CLASH' });
+    } finally {
+      await fsp.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('createBackupDir — concurrency and clock edge cases', () => {
   let tempRoot: string;
 

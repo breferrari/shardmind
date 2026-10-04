@@ -432,7 +432,7 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 **Meaning:** Two items of an `_each` template's list name the same file: identical, differing only in case, or equal after sanitizing (`Bob/Ops` and `Bob-Ops`). The second would overwrite the first, and on a case-insensitive filesystem the vault would track two names for one file. Refused before anything is written, in install, update and adopt (#234).
 
-**Remedy:** Give each item a name that differs by more than case or by characters a file name cannot hold. The message names both items and the file.
+**Remedy:** Give each item a name that differs by more than case or by characters a file name cannot hold, or a `slug` or `name` if it has neither. The list is usually the user's own: a `list` value typed at the wizard, or `values.<key>` in `shard-values.yaml`. The message names the value, both items and the file. A vault installed before #234 with such a list can't update until `shard-values.yaml` is fixed.
 
 ---
 

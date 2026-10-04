@@ -142,6 +142,7 @@ describe('renderFile', () => {
       ['exactly', ['Alice', 'Alice']],
       ['a string and an object', ['alice', { slug: 'Alice' }]],
       ['a number and a string', [3, '3']],
+      ['in different Unicode forms', ['Caf\u00e9', 'Cafe\u0301']],
     ])('eachOutputPaths refuses items that name the same file %s (#234)', (_label, list) => {
       let err: unknown;
       try {
@@ -152,6 +153,29 @@ describe('renderFile', () => {
       expect(err).toMatchObject({ code: 'RENDER_ITERATOR_NAME_CLASH' });
       // The message names the file, so the user can find the clashing items.
       expect(String((err as Error).message)).toMatch(/people\//);
+    });
+
+    it('says which value to fix and where, without dumping whole items (#234)', () => {
+      let err: { message: string; hint?: string } | undefined;
+      try {
+        eachOutputPaths('people/_each.md', [{ name: 'alice', bio: 'x'.repeat(500) }, 'Alice']);
+      } catch (e) {
+        err = e as typeof err;
+      }
+      expect(err!.message).toContain('values.people');
+      expect(err!.message).not.toContain('xxxx');
+      expect(err!.hint).toContain('shard-values.yaml');
+    });
+
+    it('tells items without a slug or name apart from a real clash (#234)', () => {
+      let err: { message: string; hint?: string } | undefined;
+      try {
+        eachOutputPaths('notes/_each.md', [{ title: 'A' }, { title: 'B' }]);
+      } catch (e) {
+        err = e as typeof err;
+      }
+      expect(err!.message).toContain('no slug or name');
+      expect(err!.hint).toContain('slug or name');
     });
 
     it('renderFile refuses a clashing list the same way, the path update and adopt render through (#234)', async () => {
