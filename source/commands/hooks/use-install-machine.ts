@@ -47,11 +47,13 @@ import {
 import { assertSafeVaultPaths } from '../../core/vault-path-guard.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
-import { attemptRollback, rollbackDetail, withRollbackFailures } from '../../core/rollback-report.js';
+import { attemptRollback, rollbackDetail, withRollbackFailures, type RollbackFailure } from '../../core/rollback-report.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
 import {
   appendHookOutput,
   useSigintRollback,
+  openRun,
+  stopRun,
 } from './shared.js';
 
 import type { WizardResult } from '../../components/InstallWizard.js';
@@ -165,10 +167,11 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   // Folders the install created, so a rollback leaves the user's own (#215).
   const createdDirsRef = useRef<string[]>([]);
   const backupsRef = useRef<BackupRecord[]>([]);
-  const installingRef = useRef(false);
-  // Set by the first Ctrl+C: stops the set-aside loop before its next move,
-  // so the rollback restores every move made (#55).
-  const interruptedRef = useRef(false);
+  // The install in flight, from the first move aside to state.json, which a
+  // Ctrl+C stops and waits for (#249). Its abort stops the set-aside loop
+  // before its next move (#55) and runInstall before its next write; the
+  // install's own rollback then runs once and settles `done`.
+  const runRef = useRef<ReturnType<typeof openRun> | null>(null);
   // AbortController that owns the currently-executing post-install hook.
   // Null when no hook is in flight. Ctrl+C in the running-hook phase
   // aborts the subprocess but does NOT roll back the install (we're
@@ -208,12 +211,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current, createdDirsRef.current);
 
   useSigintRollback({
-    isActive: () => {
-      // Read once, on Ctrl+C: stop moving files before the rollback starts.
-      interruptedRef.current = true;
-      return !dryRun && installingRef.current;
-    },
-    rollback: () => rollbackPartialInstall(),
+    isActive: () => !dryRun && runRef.current !== null,
+    rollback: () => stopRun(runRef.current),
     cleanup: async () => {
       // Abort any in-flight post-install hook subprocess. Intentionally
       // runs on every Ctrl+C, regardless of `isActive` — during the
@@ -404,8 +403,20 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     [nonInteractive, isRawModeSupported, valuesFile, runNonInteractive],
   );
 
+  // Settle the run once (later calls do nothing) and stop tracking it.
+  const endRun = (run: ReturnType<typeof openRun> | null, failures: readonly RollbackFailure[]) => {
+    if (!run) return;
+    run.settle(failures);
+    if (runRef.current === run) runRef.current = null;
+  };
+
   const executeInstall = useCallback(
-    async (ctx: PreparedContext, result: WizardResult, placed: PlacedCollisions) => {
+    async (
+      ctx: PreparedContext,
+      result: WizardResult,
+      placed: PlacedCollisions,
+      run: ReturnType<typeof openRun> | null,
+    ) => {
       const { backups, replaced, setAside, oldState } = placed;
       const start = Date.now();
       const history: string[] = [];
@@ -415,7 +426,6 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       backupsRef.current = [...backups, ...setAside];
       writtenPathsRef.current = [];
       createdDirsRef.current = [];
-      installingRef.current = true;
 
       setPhase({
         kind: 'installing',
@@ -443,6 +453,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           values: result.values,
           selections: result.selections,
           dryRun,
+          signal: run?.abort.signal,
           onFileWritten: (outputPath) => {
             writtenPathsRef.current.push(outputPath);
           },
@@ -477,10 +488,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         });
 
         // State.json is now on disk — we're past the point-of-no-return.
-        // Clear the rollback guard BEFORE firing the hook so a SIGINT
-        // during hook execution can't walk the install back. The only
-        // remaining work (hook subprocess) is non-fatal per spec §9.3.
-        installingRef.current = false;
+        // End the run BEFORE firing the hook so a SIGINT during hook
+        // execution can't walk the install back. The only remaining work
+        // (hook subprocess) is non-fatal per spec §9.3.
+        endRun(run, []);
         committed = true;
         backupsRef.current = backups;
 
@@ -539,16 +550,16 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       } catch (err) {
         const rollBack = !dryRun && !committed;
         if (rollBack) {
-          // Clear the guard first, so a Ctrl+C now cannot start a second
-          // rollback racing this one on the same backups. Rolls back every
-          // path `runInstall` reported through `onFileWritten` (#207): its
-          // own return value never arrives when it throws.
-          installingRef.current = false;
+          // The only rollback: a Ctrl+C meanwhile waits for it through
+          // `done` (#249). Rolls back every path `runInstall` reported
+          // through `onFileWritten` (#207): its own return value never
+          // arrives when it throws.
           const failures = await attemptRollback(rollbackPartialInstall);
+          endRun(run, failures);
           // A backup left unrestored is never reported as rolled back (#247).
           err = withRollbackFailures(err, failures);
         }
-        installingRef.current = false;
+        endRun(run, []);
         finish({
           kind: 'error',
           error: err as Error,
@@ -586,45 +597,56 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       const ownNow = [...own, ...recheck.own];
       const replaced = policy === 'overwrite' ? ownNow.map((c) => c.outputPath) : [];
       if (dryRun) {
-        await executeInstall(ctx, result, { backups: [], replaced, setAside: [] });
+        await executeInstall(ctx, result, { backups: [], replaced, setAside: [] }, null);
         return;
       }
       const oldInstall = ctx.previous
         ? await detectCollisions(vaultRoot, [SHARDMIND_DIR, VALUES_FILE])
         : [];
-      // Registered move by move in the array the SIGINT rollback walks; the
-      // first move turns rollback on. Before it a Ctrl+C has nothing to
-      // undo, and rollback would delete the old `.shardmind/`.
+      // Registered move by move in the array the rollback walks. The run
+      // starts before the first move, so a Ctrl+C stops the loop before its
+      // next one (#55) and waits for the rollback below (#249).
       const moved: BackupRecord[] = [];
       writtenPathsRef.current = [];
       createdDirsRef.current = [];
       backupsRef.current = moved;
+      const run = openRun();
+      runRef.current = run;
       try {
         await backupCollisions(
           [...oldInstall, ...recheck.untouched, ...ownNow],
           undefined,
           (record) => {
             moved.push(record);
-            installingRef.current = true;
           },
-          () => interruptedRef.current,
+          () => run.abort.signal.aborted,
         );
       } catch (err) {
         // backupCollisions put its moves back; there is nothing to roll back.
-        installingRef.current = false;
         backupsRef.current = [];
+        endRun(run, []);
         throw err;
       }
-      // Interrupted mid-way: the SIGINT handler restores `moved` and exits.
-      if (interruptedRef.current) return;
+      if (run.abort.signal.aborted) {
+        // Stopped mid-way: put back what was moved. Before the first move
+        // there is nothing to undo, and a rollback would delete the old
+        // `.shardmind/`.
+        endRun(run, moved.length > 0 ? await attemptRollback(rollbackPartialInstall) : []);
+        return;
+      }
       const kept = new Set(policy === 'backup' ? ownNow.map((c) => c.absolutePath) : []);
       const oldStatePath = oldInstall.find((c) => c.outputPath === SHARDMIND_DIR)?.absolutePath;
-      await executeInstall(ctx, result, {
-        backups: moved.filter((m) => kept.has(m.originalPath)),
-        replaced,
-        setAside: moved.filter((m) => !kept.has(m.originalPath)),
-        oldState: moved.find((m) => m.originalPath === oldStatePath),
-      });
+      await executeInstall(
+        ctx,
+        result,
+        {
+          backups: moved.filter((m) => kept.has(m.originalPath)),
+          replaced,
+          setAside: moved.filter((m) => !kept.has(m.originalPath)),
+          oldState: moved.find((m) => m.originalPath === oldStatePath),
+        },
+        run,
+      );
     },
     [dryRun, vaultRoot, executeInstall],
   );
