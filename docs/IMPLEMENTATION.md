@@ -791,7 +791,7 @@ interface MergeStats {
 4. If `sha256(base) === sha256(ours)` → no upstream change → `{ type: 'skip' }`
 5. If ownership is `managed` (base === theirs) → `{ type: 'overwrite', content: ours }`
 6. If ownership is `modified`:
-   a. Run `diff3MergeRegions(theirs.split(/\r?\n/), base.split(/\r?\n/), ours.split(/\r?\n/))` — not the flat `diff3Merge`; the regions variant exposes `buffer: 'a' | 'o' | 'b'` on stable regions and `aContent / oContent / bContent` on unstable ones, which is the only way to distinguish stable-unchanged (`buffer === 'o'`) from stable-auto-merged (`buffer === 'a' | 'b'`) lines. The `/\r?\n/` split tolerates CRLF on Windows-saved files; merged output preserves `theirs`'s dominant line ending (`\r\n` if any CRLF in `theirs`, else `\n`) so `shardmind update` doesn't silently flip line endings on Windows users' managed files.
+   a. Run `diff3MergeRegions(theirs.split(/\r?\n/), base.split(/\r?\n/), ours.split(/\r?\n/))` (`core/diff3.ts`, node-diff3's regions with a faster LCS, see below) — not the flat `diff3Merge`; the regions variant exposes `buffer: 'a' | 'o' | 'b'` on stable regions and `aContent / oContent / bContent` on unstable ones, which is the only way to distinguish stable-unchanged (`buffer === 'o'`) from stable-auto-merged (`buffer === 'a' | 'b'`) lines. The `/\r?\n/` split tolerates CRLF on Windows-saved files; merged output preserves `theirs`'s dominant line ending (`\r\n` if any CRLF in `theirs`, else `\n`) so `shardmind update` doesn't silently flip line endings on Windows users' managed files.
    b. For each stable region: emit `bufferContent`. For each unstable region: if `aContent === oContent` take `bContent`; if `bContent === oContent` take `aContent`; if `aContent === bContent` take either (false conflict); else emit git-style conflict markers and record a `ConflictRegion`.
    c. No conflicts → `{ type: 'auto_merge', content, stats }`. Conflicts → `{ type: 'conflict', result: { content, conflicts, stats } }`.
 
@@ -827,7 +827,13 @@ Shard update version of conflicting lines
 >>>>>>> shard update
 ```
 
-**Dependencies**: `node-diff3`, `renderer.ts`, `node:crypto`.
+**`diff3MergeRegions` (`core/diff3.ts`, #170).** A port of node-diff3 3.2.1's `diff3MergeRegions`, `diffIndices` and `LCS`, with one change to the algorithm (and the sorted hunks walked by index rather than `shift()`ed, which yields them in the same order). node-diff3's `LCS` (Hunt–McIlroy) finds each match's slot in `candidates` by a linear scan from `r`. When a match finds no slot, `r` doesn't move, so the next match rescans the same stretch. With many repeated lines that is cubic: 4,000 lines of 100 distinct took 294 ms, and 10,000 about 4.5 s.
+
+Within one row, the candidates at positions ≥ `r` are the previous row's thresholds, and their `buffer2index` strictly increases. So the slot is the largest `s ≥ r` with `buffer2index < j`, taken only if the next candidate's `buffer2index > j`. A binary search finds that same `s`, so every region is identical to node-diff3's.
+
+A property test against node-diff3 itself (the oracle, still a dependency, whose types `differ.ts` keeps using) holds the port to that. A size cap with a whole-file-conflict fallback was rejected: it changes merge results above the cap. What stays slow is one very large class of equal lines: each row still visits every match in its class, as Hunt–Szymanski does, so 20,000 lines that are half blank take about 3 s (8,000 lines of 100 distinct: 23 ms; node-diff3: 2.3 s).
+
+**Dependencies**: `node-diff3` (types, and the test oracle), `diff3.ts`, `renderer.ts`, `node:crypto`.
 
 ---
 

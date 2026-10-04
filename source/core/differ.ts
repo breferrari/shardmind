@@ -4,13 +4,14 @@
  * Given the old template, the new template, and the file on disk,
  * `computeMergeAction` decides whether to skip, silently overwrite,
  * auto-merge, or surface a conflict. When a merge is needed, the heavy
- * lifting is delegated to node-diff3's Khanna–Myers algorithm (same
- * approach git uses).
+ * lifting is node-diff3's Khanna–Myers algorithm (same approach git uses),
+ * ported to ./diff3.ts with an LCS that stays fast on repeated lines (#170).
  *
  * See docs/IMPLEMENTATION.md §4.9 for the spec.
  */
 
-import { diff3MergeRegions, type IRegion, type IUnstableRegion } from 'node-diff3';
+import type { IRegion, IUnstableRegion } from 'node-diff3';
+import { diff3MergeRegions } from './diff3.js';
 import type {
   MergeAction,
   MergeStatsWithConflicts,
@@ -44,8 +45,9 @@ function detectLineEnding(source: string): '\r\n' | '\n' {
   return source.includes('\r\n') ? '\r\n' : '\n';
 }
 
-// Raw lines go straight to node-diff3, which keys its LCS lookup by line
-// content. That needs node-diff3 >= 3.2.1: earlier versions used a plain `{}`
+// Raw lines go straight to diff3MergeRegions (./diff3.ts, node-diff3's code),
+// which keys its LCS lookup by line content. That needs the node-diff3 >= 3.2.1
+// null-prototype lookup, which the port keeps: earlier versions used a plain `{}`
 // for the lookup, so a line equal to an Object.prototype member
 // (`constructor`, `__proto__`, `toString`, ...) crashed the merge, and this
 // module interned lines to integer tokens to avoid it (bhousel/node-diff3#86,

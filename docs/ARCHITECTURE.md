@@ -1499,14 +1499,14 @@ rendering or drift classification directly.
 
 ### 19.4 Three-Way Merge Implementation
 
-Uses `node-diff3`'s `diff3MergeRegions` (Khanna–Myers algorithm) — **not**
+Uses `node-diff3`'s `diff3MergeRegions` (Khanna–Myers algorithm), ported to `core/diff3.ts` with an LCS that stays fast on repeated lines and returns identical regions (#170, IMPLEMENTATION §4.9) — **not**
 the flat `diff3Merge`. The regions variant exposes `buffer: 'a' | 'o' | 'b'`
 on stable regions and separate `aContent / oContent / bContent` on unstable
 ones, which is the only way to distinguish stable-unchanged lines from
 stable-auto-merged lines and produce accurate merge stats.
 
 ```typescript
-import { diff3MergeRegions } from 'node-diff3';
+import { diff3MergeRegions } from './diff3.js';  // node-diff3's, ported (#170)
 
 export function threeWayMerge(base, theirs, ours): ThreeWayMergeResult {
   const regions = diff3MergeRegions(
