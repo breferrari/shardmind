@@ -240,7 +240,9 @@ async function readUserFile(vaultRoot: string, rel: string): Promise<Buffer | nu
   try {
     return await fsp.readFile(userPath);
   } catch (err) {
-    if (isEnoent(err)) return null;
+    // Nothing there. A path under a regular file is ENOTDIR on POSIX and
+    // ENOENT on Windows: both mean no file, so the platforms agree.
+    if (isEnoent(err) || errnoCode(err) === 'ENOTDIR') return null;
     throw new ShardMindError(
       `Could not read user vault file: ${userPath}`,
       'COLLISION_CHECK_FAILED',
