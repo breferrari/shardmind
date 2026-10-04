@@ -16,4 +16,9 @@ Vendored into ShardMind on 2026-10-04 (#43), because upstream has been frozen si
    - `TextInput` does not fire `onChange` on a parent re-render (vadimdemedes/ink-ui#26);
    - `Select` starts with focus on its `defaultValue`, scrolled into view (upstream always focused the first option).
 
+Licences:
+- `LICENSE` is `@inkjs/ui`'s MIT notice, unchanged, with Brenno Ferrari's copyright added for the modifications.
+- `LICENSE-sindresorhus` covers what `lib/figures.ts` takes from `figures` and `is-unicode-supported`.
+- Each vendored file names its origin in a header, and the files ShardMind changed add a "Modified by" line saying what changed.
+
 Imports allowed: `ink`, `react`, `node:` built-ins, and files in this folder.

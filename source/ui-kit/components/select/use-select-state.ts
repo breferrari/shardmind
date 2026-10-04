@@ -1,3 +1,9 @@
+/*
+ * From @inkjs/ui 2.0.0 (github.com/vadimdemedes/ink-ui, commit 14b1145),
+ * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
+ * Modified by Brenno Ferrari: onChange fires once per Enter, with the choice read from the reducer (ShardMind #103, vadimdemedes/ink-ui#26, typed-ahead keys); focus starts on defaultValue; dead previousValue removed.
+ */
+
 import {isDeepStrictEqual} from 'node:util';
 import {
 	useReducer,

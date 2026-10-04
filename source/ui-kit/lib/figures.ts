@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Brenno Ferrari. MIT.
+ * The glyphs and the Unicode check follow figures and is-unicode-supported
+ * (Sindre Sorhus, MIT: see ui-kit/LICENSE-sindresorhus).
+ */
+
 import process from 'node:process';
 
 /**

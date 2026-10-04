@@ -1,3 +1,9 @@
+/*
+ * From @inkjs/ui 2.0.0 (github.com/vadimdemedes/ink-ui, commit 14b1145),
+ * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
+ * Modified by Brenno Ferrari: cut to Select and TextInput, with no deepmerge and no any.
+ */
+
 import {type ReactNode, createContext, useContext} from 'react';
 import selectTheme from './components/select/theme.js';
 import textInputTheme from './components/text-input/theme.js';

@@ -5,6 +5,9 @@
  * separate commits on top. MIT; the licence is in ./LICENSE and
  * provenance in ./PROVENANCE.md.
  *
+ * Copyright (c) 2026 Brenno Ferrari (this file and ShardMind's
+ * modifications). MIT.
+ *
  * The only public entry point. The module imports only ink, react,
  * node: built-ins and its own files (tests/ui-kit/boundary.test.ts), so
  * it can move to its own package with a `git mv` and a package.json.

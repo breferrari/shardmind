@@ -62,4 +62,20 @@ describe('ui-kit boundary (#43)', () => {
     expect(fs.readFileSync(path.join(KIT, 'PROVENANCE.md'), 'utf-8')).toMatch(/14b1145da0123a48cfc2f0ec9ff33dff0633f464/);
     expect(fs.readFileSync(path.join(KIT, 'index.ts'), 'utf-8')).toMatch(/^\/\*!/);
   });
+
+  it('keeps the upstream notice and adds the modifications’ copyright', () => {
+    const licence = fs.readFileSync(path.join(KIT, 'LICENSE'), 'utf-8');
+    expect(licence).toContain(
+      'Copyright (c) Vadym Demedes <vadimdemedes@hey.com> (github.com/vadimdemedes)\nCopyright (c) 2026 Brenno Ferrari\n',
+    );
+    expect(fs.readFileSync(path.join(KIT, 'LICENSE-sindresorhus'), 'utf-8')).toMatch(/Copyright \(c\) Sindre Sorhus/);
+  });
+
+  it('names a copyright at the top of every source file', () => {
+    const unnamed = sourceFiles(KIT).filter((file) => {
+      const head = fs.readFileSync(file, 'utf-8').slice(0, 400);
+      return !/^\/\*!?\n[\s\S]*?Copyright \(c\)/.test(head);
+    });
+    expect(unnamed.map((file) => path.relative(KIT, file))).toEqual([]);
+  });
 });

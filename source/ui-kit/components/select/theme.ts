@@ -1,3 +1,9 @@
+/*
+ * From @inkjs/ui 2.0.0 (github.com/vadimdemedes/ink-ui, commit 14b1145),
+ * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
+ * Modified by Brenno Ferrari: typed theme parameters.
+ */
+
 import {type BoxProps, type TextProps} from 'ink';
 import {type ComponentTheme} from '../../theme.js';
 

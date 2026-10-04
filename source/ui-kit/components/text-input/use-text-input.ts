@@ -1,3 +1,9 @@
+/*
+ * From @inkjs/ui 2.0.0 (github.com/vadimdemedes/ink-ui, commit 14b1145),
+ * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
+ * Modified by Brenno Ferrari: cursor and placeholder as Ink Text segments instead of chalk strings.
+ */
+
 import {useMemo} from 'react';
 import {useInput} from 'ink';
 import {type TextInputState} from './use-text-input-state.js';

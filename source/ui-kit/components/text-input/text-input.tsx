@@ -1,3 +1,9 @@
+/*
+ * From @inkjs/ui 2.0.0 (github.com/vadimdemedes/ink-ui, commit 14b1145),
+ * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
+ * Modified by Brenno Ferrari: draws Ink Text segments instead of a chalk string.
+ */
+
 import {Text} from 'ink';
 import {useComponentTheme} from '../../theme.js';
 import {useTextInputState} from './use-text-input-state.js';
