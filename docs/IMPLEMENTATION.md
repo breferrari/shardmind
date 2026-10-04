@@ -763,6 +763,8 @@ computeMergeAction(input: {
   actualContent: string;       // File on disk
   renderContext: RenderContext;
   literal?: boolean;           // copy-origin file → merge raw bytes, don't render (#132)
+  oldItem?: unknown;           // _each output: the list item each side renders with (#233)
+  newItem?: unknown;
 }): Promise<MergeAction>
 
 type MergeAction =
@@ -780,6 +782,8 @@ interface MergeStats {
 **Algorithm**:
 1. Render old template with old values → `base` (**unless `literal`** — see below)
 2. Render new template with new values → `ours` (**unless `literal`**)
+
+   For an `_each` output, each side renders with its own list item (`oldItem` / `newItem`), as the install did. The update planner finds them with `eachItemFor` (the same naming rule as the render), from the old values through the cached template's path and from the new values through the new entry's path. Without them both sides render `{{ item }}` empty, and a template change looks like a conflict with the user's file (#233).
 3. `theirs` = `actualContent` (what's on disk)
 
 **Copy-origin files (`literal: true`, #132)**: in v6 only `.njk` files are templates; everything else is copied verbatim (`modules.ts`). The update planner sets `literal` for copy-origin files (those carrying `copyFromSourcePath`). When set, steps 1–2 **skip rendering** — `base = oldTemplate`, `ours = newTemplate` — and the three-way merge runs on the raw bytes. Rendering a copy file would (a) crash on a literal `{{` that isn't a valid expression and (b) silently substitute any real `{{ expr }}` it contains as data. The renderer itself stays strict, so genuine `.njk` authoring errors still throw `RENDER_TEMPLATE_ERROR`.
