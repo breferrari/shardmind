@@ -755,22 +755,17 @@ describe('shardmind install', () => {
     'exits cleanly and leaves no partial state on SIGINT mid-install',
     async () => {
       // POSIX sends a real SIGINT via `child.kill`. Windows uses the
-      // stdin-ETX bridge (`source/core/cancellation.ts`), which works on
-      // local Windows 11 dev boxes. GitHub Actions Windows Server 2022
-      // runners have an inter-process pipe-buffering quirk where the
-      // parent's single-byte write doesn't reach the child before the
-      // outer timeout — we haven't found a test-harness mechanism that
-      // bridges both local Windows and the CI image. Narrowing the skip
-      // to `GITHUB_ACTIONS=true` keeps local Windows exercising the full
-      // SIGINT path. Follow-up tracked as #57; methodology in
-      // ARCHITECTURE §19.7.
+      // stdin-ETX bridge (`source/core/cancellation.ts`), on GitHub Actions
+      // runners too (#57); methodology in ARCHITECTURE §19.7.
       //
       // Timing: Ink in non-TTY mode renders only the final frame, so we
       // can't pattern-match `[N/M]` to detect the installing phase. Instead
-      // we slow the stub's tarball GET so the child spends ~600 ms in the
-      // download phase, then fire SIGINT at t=200 ms — well into the active
-      // download, well before any write starts. That exercises the SIGINT
-      // plumbing + the shard-tempdir cleanup path that
+      // the stub's tarball GET is held for 4 s and SIGINT fires at 1.5 s:
+      // after the CLI has started and registered `useSigintRollback`
+      // (startup takes about 0.5-1 s on CI runners), during the download,
+      // before any write. Firing earlier lands before the handler exists
+      // and only tests the bridge's exit-130 fallback (#57). This exercises
+      // the handler + the shard-tempdir cleanup that
       // `useSigintRollback({ cleanup: … })` promises on every signal, and
       // keeps the "no partial state in the vault" invariant the test is
       // really about: SIGINT at any phase leaves the vault exactly as the
@@ -783,16 +778,11 @@ describe('shardmind install', () => {
           ['install', SHARD_REF, '--yes', '--values', valuesPath],
           {
             cwd: vault.root,
-            env: { ...envWithStub(), SHARDMIND_DEBUG_CANCEL: '1' },
+            env: envWithStub(),
             signalAt: { signal: 'SIGINT', afterMs: 1500 },
             timeoutMs: 20_000,
           },
         );
-        console.log(`[#57 diag] exitCode=${result.exitCode} signal=${result.signal} duration=${result.duration}ms timedOut=${result.timedOut}
-STDERR:
-${result.stderr}
-STDOUT:
-${result.stdout.slice(-2000)}`);
         const viaCode = result.exitCode === 130;
         const viaSignal = result.signal === 'SIGINT';
         expect(
@@ -1271,9 +1261,8 @@ describe('shardmind update', () => {
   it(
     'exits cleanly and leaves state.json byte-identical on SIGINT mid-update',
     async () => {
-      // Same GH-Actions-Windows narrow skip as install-sigint — see that
-      // test's comment. Local Windows dev boxes run this test through
-      // the stdin-ETX bridge end-to-end.
+      // Same timing as install-sigint (see that test's comment): SIGINT at
+      // 1.5 s, inside a 4 s tarball hold, after the handler is registered.
       vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-sigint' });
       stub.setLatest(SHARD_SLUG, '0.2.0');
       stub.setTarballDelay(4000);
@@ -1281,13 +1270,10 @@ describe('shardmind update', () => {
         const beforeState = await vault.readFile('.shardmind/state.json');
         const result = await spawnCli(['update', '--yes'], {
           cwd: vault.root,
-          env: { ...envWithStub(), SHARDMIND_DEBUG_CANCEL: '1' },
+          env: envWithStub(),
           signalAt: { signal: 'SIGINT', afterMs: 1500 },
           timeoutMs: 20_000,
         });
-        console.log(`[#57 diag update] exitCode=${result.exitCode} signal=${result.signal} duration=${result.duration}ms
-STDERR:
-${result.stderr}`);
         const viaCode = result.exitCode === 130;
         const viaSignal = result.signal === 'SIGINT';
         expect(

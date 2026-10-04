@@ -40,16 +40,7 @@ export function installStdinCancellation(): void {
   // pipe (our target case) and true when it's a terminal. Real users
   // running `shardmind install ...` from a shell see TTY stdin and go
   // through Ink's normal console-signal path.
-  const debug = process.env['SHARDMIND_DEBUG_CANCEL'] === '1';
-  const t0 = Date.now();
-  const log = (m: string) => { if (debug) process.stderr.write(`[cancel +${Date.now() - t0}ms] ${m}
-`); };
-  log(`install isTTY=${String(process.stdin.isTTY)} readableFlowing=${String(process.stdin.readableFlowing)}`);
   if (process.stdin.isTTY) return;
-  process.stdin.on('end', () => log('stdin end'));
-  process.stdin.on('close', () => log('stdin close'));
-  process.stdin.on('pause', () => log('stdin pause'));
-  process.stdin.on('resume', () => log('stdin resume'));
 
   // `process.stdin` defaults to paused on Node 22+; `.on('data')` resumes
   // it automatically, but we guard by only reading raw bytes (no string
@@ -66,11 +57,9 @@ export function installStdinCancellation(): void {
   // present at emit time, exit 130 directly so cancellation is always
   // observable to the parent.
   process.stdin.on('data', (chunk: Buffer) => {
-    log(`data ${chunk.length} bytes`);
     for (let i = 0; i < chunk.length; i++) {
       if (chunk[i] === ETX) {
         const fired = process.emit('SIGINT');
-        log(`ETX → emit SIGINT fired=${String(fired)}`);
         if (!fired) process.exit(130);
         return;
       }
