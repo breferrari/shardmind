@@ -115,9 +115,10 @@ function checkFailed(err: unknown, at: string): ShardMindError {
  * on a case-folding filesystem, and a folder that cannot be listed skips
  * it. A path that cannot be inspected throws `COLLISION_CHECK_FAILED`.
  * Listings and `lstat` results are cached. `caseRenames` are the case-only
- * renames the run applies (old path, new path; #169): on either path of a
- * pair, the other's name is not a `case-mismatch`, since it is the same file
- * under the name the run moves it from or to.
+ * renames the run applies (old path, new path; #169, #195): a segment a pair
+ * spells either way is not a `case-mismatch` on any path under the same
+ * prefix, since it is the same file or folder under the name the run moves
+ * it from or to.
  */
 export async function findUnsafeVaultPaths(
   vaultRoot: string,
@@ -126,12 +127,22 @@ export async function findUnsafeVaultPaths(
   caseRenames: ReadonlyArray<readonly [string, string]> = [],
 ): Promise<UnsafeVaultPath[]> {
   const folds = await foldsCaseAt(vaultRoot);
-  // Path (as given) → the last-component names its rename pair spells.
+  // A prefix (as either side spells it, up to and including one segment) →
+  // the spellings the pair gives that segment. Keyed by prefix, not by whole
+  // path, so a file the run adds under a folder whose case it changes is
+  // covered too (#195).
   const pairNames = new Map<string, Set<string>>();
   for (const [from, to] of caseRenames) {
-    const names = new Set([from, to].map((rel) => path.posix.basename(rel).normalize('NFC')));
-    pairNames.set(from, names);
-    pairNames.set(to, names);
+    const a = from.split('/');
+    const b = to.split('/');
+    for (let i = 0; i < a.length && i < b.length; i++) {
+      const names = new Set([a[i]!, b[i]!].map((n) => n.normalize('NFC')));
+      for (const prefix of [a.slice(0, i + 1).join('/'), b.slice(0, i + 1).join('/')]) {
+        const set = pairNames.get(prefix) ?? new Set<string>();
+        for (const n of names) set.add(n);
+        pairNames.set(prefix, set);
+      }
+    }
   }
   // null: no such folder. undefined: not listable, so the case check is skipped.
   const list = cached<Set<string> | null | undefined>(
@@ -164,7 +175,8 @@ export async function findUnsafeVaultPaths(
         // (a normalization-only difference is the same name, and passes).
         const lower = name.normalize('NFC').toLowerCase();
         const onDisk = [...names].find((n) => n.toLowerCase() === lower);
-        if (onDisk !== undefined && !(last && pairNames.get(rel)?.has(onDisk))) return 'case-mismatch';
+        const prefix = segments.slice(0, i + 1).join('/');
+        if (onDisk !== undefined && !pairNames.get(prefix)?.has(onDisk)) return 'case-mismatch';
       }
       if (last && isDelete) return null;
       if (st.isSymbolicLink()) return last ? 'symlink' : 'symlinked-folder';
