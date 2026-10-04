@@ -8,7 +8,8 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { acquireVaultLock, LOCK_FILE } from '../../source/core/vault-lock.js';
+import { acquireVaultLock } from '../../source/core/vault-lock.js';
+import { LOCK_FILE } from '../../source/runtime/vault-paths.js';
 
 let vault: string;
 const lockPath = () => path.join(vault, LOCK_FILE);

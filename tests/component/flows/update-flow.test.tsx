@@ -79,6 +79,28 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
 
   // ───── Scenario 13: single conflict → keep_mine → ownership='modified' ─────
 
+  it('12b. another shardmind run holds the vault → VAULT_LOCKED, state untouched (#253)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 's12b-locked' });
+    try {
+      stub.setVersion(SHARD_SLUG, '0.3.0', fixtures.byVersion['0.3.0']!);
+      stub.setLatest(SHARD_SLUG, '0.3.0');
+      await fs.writeFile(
+        path.join(vault.root, '.shardmind.lock'),
+        JSON.stringify({ pid: process.pid, hostname: (await import('node:os')).hostname(), command: 'install', startedAt: '2026-10-04T12:00:00.000Z' }),
+      );
+      const stateBefore = await vault.readFile('.shardmind/state.json');
+      const r = mountUpdate({ vaultRoot: vault.root });
+      const all = await waitFor(() => r.frames.join(' ').replace(/\s+/g, ' '), (f) => /VAULT_LOCKED/.test(f), 20_000);
+      expect(all).toContain(`install (PID ${process.pid}`);
+      expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
+
   it('13. single conflict → DiffView → keep_mine → state.files reflects modified ownership', async () => {
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);

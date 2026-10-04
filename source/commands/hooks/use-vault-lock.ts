@@ -9,7 +9,8 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import { acquireVaultLock, LOCK_FILE, type VaultLock } from '../../core/vault-lock.js';
+import { acquireVaultLock, type VaultLock } from '../../core/vault-lock.js';
+import { LOCK_FILE } from '../../runtime/vault-paths.js';
 
 export function useVaultLock(
   vaultRoot: string,

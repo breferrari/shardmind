@@ -240,6 +240,22 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
     }
   }, 60_000);
 
+  it('22b. another shardmind run holds the vault → VAULT_LOCKED before anything is read (#253)', async () => {
+    const vault = await makeVaultDir('s22b-locked');
+    try {
+      await fs.writeFile(
+        path.join(vault, '.shardmind.lock'),
+        JSON.stringify({ pid: process.pid, hostname: (await import('node:os')).hostname(), command: 'install', startedAt: '2026-10-04T12:00:00.000Z' }),
+      );
+      const r = mountAdopt({ shardRef: SHARD_REF, vaultRoot: vault });
+      const all = await waitFor(() => r.frames.join(' ').replace(/\s+/g, ' '), (f) => /VAULT_LOCKED/.test(f), 20_000);
+      expect(all).toContain(`install (PID ${process.pid}`);
+      expect(await fs.readdir(vault)).toEqual(['.shardmind.lock']);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
   // ───── Scenario 23: --yes + multi-divergent → all auto-keep_mine → Summary ─────
 
   it('23. --yes + multi-divergent → all auto-keep_mine → Summary', async () => {

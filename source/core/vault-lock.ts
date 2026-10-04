@@ -14,8 +14,6 @@ import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
 import { LOCK_FILE } from '../runtime/vault-paths.js';
 
-export { LOCK_FILE };
-
 export interface VaultLockInfo {
   pid: number;
   hostname: string;
@@ -81,7 +79,10 @@ function tryCreate(file: string, info: VaultLockInfo): boolean {
   try {
     fd = fs.openSync(file, 'wx');
   } catch (err) {
-    if (errnoCode(err) === 'EEXIST' || errnoCode(err) === 'EISDIR' || errnoCode(err) === 'EPERM') return false;
+    // EISDIR: a folder by that name. EPERM: on Windows, a file whose delete
+    // is still pending. Both are "taken"; readHolder decides what to say.
+    const code = errnoCode(err);
+    if (code === 'EEXIST' || code === 'EISDIR' || code === 'EPERM') return false;
     throw err;
   }
   try {

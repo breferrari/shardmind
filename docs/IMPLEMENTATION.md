@@ -1715,7 +1715,7 @@ interface VaultLock { release(): void; tookOver?: VaultLockInfo }
 acquireVaultLock(vaultRoot: string, command: 'install' | 'update' | 'adopt', deps?: { pid?: number; hostname?: string; isAlive?: (pid: number) => boolean; now?: () => Date }): VaultLock
 ```
 
-1. **Create.** `openSync(<vault>/.shardmind.lock, 'wx')` writes `VaultLockInfo` as JSON. On success it registers a `process.on('exit')` handler that releases, and returns.
+1. **Create.** `openSync(<vault>/.shardmind.lock, 'wx')` writes `VaultLockInfo` as JSON. `EEXIST`, `EISDIR` (a folder by that name) and `EPERM` (on Windows, a file whose delete is still pending) all mean the name is taken. On success it registers a `process.on('exit')` handler that releases, and returns.
 2. **On `EEXIST`,** it reads the holder.
    - **Unreadable,** not a regular file (a symlink, a folder), or not that JSON: throw `VAULT_LOCKED`. Nothing is overwritten.
    - **Same hostname and `isAlive(pid)` is false** (`process.kill(pid, 0)` fails `ESRCH`; `EPERM` means alive): stale. Remove it and create again, once. If that create meets `EEXIST`, another run took it first, and its holder is reported. The result carries `tookOver`.
