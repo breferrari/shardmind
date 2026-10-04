@@ -1614,6 +1614,10 @@ lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: st
 5. `renderFile` for every render entry with `buildRenderContext(manifest, values, selections)`; each failure is recorded with the entry's output path.
 6. Warnings: a module whose paths match no file in the walk; a group no value belongs to.
 
+---
+
+## 5. Runtime Module: `shardmind/runtime`
+
 ### 5.1 `resolveVaultRoot()`
 
 Walk up from `process.cwd()` looking for `.shardmind/state.json`. Max 20 levels. Return absolute path or throw.
@@ -1653,9 +1657,6 @@ Build zod schema from `ShardSchema` (same logic as `schema.ts:buildValuesValidat
 6. Return `{ valid, noteType, missing, extra }`
 
 ---
-
-## 5. Runtime Module: `shardmind/runtime`
-
 
 ## 6. Ink Components
 
