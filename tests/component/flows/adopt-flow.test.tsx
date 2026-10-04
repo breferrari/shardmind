@@ -11,7 +11,7 @@
  * DiffView.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { cleanup } from 'ink-testing-library';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -482,6 +482,49 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
         'my pre-existing Home',
       );
     } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  // ───── Scenario 33: a rollback that can't restore says so, not "Rolled back" (#247) ─────
+
+  it("33. failed adopt whose snapshot can't be restored → ROLLBACK_INCOMPLETE names the file and its copy", async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s33-rollback-incomplete');
+    const realWrite = fs.writeFile;
+    const realCopy = fs.copyFile;
+    try {
+      await writeRel(vault, 'Home.md', 'my pre-existing Home\n');
+      const valuesFile = path.join(vault, 'values.yaml');
+      await fs.writeFile(valuesFile, stringifyYaml(DEFAULT_VALUES), 'utf-8');
+      const homeAbs = path.join(vault, 'Home.md');
+      // A shard file's write fails, and restoring Home.md from the snapshot fails.
+      vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, opts) => {
+        if (file === path.join(vault, 'CLAUDE.md')) {
+          throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
+        }
+        return realWrite(file, data, opts);
+      });
+      vi.spyOn(fs, 'copyFile').mockImplementation(async (src, dst, mode) => {
+        if (dst === homeAbs && String(src).includes(path.join('.shardmind', 'backups'))) {
+          throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
+        }
+        return realCopy(src, dst, mode);
+      });
+      const r = mountAdopt({
+        shardRef: `${SHARD_REF}#v0.1.0`,
+        vaultRoot: vault,
+        options: { yes: true, values: valuesFile, mode: 'use-all-theirs' },
+      });
+      // An error exits ~100 ms after rendering, which clears lastFrame; read the history.
+      await waitFor(() => r.frames.join('\n'), (f) => /ROLLBACK_INCOMPLETE/.test(f), 30_000);
+      await tick(200);
+      const frames = r.frames.join('\n');
+      expect(frames).toMatch(/Home\.md: restore failed: simulated EBUSY/);
+      expect(frames).not.toMatch(/Rolled back partial adopt/);
+    } finally {
+      vi.restoreAllMocks();
       await cleanupVault(vault);
     }
   }, 60_000);
