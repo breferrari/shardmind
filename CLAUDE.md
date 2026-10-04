@@ -200,6 +200,7 @@ shardmind/
 │   │   ├── hook-orchestrator.ts       # Hook lifecycle: slot selection/order, boundary checks, re-hash, fingerprint (#102)
 │   │   ├── hook-boundary.ts           # Pure detect-and-warn write-boundary detector — managed-write / unmanaged-create (#102)
 │   │   ├── vault-path-guard.ts        # Refuse writes through symlinks, hard links, case-folded names (#163)
+│   │   ├── stdout-closed.ts           # A reader that closes stdout early: quiet exit 141 after the run ends (#252)
 │   │   ├── lint-shard.ts              # Install's checks in check mode, collecting every finding (#34)
 │   │   ├── validate-shard.ts          # validate target (dir or ref) + headless --json runner (#34)
 │   │   ├── color-env.ts               # NO_COLOR → chalk level 0 before Ink loads; FORCE_COLOR wins (#37)
@@ -365,6 +366,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `update-check.ts` | §4.15 | 24h cached GitHub latest-version lookup shared by status + update |
 | `self-update-check.ts` | §4.19 | 24h cached npm-registry check for newer shardmind engine versions; powers `<SelfUpdateBanner>` |
 | `vault-path-guard.ts` | §4.20 | Refuses install / update / adopt over a symlinked, hard-linked or case-folded vault path (`VAULT_PATH_UNSAFE`, #163) |
+| `stdout-closed.ts` | §7.2a | A reader that closes stdout early (`| head`): later writes dropped, the run finishes or rolls back, then a quiet exit 141 (#252) |
 | `color-env.ts` | §4.21 | Applies `NO_COLOR` to the environment before chalk loads; `FORCE_COLOR` wins when both are set (#37) |
 | `json-run.ts` | §4.23 | Detects a `--json` run of update / adopt / validate / status and marks stdout non-interactive before Ink loads, so a terminal run equals the piped one; a crash in it answers on stdout too (#198) |
 
