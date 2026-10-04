@@ -728,6 +728,34 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     expect(await fsp.readFile(path.join(second, 'files', 'Home.md'), 'utf-8')).toBe('second\n');
   });
 
+  it("a failed adopt's clean rollback keeps an earlier snapshot from the same instant (#248)", async () => {
+    const now = new Date('2026-10-04T12:00:00.000Z');
+    await fsp.writeFile(path.join(vault, 'Home.md'), 'first\n', 'utf-8');
+    const first = (await adopt(vault, { 'Home.md': 'use_shard' }, now)).result.backupDir!;
+    for (const name of await fsp.readdir(vault)) {
+      if (name !== '.shardmind') await fsp.rm(path.join(vault, name), { recursive: true });
+    }
+    for (const name of await fsp.readdir(path.join(vault, '.shardmind'))) {
+      if (name !== 'backups') await fsp.rm(path.join(vault, '.shardmind', name), { recursive: true });
+    }
+    await fsp.writeFile(path.join(vault, 'Home.md'), 'second\n', 'utf-8');
+    // The second adopt fails on a shard file and rolls back cleanly, which
+    // removes its own snapshot folder.
+    const claude = path.join(vault, 'CLAUDE.md');
+    const realWrite = fsp.writeFile;
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (file === claude) throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
+      return realWrite(file, data, opts);
+    });
+    try {
+      await expect(adopt(vault, { 'Home.md': 'use_shard' }, now)).rejects.toMatchObject({ code: 'ADOPT_WRITE_FAILED' });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('second\n');
+    expect(await fsp.readFile(path.join(first, 'files', 'Home.md'), 'utf-8')).toBe('first\n');
+  });
+
   it('runAdopt with a zero-classification plan still writes engine metadata', async () => {
     // Pin the empty-plan path: a shard whose every file is excluded
     // ends up with `matches=[], differs=[], shardOnly=[]`. Adopt
