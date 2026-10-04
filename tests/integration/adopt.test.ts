@@ -512,6 +512,40 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     }
   });
 
+  it("a failed adopt keeps the user's own .shardmind/ files (#243)", async () => {
+    const { manifest, schema } = await loadShard();
+    const selections = defaultModuleSelections(schema);
+    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+    // The vault owner's own file in the engine's folder (#190), made before
+    // any adopt; assertAdoptable allows a .shardmind/ without state.json.
+    const ignore = 'archive/\n';
+    await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind', 'boundary-ignore'), ignore, 'utf-8');
+    await fsp.writeFile(path.join(vault, 'Home.md'), '# Home, mine\n', 'utf-8');
+
+    const adoptPlan = await classifyAdoption({
+      vaultRoot: vault, schema, manifest, tempDir: MINIMAL_SHARD,
+      values: values as Record<string, unknown>, selections,
+    });
+    // Force a write failure after the snapshot (same blocker as above).
+    const blocker = adoptPlan.shardOnly[1]!.path;
+    await fsp.mkdir(path.join(vault, blocker), { recursive: true });
+    await fsp.writeFile(path.join(vault, blocker, '.sentinel'), 'x', 'utf-8');
+
+    await expect(
+      runAdopt({
+        vaultRoot: vault, manifest, schema, tempDir: MINIMAL_SHARD, resolved: RESOLVED,
+        tarballSha256: 'deadbeef', values: values as Record<string, unknown>, selections,
+        plan: adoptPlan, resolutions: { 'Home.md': 'use_shard' },
+      }),
+    ).rejects.toMatchObject({ code: 'ADOPT_WRITE_FAILED' });
+
+    // Only the user's file is left in .shardmind/: no state, no cache, no
+    // snapshot, no empty backups/ folder.
+    expect(await fsp.readdir(path.join(vault, '.shardmind'))).toEqual(['boundary-ignore']);
+    expect(await fsp.readFile(path.join(vault, '.shardmind', 'boundary-ignore'), 'utf-8')).toBe(ignore);
+  });
+
   it('--dry-run: no engine metadata or user-file writes', async () => {
     const { manifest, schema } = await loadShard();
     const selections = defaultModuleSelections(schema);
@@ -574,6 +608,27 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     // `.shardmind/` cleanup ran regardless of whether any engine writes
     // had landed.
     await expect(fsp.access(path.join(vault, '.shardmind'))).rejects.toThrow();
+  });
+
+  it("rollbackAdopt keeps a shard-values.yaml the adopt never wrote (#243)", async () => {
+    // The user's own values file, not in addedPaths: the adopt failed
+    // before (or at) its exclusive write, so the file is theirs.
+    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
+    await fsp.mkdir(path.join(backupDir, 'files'), { recursive: true });
+    await fsp.writeFile(path.join(vault, 'shard-values.yaml'), 'user_name: mine\n', 'utf-8');
+    expect(await rollbackAdopt(vault, backupDir, [])).toEqual([]);
+    expect(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')).toBe('user_name: mine\n');
+  });
+
+  it('rollbackAdopt keeps the snapshot when restoring from it failed (#243)', async () => {
+    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
+    await fsp.mkdir(path.join(backupDir, 'files'), { recursive: true });
+    await fsp.writeFile(path.join(backupDir, 'files', 'Notes.md'), 'the only copy\n', 'utf-8');
+    // A folder where the file must be restored: the copy fails.
+    await fsp.mkdir(path.join(vault, 'Notes.md', 'blocker'), { recursive: true });
+    const failures = await rollbackAdopt(vault, backupDir, []);
+    expect(failures.some((f) => f.reason.startsWith('restore failed'))).toBe(true);
+    expect(await fsp.readFile(path.join(backupDir, 'files', 'Notes.md'), 'utf-8')).toBe('the only copy\n');
   });
 
   it('runAdopt with a zero-classification plan still writes engine metadata', async () => {

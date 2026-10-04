@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (a failed adopt keeps your files under `.shardmind/` — #243)
+
+- **A failed or cancelled adopt no longer deletes your files under `.shardmind/`.** Its rollback removed the whole folder, which can hold your `boundary-ignore` (#190) before any adopt. It now removes only what the adopt wrote there, the same rule a failed install has followed since #215.
+
 ### Fixed (updating an `_each` file you edited — #233)
 
 - **Updating a file an `_each` template wrote, after you edited it, now merges with its name in place.** The update rendered the old and new template without the file's list item, so `{{ item }}` came out empty on both sides. A template change then looked like a conflict on a line you never touched, and **Accept new** wrote that line without the name. Both sides now render with the file's own item, so your edits merge with the shard's change as for any other file.
