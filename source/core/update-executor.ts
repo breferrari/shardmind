@@ -861,8 +861,16 @@ async function restoreTree(
   failures: RollbackFailure[],
 ): Promise<void> {
   if (!(await pathExists(srcRoot))) return;
+  // Never throws: an unreadable snapshot folder is a failure like any
+  // other, and the ones collected so far must reach the user (#247).
   const walk = async (dir: string): Promise<string[]> => {
-    const entries = await fsp.readdir(dir, { withFileTypes: true });
+    let entries;
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      failures.push({ path: path.relative(srcRoot, dir) || '.', reason: `readdir failed: ${reasonOf(err)}`, backup: dir });
+      return [];
+    }
     const out: string[] = [];
     for (const entry of entries) {
       const full = path.join(dir, entry.name);

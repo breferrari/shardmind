@@ -22,12 +22,19 @@ describe('withRollbackFailures (#247)', () => {
     expect(wrapped).toBeInstanceOf(ShardMindError);
     expect(wrapped.code).toBe('ROLLBACK_INCOMPLETE');
     expect(wrapped.message).toBe(
-      'boom (ADOPT_WRITE_FAILED)\nRollback incomplete (1 path not restored):\n' +
+      'boom (ADOPT_WRITE_FAILED)\nRollback incomplete (1 path):\n' +
         '  - Home.md: restore failed: EBUSY; its backup is at /v/Home.md.shardmind-backup-1',
     );
     expect(wrapped.cause).toBe(err);
     expect(err.message).toBe('boom');
     expect(rollbackFailuresOf(wrapped)).toEqual([failure]);
+  });
+
+  it("keeps the original error's hint ahead of the rollback remedy", () => {
+    const err = new ShardMindError('boom', 'UPDATE_WRITE_FAILED', 'Check permissions on the vault.');
+    const wrapped = withRollbackFailures(err, [failure]) as ShardMindError;
+    expect(wrapped.hint?.startsWith('Check permissions on the vault.\n')).toBe(true);
+    expect(wrapped.hint).toMatch(/copy back the ones with a backup/);
   });
 
   it('wraps an unknown error as a known one, so it is never framed as a bug', () => {
@@ -41,7 +48,7 @@ describe('withRollbackFailures (#247)', () => {
     const many = Array.from({ length: 7 }, (_, i) => ({ path: `f${i}.md`, reason: 'unlink failed: EPERM' }));
     const text = formatRollbackFailures(many);
     expect(text.split('\n')).toHaveLength(8);
-    expect(text).toMatch(/^Rollback incomplete \(7 paths not restored\):/);
+    expect(text).toMatch(/^Rollback incomplete \((7 paths)\):/);
     expect(text).not.toMatch(/backup/);
   });
 });

@@ -497,6 +497,24 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     }
   });
 
+  it("rollback reports a written file it could not remove, never a folder that is the user's (#247)", async () => {
+    await fsp.writeFile(path.join(vault, 'Locked.md'), 'shard content', 'utf-8');
+    await fsp.mkdir(path.join(vault, 'Theirs.md', 'inside'), { recursive: true });
+    const lockedAbs = path.join(vault, 'Locked.md');
+    const realUnlink = fsp.unlink;
+    const spy = vi.spyOn(fsp, 'unlink').mockImplementation(async (p) => {
+      if (p === lockedAbs) throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
+      return realUnlink(p);
+    });
+    try {
+      const failures = await rollbackInstall(vault, ['Locked.md', 'Theirs.md'], [], []);
+      expect(failures).toEqual([{ path: 'Locked.md', reason: 'unlink failed: simulated EBUSY' }]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await fsp.stat(path.join(vault, 'Theirs.md'))).isDirectory()).toBe(true);
+  });
+
   it('rollback removes all written files and the .shardmind directory', async () => {
     const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
     const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));

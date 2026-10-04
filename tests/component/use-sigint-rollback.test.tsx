@@ -97,8 +97,21 @@ describe('useSigintRollback', () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     const written = stderr.mock.calls.map((c) => String(c[0])).join('');
-    expect(written).toMatch(/Rollback incomplete \(1 path not restored\)/);
+    expect(written).toMatch(/Rollback incomplete \((1 path)\)/);
     expect(written).toMatch(/Home\.md: restore failed: EBUSY; its backup is at \/v\/\.shardmind\/backups\/adopt-1\/files\/Home\.md/);
+    expect(exit).toHaveBeenCalledWith(130);
+  });
+
+  it('prints a rollback that throws partway, then exits 130 (#247)', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    render(<Probe rollback={async () => { throw new Error('EIO on the snapshot'); }} cleanup={async () => {}} />);
+    await new Promise((r) => setImmediate(r));
+    process.emit('SIGINT');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    const written = stderr.mock.calls.map((c) => String(c[0])).join('');
+    expect(written).toMatch(/\(the rollback\): stopped partway: EIO on the snapshot/);
     expect(exit).toHaveBeenCalledWith(130);
   });
 });

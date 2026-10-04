@@ -14,7 +14,7 @@
 
 import type React from 'react';
 import { useEffect, useRef } from 'react';
-import { formatRollbackFailures, type RollbackFailure } from '../../core/rollback-report.js';
+import { attemptRollback, formatRollbackFailures, type RollbackFailure } from '../../core/rollback-report.js';
 import {
   tailAtUtf8Boundary,
   summarizeHook,
@@ -113,11 +113,10 @@ export function useSigintRollback(opts: {
       if (sigintRollbackStarted) return;
       sigintRollbackStarted = true;
       try {
-        const failures = isActiveRef.current() ? await rollbackRef.current() : undefined;
-        if (failures && failures.length > 0) {
-          process.stderr.write(`
-${formatRollbackFailures(failures)}
-`);
+        if (isActiveRef.current()) {
+          // A rollback that throws partway is reported too (attemptRollback).
+          const failures = await attemptRollback(async () => [...((await rollbackRef.current()) ?? [])]);
+          if (failures.length > 0) process.stderr.write(`\n${formatRollbackFailures(failures)}\n`);
         }
       } catch {
         // swallow; process is about to exit

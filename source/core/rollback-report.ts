@@ -4,9 +4,9 @@
  * Install, update and adopt each roll back a failed run best effort and
  * collect what they could not undo. A failed restore must never reach the
  * user as "rolled back" (#207): the run instead fails with
- * `ROLLBACK_INCOMPLETE`, a known error whose message names every path not
- * restored and where its backup is, so a person and a `--json` reader both
- * see what to put back by hand.
+ * `ROLLBACK_INCOMPLETE`, a known error whose message names every path the
+ * rollback could not restore or remove and, for a restore, where its backup
+ * is, so a person and a `--json` reader both see what to fix by hand.
  */
 
 import { ShardMindError } from '../runtime/types.js';
@@ -30,10 +30,13 @@ export interface RollbackFailure {
 export function withRollbackFailures(err: unknown, failures: readonly RollbackFailure[]): unknown {
   if (failures.length === 0) return err;
   const original = err instanceof ShardMindError ? `${err.message} (${err.code})` : reasonOf(err);
+  const remedy =
+    'Each listed path is as the failed run left it: copy back the ones with a backup, and remove ' +
+    'or put back the others, before you run shardmind again.';
   const wrapped = new ShardMindError(
     `${original}\n${formatRollbackFailures(failures)}`,
     'ROLLBACK_INCOMPLETE',
-    'Put each listed file back from its backup by hand before you run shardmind again.',
+    err instanceof ShardMindError && err.hint ? `${err.hint}\n${remedy}` : remedy,
   );
   return Object.assign(wrapped, { rollbackFailures: [...failures], cause: err });
 }
@@ -74,11 +77,11 @@ export function rollbackDetail(err: unknown, rolledBack: string): string | undef
   return rollbackFailuresOf(err).length === 0 ? rolledBack : undefined;
 }
 
-/** "Rollback incomplete (N):" and one line per failure, with its backup. */
+/** "Rollback incomplete (N paths):" and one line per failure, with its backup. */
 export function formatRollbackFailures(failures: readonly RollbackFailure[]): string {
   const lines = failures.map(
     (f) => `  - ${f.path}: ${f.reason}${f.backup ? `; its backup is at ${f.backup}` : ''}`,
   );
   const n = failures.length;
-  return `Rollback incomplete (${n} ${n === 1 ? 'path' : 'paths'} not restored):\n${lines.join('\n')}`;
+  return `Rollback incomplete (${n} ${n === 1 ? 'path' : 'paths'}):\n${lines.join('\n')}`;
 }

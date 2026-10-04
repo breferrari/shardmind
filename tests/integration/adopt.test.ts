@@ -687,6 +687,25 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     expect(await fsp.readFile(path.join(backupDir, 'files', 'Notes.md'), 'utf-8')).toBe('the only copy\n');
   });
 
+  it('rollbackAdopt keeps the snapshot when a folder in it could not be read (#247)', async () => {
+    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
+    const notes = path.join(backupDir, 'files', 'notes');
+    await fsp.mkdir(notes, { recursive: true });
+    await fsp.writeFile(path.join(notes, 'a.md'), 'the only copy\n', 'utf-8');
+    const realReaddir = fsp.readdir;
+    const spy = vi.spyOn(fsp, 'readdir').mockImplementation((async (dir: string, opts: unknown) => {
+      if (dir === notes) throw Object.assign(new Error('simulated EMFILE'), { code: 'EMFILE' });
+      return (realReaddir as (d: string, o: unknown) => Promise<unknown>)(dir, opts);
+    }) as typeof fsp.readdir);
+    try {
+      const failures = await rollbackAdopt(vault, backupDir, []);
+      expect(failures).toContainEqual({ path: 'notes', reason: 'readdir failed: simulated EMFILE', backup: notes });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await fsp.readFile(path.join(notes, 'a.md'), 'utf-8')).toBe('the only copy\n');
+  });
+
   it('runAdopt with a zero-classification plan still writes engine metadata', async () => {
     // Pin the empty-plan path: a shard whose every file is excluded
     // ends up with `matches=[], differs=[], shardOnly=[]`. Adopt

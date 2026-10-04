@@ -33,7 +33,7 @@ import {
 import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths, ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
-import type { RollbackFailure } from './rollback-report.js';
+import { reasonOf, type RollbackFailure } from './rollback-report.js';
 import {
   SHARDMIND_DIR,
   VALUES_FILE,
@@ -416,10 +416,10 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
  * `.shardmind/` entries included), then the folders it created, then
  * restore any backups. Removes only what this install made: never
  * `.shardmind/` wholesale, and never a folder the user already had (#215).
- * Best-effort: it never throws. It returns each backup it could not move
- * back (#247), with where that backup still is, so the caller reports the
- * rollback as incomplete; a failure removing what the install wrote is not
- * reported.
+ * Best-effort: it never throws. It returns what it could not undo (#247):
+ * each backup it could not move back, with where that backup still is, and
+ * each file it wrote but could not remove, so the caller reports the
+ * rollback as incomplete.
  *
  * `createdDirs` is what `runInstall` reported through `onDirCreated`; only
  * those folders are removed, and only when empty.
@@ -434,22 +434,30 @@ export async function rollbackInstall(
     [...paths].sort((a, b) => toPosixRel(b).split('/').length - toPosixRel(a).split('/').length);
 
   // The engine's own entries are `removeEngineWrites`' (below), not unlinked here.
+  const failures: RollbackFailure[] = [];
   const files = new Set(writtenPaths.map(toPosixRel));
   for (const rel of ENGINE_INSTALL_WRITES) files.delete(toPosixRel(rel));
   for (const rel of deepestFirst(files)) {
+    const abs = path.join(vaultRoot, rel);
     try {
       // unlink, not a recursive remove: a folder the user put at a planned
       // file path is theirs, and unlink leaves it alone.
-      await fsp.unlink(path.join(vaultRoot, rel));
-    } catch {
-      // already gone, or not a file
+      await fsp.unlink(abs);
+    } catch (err) {
+      if (isEnoent(err)) continue;
+      // A folder is the user's (above). Anything else is the install's file,
+      // still there, and is reported (#247).
+      const isFolder = await fsp.lstat(abs).then((st) => st.isDirectory(), () => false);
+      if (!isFolder) failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
     }
   }
   // The engine's own entries go whether or not they were recorded: a Ctrl+C
   // rollback snapshots the lists while `runInstall` may still be writing
   // them. Shared with adopt's rollback (#243); nothing else under
   // `.shardmind/` is touched, and the folder itself is left to `createdDirs`.
-  await removeEngineWrites(vaultRoot, { removeEmptyDir: false });
+  for (const failure of await removeEngineWrites(vaultRoot, { removeEmptyDir: false })) {
+    failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
+  }
 
   for (const rel of deepestFirst(createdDirs)) {
     try {
@@ -462,11 +470,14 @@ export async function rollbackInstall(
   // Restore any backups last, so they land on paths that have been
   // freed by the file removal above.
   const { failed } = await restoreBackups(backups);
-  return failed.map((f) => ({
-    path: toPosixRel(path.relative(vaultRoot, f.originalPath)),
-    reason: `restore failed: ${f.reason}`,
-    backup: f.backupPath,
-  }));
+  for (const f of failed) {
+    failures.push({
+      path: toPosixRel(path.relative(vaultRoot, f.originalPath)),
+      reason: `restore failed: ${f.reason}`,
+      backup: f.backupPath,
+    });
+  }
+  return failures;
 }
 
 /** A vault-relative path in POSIX form, whichever separator it was built with. */

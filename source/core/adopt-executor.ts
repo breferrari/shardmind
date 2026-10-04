@@ -561,7 +561,7 @@ export async function rollbackAdopt(
       // ENOENT on a subdir is a vanished mid-walk dir — also tolerable.
       // Anything else (EACCES, EBUSY, …) is a real failure.
       if (isEnoent(err)) continue;
-      failures.push({ path: dir, reason: `readdir failed: ${reasonOf(err)}` });
+      failures.push({ path: path.relative(filesDir, dir) || '.', reason: `readdir failed: ${reasonOf(err)}`, backup: dir });
       continue;
     }
     for (const entry of entries) {
@@ -587,10 +587,11 @@ export async function rollbackAdopt(
   // nothing else: `assertAdoptable` allows a `.shardmind/` without
   // state.json, which may hold the vault owner's own files (`boundary-ignore`,
   // #190, #243). The folder itself goes only if that leaves it empty. The
-  // snapshot is kept when a restore from it failed: it then holds the only
-  // copy of those files. `shard-values.yaml` is in `addedPaths` once the
-  // adopt has written it, and was removed with them above.
-  const restoreFailed = failures.some((f) => f.reason.startsWith('restore failed'));
+  // snapshot is kept when any part of the restore failed (a file, or a
+  // folder it could not read): it then holds the only copy of those files.
+  // `shard-values.yaml` is in `addedPaths` once the adopt has written it,
+  // and was removed with them above.
+  const restoreFailed = failures.some((f) => /^(restore|readdir) failed/.test(f.reason));
   for (const failure of await removeEngineWrites(vaultRoot, {
     snapshotDir: restoreFailed ? null : backupDir,
     removeEmptyDir: true,
