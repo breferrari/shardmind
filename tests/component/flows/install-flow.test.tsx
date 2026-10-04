@@ -825,35 +825,26 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
   }, 60_000);
   // ───── A fresh install whose render fails mid-write leaves nothing behind (#207) ─────
 
-  it('fresh install whose render fails after earlier files are written → the directory is left empty (#207)', async () => {
-    const { stub } = getCtx();
+  it('fresh install that fails after its files are written → only the user\'s own file is left (#207)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
     const vaultRoot = await makeVaultDir('s207-fresh-rollback');
-    const workDir = await makeVaultDir('s207-tarball');
     try {
-      // zz- sorts last in the walk, so the files before it are already on
-      // disk when its render throws.
-      const tarPath = await buildCustomTarball({
-        version: '0.1.0',
-        prefix: 'broken-render-fresh-0.1.0',
-        manifestOverrides: { hooks: {}, name: 'minimal', namespace: 'shardmind' },
-        outDir: workDir,
-        mutate: async (work) => {
-          await fs.writeFile(path.join(work, 'zz-broken.md.njk'), '{{ not_a_function() }}\n');
-        },
-      });
-      stub.setRef(SLUG_BROKEN, 'v0.1.0', STUB_SHA, tarPath);
-      const r = mountInstall({
-        shardRef: `github:${SLUG_BROKEN}#v0.1.0`,
-        vaultRoot,
-        options: { defaults: true },
-      });
-      await waitFor(() => r.frames.join('\n'), (f) => /RENDER_TEMPLATE_ERROR/.test(f), 30_000);
+      // A stray values file with no state.json: the install is fresh, every
+      // file and state.json get written, and only the final exclusive
+      // values write fails (VALUES_FILE_COLLISION). Deterministic, unlike a
+      // failing template, whose place in the walk depends on readdir order.
+      const stray = 'user_name: "left over"\n';
+      await fs.writeFile(path.join(vaultRoot, 'shard-values.yaml'), stray, 'utf-8');
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot, options: { defaults: true } });
+      await waitFor(() => r.frames.join('\n'), (f) => /VALUES_FILE_COLLISION/.test(f), 30_000);
       await tick(200);
       expect(r.frames.join('\n')).toMatch(/Rolled back partial install/);
-      expect(await fs.readdir(vaultRoot)).toEqual([]);
+      expect(await fs.readdir(vaultRoot)).toEqual(['shard-values.yaml']);
+      expect(await fs.readFile(path.join(vaultRoot, 'shard-values.yaml'), 'utf-8')).toBe(stray);
     } finally {
       await cleanupVault(vaultRoot);
-      await cleanupVault(workDir);
     }
   }, 60_000);
 
