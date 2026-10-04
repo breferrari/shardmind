@@ -1971,7 +1971,7 @@ describe('shardmind — state.json written by an older shardmind (#40)', () => {
     // The drift line proves status compared against the migrated state's
     // recorded hashes, not that it merely failed to throw.
     expect(result.stdout).toMatch(/Home\.md/);
-    expect(result.stdout).toMatch(/\+\d+\/[−-]\d+|\(whitespace-only\)/);
+    expect(result.stdout).toMatch(/\+\d+\/[−-]\d+/);
   });
 
   it('update migrates a v1 state.json, merges a user edit, and writes it back at the current schema version', async () => {
