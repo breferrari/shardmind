@@ -67,4 +67,18 @@ describe.each([0, 1] as const)('hook output control sequences, chalk level %i', 
       ).lastFrame() ?? '';
     expectClean(frame);
   });
+
+  it('the write-boundary warning shows hook-created paths without their sequences', () => {
+    chalk.level = level;
+    const hostilePath = `${SEQUENCES['OSC 52 clipboard write']}${SEQUENCES['OSC 8 hyperlink open']}notes.md${SEQUENCES['OSC 8 hyperlink close']}`;
+    const frame =
+      render(
+        <HookSummarySection
+          outcomes={[{ slot: 'personalize', summary: { exitCode: 0, violation: { kind: 'unmanaged-create', paths: [hostilePath] } } }]}
+        />,
+      ).lastFrame() ?? '';
+    expect(frame).toContain('notes.md');
+    expect(frame).not.toContain(SEQUENCES['OSC 52 clipboard write']);
+    expect(frame).not.toContain(SEQUENCES['OSC 8 hyperlink open']);
+  });
 });

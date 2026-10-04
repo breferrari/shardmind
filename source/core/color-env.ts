@@ -23,7 +23,8 @@ export function applyNoColor(env: NodeJS.ProcessEnv): void {
 const ESC = 0x1b;
 const BEL = 0x07;
 const TAB = 0x09;
-const LF = 0x0a;
+const CAN = 0x18;
+const SUB = 0x1a;
 const BACKSLASH = 0x5c;
 const CSI_8BIT = 0x9b;
 const OSC_8BIT = 0x9d;
@@ -32,90 +33,137 @@ const ST_8BIT = 0x9c;
 const STRING_INTRODUCERS = new Set([0x50, 0x58, 0x5e, 0x5f]); // P X ^ _
 const STRING_INTRODUCERS_8BIT = new Set([0x90, 0x98, 0x9e, 0x9f]);
 const SGR_PARAMETERS = /^[0-9;:]*$/;
+const TAB_STOP = 8;
+// Anything sanitizeHookLine would change: C0 controls but LF, DEL, C1.
+const NEEDS_SANITIZING = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/;
 
 const inRange = (c: number, lo: number, hi: number): boolean => c >= lo && c <= hi;
 
 /**
- * Hook output as text (#204): keeps printable text, tabs, newlines and, when
+ * Hook output as text (#204): keeps printable text, newlines and, when
  * `keepSgr`, colour (SGR). Removes every other terminal control sequence and
- * control character. A lone CR rewrites its line, as a terminal shows a
- * progress bar. Lines are handled one at a time, so no sequence, finished or
- * not, can reach past the end of its line.
+ * control character, and expands tabs. A lone CR rewrites its line, as a
+ * terminal shows a progress bar. Lines are handled one at a time, so no
+ * sequence, finished or not, can reach past the end of its line.
  */
 export function sanitizeHookText(text: string, keepSgr: boolean): string {
+  if (!NEEDS_SANITIZING.test(text)) return text;
   return text
     .replace(/\r\n/g, '\n')
     .split('\n')
-    .map((line) => sanitizeLine(line.slice(line.lastIndexOf('\r') + 1), keepSgr))
+    .map((line) => sanitizeHookLine(line, keepSgr))
     .join('\n');
 }
 
-function sanitizeLine(s: string, keepSgr: boolean): string {
-  let out = '';
+/**
+ * One line of hook output (no LF). Of its CR-separated segments, the last one
+ * with visible text is shown; with `keepSgr`, the SGR of the segments before
+ * it is kept in front, since a terminal keeps its pen state across a CR.
+ */
+export function sanitizeHookLine(line: string, keepSgr: boolean): string {
+  if (!NEEDS_SANITIZING.test(line)) return line;
+  const segments = line.split('\r').map((segment) => scan(segment, keepSgr));
+  let shown = segments.length - 1;
+  while (shown > 0 && segments[shown]!.visible === 0) shown -= 1;
+  const carried = keepSgr ? segments.slice(0, shown).map((segment) => segment.sgr).join('') : '';
+  return carried + segments[shown]!.text;
+}
+
+interface Scanned {
+  /** The segment as shown: text, expanded tabs, and SGR when kept. */
+  text: string;
+  /** Only the SGR sequences, 7-bit, for carrying across a CR. */
+  sgr: string;
+  /** Columns of visible text. */
+  visible: number;
+}
+
+function scan(s: string, keepSgr: boolean): Scanned {
+  let text = '';
+  let sgr = '';
+  let visible = 0;
   let i = 0;
   while (i < s.length) {
     const c = s.charCodeAt(i);
-    if (c === ESC) {
-      i = escape(s, i, keepSgr, (kept) => (out += kept));
-    } else if (c === CSI_8BIT) {
-      i = csi(s, i, i + 1, keepSgr, (kept) => (out += kept));
-    } else if (c === OSC_8BIT) {
-      i = stringSequence(s, i + 1, true);
-    } else if (STRING_INTRODUCERS_8BIT.has(c)) {
-      i = stringSequence(s, i + 1, false);
-    } else if ((c < 0x20 && c !== TAB && c !== LF) || c === 0x7f || inRange(c, 0x80, 0x9f)) {
-      i += 1; // C0 (except tab and newline), DEL, C1
-    } else {
-      out += s[i];
+    let step: Step;
+    if (c === ESC) step = escape(s, i);
+    else if (c === CSI_8BIT) step = csi(s, i + 1);
+    else if (c === OSC_8BIT) step = stringSequence(s, i + 1, true);
+    else if (STRING_INTRODUCERS_8BIT.has(c)) step = stringSequence(s, i + 1, false);
+    else if (c === TAB) {
+      const spaces = TAB_STOP - (visible % TAB_STOP);
+      text += ' '.repeat(spaces);
+      visible += spaces;
       i += 1;
+      continue;
+    } else if (c < 0x20 || c === 0x7f || inRange(c, 0x80, 0x9f)) step = { next: i + 1 }; // C0, DEL, C1
+    else {
+      text += s[i];
+      visible += 1;
+      i += 1;
+      continue;
     }
+    if (step.sgr !== undefined) {
+      sgr += step.sgr;
+      if (keepSgr) text += step.sgr;
+    }
+    i = step.next;
   }
-  return out;
+  return { text, sgr, visible };
 }
 
-/** Handles a sequence starting with ESC at `start`; returns where scanning resumes. */
-function escape(s: string, start: number, keepSgr: boolean, keep: (text: string) => void): number {
+/** Where scanning resumes, and the sequence as 7-bit SGR when it was one. */
+interface Step {
+  next: number;
+  sgr?: string;
+}
+
+/** A sequence starting with ESC at `start`. */
+function escape(s: string, start: number): Step {
   const next = s.charCodeAt(start + 1);
-  if (Number.isNaN(next)) return start + 1; // a lone ESC at the end
-  if (next === 0x5b) return csi(s, start, start + 2, keepSgr, keep); // ESC [
+  if (Number.isNaN(next)) return { next: start + 1 }; // a lone ESC at the end
+  if (next === 0x5b) return csi(s, start + 2); // ESC [
   if (next === 0x5d) return stringSequence(s, start + 2, true); // ESC ]
   if (STRING_INTRODUCERS.has(next)) return stringSequence(s, start + 2, false);
   if (inRange(next, 0x20, 0x2f)) {
     // nF escape: intermediates, then a final byte. Unfinished: drop what is there.
     let j = start + 1;
     while (j < s.length && inRange(s.charCodeAt(j), 0x20, 0x2f)) j += 1;
-    return j < s.length && inRange(s.charCodeAt(j), 0x30, 0x7e) ? j + 1 : j;
+    return { next: j < s.length && inRange(s.charCodeAt(j), 0x30, 0x7e) ? j + 1 : j };
   }
-  if (inRange(next, 0x30, 0x7e)) return start + 2; // two-byte escape: ESC 7, ESC c, …
-  return start + 1; // a lone ESC before something that cannot follow it
+  if (inRange(next, 0x30, 0x7e)) return { next: start + 2 }; // two-byte escape: ESC 7, ESC c, …
+  return { next: start + 1 }; // a lone ESC before something that cannot follow it
 }
 
 /**
- * CSI from `start` (its introducer), parameters at `body`. Kept only when it
- * is SGR and `keepSgr`. An unfinished CSI drops its introducer and parameters.
+ * CSI with parameters at `body` (after `ESC [` or U+009B). An SGR is returned
+ * in its 7-bit form. An unfinished CSI drops its introducer, parameters and
+ * intermediates.
  */
-function csi(s: string, start: number, body: number, keepSgr: boolean, keep: (text: string) => void): number {
+function csi(s: string, body: number): Step {
   let j = body;
   while (j < s.length && inRange(s.charCodeAt(j), 0x30, 0x3f)) j += 1;
   const parameters = s.slice(body, j);
   const intermediatesStart = j;
   while (j < s.length && inRange(s.charCodeAt(j), 0x20, 0x2f)) j += 1;
-  if (j >= s.length || !inRange(s.charCodeAt(j), 0x40, 0x7e)) return j;
+  if (j >= s.length || !inRange(s.charCodeAt(j), 0x40, 0x7e)) return { next: j };
   const isSgr = s[j] === 'm' && j === intermediatesStart && SGR_PARAMETERS.test(parameters);
-  if (isSgr && keepSgr) keep(s.slice(start, j + 1));
-  return j + 1;
+  return isSgr ? { next: j + 1, sgr: `\x1b[${parameters}m` } : { next: j + 1 };
 }
 
 /**
  * OSC (`allowBel`) or DCS / SOS / PM / APC, payload at `body`, ended by ST
- * (`ESC \` or U+009C), or BEL for OSC. Removed whole when terminated. With no
- * terminator only the introducer goes, so the payload stays as inert text.
+ * (`ESC \` or U+009C), or BEL for OSC: removed whole. Aborted, as a terminal
+ * aborts it, by an ESC that does not start ST (scanning resumes at that ESC)
+ * or by CAN / SUB (removed too). With neither before the end of the line,
+ * only the introducer goes, so the payload stays as inert text.
  */
-function stringSequence(s: string, body: number, allowBel: boolean): number {
+function stringSequence(s: string, body: number, allowBel: boolean): Step {
   for (let k = body; k < s.length; k += 1) {
     const c = s.charCodeAt(k);
-    if (c === ST_8BIT || (allowBel && c === BEL)) return k + 1;
-    if (c === ESC && s.charCodeAt(k + 1) === BACKSLASH) return k + 2;
+    if (c === ST_8BIT || (allowBel && c === BEL)) return { next: k + 1 };
+    if (c === ESC) return { next: s.charCodeAt(k + 1) === BACKSLASH ? k + 2 : k };
+    if (c === CAN || c === SUB) return { next: k + 1 };
   }
-  return body;
+  return { next: body };
 }

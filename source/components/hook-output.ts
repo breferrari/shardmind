@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { sanitizeHookText } from '../core/color-env.js';
+import { sanitizeHookLine, sanitizeHookText } from '../core/color-env.js';
 
 /**
  * Hook output as our components render it. A hook is shard code: its terminal
@@ -10,4 +10,9 @@ import { sanitizeHookText } from '../core/color-env.js';
  */
 export function hookOutputForDisplay(text: string): string {
   return sanitizeHookText(text, chalk.level > 0);
+}
+
+/** One line of hook output (no LF), for the live tail. */
+export function hookLineForDisplay(line: string): string {
+  return sanitizeHookLine(line, chalk.level > 0);
 }
