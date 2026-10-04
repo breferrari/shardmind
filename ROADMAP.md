@@ -162,7 +162,7 @@ The release pipeline, dependencies and test harness are settled: built, or decli
 |---|---|---|
 | ⬜ | Re-evaluate @inkjs/ui dependency at v0.2 scope freeze | [#43](https://github.com/breferrari/shardmind/issues/43) |
 | ⬜ | release.yml: split into two pipelines (GitHub release before npm publish) | [#108](https://github.com/breferrari/shardmind/issues/108) |
-| ⬜ | TUI testing framework — continuing-hardening tracker | [#122](https://github.com/breferrari/shardmind/issues/122) |
+| ✅ | TUI testing framework — continuing-hardening tracker | [#122](https://github.com/breferrari/shardmind/issues/122) |
 | ⬜ | Run the Layer 2 real-terminal tests on Windows under ConPTY | [#174](https://github.com/breferrari/shardmind/issues/174) |
 | ⬜ | Reach the write-phase SIGINT rollback deterministically in E2E | [#186](https://github.com/breferrari/shardmind/issues/186) |
 
