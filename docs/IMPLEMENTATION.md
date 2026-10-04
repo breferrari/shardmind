@@ -1902,7 +1902,9 @@ The link carries the shardmind version (`?body=shardmind <version>`; the bare ne
 - `EPIPE`: stdout is marked closed and every later write is dropped, its callback still called. The run is not cut short: an update or adopt in its write pass finishes, or rolls back, through its own paths, so a closed pipe never leaves a half-written vault. When the process exits, a run that would have exited 0 exits 141 (128 + SIGPIPE) on every OS instead. That is what a shell reports for a Unix tool cut off by `head`, so `set -o pipefail` treats shardmind like any other tool. Any other exit code the run reaches (a failure, a crash whose report went to stderr) is kept. Nothing is written to stderr.
 - Any other stdout error is rethrown from the listener, so it stays an uncaught exception and the top-level handler reports it as before. Once stdout is closed, further stdout errors are ignored.
 
-Only stdout is covered. An `EPIPE` from anywhere else (a hook's pipe, a socket, an error carrying that code) is reported as any other error is.
+Only stdout is covered. An `EPIPE` from anywhere else (a hook's pipe, a socket, an error carrying that code) is reported as any other error is. stderr closing early (`2>&1 | head`) is out of scope.
+
+Today a piped run cannot hit the pipe mid-write anyway: Ink, rendering non-interactively, writes nothing to stdout until it unmounts (no command renders `<Static>`). `tests/e2e/stdout-closed.test.ts` pins that: a piped `update --yes` has put zero bytes on stdout when its post-update hook runs. If streaming output is ever added, that test breaks, and that is when a test closing stdout during the write pass is needed.
 
 `describeError` reads the working directory only for an `ENOENT`. `process.cwd()` throws once the vault folder itself is removed, so the directory shardmind started in stands in, and a missing file in a deleted vault is still the environment. The vault folder itself counts as inside it. A value whose `String()` throws (a null-prototype object) is described without throwing, and only the table's own keys are environment codes (`Object.hasOwn`).
 
