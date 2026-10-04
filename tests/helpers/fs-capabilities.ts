@@ -4,6 +4,7 @@
  */
 
 import fsp from 'node:fs/promises';
+import { removePath } from '../../source/core/fs-utils.js';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -15,7 +16,7 @@ async function probe(attempt: (dir: string) => Promise<unknown>): Promise<boolea
   } catch {
     return false;
   } finally {
-    await fsp.rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
 }
 

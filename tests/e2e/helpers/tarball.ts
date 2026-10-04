@@ -18,6 +18,7 @@
  */
 
 import fs from 'node:fs/promises';
+import { removePath } from '../../../source/core/fs-utils.js';
 import path from 'node:path';
 import os from 'node:os';
 import * as tar from 'tar';
@@ -120,7 +121,7 @@ export async function buildTarballFixtures(): Promise<TarballFixtures> {
  */
 export async function cleanupTarballFixtures(): Promise<void> {
   if (!cached) return;
-  await fs.rm(cached.fixtures.baseDir, { recursive: true, force: true });
+  await removePath(cached.fixtures.baseDir);
   cached = null;
 }
 
@@ -160,7 +161,7 @@ async function buildOne(opts: BuildOneOpts): Promise<string> {
     );
     return tarPath;
   } finally {
-    await fs.rm(workRoot, { recursive: true, force: true });
+    await removePath(workRoot);
   }
 }
 

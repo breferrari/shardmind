@@ -18,6 +18,7 @@
  */
 
 import fs from 'node:fs/promises';
+import { removePath } from '../../../source/core/fs-utils.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -68,16 +69,11 @@ export async function createEmptyVault(prefix = 'vault'): Promise<Vault> {
     listFiles: () => listRecursive(root),
     cleanup: async () => {
       activeVaults.delete(root);
-      // `maxRetries` + `retryDelay` absorb Windows ENOTEMPTY: an install
-      // subprocess that's just exited may still hold file handles open
-      // for a few hundred ms while the OS reclaims them, so a recursive
-      // rmdir on the vault races the descriptor close and fails with
-      // ENOTEMPTY. Per Node's `fs.rm` docs, `maxRetries` is honored only
-      // when `force: true`, with linear backoff over the listed errors
-      // (EBUSY/EMFILE/ENFILE/ENOTEMPTY/EPERM). 5 × 100ms is well under any
-      // realistic test timeout but generous enough for typical Windows
-      // antivirus + handle-close jitter.
-      await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      // `removePath` retries Windows ENOTEMPTY / EBUSY / EPERM: an install
+      // subprocess that's just exited may still hold file handles open for
+      // a few hundred ms while the OS reclaims them, and antivirus can hold
+      // a file just written, so a recursive rmdir on the vault races them.
+      await removePath(root);
     },
   };
 }
@@ -126,12 +122,7 @@ export async function cleanupAllVaults(): Promise<void> {
   const roots = [...activeVaults];
   activeVaults.clear();
   for (const root of roots) {
-    await fs.rm(root, {
-      recursive: true,
-      force: true,
-      maxRetries: 5,
-      retryDelay: 100,
-    }).catch(() => {});
+    await removePath(root).catch(() => {});
   }
 }
 
@@ -142,7 +133,7 @@ export async function cleanupAllVaults(): Promise<void> {
  * never went through `shardmind install`.
  */
 export async function stripShardmindMetadata(vault: Vault): Promise<void> {
-  await fs.rm(path.join(vault.root, '.shardmind'), { recursive: true, force: true });
+  await removePath(path.join(vault.root, '.shardmind'));
   await fs.rm(path.join(vault.root, 'shard-values.yaml'), { force: true });
 }
 
