@@ -107,7 +107,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ✅ | Refuse _each list items that name the same file | [#234](https://github.com/breferrari/shardmind/issues/234) |
 | ✅ | Keep the user's .shardmind/ files through a successful reinstall | [#237](https://github.com/breferrari/shardmind/issues/237) |
 | ⬜ | Refuse two shard outputs that name the same file | [#240](https://github.com/breferrari/shardmind/issues/240) |
-| ⬜ | Keep the user's .shardmind/ files when an adopt rolls back | [#243](https://github.com/breferrari/shardmind/issues/243) |
+| ✅ | Keep the user's .shardmind/ files when an adopt rolls back | [#243](https://github.com/breferrari/shardmind/issues/243) |
 | ⬜ | Tell the user when an adopt rollback could not restore their files | [#247](https://github.com/breferrari/shardmind/issues/247) |
 | ⬜ | Give each adopt snapshot its own folder, as update does | [#248](https://github.com/breferrari/shardmind/issues/248) |
 | ⬜ | Stop an adopt's writes before its Ctrl+C rollback runs | [#249](https://github.com/breferrari/shardmind/issues/249) |
