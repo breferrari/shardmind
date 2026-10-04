@@ -348,3 +348,44 @@ export async function rehashManagedFiles(
     current,
   };
 }
+
+/**
+ * Remove what an install or an adopt wrote under `.shardmind/`, and nothing
+ * else, when it rolls back (#215, #243). The engine's own entries go
+ * (`state.json`, `shard.yaml`, `shard-schema.yaml`, `templates/`, and the
+ * run's own snapshot folder when given); `backups/` goes only if that left it
+ * empty, and `.shardmind/` itself only when `removeEmptyDir` is set and it
+ * is empty. The vault owner's files there (`boundary-ignore`, #190) are never
+ * touched. Best effort: each failure is returned, never thrown.
+ */
+export async function removeEngineWrites(
+  vaultRoot: string,
+  opts: { snapshotDir?: string | null; removeEmptyDir: boolean },
+): Promise<Array<{ path: string; reason: string }>> {
+  const failures: Array<{ path: string; reason: string }> = [];
+  const attempt = async (rel: string, op: () => Promise<unknown>, tolerate: (code: string | undefined) => boolean) => {
+    try {
+      await op();
+    } catch (err) {
+      if (!tolerate(errnoCode(err))) {
+        failures.push({ path: rel, reason: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  };
+  for (const rel of [STATE_FILE, CACHED_MANIFEST, CACHED_SCHEMA]) {
+    await attempt(rel, () => fsp.unlink(path.join(vaultRoot, rel)), (code) => code === 'ENOENT');
+  }
+  await attempt(CACHED_TEMPLATES, () => removePath(path.join(vaultRoot, CACHED_TEMPLATES)), () => false);
+  if (opts.snapshotDir) {
+    const snapshot = opts.snapshotDir;
+    await attempt(path.relative(vaultRoot, snapshot), () => removePath(snapshot), () => false);
+  }
+  // Only empty folders: rmdir refuses one that still holds the user's files.
+  const notEmpty = (code: string | undefined) => code === 'ENOENT' || code === 'ENOTEMPTY' || code === 'EEXIST';
+  const backups = path.join(SHARDMIND_DIR, 'backups');
+  await attempt(backups, () => fsp.rmdir(path.join(vaultRoot, backups)), notEmpty);
+  if (opts.removeEmptyDir) {
+    await attempt(SHARDMIND_DIR, () => fsp.rmdir(path.join(vaultRoot, SHARDMIND_DIR)), notEmpty);
+  }
+  return failures;
+}

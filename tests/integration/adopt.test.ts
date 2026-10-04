@@ -512,6 +512,40 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     }
   });
 
+  it("a failed adopt keeps the user's own .shardmind/ files (#243)", async () => {
+    const { manifest, schema } = await loadShard();
+    const selections = defaultModuleSelections(schema);
+    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+    // The vault owner's own file in the engine's folder (#190), made before
+    // any adopt; assertAdoptable allows a .shardmind/ without state.json.
+    const ignore = 'archive/\n';
+    await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind', 'boundary-ignore'), ignore, 'utf-8');
+    await fsp.writeFile(path.join(vault, 'Home.md'), '# Home, mine\n', 'utf-8');
+
+    const adoptPlan = await classifyAdoption({
+      vaultRoot: vault, schema, manifest, tempDir: MINIMAL_SHARD,
+      values: values as Record<string, unknown>, selections,
+    });
+    // Force a write failure after the snapshot (same blocker as above).
+    const blocker = adoptPlan.shardOnly[1]!.path;
+    await fsp.mkdir(path.join(vault, blocker), { recursive: true });
+    await fsp.writeFile(path.join(vault, blocker, '.sentinel'), 'x', 'utf-8');
+
+    await expect(
+      runAdopt({
+        vaultRoot: vault, manifest, schema, tempDir: MINIMAL_SHARD, resolved: RESOLVED,
+        tarballSha256: 'deadbeef', values: values as Record<string, unknown>, selections,
+        plan: adoptPlan, resolutions: { 'Home.md': 'use_shard' },
+      }),
+    ).rejects.toMatchObject({ code: 'ADOPT_WRITE_FAILED' });
+
+    // Only the user's file is left in .shardmind/: no state, no cache, no
+    // snapshot, no empty backups/ folder.
+    expect(await fsp.readdir(path.join(vault, '.shardmind'))).toEqual(['boundary-ignore']);
+    expect(await fsp.readFile(path.join(vault, '.shardmind', 'boundary-ignore'), 'utf-8')).toBe(ignore);
+  });
+
   it('--dry-run: no engine metadata or user-file writes', async () => {
     const { manifest, schema } = await loadShard();
     const selections = defaultModuleSelections(schema);

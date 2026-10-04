@@ -42,7 +42,7 @@ import {
   STATE_FILE,
   VALUES_FILE,
 } from '../runtime/vault-paths.js';
-import { mapConcurrent, pathExists, removePath } from './fs-utils.js';
+import { mapConcurrent, pathExists } from './fs-utils.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { assertRenameTargetFree, moveToFreePath } from './rename-migrations.js';
 import { hashValues } from './install-planner.js';
@@ -52,6 +52,7 @@ import {
   cacheManifest,
   writeState,
   STATE_SCHEMA_VERSION,
+  removeEngineWrites,
 } from './state.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
 
@@ -582,18 +583,13 @@ export async function rollbackAdopt(
     }
   }
 
-  // Cleanup the engine dir in case anything was written: state.json,
-  // cached manifest/schema, the templates cache. We never get here on
-  // success, so dropping `.shardmind/` is safe — it didn't exist before
-  // adopt by virtue of `assertAdoptable`. Best-effort: errors during
-  // cleanup are logged into `failures` but don't block.
-  try {
-    await removePath(path.join(vaultRoot, SHARDMIND_DIR));
-  } catch (err) {
-    failures.push({
-      path: SHARDMIND_DIR,
-      reason: `cleanup failed: ${reasonOf(err)}`,
-    });
+  // Remove what the adopt wrote under `.shardmind/` (state.json, the cached
+  // manifest and schema, the templates cache, this run's snapshot) and
+  // nothing else: `assertAdoptable` allows a `.shardmind/` without
+  // state.json, which may hold the vault owner's own files (`boundary-ignore`,
+  // #190, #243). The folder itself goes only if that leaves it empty.
+  for (const failure of await removeEngineWrites(vaultRoot, { snapshotDir: backupDir, removeEmptyDir: true })) {
+    failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
   }
   try {
     await fsp.rm(path.join(vaultRoot, VALUES_FILE), { force: true });

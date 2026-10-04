@@ -27,6 +27,7 @@ import {
   cacheManifest,
   writeState,
   STATE_SCHEMA_VERSION,
+  removeEngineWrites,
 } from './state.js';
 import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
@@ -428,12 +429,8 @@ export async function rollbackInstall(
   const deepestFirst = (paths: Iterable<string>) =>
     [...paths].sort((a, b) => toPosixRel(b).split('/').length - toPosixRel(a).split('/').length);
 
-  // The engine's own entries are removed whether or not they were recorded:
-  // a Ctrl+C rollback snapshots the lists while `runInstall` may still be
-  // writing them. Nothing else under `.shardmind/` is touched.
-  const engineFiles = [CACHED_MANIFEST, CACHED_SCHEMA, STATE_FILE].map(toPosixRel);
-  const files = new Set([...writtenPaths.map(toPosixRel), ...engineFiles]);
-  files.delete(toPosixRel(CACHED_TEMPLATES));
+  const files = new Set(writtenPaths.map(toPosixRel));
+  for (const rel of [CACHED_MANIFEST, CACHED_SCHEMA, STATE_FILE, CACHED_TEMPLATES]) files.delete(toPosixRel(rel));
   for (const rel of deepestFirst(files)) {
     try {
       // unlink, not a recursive remove: a folder the user put at a planned
@@ -443,11 +440,11 @@ export async function rollbackInstall(
       // already gone, or not a file
     }
   }
-  try {
-    await removePath(path.join(vaultRoot, CACHED_TEMPLATES));
-  } catch {
-    // already gone
-  }
+  // The engine's own entries go whether or not they were recorded: a Ctrl+C
+  // rollback snapshots the lists while `runInstall` may still be writing
+  // them. Shared with adopt's rollback (#243); nothing else under
+  // `.shardmind/` is touched, and the folder itself is left to `createdDirs`.
+  await removeEngineWrites(vaultRoot, { removeEmptyDir: false });
 
   for (const rel of deepestFirst(createdDirs)) {
     try {
