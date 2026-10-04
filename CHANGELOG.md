@@ -8,6 +8,15 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (adopt a vault cloned from an older release — #179)
+
+- **`shardmind adopt --from-version <v>` adopts a vault cloned from release `<v>` at the shard's current paths.** Adopt applies the shard's rename migrations since `<v>`:
+  - a file you never edited moves to its new path;
+  - an edited one is offered as usual, and ends at the new path whichever way you choose;
+  - the old path goes.
+- The summary lists each move, and `adopt --dry-run --json` gives each moved file its `movedFrom`.
+- A `<v>` that is not a version is refused with `ADOPT_FROM_VERSION_INVALID` before anything is downloaded. Without the flag, adopt is unchanged.
+
 ### Added (rename migrations on update — #178)
 
 - **A shard can move a file between releases without losing your edits.** It declares the move in `shard.yaml` under `migrations: [{ from, to, renames: { old: new } }]`, and `shardmind update` carries the file to its new path:

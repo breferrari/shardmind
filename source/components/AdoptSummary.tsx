@@ -2,6 +2,7 @@ import os from 'node:os';
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import HookSummarySection from './HookSummarySection.js';
+import MovedFilesList from './MovedFilesList.js';
 import type { ShardManifest } from '../runtime/types.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
 import type { AdoptSummary as AdoptSummaryData } from '../core/adopt-executor.js';
@@ -92,6 +93,8 @@ export default function AdoptSummary({
           <Text dimColor>  (no files adopted — empty plan)</Text>
         )}
       </Box>
+
+      <MovedFilesList moves={summary.renamedFiles} dryRun={dryRun} />
 
       <HookSummarySection outcomes={hooks} />
 

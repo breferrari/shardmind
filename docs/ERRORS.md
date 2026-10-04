@@ -466,6 +466,12 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 Thrown by `source/core/adopt-executor.ts` (and surfaced through `source/commands/hooks/use-adopt-machine.ts`).
 
+### `ADOPT_FROM_VERSION_INVALID`
+
+**Meaning:** `shardmind adopt --from-version <v>` was given a `<v>` that is not a semver version (#179). The flag names the release the vault was cloned from, so the engine can apply the shard's rename migrations since then.
+
+**Remedy:** Pass the version as `MAJOR.MINOR.PATCH` (e.g. `--from-version 5.1.0`), the one in the cloned repo's `shard.yaml` or its release tag without the `v`. Omit the flag if the clone already uses the shard's current paths.
+
 ### `ADOPT_EXISTING_INSTALL`
 
 **Meaning:** `shardmind adopt` was invoked in a directory that already contains `.shardmind/state.json`. Adopt is for un-managed vaults (typically pre-shardmind clones); a managed vault routes through `shardmind update` instead.

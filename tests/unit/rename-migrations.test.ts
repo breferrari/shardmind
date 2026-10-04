@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { ShardManifestSchema } from '../../source/core/manifest.js';
-import { renamesBetween } from '../../source/core/rename-migrations.js';
+import { parseFromVersion, renamesBetween } from '../../source/core/rename-migrations.js';
 
 const base = { apiVersion: 'v1', name: 'demo', namespace: 'acme', version: '6.2.0' };
 
@@ -76,5 +76,16 @@ describe('renamesBetween (#178)', () => {
   it('compares versions as semver, not as strings', () => {
     const migrations = [m('6.9.0', '6.10.0', { 'a.md': 'b.md' })];
     expect(renamesBetween(migrations, '6.9.0', '6.10.0')).toEqual(new Map([['a.md', 'b.md']]));
+  });
+});
+
+describe('parseFromVersion (#179)', () => {
+  it('accepts a semver version, normalized', () => {
+    expect(parseFromVersion('5.1.0')).toBe('5.1.0');
+    expect(parseFromVersion('v5.1.0')).toBe('5.1.0');
+  });
+
+  it.each(['five', '5.1', '', '>=5.0.0'])('refuses %j with ADOPT_FROM_VERSION_INVALID', (value) => {
+    expect(() => parseFromVersion(value)).toThrow(expect.objectContaining({ code: 'ADOPT_FROM_VERSION_INVALID' }));
   });
 });

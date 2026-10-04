@@ -937,6 +937,7 @@ Flags:
 - `--values <file>` — prefill value answers (same shape as `install --values`); shown on the gate's confirm page as `(from --values)`.
 - `--verbose` — show per-file action history during the apply phase.
 - `--dry-run` — run the full pipeline (fetch, values gate, classify) without touching the vault. Summary reports what *would* happen.
+- `--from-version <v>` (#179) — the release the vault was cloned from. Applies the shard's rename migrations from `<v>` to its version before classifying, so a file at an old path is adopted at its new one (moved, or replaced, per the resolution). Not semver → `ADOPT_FROM_VERSION_INVALID`; no applicable migration → no-op. See SHARD-LAYOUT.md §Rename migrations.
 
 Volatile templates (`{# shardmind: volatile #}`) skip the differs prompt entirely — their rendered output is expected to vary across renders, so a content prompt would be meaningless. User's bytes are accepted as-is; missing-on-disk falls through to shard-only.
 

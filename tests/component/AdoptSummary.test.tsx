@@ -25,6 +25,7 @@ function makeSummary(overrides: Partial<AdoptSummaryData> = {}): AdoptSummaryDat
     adoptedShard: [],
     adoptedMerged: [],
     installedFresh: [],
+    renamedFiles: [],
     totalManaged: 2,
     ...overrides,
   };
@@ -86,12 +87,27 @@ describe('AdoptSummary', () => {
     expect(frame).toMatch(/review recommended/i);
   });
 
+  it('lists the files moved to a new path (#179)', () => {
+    const summary = makeSummary({ renamedFiles: [{ from: 'CLAUDE.md', to: 'AGENTS.md' }] });
+    const { lastFrame } = render(<AdoptSummary {...baseProps} summary={summary} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Moved to a new path');
+    expect(frame).toContain('CLAUDE.md → AGENTS.md');
+  });
+
+  it('says a dry run would move them', () => {
+    const summary = makeSummary({ renamedFiles: [{ from: 'CLAUDE.md', to: 'AGENTS.md' }] });
+    const { lastFrame } = render(<AdoptSummary {...baseProps} summary={summary} dryRun />);
+    expect(lastFrame() ?? '').toContain('Would move to a new path');
+  });
+
   it('omits zero-count rows', () => {
     const summary = makeSummary({
       matchedAuto: ['a.md'],
       adoptedMine: [],
       adoptedShard: [],
       installedFresh: [],
+      renamedFiles: [],
       totalManaged: 1,
     });
     const { lastFrame } = render(<AdoptSummary {...baseProps} summary={summary} />);
@@ -100,6 +116,7 @@ describe('AdoptSummary', () => {
     expect(frame).not.toContain('kept your version');
     expect(frame).not.toContain('switched to the shard');
     expect(frame).not.toContain('installed fresh');
+    expect(frame).not.toContain('to a new path');
   });
 
   it('renders empty-plan footnote when totalManaged is 0', () => {
@@ -108,6 +125,7 @@ describe('AdoptSummary', () => {
       adoptedMine: [],
       adoptedShard: [],
       installedFresh: [],
+      renamedFiles: [],
       totalManaged: 0,
     });
     const { lastFrame } = render(<AdoptSummary {...baseProps} summary={summary} />);

@@ -11,6 +11,7 @@ import semver from 'semver';
 import type { DriftEntry, DriftReport, RenameMigration, ShardState } from '../runtime/types.js';
 import { mapConcurrent } from './fs-utils.js';
 import { isEnoent } from '../runtime/errno.js';
+import { ShardMindError } from '../runtime/types.js';
 
 /**
  * Old path → new path for an update from `installed` to `target`. A
@@ -46,7 +47,7 @@ export function renamesBetween(
  * reports ENOENT, not ENOTDIR, for a path under a regular file, so the
  * ancestors are checked too. Any other error counts as taken.
  */
-async function isFree(vaultRoot: string, rel: string): Promise<boolean> {
+export async function isFree(vaultRoot: string, rel: string): Promise<boolean> {
   const segments = rel.split('/');
   for (let i = 1; i < segments.length; i++) {
     const ancestor = path.join(vaultRoot, ...segments.slice(0, i));
@@ -56,6 +57,71 @@ async function isFree(vaultRoot: string, rel: string): Promise<boolean> {
     if (!st.isDirectory()) return false;
   }
   return fsp.lstat(path.join(vaultRoot, rel)).then(() => false, (err: unknown) => isEnoent(err));
+}
+
+/**
+ * `adopt --from-version <v>` (#179): the release a vault was cloned from,
+ * refused unless it is semver. Checked before the shard is fetched.
+ */
+export function parseFromVersion(value: string): string {
+  const version = semver.valid(value);
+  if (version !== null) return version;
+  throw new ShardMindError(
+    `--from-version is not a version: '${value}'`,
+    'ADOPT_FROM_VERSION_INVALID',
+    "Pass the release the vault was cloned from as MAJOR.MINOR.PATCH (e.g. --from-version 5.1.0), as in that release's shard.yaml.",
+  );
+}
+
+/** The command that moves a file, for the error it refuses with. */
+export type MovingCommand = 'update' | 'adopt';
+
+/**
+ * Refuse a rename into a path something now occupies (`isFree`), arrived
+ * after the command planned it: refused before any write, and again before
+ * the move itself.
+ */
+export async function assertRenameTargetFree(
+  vaultRoot: string,
+  from: string,
+  to: string,
+  command: MovingCommand,
+): Promise<void> {
+  if (await isFree(vaultRoot, to)) return;
+  throw new ShardMindError(
+    `'${to}' is no longer free: '${from}' was to move there`,
+    command === 'update' ? 'UPDATE_WRITE_FAILED' : 'ADOPT_WRITE_FAILED',
+    `Something was created at '${to}' after the ${command} was planned. Move or remove it, then run \`shardmind ${command}\` again.`,
+  );
+}
+
+/**
+ * Move the user's file from `from` to `to`, which the command registered in
+ * `addedPaths` before writing. Something that arrived at `to` meanwhile is
+ * never moved over, and leaves `addedPaths` so a rollback keeps it. A
+ * missing `from` (a volatile file the user deleted) has nothing to move.
+ */
+export async function moveToFreePath(
+  vaultRoot: string,
+  from: string,
+  to: string,
+  addedPaths: string[],
+  command: MovingCommand,
+): Promise<void> {
+  try {
+    await assertRenameTargetFree(vaultRoot, from, to, command);
+  } catch (err) {
+    const i = addedPaths.indexOf(to);
+    if (i >= 0) addedPaths.splice(i, 1);
+    throw err;
+  }
+  const toAbs = path.join(vaultRoot, to);
+  await fsp.mkdir(path.dirname(toAbs), { recursive: true });
+  try {
+    await fsp.rename(path.join(vaultRoot, from), toAbs);
+  } catch (err) {
+    if (!isEnoent(err)) throw err;
+  }
 }
 
 export interface AppliedRenames {
