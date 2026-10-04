@@ -244,6 +244,15 @@ describe('adopt --from-version applies rename migrations (#179)', () => {
     expect(await exists('AGENTS.md')).toBe(false);
   });
 
+  it('refuses a link to a folder at the old path as unsafe (#163)', async () => {
+    await cloneOfV1();
+    await fsp.rm(path.join(vault, COPY));
+    await fsp.mkdir(path.join(root, 'target'));
+    // A junction on Windows (no privilege needed); a plain symlink elsewhere.
+    await fsp.symlink(path.join(root, 'target'), path.join(vault, COPY), 'junction');
+    await expect(adopt(await shardV2(), '0.1.0')).rejects.toMatchObject({ code: 'VAULT_PATH_UNSAFE' });
+  });
+
   it('treats a folder at the old path as no file, and installs the new path fresh', async () => {
     await cloneOfV1();
     await fsp.rm(path.join(vault, COPY));

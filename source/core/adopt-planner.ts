@@ -254,12 +254,19 @@ async function readUserFile(vaultRoot: string, rel: string): Promise<Buffer | nu
  * folder, or a path under a file, is no file to move (#179).
  */
 async function readOldPath(vaultRoot: string, rel: string): Promise<Buffer | null> {
-  const st = await fsp.lstat(path.join(vaultRoot, rel)).catch((err: unknown) => {
+  const abs = path.join(vaultRoot, rel);
+  const st = await fsp.lstat(abs).catch((err: unknown) => {
     const code = errnoCode(err);
     if (code === 'ENOENT' || code === 'ENOTDIR') return null;
-    throw err;
+    throw new ShardMindError(
+      `Could not read user vault file: ${abs}`,
+      'COLLISION_CHECK_FAILED',
+      err instanceof Error ? err.message : String(err),
+    );
   });
   if (st === null || st.isDirectory()) return null;
+  // A link is never moved: refused as the guard refuses any linked path.
+  if (st.isSymbolicLink()) await assertSafeVaultPaths(vaultRoot, [rel]);
   return readUserFile(vaultRoot, rel);
 }
 
