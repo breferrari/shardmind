@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (Ctrl+C stops the writes before it rolls back — #249)
+
+- **Ctrl+C during an install, update or adopt now stops the run before it rolls back.** The rollback used to start while the run went on writing. It could put your file back only for the run to overwrite it again, or leave a `state.json` for a run reported as cancelled. Pressing Ctrl+C while a failed run was already rolling back started a second rollback on the same backups. Now the run stops before its next write, and its own rollback runs once.
+
 ### Fixed (`update --dry-run --json` that needs answers — #230)
 
 - **`update --dry-run --json` always answers with a document.** When the new version adds an optional module, or removes a file you edited, the run used to stop at a prompt that `--json` never shows and wrote nothing. It now fails with `UPDATE_JSON_NEEDS_ANSWERS`, naming the decision, and `--yes` answers it.

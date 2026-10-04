@@ -50,7 +50,6 @@ import { parseFromVersion, renamesBetween } from '../../core/rename-migrations.j
 import { sha256 } from '../../core/fs-utils.js';
 import {
   assertAdoptable,
-  rollbackAdopt,
   runAdopt,
   type AdoptApplyKind,
   type AdoptResolutions,
@@ -68,6 +67,11 @@ import { rollbackDetail } from '../../core/rollback-report.js';
 import {
   appendHookOutput,
   useSigintRollback,
+  isCancelledRun,
+  newRunAbort,
+  stopRun,
+  trackRun,
+  type RunInFlight,
 } from './shared.js';
 
 import type { WizardResult } from '../../components/InstallWizard.js';
@@ -178,9 +182,8 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
   phaseRef.current = phase;
 
   const ctxCleanupRef = useRef<(() => Promise<void>) | null>(null);
-  const backupDirRef = useRef<string | null>(null);
-  const writingRef = useRef(false);
-  const addedPathsRef = useRef<string[]>([]);
+  // The adopt in flight, which a Ctrl+C stops and waits for (#249).
+  const runRef = useRef<RunInFlight | null>(null);
   const hookAbortRef = useRef<AbortController | null>(null);
 
   const finish = useCallback(
@@ -202,9 +205,9 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
   // fires on every Ctrl+C so we don't leak the extracted shard under
   // /tmp/. Mirrors `useUpdateMachine`'s rollback wiring.
   useSigintRollback({
-    isActive: () => !dryRun && writingRef.current && backupDirRef.current !== null,
-    rollback: async () =>
-      backupDirRef.current ? rollbackAdopt(vaultRoot, backupDirRef.current, addedPathsRef.current) : [],
+    isActive: () => !dryRun && runRef.current !== null,
+    // runAdopt rolls back in its own catch once the abort stops it.
+    rollback: () => stopRun(runRef.current),
     cleanup: async () => {
       hookAbortRef.current?.abort();
       if (ctxCleanupRef.current) await ctxCleanupRef.current();
@@ -422,10 +425,6 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
       const start = Date.now();
       const history: string[] = [];
 
-      writingRef.current = true;
-      addedPathsRef.current = [];
-      backupDirRef.current = null;
-
       setPhase({
         kind: 'executing',
         total: 0,
@@ -435,7 +434,8 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
       });
 
       try {
-        const runResult = await runAdopt({
+        const abort = newRunAbort();
+        const run = runAdopt({
           vaultRoot,
           manifest: ctx.manifest,
           schema: ctx.schema,
@@ -447,12 +447,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           plan,
           resolutions,
           dryRun,
-          onBackupReady: (dir) => {
-            backupDirRef.current = dir;
-          },
-          onFileTouched: (rel, introduced) => {
-            if (introduced) addedPathsRef.current.push(rel);
-          },
+          signal: abort.signal,
           onProgress: (ev) => {
             if (ev.kind === 'start') {
               setPhase((prev) =>
@@ -479,11 +474,13 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           },
         });
 
+        runRef.current = trackRun(abort, run);
+        const runResult = await run;
+
         // State.json is now on disk — past the point-of-no-return.
-        // Clear the write guard BEFORE firing the hook so a SIGINT
-        // during hook execution can't walk the adopt back. Mirrors
-        // install/update.
-        writingRef.current = false;
+        // Drop the run BEFORE firing the hook so a SIGINT during hook
+        // execution can't walk the adopt back. Mirrors install/update.
+        runRef.current = null;
 
         // Adopt runs the install-side slots: bootstrap → personalize (skipped
         // under Invariant 2), or a lone legacy post-install. newFiles is the
@@ -528,7 +525,12 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           dryRun: Boolean(dryRun),
         });
       } catch (err) {
-        writingRef.current = false;
+        runRef.current = null;
+        if (isCancelledRun(err)) {
+          // The Ctrl+C handler reports any rollback failure and exits 130.
+          finish({ kind: 'cancelled', reason: 'Cancelled with Ctrl+C.' });
+          return;
+        }
         finish({
           kind: 'error',
           error: err as Error,

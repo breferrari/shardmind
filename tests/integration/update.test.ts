@@ -153,6 +153,60 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     return { state, oldValues, newManifest, newSchema };
   }
 
+  it('an update aborted mid-run stops writing, rolls back and throws CANCELLED (#249)', async () => {
+    const { state, oldValues, newManifest, newSchema } = await setUpUpdate({
+      bumpTo: '0.2.0',
+      newHomeTemplate: '# Home v2 {{ user_name }}\n',
+    });
+    const homeBefore = await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8');
+    const stateBefore = await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8');
+    const migration = applyMigrations(oldValues, state.version, newManifest.version, newSchema.migrations);
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift: await detectDrift(vault, state) },
+      values: { old: oldValues, new: migration.values },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: buildRenderContext(newManifest, migration.values, selections),
+      },
+      removedFileDecisions: {},
+    });
+    const abort = new AbortController();
+    const realWrite = fsp.writeFile;
+    let writesAfterAbort = 0;
+    const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (abort.signal.aborted) writesAfterAbort++;
+      return realWrite(file, data, opts);
+    });
+    const err = await runUpdate({
+      vaultRoot: vault,
+      plan,
+      conflictResolutions: {},
+      currentState: state,
+      newManifest,
+      newSchema,
+      newValues: migration.values,
+      newSelections: selections,
+      resolved: { ...RESOLVED, version: newManifest.version },
+      tarballSha256: 'sha-0.2.0',
+      newTempDir: newShard,
+      signal: abort.signal,
+      // Ctrl+C lands once the first file has been written.
+      onProgress: (ev) => {
+        if (ev.kind === 'file') abort.abort();
+      },
+    }).catch((e: unknown) => e);
+    writeSpy.mockRestore();
+    // The progress event comes just before its action's write, which goes
+    // on; nothing after it. The rollback copies, never writes.
+    expect(writesAfterAbort).toBeLessThanOrEqual(1);
+    expect(err).toMatchObject({ code: 'CANCELLED' });
+    expect(await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe(homeBefore);
+    expect(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')).toBe(stateBefore);
+  });
+
   it('silently overwrites a managed file when the shard version bumps with a template change', async () => {
     const newTemplate = [
       '---',
@@ -441,7 +495,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     expect(needing).toContain(modifiedPath);
   });
 
-  it('fires onBackupReady before any writes, so SIGINT can roll back mid-run', async () => {
+  it('fires onBackupReady before any writes, once the snapshot is staged', async () => {
     // Round 4 /harden audit caught that the state machine was
     // populating its backupDirRef only AFTER runUpdate returned — so
     // a mid-write Ctrl-C would find the ref null and skip rollback.

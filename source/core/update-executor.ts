@@ -25,6 +25,7 @@ import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
+import { throwIfCancelled } from './run-cancel.js';
 import {
   assertRenameTargetFree,
   caseJournal,
@@ -75,6 +76,11 @@ export interface UpdateRunnerOptions {
   now?: Date;
   dryRun?: boolean;
   /**
+   * Aborted on Ctrl+C (#249): checked before every write, so the run stops
+   * between two writes with `CANCELLED` and is rolled back once.
+   */
+  signal?: AbortSignal;
+  /**
    * `--adopt-preexisting` (#61): a preexisting add-collision the user keeps
    * is tracked as their modified copy instead of being left untracked.
    */
@@ -82,17 +88,16 @@ export interface UpdateRunnerOptions {
   onProgress?: (event: UpdateProgressEvent) => void;
   /**
    * Fires exactly once, after the backup directory is created and the
-   * snapshot is staged but before any vault mutation happens. The state
-   * machine uses this to populate its rollback ref so a mid-write SIGINT
-   * can actually roll back — waiting for `runUpdate` to return is too
-   * late because Ctrl+C fires while the run is in flight.
+   * snapshot is staged but before any vault mutation happens. Progress
+   * only: the rollback is runUpdate's own, in its catch, and a Ctrl+C
+   * reaches it through `signal` (#249).
    */
   onBackupReady?: (backupDir: string) => void;
   /**
    * Fires after each write with the file's vault-relative path and
    * whether we newly introduced it (as opposed to overwriting an
-   * existing on-disk file). Powers the SIGINT rollback's added-paths
-   * list so it can erase only files this run created. A rename's new
+   * existing on-disk file): the same list runUpdate's own rollback
+   * erases, so a caller can see exactly which files this run created. A rename's new
    * path (#178) fires once before the write pass, after it was checked
    * free.
    */
@@ -184,6 +189,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     newTempDir,
     now = new Date(),
     dryRun = false,
+    signal,
     adoptPreexisting = false,
     onProgress,
     onBackupReady,
@@ -210,10 +216,9 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     if (!dryRun) {
       await snapshotForRollback(vaultRoot, plan, backupDir!);
       await recordFolders(vaultRoot, touched, folderMoves, backupDir!);
-      // Surface the backup dir to the caller before any writes happen
-      // so a mid-write SIGINT can find it. Doing this after snapshot
-      // means the directory actually contains the restore data the
-      // rollback handler will need.
+      // Report the backup dir to the caller before any writes happen,
+      // once it holds the restore data. Progress only: the rollback is
+      // this run's own catch (#249).
       onBackupReady?.(backupDir!);
     }
 
@@ -234,6 +239,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     const renamedFolders = new Set<string>();
     if (!dryRun) {
       for (const move of folderMoves) {
+        throwIfCancelled(signal);
         if (await renameCaseInPlace(vaultRoot, move.from, move.to, null, journal)) renamedFolders.add(move.from);
       }
     }
@@ -271,6 +277,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     let index = 0;
     for (const action of plan.actions) {
       if (isDeleteAction(action)) continue;
+      if (!dryRun) throwIfCancelled(signal);
       await applyWriteAction(action, {
         vaultRoot,
         conflictResolutions,
@@ -288,6 +295,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     const written = new Set(summary.wroteFiles);
     for (const action of plan.actions) {
       if (action.renamedFrom === undefined) continue;
+      if (!dryRun) throwIfCancelled(signal);
       await completeRename(action, action.renamedFrom, {
         written,
         vaultRoot,
@@ -300,6 +308,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     }
     for (const action of plan.actions) {
       if (!isDeleteAction(action)) continue;
+      if (!dryRun) throwIfCancelled(signal);
       await applyDeleteAction(action, {
         vaultRoot,
         nextFiles,
@@ -349,10 +358,13 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     };
 
     if (!dryRun) {
+      throwIfCancelled(signal);
       await initShardDir(vaultRoot);
       await cacheTemplates(vaultRoot, newTempDir);
       await cacheManifest(vaultRoot, newManifest, newSchema, newTempDir);
       await writeValuesFile(vaultRoot, newValues);
+      // state.json commits the update: the last point a Ctrl+C can stop it.
+      throwIfCancelled(signal);
       await writeState(vaultRoot, nextState);
     }
 

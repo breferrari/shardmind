@@ -32,15 +32,18 @@
  * every byte and the observer sees each chunk before Ink parses it. Outside
  * raw mode the kernel turns Ctrl+C into a real SIGINT, as before.
  *
- * Scope: this file is imported once at CLI startup and has no runtime
- * consumers beyond that. In a pipe the listener stays alive for the
- * lifetime of the process; in a TTY it comes and goes with raw mode.
+ * Scope: the bridge is installed once at CLI startup. In a pipe the
+ * listener stays alive for the lifetime of the process; in a TTY it comes
+ * and goes with raw mode. It imports nothing beyond node built-ins, so it
+ * loads before chalk (tests/unit/color-env.test.ts); the executors' check
+ * that stops a run once Ctrl+C aborted it is in `run-cancel.ts` (#249).
  *
  * Every Ctrl+C byte emits SIGINT. A repeat during a rollback is absorbed by
  * `useSigintRollback`, which runs once whatever the source (this bridge or
  * a kernel signal), so a second press never starts a second rollback or
  * cuts the first one short.
  */
+
 
 const ETX = 0x03;
 const ETX_CHAR = String.fromCharCode(ETX);

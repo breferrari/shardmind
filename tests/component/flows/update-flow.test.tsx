@@ -27,6 +27,7 @@ import {
 } from './helpers.js';
 import { tick, waitFor, ENTER, ARROW_DOWN } from '../helpers.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
+import { resetSigintRollbackForTests } from '../../../source/commands/hooks/shared.js';
 
 const MULTI_CONFLICT_SLUG = 'acme/multi-conflict';
 const MULTI_CONFLICT_REF = `github:${MULTI_CONFLICT_SLUG}`;
@@ -71,6 +72,9 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
 
   afterEach(() => {
     cleanup();
+    // A Ctrl+C sets a once-per-process latch (#155); without a reset the
+    // next test's Ctrl+C is ignored and its runs start aborted (#249).
+    resetSigintRollbackForTests();
   });
 
   // ───── Scenario 13: single conflict → keep_mine → ownership='modified' ─────
@@ -247,6 +251,59 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         await vault.cleanup();
       }
     });
+  }, 90_000);
+
+  // ───── Ctrl+C mid-update stops the writes and rolls back once (#249) ─────
+
+  it('Ctrl+C mid-update → the update writes nothing more and leaves state.json as it was (#249)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    let vault: Vault | null = null;
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      vault = await createInstalledVault({
+        stub,
+        shardRef: SHARD_REF,
+        values: DEFAULT_VALUES,
+        prefix: 's249-ctrl-c-update',
+      });
+      const root = vault.root;
+      const stateBefore = await vault.readFile('.shardmind/state.json');
+      const homeBefore = await vault.readFile('Home.md');
+      stub.setVersion(SHARD_SLUG, '0.3.0', fixtures.byVersion['0.3.0']!);
+      stub.setLatest(SHARD_SLUG, '0.3.0');
+      const inVault = (f: string) => path.resolve(f).toLowerCase().startsWith(path.resolve(root).toLowerCase());
+      const realWrite = fs.writeFile;
+      const writtenAfter: string[] = [];
+      let interrupted = false;
+      vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, opts) => {
+        const f = String(file);
+        if (interrupted && inVault(f)) writtenAfter.push(path.relative(root, f));
+        // The run's first content write: `.shardmind/` also holds the
+        // update-check cache, written before the run starts.
+        if (!interrupted && inVault(f) && !path.relative(root, f).startsWith('.shardmind')) {
+          // Ctrl+C lands during the update's first write, which goes on
+          // while the handler acts.
+          interrupted = true;
+          process.emit('SIGINT');
+          await new Promise((r) => setImmediate(r));
+        }
+        return realWrite(file, data, opts);
+      });
+      mountUpdate({ vaultRoot: root, options: { yes: true } });
+      await waitFor(() => (exit.mock.calls.length > 0 ? 'exited' : ''), (f) => f === 'exited', 30_000);
+      await tick(500);
+      expect(interrupted).toBe(true);
+      expect(exit).toHaveBeenCalledWith(130);
+      expect(writtenAfter).toEqual([]);
+      expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+      expect(await vault.readFile('Home.md')).toBe(homeBefore);
+    } finally {
+      vi.restoreAllMocks();
+      resetSigintRollbackForTests();
+      if (vault) await vault.cleanup();
+    }
   }, 90_000);
 
   // ───── Scenario 14: ≥3 conflicts → iterate (#109 regression) ─────

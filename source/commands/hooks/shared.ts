@@ -14,7 +14,12 @@
 
 import type React from 'react';
 import { useEffect, useRef } from 'react';
-import { attemptRollback, formatRollbackFailures, type RollbackFailure } from '../../core/rollback-report.js';
+import {
+  attemptRollback,
+  formatRollbackFailures,
+  rollbackFailuresOf,
+  type RollbackFailure,
+} from '../../core/rollback-report.js';
 import {
   tailAtUtf8Boundary,
   summarizeHook,
@@ -161,4 +166,78 @@ export function resetSigintRollbackForTests(): void {
   sigintRollbackStarted = false;
   for (const handler of sigintHandlers) process.off('SIGINT', handler);
   sigintHandlers.clear();
+}
+
+/**
+ * A run that writes to the vault, as a Ctrl+C sees it (#249). The handler
+ * never rolls back while a run is in flight: it aborts `abort`, which the
+ * executor checks before every write, and awaits `done`, so the run's own
+ * rollback is the only one and starts after the writes have stopped.
+ */
+export interface RunInFlight {
+  readonly abort: AbortController;
+  /** Settles once the run and its rollback have finished. */
+  readonly done: Promise<RunEnd>;
+}
+
+/** How a run in flight ended. */
+export interface RunEnd {
+  /** It committed: the Ctrl+C came after its last check, and nothing was rolled back. */
+  readonly finished: boolean;
+  /** What its rollback could not undo (#247). */
+  readonly failures: readonly RollbackFailure[];
+}
+
+/** A run whose rollback the caller performs (install): settle `done` once it is over. */
+export interface OpenRun extends RunInFlight {
+  /** The first call wins; later ones do nothing. */
+  readonly settle: (end: RunEnd) => void;
+}
+
+/**
+ * The abort for a new run. Already aborted when a Ctrl+C was handled before
+ * the run started: the handler found no run to stop then, so the run stops
+ * itself before its first write instead of writing while the process exits.
+ */
+export function newRunAbort(): AbortController {
+  const abort = new AbortController();
+  if (sigintRollbackStarted) abort.abort();
+  return abort;
+}
+
+/** Track a run whose own catch rolls back (update, adopt): `done` follows it. */
+export function trackRun(abort: AbortController, run: Promise<unknown>): RunInFlight {
+  return {
+    abort,
+    done: run.then(
+      () => ({ finished: true, failures: [] }),
+      (err: unknown) => ({ finished: false, failures: rollbackFailuresOf(err) }),
+    ),
+  };
+}
+
+/** A run whose rollback the caller performs (install). */
+export function openRun(): OpenRun {
+  let settle!: (end: RunEnd) => void;
+  const done = new Promise<RunEnd>((resolve) => {
+    settle = resolve;
+  });
+  return { abort: newRunAbort(), done, settle };
+}
+
+/** The Ctrl+C rollback: stop the run in flight and wait for it and its rollback. */
+export async function stopRun(run: RunInFlight | null): Promise<readonly RollbackFailure[]> {
+  if (!run) return [];
+  run.abort.abort();
+  const end = await run.done;
+  if (end.finished) {
+    process.stderr.write('\nThe run had already finished when Ctrl+C arrived; nothing was rolled back.\n');
+  }
+  return end.failures;
+}
+
+/** A run stopped by Ctrl+C, whether or not its rollback then left files behind. */
+export function isCancelledRun(err: unknown): boolean {
+  const code = (e: unknown) => (typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined);
+  return code(err) === 'CANCELLED' || code((err as { cause?: unknown } | null)?.cause) === 'CANCELLED';
 }

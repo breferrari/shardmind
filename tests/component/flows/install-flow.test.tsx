@@ -34,6 +34,7 @@ import {
   DEFAULT_VALUES,
 } from './helpers.js';
 import { createInstalledVault } from '../../e2e/helpers/vault.js';
+import { resetSigintRollbackForTests } from '../../../source/commands/hooks/shared.js';
 import { tick, waitFor, ENTER, ESC, ARROW_DOWN, SPACE, typeText } from '../helpers.js';
 
 // Custom-tarball slugs for scenarios that need a shape minimal-shard
@@ -86,6 +87,8 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   afterEach(() => {
     cleanup();
+    // A Ctrl+C sets a once-per-process latch (#155); reset it between tests (#249).
+    resetSigintRollbackForTests();
   });
 
   // ───── Scenario 1: select default = first option, Enter advances (#103 regression) ─────
@@ -923,7 +926,96 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await vault.cleanup();
     }
   }, 60_000);
+  // ───── Ctrl+C while a reinstall moves files aside puts them all back once (#55, #249) ─────
+
+  it('Ctrl+C while a --force reinstall moves files aside → old install and edits restored (#249)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's249-ctrl-c-set-aside',
+    });
+    const realRename = fs.rename;
+    let interrupted = false;
+    let movedAfter = 0;
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      await vault.writeFile('Home.md', 'my edited home\n');
+      const stateBefore = await vault.readFile('.shardmind/state.json');
+      vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+        if (interrupted && String(to).includes('shardmind-backup-')) movedAfter++;
+        const result = await realRename(from, to);
+        if (!interrupted && String(to).includes('shardmind-backup-')) {
+          // Ctrl+C lands right after the first move aside.
+          interrupted = true;
+          process.emit('SIGINT');
+          await new Promise((r) => setImmediate(r));
+        }
+        return result;
+      });
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root, options: { force: true } });
+      await driveMinimalWizard(r, 'Dana');
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER);
+      await waitFor(() => (exit.mock.calls.length > 0 ? 'exited' : ''), (f) => f === 'exited', 30_000);
+      await tick(500);
+      expect(interrupted).toBe(true);
+      expect(exit).toHaveBeenCalledWith(130);
+      // The loop stops before its next move (#55).
+      expect(movedAfter).toBe(0);
+      expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
+      expect(await vault.readFile('Home.md')).toBe('my edited home\n');
+      expect(await leftoverBackups(vault.root)).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
+      resetSigintRollbackForTests();
+      await vault.cleanup();
+    }
+  }, 60_000);
+
   // ───── A fresh install whose render fails mid-write leaves nothing behind (#207) ─────
+
+  it('Ctrl+C mid-install → the install writes nothing more and leaves nothing behind (#249)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vaultRoot = await makeVaultDir('s249-ctrl-c-install');
+    const realWrite = fs.writeFile;
+    const writtenAfter: string[] = [];
+    let interrupted = false;
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const inVault = (f: string) => path.resolve(f).toLowerCase().startsWith(path.resolve(vaultRoot).toLowerCase());
+    vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, opts) => {
+      const f = String(file);
+      if (interrupted && inVault(f)) writtenAfter.push(path.relative(vaultRoot, f));
+      if (!interrupted && inVault(f)) {
+        // Ctrl+C lands during the install's first write, which then goes on
+        // while the handler acts: the two overlap, as they do for real.
+        interrupted = true;
+        process.emit('SIGINT');
+        await new Promise((r) => setImmediate(r));
+      }
+      return realWrite(file, data, opts);
+    });
+    try {
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot, options: { defaults: true } });
+      void r;
+      await waitFor(() => (exit.mock.calls.length > 0 ? 'exited' : ''), (f) => f === 'exited', 30_000);
+      await tick(500);
+      expect(exit).toHaveBeenCalledWith(130);
+      expect(interrupted).toBe(true);
+      expect(writtenAfter).toEqual([]);
+      expect(await fs.readdir(vaultRoot)).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
+      resetSigintRollbackForTests();
+      await cleanupVault(vaultRoot);
+    }
+  }, 60_000);
 
   it('fresh install that fails after its files are written → only the user\'s own file is left (#207)', async () => {
     const { stub, fixtures } = getCtx();

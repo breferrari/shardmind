@@ -32,6 +32,7 @@ import {
 } from './helpers.js';
 import { tick, waitFor, ENTER, ARROW_DOWN } from '../helpers.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
+import { resetSigintRollbackForTests } from '../../../source/commands/hooks/shared.js';
 
 const SLUG_VERSION_MISMATCH = 'acme/adopt-future-engine';
 const SLUG_RENAMED = 'acme/adopt-renamed';
@@ -56,6 +57,8 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
 
   afterEach(() => {
     cleanup();
+    // A Ctrl+C sets a once-per-process latch (#155); reset it between tests (#249).
+    resetSigintRollbackForTests();
   });
 
   /**
@@ -525,6 +528,98 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
       expect(frames).not.toMatch(/Rolled back partial adopt/);
     } finally {
       vi.restoreAllMocks();
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  // ───── Scenarios 34-35: Ctrl+C stops the writes and rolls back once (#249) ─────
+
+  async function adoptWithCtrlC(
+    vault: string,
+    interceptor: (vault: string, interrupt: () => Promise<void>) => void,
+  ): Promise<{ exit: ReturnType<typeof vi.spyOn> }> {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    await writeRel(vault, 'Home.md', 'my pre-existing Home\n');
+    const valuesFile = path.join(vault, 'values.yaml');
+    await fs.writeFile(valuesFile, stringifyYaml(DEFAULT_VALUES), 'utf-8');
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    // Ctrl+C, then time for the handler to do whatever it does before the
+    // intercepted operation goes on.
+    interceptor(vault, async () => {
+      process.emit('SIGINT');
+      await new Promise((r) => setTimeout(r, 200));
+    });
+    mountAdopt({
+      shardRef: `${SHARD_REF}#v0.1.0`,
+      vaultRoot: vault,
+      options: { yes: true, values: valuesFile, mode: 'use-all-theirs' },
+    });
+    await waitFor(() => (exit.mock.calls.length > 0 ? 'exited' : ''), (f) => f === 'exited', 30_000);
+    await tick(500);
+    return { exit };
+  }
+
+  it('34. Ctrl+C mid-write → the adopt writes nothing more and leaves no state behind', async () => {
+    const vault = await makeVaultDir('s34-ctrl-c-mid-write');
+    const realWrite = fs.writeFile;
+    const writtenAfter: string[] = [];
+    let interrupted = false;
+    try {
+      const { exit } = await adoptWithCtrlC(vault, (v, interrupt) => {
+        vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, opts) => {
+          const f = String(file);
+          if (interrupted && f.startsWith(v)) writtenAfter.push(path.relative(v, f));
+          if (!interrupted && f === path.join(v, 'CLAUDE.md')) {
+            interrupted = true;
+            await interrupt();
+          }
+          return realWrite(file, data, opts);
+        });
+      });
+      expect(exit).toHaveBeenCalledWith(130);
+      expect(writtenAfter).toEqual([]);
+      await expect(fs.access(path.join(vault, '.shardmind', 'state.json'))).rejects.toThrow();
+      expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('my pre-existing Home\n');
+    } finally {
+      vi.restoreAllMocks();
+      resetSigintRollbackForTests();
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  it("35. Ctrl+C while a failed adopt rolls back → the snapshot is restored once, not twice", async () => {
+    const vault = await makeVaultDir('s35-ctrl-c-mid-rollback');
+    const realWrite = fs.writeFile;
+    const realCopy = fs.copyFile;
+    let homeRestores = 0;
+    let interrupted = false;
+    try {
+      await adoptWithCtrlC(vault, (v, interrupt) => {
+        // A shard file's write fails, so runAdopt rolls back on its own.
+        vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, opts) => {
+          if (file === path.join(v, 'CLAUDE.md')) {
+            throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
+          }
+          return realWrite(file, data, opts);
+        });
+        // Ctrl+C lands while that rollback restores Home.md.
+        vi.spyOn(fs, 'copyFile').mockImplementation(async (src, dst, mode) => {
+          if (dst === path.join(v, 'Home.md') && String(src).includes(path.join('.shardmind', 'backups'))) {
+            homeRestores++;
+            if (!interrupted) {
+              interrupted = true;
+              await interrupt();
+            }
+          }
+          return realCopy(src, dst, mode);
+        });
+      });
+      expect(homeRestores).toBe(1);
+      expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('my pre-existing Home\n');
+    } finally {
+      vi.restoreAllMocks();
+      resetSigintRollbackForTests();
       await cleanupVault(vault);
     }
   }, 60_000);

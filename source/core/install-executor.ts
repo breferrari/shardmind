@@ -33,6 +33,7 @@ import {
 import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths, ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
+import { throwIfCancelled } from './run-cancel.js';
 import { reasonOf, type RollbackFailure } from './rollback-report.js';
 import {
   SHARDMIND_DIR,
@@ -70,6 +71,11 @@ export interface InstallRunnerOptions {
    */
   onDirCreated?: (dir: string) => void;
   dryRun?: boolean;
+  /**
+   * Aborted on Ctrl+C (#249): checked before every write, so the run stops
+   * between two writes with `CANCELLED` and is rolled back once.
+   */
+  signal?: AbortSignal;
 }
 
 export interface InstallResult {
@@ -283,7 +289,7 @@ export async function restoreBackups(
  * that fails partway is rolled back too.
  */
 export async function runInstall(opts: InstallRunnerOptions): Promise<InstallResult> {
-  const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, onFileWritten, onDirCreated, dryRun } = opts;
+  const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, onFileWritten, onDirCreated, dryRun, signal } = opts;
 
   const resolution = await resolveModules(schema, selections, tempDir);
   // Refuse before the first write, dry run included, if any path would
@@ -296,6 +302,8 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   // so a rollback removes exactly what this install made (#207, #215).
   const knownDirs = new Set<string>();
   const recordWrite = async (rel: string): Promise<void> => {
+    // Every write is recorded first, so this is the one place to stop (#249).
+    throwIfCancelled(signal);
     for (const dir of await missingAncestors(vaultRoot, rel, knownDirs)) {
       createdDirs.push(dir);
       onDirCreated?.(dir);
