@@ -85,7 +85,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | | Task | Issue |
 |---|---|---|
 | ⬜ | Make the test suite independent of FORCE_COLOR | [#159](https://github.com/breferrari/shardmind/issues/159) |
-| ⬜ | Drop LineInterner workaround once node-diff3 ships the prototype-lookup fix | [#49](https://github.com/breferrari/shardmind/issues/49) |
+| ✅ | Drop LineInterner workaround once node-diff3 ships the prototype-lookup fix | [#49](https://github.com/breferrari/shardmind/issues/49) |
 | ⬜ | NO_COLOR / FORCE_COLOR respect across Ink components | [#37](https://github.com/breferrari/shardmind/issues/37) |
 | ⬜ | Agent/headless ergonomics: non-interactive mode, JSON output, per-file plan, value detection | [#139](https://github.com/breferrari/shardmind/issues/139) |
 | ⬜ | Apply a shard release that only changes a file's case | [#169](https://github.com/breferrari/shardmind/issues/169) |
@@ -447,7 +447,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] Alternate registry configurability (GHE, private, custom URL) ([#39](https://github.com/breferrari/shardmind/issues/39))
 - [ ] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
 - [ ] Re-evaluate `@inkjs/ui` dependency ([#43](https://github.com/breferrari/shardmind/issues/43))
-- [ ] Drop `LineInterner` workaround once `node-diff3` releases the prototype-lookup fix ([#49](https://github.com/breferrari/shardmind/issues/49))
+- [x] Drop `LineInterner` workaround once `node-diff3` releases the prototype-lookup fix ([#49](https://github.com/breferrari/shardmind/issues/49))
 - [ ] `$EDITOR` integration for DiffView conflict resolution ([#50](https://github.com/breferrari/shardmind/issues/50))
 - [x] 24h update-check cache shared between status + update ([#51](https://github.com/breferrari/shardmind/issues/51) — shipped with #13)
 - [x] DiffView: distinguish preexisting add-collision from modified-file conflict ([#60](https://github.com/breferrari/shardmind/issues/60))
