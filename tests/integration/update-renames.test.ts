@@ -403,15 +403,64 @@ describe('update applies rename migrations (#178)', () => {
     expect(await read('AGENTS.md')).toBe('Agents.\n');
   });
 
-  it('falls back when a file sits where the new path needs a folder', async () => {
+  it('drops a rename whose new path needs a folder where a file sits', async () => {
     await install();
     await write('notes', 'a file, not a folder\n');
-    const v2 = await shardAt('0.2.0', {
-      moves: { [COPY]: 'notes/AGENTS.md' },
-      migrations: `  - from: "0.1.0"\n    to: "0.2.0"\n    renames:\n      "${COPY}": "notes/AGENTS.md"\n`,
+    const state = (await readState(vault)) as ShardState;
+    const { movedFrom } = await applyRenames({
+      vaultRoot: vault,
+      state,
+      drift: await detectDrift(vault, state),
+      renames: new Map([[COPY, 'notes/AGENTS.md']]),
+      newPaths: new Set(['notes/AGENTS.md']),
     });
-    const { result } = await update(v2).catch((e: unknown) => ({ result: { summary: { renamedFiles: ['threw'] } }, e }));
-    expect(result.summary.renamedFiles).not.toContainEqual({ from: COPY, to: 'notes/AGENTS.md' });
+    // Windows reports ENOENT, not ENOTDIR, under a file: the folder check catches it.
+    expect(movedFrom).toEqual(new Map());
+  });
+
+  it('refuses before any write when a file arrives at a new path the shard writes', async () => {
+    await install();
+    const v2 = await moveCopy('0.2.0', { 'AGENTS.md': (src) => src.replace(COPY_LINE, 'Changed in 0.2.0.') });
+    const arrive = () => fsp.writeFile(path.join(vault, 'AGENTS.md'), 'Arrived meanwhile.\n', 'utf-8');
+    const stateBefore = await read('.shardmind/state.json');
+    await expect(update(v2, 'keep_mine', false, arrive)).rejects.toMatchObject({ code: 'UPDATE_WRITE_FAILED' });
+    expect(await read('AGENTS.md')).toBe('Arrived meanwhile.\n');
+    expect(await read(COPY)).toContain(COPY_LINE);
+    expect(await read('.shardmind/state.json')).toBe(stateBefore);
+  });
+
+  it('moves the state of a renamed volatile file whose file the user deleted', async () => {
+    await install();
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+    const state = (await readState(vault)) as ShardState;
+    const values = parseYaml(await read('shard-values.yaml')) as Record<string, unknown>;
+    // A volatile entry for a file that is gone: the move has nothing to carry.
+    const withVolatile: ShardState = {
+      ...state,
+      files: { ...state.files, 'log.md': { template: 'log.md.njk', rendered_hash: 'x', ownership: 'user' } as never },
+    };
+    const zero = { silent: 0, overwritten: 0, adopted: 0, autoMerged: 0, conflicts: 0, volatile: 1, added: 0, deleted: 0, keptAsUser: 0, restored: 0 };
+    const result = await runUpdate({
+      vaultRoot: vault,
+      plan: {
+        actions: [{ kind: 'skip_volatile', path: 'logs/log.md', renamedFrom: 'log.md', renamedKeys: { templateKey: 'logs/log.md.njk' } }],
+        pendingConflicts: [],
+        counts: zero,
+      },
+      conflictResolutions: {},
+      currentState: withVolatile,
+      newManifest: { ...manifest, version: '0.2.0' },
+      newSchema: schema,
+      newValues: values,
+      newSelections: state.modules,
+      resolved: { ...RESOLVED, version: '0.2.0' },
+      tarballSha256: 'sha-0.2.0',
+      newTempDir: MINIMAL_SHARD,
+    });
+    expect(await exists('logs/log.md')).toBe(false);
+    expect(result.state.files['log.md']).toBeUndefined();
+    expect(result.state.files['logs/log.md']?.template).toBe('logs/log.md.njk');
   });
 
   it('refuses to move over a file that appeared at the new path after planning, and keeps it', async () => {

@@ -41,6 +41,23 @@ export function renamesBetween(
   return result;
 }
 
+/**
+ * Nothing at `rel`, and every existing folder on its way is a folder. Windows
+ * reports ENOENT, not ENOTDIR, for a path under a regular file, so the
+ * ancestors are checked too. Any other error counts as taken.
+ */
+async function isFree(vaultRoot: string, rel: string): Promise<boolean> {
+  const segments = rel.split('/');
+  for (let i = 1; i < segments.length; i++) {
+    const ancestor = path.join(vaultRoot, ...segments.slice(0, i));
+    const st = await fsp.lstat(ancestor).catch((err: unknown) => (isEnoent(err) ? null : undefined));
+    if (st === undefined) return false;
+    if (st === null) return true;
+    if (!st.isDirectory()) return false;
+  }
+  return fsp.lstat(path.join(vaultRoot, rel)).then(() => false, (err: unknown) => isEnoent(err));
+}
+
 export interface AppliedRenames {
   /** `state.files` keyed by each renamed file's new path. */
   state: ShardState;
@@ -80,9 +97,7 @@ export async function applyRenames(input: {
   const unique = candidates.filter(([, to]) => claims.get(to) === 1);
   // Free means nothing there at all; any other error (a file where a
   // folder should be, no access) keeps the old behaviour.
-  const free = await mapConcurrent(unique, 16, async ([, to]) =>
-    fsp.lstat(path.join(vaultRoot, to)).then(() => false, (err: unknown) => isEnoent(err)),
-  );
+  const free = await mapConcurrent(unique, 16, ([, to]) => isFree(vaultRoot, to));
   const newOf = new Map(unique.filter((_, i) => free[i]));
   const movedFrom = new Map([...newOf].map(([from, to]) => [to, from]));
   if (movedFrom.size === 0) return { state, drift, movedFrom };

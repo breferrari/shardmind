@@ -81,7 +81,9 @@ export interface UpdateRunnerOptions {
    * Fires after each write with the file's vault-relative path and
    * whether we newly introduced it (as opposed to overwriting an
    * existing on-disk file). Powers the SIGINT rollback's added-paths
-   * list so it can erase only files this run created.
+   * list so it can erase only files this run created. A rename's new
+   * path (#178) fires once before the write pass, after it was checked
+   * free.
    */
   onFileTouched?: (outputPath: string, introduced: boolean) => void;
 }
@@ -177,6 +179,11 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // ago, behind prompts. Before the snapshot or any write, dry run included.
   const touched = pathsTheUpdateTouches(plan.actions);
   await assertSafeVaultPaths(vaultRoot, touched.writes, touched.deletes);
+  // A rename's new path was free when planned; refuse before any write if
+  // something arrived there during the prompts (#178).
+  for (const action of plan.actions) {
+    if (action.renamedFrom !== undefined) await assertRenameTargetFree(vaultRoot, action.path, action.renamedFrom);
+  }
 
   const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now);
   const addedPaths: string[] = [];
@@ -191,14 +198,9 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       onBackupReady?.(backupDir!);
     }
 
-    // Every action that emits an `onProgress 'file'` event counts toward
-    // `total` — including conflicts resolved as keep_mine/skip that emit
-    // progress but don't actually write. Counting only write-actions
-    // would under-count total and let `index` overshoot 100% on the
-    // progress bar.
     // A rename's new path is introduced by this run, whichever pass fills it:
-    // registered before any write, so a failure or Ctrl+C mid-pass removes it
-    // (#178).
+    // registered once, before any write, so a failure or Ctrl+C mid-pass
+    // removes it (#178).
     if (!dryRun) {
       for (const action of plan.actions) {
         if (action.renamedFrom === undefined) continue;
@@ -207,6 +209,11 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       }
     }
 
+    // Every action that emits an `onProgress 'file'` event counts toward
+    // `total` — including conflicts resolved as keep_mine/skip that emit
+    // progress but don't actually write. Counting only write-actions
+    // would under-count total and let `index` overshoot 100% on the
+    // progress bar.
     const progressTotal = plan.actions.filter(actionEmitsProgress).length;
     onProgress?.({ kind: 'start', total: progressTotal });
 
@@ -248,9 +255,11 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
         total: progressTotal,
       });
     }
+    const written = new Set(summary.wroteFiles);
     for (const action of plan.actions) {
       if (action.renamedFrom === undefined) continue;
       await completeRename(action, action.renamedFrom, {
+        written,
         vaultRoot,
         nextFiles,
         summary,
@@ -428,8 +437,11 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         const introduced =
           action.kind !== 'overwrite' && !(await pathExists(path.join(ctx.vaultRoot, action.path)));
         await writeAction(ctx.vaultRoot, action);
-        if (introduced) ctx.addedPaths.push(action.path);
-        ctx.onFileTouched?.(action.path, introduced);
+        // A rename's new path is registered before the write pass (#178).
+        if (action.renamedFrom === undefined) {
+          if (introduced) ctx.addedPaths.push(action.path);
+          ctx.onFileTouched?.(action.path, introduced);
+        }
       }
       ctx.nextFiles[action.path] = buildFileState(action, action.renderedHash, 'managed');
       ctx.summary.wroteFiles.push(action.path);
@@ -618,6 +630,20 @@ export async function createBackupDir(vaultRoot: string, now: Date): Promise<str
 }
 
 /**
+ * Refuse a rename into a path something now occupies: a file, a folder or a
+ * symlink, dangling or not (`lstat`, not `access`), arrived after planning.
+ */
+async function assertRenameTargetFree(vaultRoot: string, to: string, from: string): Promise<void> {
+  const taken = await fsp.lstat(path.join(vaultRoot, to)).then(() => true, (err: unknown) => !isEnoent(err));
+  if (!taken) return;
+  throw new ShardMindError(
+    `'${to}' is no longer free: '${from}' was to move there`,
+    'UPDATE_WRITE_FAILED',
+    `Something was created at '${to}' after the update was planned. Move or remove it, then run \`shardmind update\` again.`,
+  );
+}
+
+/**
  * Finish a rename migration's move once the write pass is done (#178). An
  * action that wrote its new path leaves the old file to delete; one that
  * wrote nothing (no change, a volatile file, a conflict kept as mine or
@@ -633,27 +659,28 @@ async function completeRename(
     summary: UpdateSummary;
     addedPaths: string[];
     dryRun: boolean;
+    /** The paths the write pass wrote. */
+    written: ReadonlySet<string>;
   },
 ): Promise<void> {
   const to = action.path;
   // What the write pass did, not a re-derivation of it.
-  const wroteNewPath = ctx.summary.wroteFiles.includes(to);
+  const wroteNewPath = ctx.written.has(to);
   if (!ctx.dryRun) {
     const fromAbs = path.join(ctx.vaultRoot, from);
     const toAbs = path.join(ctx.vaultRoot, to);
     if (wroteNewPath) {
       await fsp.rm(fromAbs, { force: true });
     } else {
-      // Planned free; something may have arrived during the prompts. Never
-      // move over it, and keep it out of the rollback's removals.
-      if (await pathExists(toAbs)) {
-        const i = ctx.addedPaths.lastIndexOf(to);
+      // Checked at the top of the run; something may still arrive during
+      // the write pass. Never move over it, and keep it out of the
+      // rollback's removals.
+      try {
+        await assertRenameTargetFree(ctx.vaultRoot, to, from);
+      } catch (err) {
+        const i = ctx.addedPaths.indexOf(to);
         if (i >= 0) ctx.addedPaths.splice(i, 1);
-        throw new ShardMindError(
-          `A file appeared at '${to}' while the update was planned, where '${from}' was to move`,
-          'UPDATE_WRITE_FAILED',
-          `Move or remove '${to}', then run \`shardmind update\` again.`,
-        );
+        throw err;
       }
       await fsp.mkdir(path.dirname(toAbs), { recursive: true });
       try {
