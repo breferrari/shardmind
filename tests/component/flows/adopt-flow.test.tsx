@@ -565,7 +565,9 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
         vaultRoot: vault,
         options: { fromVersion: 'five' },
       });
-      const frame = await waitFor(r.lastFrame, (f) => /ADOPT_FROM_VERSION_INVALID/.test(f), 30_000);
+      // The refusal is immediate and the command exits ~100 ms later, writing
+      // an empty last frame: search every frame, not just the last one.
+      const frame = await waitFor(() => r.frames.join('\n'), (f) => /ADOPT_FROM_VERSION_INVALID/.test(f), 30_000);
       expect(frame).toContain("'five'");
     } finally {
       await cleanupVault(vault);
