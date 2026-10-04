@@ -43,6 +43,7 @@ import {
 } from '../runtime/vault-paths.js';
 import { mapConcurrent, pathExists } from './fs-utils.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
+import { throwIfCancelled } from './cancellation.js';
 import { assertRenameTargetFree, moveToFreePath } from './rename-migrations.js';
 import { hashValues } from './install-planner.js';
 import {
@@ -103,6 +104,11 @@ export interface AdoptRunnerOptions {
   resolutions: AdoptResolutions;
   now?: Date;
   dryRun?: boolean;
+  /**
+   * Aborted on Ctrl+C (#249): checked before every write, so the run stops
+   * between two writes with `CANCELLED` and is rolled back once.
+   */
+  signal?: AbortSignal;
   onProgress?: (event: AdoptProgressEvent) => void;
   /**
    * Fires once after the snapshot is staged, before any vault write.
@@ -225,6 +231,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     resolutions,
     now = new Date(),
     dryRun = false,
+    signal,
     onProgress,
     onBackupReady,
     onFileTouched,
@@ -306,6 +313,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
       });
       if (c.kind !== 'shard-only') continue; // type narrow
       if (!dryRun) {
+        throwIfCancelled(signal);
         await writeVaultFileBuffer(vaultRoot, c.path, c.shardContent);
         addedPaths.push(c.path);
       }
@@ -322,6 +330,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     for (const c of plan.differs) {
       index++;
       if (c.kind !== 'differs') continue;
+      if (!dryRun) throwIfCancelled(signal);
       const resolution = resolutions[c.path];
       if (resolution === undefined) {
         throw new ShardMindError(
@@ -379,6 +388,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
 
     // Finish each move once its new path holds what was decided (#179).
     for (const move of moves) {
+      if (!dryRun) throwIfCancelled(signal);
       if (!dryRun) await completeMove(vaultRoot, move, resolutions[move.to], addedPaths);
       summary.renamedFiles.push({ from: move.from, to: move.to });
     }
@@ -403,6 +413,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     };
 
     if (!dryRun) {
+      throwIfCancelled(signal);
       await initShardDir(vaultRoot);
       await cacheTemplates(vaultRoot, tempDir);
       await cacheManifest(vaultRoot, manifest, schema, tempDir);

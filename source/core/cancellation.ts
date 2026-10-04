@@ -32,15 +32,18 @@
  * every byte and the observer sees each chunk before Ink parses it. Outside
  * raw mode the kernel turns Ctrl+C into a real SIGINT, as before.
  *
- * Scope: this file is imported once at CLI startup and has no runtime
- * consumers beyond that. In a pipe the listener stays alive for the
- * lifetime of the process; in a TTY it comes and goes with raw mode.
+ * Scope: the bridge is installed once at CLI startup. In a pipe the
+ * listener stays alive for the lifetime of the process; in a TTY it comes
+ * and goes with raw mode. The executors import only `throwIfCancelled`
+ * (below), the check that stops a run's writes once Ctrl+C aborted it.
  *
  * Every Ctrl+C byte emits SIGINT. A repeat during a rollback is absorbed by
  * `useSigintRollback`, which runs once whatever the source (this bridge or
  * a kernel signal), so a second press never starts a second rollback or
  * cuts the first one short.
  */
+
+import { ShardMindError } from '../runtime/types.js';
 
 const ETX = 0x03;
 const ETX_CHAR = String.fromCharCode(ETX);
@@ -139,4 +142,19 @@ export function attachStdinCancellation(stdin: StdinLike, deps: CancellationDeps
   // case is the familiar "CLI hangs on exit" behavior we're trying to
   // avoid, and wrapper scripts can always close stdin to unstick it.
   stdin.unref?.();
+}
+
+/**
+ * Stop a run between two writes once Ctrl+C aborted `signal` (#249). Each
+ * executor calls this before every write and before the engine metadata,
+ * so the rollback that follows never races a write still in progress.
+ */
+export function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new ShardMindError(
+      'Cancelled.',
+      'CANCELLED',
+      'The run was stopped with Ctrl+C and rolled back.',
+    );
+  }
 }

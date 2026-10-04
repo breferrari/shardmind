@@ -515,6 +515,29 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     expect((await fsp.stat(path.join(vault, 'Theirs.md'))).isDirectory()).toBe(true);
   });
 
+  it('an install whose signal is aborted writes nothing and throws CANCELLED (#249)', async () => {
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+    const selections = defaultModuleSelections(schema);
+    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+    const abort = new AbortController();
+    abort.abort();
+    await expect(
+      runInstall({
+        vaultRoot: vault,
+        manifest,
+        schema,
+        tempDir: MINIMAL_SHARD,
+        resolved: RESOLVED,
+        tarballSha256: 'deadbeef',
+        values,
+        selections,
+        signal: abort.signal,
+      }),
+    ).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(await fsp.readdir(vault)).toEqual([]);
+  });
+
   it('rollback removes all written files and the .shardmind directory', async () => {
     const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
     const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));

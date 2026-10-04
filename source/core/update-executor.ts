@@ -25,6 +25,7 @@ import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
+import { throwIfCancelled } from './cancellation.js';
 import {
   assertRenameTargetFree,
   caseJournal,
@@ -74,6 +75,11 @@ export interface UpdateRunnerOptions {
   newTempDir: string;
   now?: Date;
   dryRun?: boolean;
+  /**
+   * Aborted on Ctrl+C (#249): checked before every write, so the run stops
+   * between two writes with `CANCELLED` and is rolled back once.
+   */
+  signal?: AbortSignal;
   /**
    * `--adopt-preexisting` (#61): a preexisting add-collision the user keeps
    * is tracked as their modified copy instead of being left untracked.
@@ -184,6 +190,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     newTempDir,
     now = new Date(),
     dryRun = false,
+    signal,
     adoptPreexisting = false,
     onProgress,
     onBackupReady,
@@ -234,6 +241,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     const renamedFolders = new Set<string>();
     if (!dryRun) {
       for (const move of folderMoves) {
+        throwIfCancelled(signal);
         if (await renameCaseInPlace(vaultRoot, move.from, move.to, null, journal)) renamedFolders.add(move.from);
       }
     }
@@ -271,6 +279,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     let index = 0;
     for (const action of plan.actions) {
       if (isDeleteAction(action)) continue;
+      if (!dryRun) throwIfCancelled(signal);
       await applyWriteAction(action, {
         vaultRoot,
         conflictResolutions,
@@ -288,6 +297,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     const written = new Set(summary.wroteFiles);
     for (const action of plan.actions) {
       if (action.renamedFrom === undefined) continue;
+      if (!dryRun) throwIfCancelled(signal);
       await completeRename(action, action.renamedFrom, {
         written,
         vaultRoot,
@@ -300,6 +310,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     }
     for (const action of plan.actions) {
       if (!isDeleteAction(action)) continue;
+      if (!dryRun) throwIfCancelled(signal);
       await applyDeleteAction(action, {
         vaultRoot,
         nextFiles,
@@ -349,6 +360,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     };
 
     if (!dryRun) {
+      throwIfCancelled(signal);
       await initShardDir(vaultRoot);
       await cacheTemplates(vaultRoot, newTempDir);
       await cacheManifest(vaultRoot, newManifest, newSchema, newTempDir);
