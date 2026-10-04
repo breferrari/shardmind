@@ -28,9 +28,10 @@ import fsp from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import type { HookSlot, ShardState } from '../runtime/types.js';
-import type { IgnoreFilter } from './shardmindignore.js';
+import { parseShardmindignore, type IgnoreFilter } from './shardmindignore.js';
+import { BOUNDARY_IGNORE_FILE } from '../runtime/vault-paths.js';
 import { isTier1Excluded } from './tier1.js';
-import { errnoCode } from '../runtime/errno.js';
+import { errnoCode, isEnoent } from '../runtime/errno.js';
 
 /**
  * `incomplete`: the personalize walk could not read some folders and found no
@@ -194,4 +195,43 @@ export function detectUnmanagedCreates(
   }
   if (unreadable.length > 0) return { slot: 'personalize', kind: 'incomplete', paths: unreadable };
   return null;
+}
+
+/** Two names no vault owner means to exclude: a list that matches both matches everything. */
+const PROBE_FILE = 'shardmind-boundary-probe.md';
+const PROBE_FOLDER = 'shardmind-boundary-probe';
+
+/**
+ * The vault owner's exclusions for the personalize boundary walk (#190), read
+ * from `.shardmind/boundary-ignore` with the `.shardmindignore` matcher. A
+ * missing file excludes nothing (`filter: null`). A file that cannot be read
+ * or parsed, or that matches every name at the vault root (which would switch
+ * the check off), is not applied: `filter` is null and `problem` says why,
+ * for the `HOOK_BOUNDARY_IGNORE_INVALID` warning.
+ */
+export async function loadBoundaryIgnore(
+  vaultRoot: string,
+): Promise<{ filter: IgnoreFilter | null; problem?: string }> {
+  let source: string;
+  try {
+    source = await fsp.readFile(path.join(vaultRoot, BOUNDARY_IGNORE_FILE), 'utf-8');
+  } catch (err) {
+    if (isEnoent(err)) return { filter: null };
+    return { filter: null, problem: `it could not be read (${errnoCode(err) ?? String(err)})` };
+  }
+  let filter: IgnoreFilter;
+  try {
+    filter = parseShardmindignore(source);
+  } catch (err) {
+    return { filter: null, problem: `it could not be parsed (${err instanceof Error ? err.message : String(err)})` };
+  }
+  if (filter.ignores(PROBE_FILE, false) && filter.ignores(PROBE_FOLDER, true)) {
+    return { filter: null, problem: 'it matches every name at the vault root, which would switch the check off' };
+  }
+  return { filter };
+}
+
+/** A filter that ignores what either one ignores. */
+export function eitherIgnores(a: IgnoreFilter, b: IgnoreFilter): IgnoreFilter {
+  return { ignores: (rel, isDir) => a.ignores(rel, isDir) || b.ignores(rel, isDir) };
 }
