@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (an adopt that cannot make its snapshot leaves no empty `.shardmind/` — #269)
+
+- **An adopt that fails before it starts, because its snapshot folder can't be created, no longer leaves an empty `.shardmind/backups/` behind.** It now removes the folders it made on the way, and update does the same. A `.shardmind/` that was already there, or that holds your files, stays.
+
 ### Internal (a real Ctrl+C mid-write in E2E — #186)
 
 - **Install, update and adopt are interrupted mid-write by a real SIGINT in the E2E suite**, on every OS (the stdin-ETX bridge on Windows). A test-only preload holds the CLI at a vault write; each run must exit 130 and leave the vault as it was.
