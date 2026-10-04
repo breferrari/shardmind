@@ -314,6 +314,34 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       }
     });
 
+    it('alternative modules: both selected is refused, either one alone plans cleanly (#240)', async () => {
+      const dir = path.join(os.tmpdir(), `shardmind-alt-${crypto.randomUUID()}`);
+      const shard = await makeShardSource(dir, {
+        'alt/start.md': 'simple\n',
+        'alt/Start.md.njk': 'fancy\n',
+      });
+      try {
+        const base = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+        const schema = {
+          ...base,
+          modules: {
+            ...base.modules,
+            simple: { label: 'Simple', paths: ['alt/start.md'], removable: true },
+            fancy: { label: 'Fancy', paths: ['alt/Start.md.njk'], removable: true },
+          },
+        } as typeof base;
+        const both = { ...defaultModuleSelections(schema), simple: 'included', fancy: 'included' } as const;
+        await expect(planOutputs(schema, shard, both, {})).rejects.toMatchObject({ code: 'OUTPUT_PATH_CLASH' });
+        for (const only of ['simple', 'fancy'] as const) {
+          const selections = { ...both, [only === 'simple' ? 'fancy' : 'simple']: 'excluded' } as const;
+          const { outputs } = await planOutputs(schema, shard, selections, {});
+          expect(outputs.filter((o) => o.outputPath.toLowerCase() === 'alt/start.md')).toHaveLength(1);
+        }
+      } finally {
+        await fsp.rm(dir, { recursive: true, force: true });
+      }
+    });
+
     it('planOutputs refuses a static file and an _each expansion that name one file (#240)', async () => {
       const dir = path.join(os.tmpdir(), `shardmind-each-${crypto.randomUUID()}`);
       const shard = await makeShardSource(dir, {

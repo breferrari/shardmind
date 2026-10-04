@@ -150,12 +150,11 @@ export async function lintShard(
     const a = clash.first.module ?? null;
     const b = clash.second.module ?? null;
     if (a !== null && b !== null && a !== b) {
-      const err = outputClashError(clash);
       findings.push({
         severity: 'warning',
         code: 'LINT_OUTPUT_CLASH_ACROSS_MODULES',
-        message: `${err.message} (modules '${a}' and '${b}')`,
-        hint: `Installing with both modules included is refused with OUTPUT_PATH_CLASH. Fine if the two modules are alternatives a user picks between; otherwise rename one file.`,
+        message: `Modules '${a}' and '${b}' clash: ${clash.first.origin} and ${clash.second.origin} both install to ${clash.at}`,
+        hint: `A user who selects both '${a}' and '${b}' is refused with OUTPUT_PATH_CLASH; either one alone installs. Fine if they are alternatives; otherwise rename one file.`,
       });
     } else {
       error(outputClashError(clash));

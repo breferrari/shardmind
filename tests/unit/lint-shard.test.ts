@@ -80,7 +80,9 @@ describe('lintShard (#34)', () => {
     await write('alt/Start.md.njk', 'fancy\n');
     const result = await lintShard(shard, {});
     expect(errors(result).filter((f) => f.code === 'OUTPUT_PATH_CLASH')).toEqual([]);
-    expect(warnings(result).map((f) => f.code)).toContain('LINT_OUTPUT_CLASH_ACROSS_MODULES');
+    const warning = warnings(result).find((f) => f.code === 'LINT_OUTPUT_CLASH_ACROSS_MODULES');
+    // The author can tell which pair of modules clashes.
+    expect(warning?.message).toMatch(/Modules '(simple|fancy)' and '(simple|fancy)' clash/);
   });
 
   it('reports an unparseable schema and stops there', async () => {
