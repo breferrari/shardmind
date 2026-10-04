@@ -21,8 +21,14 @@ import type {
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
+import {
+  createdFoldersRecord,
+  missingFolders,
+  recordCreatedFolders,
+  rollbackCreatedFolders,
+} from './created-folders.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
-import { pathExists, mapConcurrent } from './fs-utils.js';
+import { pathExists, mapConcurrent, toPosix } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { throwIfCancelled } from './run-cancel.js';
@@ -215,7 +221,15 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   try {
     if (!dryRun) {
       await snapshotForRollback(vaultRoot, plan, backupDir!);
-      await recordFolders(vaultRoot, touched, folderMoves, backupDir!);
+      // The folders on the way to every touched path that do not exist, and
+      // every new spelling of a folder renamed by case, so a rollback
+      // removes the ones the run created (#195, #258).
+      await recordCreatedFolders(
+        backupDir!,
+        await missingFolders(vaultRoot, [...touched.writes, ...touched.deletes], {
+          folders: folderMoves.map((move) => move.to),
+        }),
+      );
       // Report the backup dir to the caller before any writes happen,
       // once it holds the restore data. Progress only: the rollback is
       // this run's own catch (#249).
@@ -678,49 +692,6 @@ function folderChangesOf(pairs: ReadonlyArray<readonly [string, string]>): Array
   return [...byFrom.values()].sort((a, b) => a.from.split('/').length - b.from.split('/').length);
 }
 
-const FOLDERS_FILE = 'folders.json';
-
-/**
- * Record, before any write, which folders on the way to every path the run
- * touches already exist, so a rollback removes the ones the run created
- * (`<backupDir>/folders.json`). On a case-folding filesystem a folder under
- * another spelling counts as existing.
- */
-async function recordFolders(
-  vaultRoot: string,
-  touched: ReturnType<typeof pathsTheUpdateTouches>,
-  folderMoves: ReadonlyArray<{ from: string; to: string }>,
-  backupDir: string,
-): Promise<void> {
-  const folders = new Set<string>();
-  const addFolders = (rel: string, includeLast: boolean) => {
-    const segments = rel.split('/');
-    for (let i = 1; i < segments.length + (includeLast ? 1 : 0); i++) folders.add(segments.slice(0, i).join('/'));
-  };
-  for (const rel of [...touched.writes, ...touched.deletes]) addFolders(rel, false);
-  for (const move of folderMoves) addFolders(move.to, true);
-  const created = await mapConcurrent([...folders], SNAPSHOT_CONCURRENCY, async (rel) =>
-    (await pathExists(path.join(vaultRoot, rel))) ? null : rel,
-  );
-  await fsp.writeFile(
-    path.join(backupDir, FOLDERS_FILE),
-    JSON.stringify(created.filter((rel): rel is string => rel !== null)),
-    'utf-8',
-  );
-}
-
-/** Remove the folders the run created that are empty again, deepest first. */
-async function removeCreatedFolders(vaultRoot: string, backupDir: string): Promise<void> {
-  let created: string[];
-  try {
-    created = JSON.parse(await fsp.readFile(path.join(backupDir, FOLDERS_FILE), 'utf-8')) as string[];
-  } catch {
-    return;
-  }
-  created.sort((a, b) => b.split('/').length - a.split('/').length);
-  for (const rel of created) await fsp.rmdir(path.join(vaultRoot, rel)).catch(() => {});
-}
-
 async function snapshotForRollback(
   vaultRoot: string,
   plan: UpdatePlan,
@@ -837,9 +808,11 @@ export async function rollbackUpdate(
   const cacheDir = path.join(backupDir, 'cache');
   await restoreTree(cacheDir, vaultRoot, failures);
 
-  // Folders the run created (a rename's new folder on a case-sensitive
-  // filesystem, #195), once nothing is left in them.
-  await removeCreatedFolders(vaultRoot, backupDir);
+  // Folders the run created (a new file's folder, a rename's new folder on a
+  // case-sensitive filesystem, #195), once nothing is left in them (#258).
+  failures.push(
+    ...(await rollbackCreatedFolders(vaultRoot, backupDir, toPosix(vaultRoot, createdFoldersRecord(backupDir)))),
+  );
 
   return failures;
 }

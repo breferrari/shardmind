@@ -41,7 +41,7 @@ import {
   STATE_FILE,
   VALUES_FILE,
 } from '../runtime/vault-paths.js';
-import { mapConcurrent, pathExists } from './fs-utils.js';
+import { mapConcurrent, pathExists, toPosix } from './fs-utils.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { throwIfCancelled } from './run-cancel.js';
 import { assertRenameTargetFree, moveToFreePath } from './rename-migrations.js';
@@ -57,6 +57,12 @@ import {
 } from './state.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
 import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
+import {
+  createdFoldersRecord,
+  missingFolders,
+  recordCreatedFolders,
+  rollbackCreatedFolders,
+} from './created-folders.js';
 
 /** Cap on parallel snapshot copies — same budget update-executor uses. */
 const SNAPSHOT_CONCURRENCY = 16;
@@ -274,6 +280,17 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
   try {
     if (!dryRun) {
       await snapshotForRollback(vaultRoot, plan, resolutions, moves, backupDir!);
+      // The folders this adopt will create, so its rollback removes them and
+      // no other (#258).
+      await recordCreatedFolders(
+        backupDir!,
+        await missingFolders(vaultRoot, [
+          ...plan.shardOnly.map((c) => c.path),
+          // A differing file kept as the user's is never written.
+          ...plan.differs.filter((c) => resolutions[c.path] !== 'keep_mine').map((c) => c.path),
+          ...moves.map((move) => move.to),
+        ]),
+      );
       onBackupReady?.(backupDir!);
       // A move's new path is introduced by this run, whether it is written or
       // the old file moves there: registered before any write, so a failure or
@@ -588,6 +605,12 @@ export async function rollbackAdopt(
     }
   }
 
+  // The folders the adopt created, once empty again (#258). Read before the
+  // snapshot holding the record goes.
+  failures.push(
+    ...(await rollbackCreatedFolders(vaultRoot, backupDir, toPosix(vaultRoot, createdFoldersRecord(backupDir)))),
+  );
+
   // Remove what the adopt wrote under `.shardmind/` (state.json, the cached
   // manifest and schema, the templates cache, this run's snapshot) and
   // nothing else: `assertAdoptable` allows a `.shardmind/` without
@@ -596,8 +619,9 @@ export async function rollbackAdopt(
   // snapshot is kept when any part of the restore failed (a file, or a
   // folder it could not read): it then holds the only copy of those files.
   // `shard-values.yaml` is in `addedPaths` once the adopt has written it,
-  // and was removed with them above.
-  const restoreFailed = failures.some((f) => /^(restore|readdir) failed/.test(f.reason));
+  // and was removed with them above. The snapshot is kept, too, when its
+  // folder record could not be read: it is the only list of those folders.
+  const restoreFailed = failures.some((f) => /^(restore|readdir) failed|^folder record unreadable/.test(f.reason));
   for (const failure of await removeEngineWrites(vaultRoot, {
     snapshotDir: restoreFailed ? null : backupDir,
     removeEmptyDir: true,

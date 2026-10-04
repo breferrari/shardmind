@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (a failed adopt leaves no empty folders — #258)
+
+- **A failed or cancelled adopt now removes the folders it created.** It removed the files it wrote but left their folders behind, such as `.claude/` and `brain/`, empty. Install, update and adopt now track the folders a run creates the same way. A rollback removes those folders once they are empty again. A folder that was there before, or that holds your files, stays.
+
 ### Fixed (a reinstall removes the files it no longer writes — #228)
 
 - **Reinstalling a release that dropped files now removes them, unless you edited them.** A reinstall (`install --force`, or Reinstall at the prompt) left any file the old install wrote and the new one doesn't, such as an `_each` item you removed from the list. It was no longer tracked, so status and update treated it as yours. Now an untouched one is removed (and put back if the reinstall fails), and one you edited is kept as yours. The summary lists both.

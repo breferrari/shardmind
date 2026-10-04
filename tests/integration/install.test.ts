@@ -538,6 +538,22 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     expect(await fsp.readdir(vault)).toEqual([]);
   });
 
+  it('rollback reports a folder it created that rmdir refuses for another reason than holding files (#258)', async () => {
+    await fsp.mkdir(path.join(vault, 'made'));
+    const madeAbs = path.join(vault, 'made');
+    const realRmdir = fsp.rmdir;
+    const spy = vi.spyOn(fsp, 'rmdir').mockImplementation(async (p, o) => {
+      if (p === madeAbs) throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
+      return realRmdir(p, o);
+    });
+    try {
+      const failures = await rollbackInstall(vault, [], [], ['made']);
+      expect(failures).toEqual([{ path: 'made', reason: 'remove failed: simulated EBUSY' }]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('rollback removes all written files and the .shardmind directory', async () => {
     const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
     const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));

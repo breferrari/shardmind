@@ -35,6 +35,7 @@ import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths, ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
 import { throwIfCancelled } from './run-cancel.js';
 import { reasonOf, type RollbackFailure } from './rollback-report.js';
+import { missingFolders, removeCreatedFolders } from './created-folders.js';
 import {
   SHARDMIND_DIR,
   VALUES_FILE,
@@ -308,12 +309,14 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   const writtenPaths: string[] = [];
   const createdDirs: string[] = [];
   // Report a path before its write, with every folder the write will create,
-  // so a rollback removes exactly what this install made (#207, #215).
-  const knownDirs = new Set<string>();
+  // so a rollback removes exactly what this install made (#207, #215, #258).
+  // A folder an earlier write created exists by then, so it is never
+  // reported twice.
+  const folderSeen = new Map<string, boolean>();
   const recordWrite = async (rel: string): Promise<void> => {
     // Every write is recorded first, so this is the one place to stop (#249).
     throwIfCancelled(signal);
-    for (const dir of await missingAncestors(vaultRoot, rel, knownDirs)) {
+    for (const dir of await missingFolders(vaultRoot, [rel], { seen: folderSeen })) {
       createdDirs.push(dir);
       onDirCreated?.(dir);
     }
@@ -434,9 +437,10 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
  * restore any backups. Removes only what this install made: never
  * `.shardmind/` wholesale, and never a folder the user already had (#215).
  * Best-effort: it never throws. It returns what it could not undo (#247):
- * each backup it could not move back, with where that backup still is, and
- * each file it wrote but could not remove, so the caller reports the
- * rollback as incomplete.
+ * each backup it could not move back, with where that backup still is,
+ * each file it wrote but could not remove, and each folder it created that
+ * `rmdir` refused for a reason other than holding files (#258), so the
+ * caller reports the rollback as incomplete.
  *
  * `createdDirs` is what `runInstall` reported through `onDirCreated`; only
  * those folders are removed, and only when empty.
@@ -476,13 +480,9 @@ export async function rollbackInstall(
     failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
   }
 
-  for (const rel of deepestFirst(createdDirs)) {
-    try {
-      await fsp.rmdir(path.join(vaultRoot, rel));
-    } catch {
-      // non-empty (the user's files are in it) or already gone
-    }
-  }
+  // The folders it created, once empty again; one holding the user's files
+  // stays (#215, #258).
+  failures.push(...(await removeCreatedFolders(vaultRoot, createdDirs)));
 
   // Restore any backups last, so they land on paths that have been
   // freed by the file removal above.
@@ -500,34 +500,6 @@ export async function rollbackInstall(
 /** A vault-relative path in POSIX form, whichever separator it was built with. */
 function toPosixRel(rel: string): string {
   return rel.split(path.sep).join('/');
-}
-
-/**
- * The folders (POSIX, shallowest first) that writing `rel` will create.
- * Only ENOENT counts as missing: a folder `lstat` cannot read for another
- * reason (EACCES, a Windows lock) exists, and must never be recorded as
- * the install's to remove. `known` memoizes folders seen this run; each
- * one recorded here is created by the write that follows.
- */
-async function missingAncestors(vaultRoot: string, rel: string, known: Set<string>): Promise<string[]> {
-  const parts = toPosixRel(rel).split('/').slice(0, -1);
-  const missing: string[] = [];
-  let current = '';
-  for (const part of parts) {
-    current = current ? `${current}/${part}` : part;
-    if (known.has(current)) continue;
-    known.add(current);
-    if (missing.length > 0) {
-      missing.push(current);
-      continue;
-    }
-    try {
-      await fsp.lstat(path.join(vaultRoot, current));
-    } catch (err) {
-      if (isEnoent(err)) missing.push(current);
-    }
-  }
-  return missing;
 }
 
 async function writeVaultFile(

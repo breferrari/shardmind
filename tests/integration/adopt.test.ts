@@ -878,10 +878,65 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     }).catch((e: unknown) => e);
     expect(err).toMatchObject({ code: 'CANCELLED' });
     expect(await readState(vault)).toBeNull();
-    // Every file it wrote is gone. (The empty folders it made stay: adopt's
-    // rollback does not track folders yet, a separate gap.)
-    const entries = await fsp.readdir(vault, { recursive: true, withFileTypes: true });
-    expect(entries.filter((e) => e.isFile()).map((e) => e.name)).toEqual([]);
+    // Every file it wrote is gone, and so is every folder it made (#258).
+    expect(await fsp.readdir(vault)).toEqual([]);
+  });
+
+  it("a failed adopt removes the folders it created, never one that was there or holds the user's file (#258)", async () => {
+    const { manifest, schema } = await loadShard();
+    const selections = defaultModuleSelections(schema);
+    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+    // brain/ existed before, empty; .claude/ gets a user file during the run.
+    await fsp.mkdir(path.join(vault, 'brain'));
+    const adoptPlan = await classifyAdoption({
+      vaultRoot: vault,
+      schema,
+      manifest,
+      tempDir: MINIMAL_SHARD,
+      values: values as Record<string, unknown>,
+      selections,
+    });
+    const realWrite = fsp.writeFile;
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      // The last shard file fails, after the user dropped a note into .claude/.
+      if (file === path.join(vault, 'Home.md')) {
+        await realWrite(path.join(vault, '.claude', 'mine.md'), 'my note\n');
+        throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
+      }
+      return realWrite(file, data, opts);
+    });
+    try {
+      await expect(
+        runAdopt({
+          vaultRoot: vault,
+          manifest,
+          schema,
+          tempDir: MINIMAL_SHARD,
+          resolved: RESOLVED,
+          tarballSha256: 'deadbeef',
+          values: values as Record<string, unknown>,
+          selections,
+          plan: adoptPlan,
+          resolutions: {},
+        }),
+      ).rejects.toMatchObject({ code: 'ADOPT_WRITE_FAILED' });
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await fsp.readdir(vault)).sort()).toEqual(['.claude', 'brain']);
+    expect(await fsp.readdir(path.join(vault, '.claude'))).toEqual(['mine.md']);
+    expect(await fsp.readdir(path.join(vault, 'brain'))).toEqual([]);
+  });
+
+  it('rollbackAdopt keeps the snapshot when its folder record cannot be read, and names the record (#258)', async () => {
+    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
+    await fsp.mkdir(path.join(backupDir, 'files'), { recursive: true });
+    await fsp.writeFile(path.join(backupDir, 'folders.json'), '{truncated');
+    const failures = await rollbackAdopt(vault, backupDir, []);
+    expect(failures).toContainEqual(
+      expect.objectContaining({ path: '.shardmind/backups/adopt-isolated/folders.json' }),
+    );
+    expect(await fsp.readFile(path.join(backupDir, 'folders.json'), 'utf-8')).toBe('{truncated');
   });
 
   it('runAdopt with a zero-classification plan still writes engine metadata', async () => {

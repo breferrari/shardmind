@@ -207,6 +207,55 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     expect(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')).toBe(stateBefore);
   });
 
+  it('an update rolled back removes the folders it created for a new file (#258)', async () => {
+    const { state, oldValues, newManifest, newSchema } = await setUpUpdate({ bumpTo: '0.2.0' });
+    // The new release adds a file in folders the vault does not have yet.
+    await fsp.mkdir(path.join(newShard, 'Fresh', 'Deep'), { recursive: true });
+    await fsp.writeFile(path.join(newShard, 'Fresh', 'Deep', 'note.md'), 'new\n', 'utf-8');
+    const migration = applyMigrations(oldValues, state.version, newManifest.version, newSchema.migrations);
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift: await detectDrift(vault, state) },
+      values: { old: oldValues, new: migration.values },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: buildRenderContext(newManifest, migration.values, selections),
+      },
+      removedFileDecisions: {},
+    });
+    expect(plan.actions.some((a) => a.path === 'Fresh/Deep/note.md')).toBe(true);
+    // Cancelled right after the new file is written.
+    const abort = new AbortController();
+    // A static file is copied in, not written.
+    const realCopy = fsp.copyFile;
+    const spy = vi.spyOn(fsp, 'copyFile').mockImplementation(async (src, dst, mode) => {
+      await realCopy(src, dst, mode);
+      if (dst === path.join(vault, 'Fresh', 'Deep', 'note.md')) abort.abort();
+    });
+    try {
+      const err = await runUpdate({
+        vaultRoot: vault,
+        plan,
+        conflictResolutions: {},
+        currentState: state,
+        newManifest,
+        newSchema,
+        newValues: migration.values,
+        newSelections: selections,
+        resolved: { ...RESOLVED, version: newManifest.version },
+        tarballSha256: 'sha-0.2.0',
+        newTempDir: newShard,
+        signal: abort.signal,
+      }).catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: 'CANCELLED' });
+    } finally {
+      spy.mockRestore();
+    }
+    await expect(fsp.access(path.join(vault, 'Fresh'))).rejects.toThrow();
+  });
+
   it('silently overwrites a managed file when the shard version bumps with a template change', async () => {
     const newTemplate = [
       '---',
