@@ -123,6 +123,9 @@ Each authoring and CLI proposal is built, or declined with a reason that survive
 | ⬜ | Let the update prompt track a kept add-collision file per file | [#165](https://github.com/breferrari/shardmind/issues/165) |
 | ⬜ | Merge files with many repeated lines in less than cubic time | [#170](https://github.com/breferrari/shardmind/issues/170) |
 | ⬜ | Write --json output without terminal control codes in a TTY | [#198](https://github.com/breferrari/shardmind/issues/198) |
+| ⬜ | Decide whether adopt gets --skip-hooks | [#199](https://github.com/breferrari/shardmind/issues/199) |
+| ⬜ | Decide what a bare owner/repo install does while shardmind/registry is empty | [#200](https://github.com/breferrari/shardmind/issues/200) |
+| ⬜ | Decide who keeps .shardmind/logs/ out of a vault's git history | [#201](https://github.com/breferrari/shardmind/issues/201) |
 
 ## Phase 8 — release and test tooling
 
