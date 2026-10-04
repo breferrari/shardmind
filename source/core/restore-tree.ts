@@ -1,20 +1,30 @@
 /**
  * Put a snapshot back (#247, #264). Never throws: every file it cannot
  * restore or remove is collected as a `RollbackFailure`, so the ones before
- * it still reach the user.
+ * it still reach the user. Failure paths are POSIX, relative to the vault.
  *
  * - `restoreTree` copies the snapshot over `destRoot` and leaves whatever
  *   else is there. Update restores its `files/` snapshot over the vault
  *   root, which holds the user's own files too.
- * - `restoreDirExactly` makes a folder the run replaced whole equal to its
- *   snapshot: what the snapshot lacks is removed, and with no snapshot the
- *   folder is removed, since it did not exist before.
+ * - `restoreDirExactly` makes a folder the run replaced whole equal to a
+ *   snapshot of it that is known to be complete: what the snapshot lacks is
+ *   removed, and a symlink at a restored path is removed rather than
+ *   written through. Under a snapshot folder that cannot be read, nothing
+ *   is removed, since what it held is unknown.
  */
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { pathExists } from './fs-utils.js';
+import { errnoCode } from '../runtime/errno.js';
+import { removePath } from './fs-utils.js';
 import { reasonOf, type RollbackFailure } from './rollback-report.js';
+
+interface Listing {
+  files: string[];
+  dirs: string[];
+  /** Folders whose contents could not be read. */
+  unreadable: string[];
+}
 
 export async function restoreTree(
   srcRoot: string,
@@ -27,22 +37,9 @@ export async function restoreTree(
     label?: string;
   } = {},
 ): Promise<void> {
-  if (!(await pathExists(srcRoot))) return;
-  const skip = (opts.skip ?? []).map((p) => path.normalize(p));
-  const files = (await listTree(srcRoot, failures, opts.label)).files.filter(
-    (rel) => !skip.some((p) => rel === p || rel.startsWith(p + path.sep)),
-  );
-  for (const rel of files) {
-    const abs = path.join(srcRoot, rel);
-    const dst = path.join(destRoot, rel);
-    try {
-      await fsp.mkdir(path.dirname(dst), { recursive: true });
-      await fsp.copyFile(abs, dst);
-    } catch (err) {
-      // The snapshot is never removed, so `abs` is still there.
-      failures.push({ path: labelled(opts.label, rel), reason: `restore failed: ${reasonOf(err)}`, backup: abs });
-    }
-  }
+  const listing = await listTree(srcRoot, failures, opts.label, true, opts.skip);
+  if (!listing) return;
+  await copyAll(srcRoot, destRoot, listing.files, failures, opts.label);
 }
 
 export async function restoreDirExactly(
@@ -51,68 +48,132 @@ export async function restoreDirExactly(
   failures: RollbackFailure[],
   opts: { label?: string } = {},
 ): Promise<void> {
-  if (!(await pathExists(srcRoot))) {
-    try {
-      await fsp.rm(destRoot, { recursive: true, force: true });
-    } catch (err) {
-      failures.push({ path: opts.label ?? destRoot, reason: `remove failed: ${reasonOf(err)}` });
-    }
+  const want = await listTree(srcRoot, failures, opts.label, true);
+  if (!want) {
+    // The caller knows the folder did not exist before: remove it.
+    await removeLogged(destRoot, opts.label ?? '.', failures);
     return;
   }
-  const want = await listTree(srcRoot, failures, opts.label);
-  const have = (await pathExists(destRoot)) ? await listTree(destRoot, failures, opts.label) : { files: [], dirs: [] };
+  const have = (await listTree(destRoot, failures, opts.label, false)) ?? { files: [], dirs: [], unreadable: [] };
   const wantFiles = new Set(want.files);
   const wantDirs = new Set(want.dirs);
+  const unknown = (rel: string) => want.unreadable.some((d) => rel === d || rel.startsWith(d + path.sep));
+
   for (const rel of have.files) {
-    if (wantFiles.has(rel)) continue;
+    if (unknown(rel)) continue;
+    const abs = path.join(destRoot, rel);
+    // A file the snapshot lacks goes; one it has goes too if it is a
+    // symlink now, so the copy below writes a file, not through the link.
+    if (wantFiles.has(rel) && !(await isSymlink(abs))) continue;
+    await removeLogged(abs, labelled(opts.label, rel), failures);
+  }
+  // Deepest first, only folders the snapshot does not have.
+  for (const rel of [...have.dirs].sort((a, b) => b.length - a.length)) {
+    if (wantDirs.has(rel) || unknown(rel)) continue;
     try {
-      await fsp.rm(path.join(destRoot, rel), { force: true });
+      await fsp.rmdir(path.join(destRoot, rel));
     } catch (err) {
-      failures.push({ path: labelled(opts.label, rel), reason: `remove failed: ${reasonOf(err)}` });
+      if (errnoCode(err) !== 'ENOENT') {
+        failures.push({ path: labelled(opts.label, rel), reason: `remove failed: ${reasonOf(err)}` });
+      }
     }
   }
-  // Deepest first, and only folders the snapshot does not have; an emptied
-  // one goes, one still holding a file that could not be removed stays.
-  for (const rel of [...have.dirs].sort((a, b) => b.length - a.length)) {
-    if (wantDirs.has(rel)) continue;
-    await fsp.rmdir(path.join(destRoot, rel)).catch(() => {});
+  for (const rel of want.dirs) {
+    try {
+      await fsp.mkdir(path.join(destRoot, rel), { recursive: true });
+    } catch (err) {
+      failures.push({ path: labelled(opts.label, rel), reason: `restore failed: ${reasonOf(err)}`, backup: path.join(srcRoot, rel) });
+    }
   }
-  for (const rel of want.dirs) await fsp.mkdir(path.join(destRoot, rel), { recursive: true }).catch(() => {});
-  await restoreTree(srcRoot, destRoot, failures, opts.label === undefined ? {} : { label: opts.label });
+  await copyAll(srcRoot, destRoot, want.files, failures, opts.label);
 }
 
-/** Every file and folder under `root`, relative. An unreadable folder is a failure, and is skipped. */
+async function copyAll(
+  srcRoot: string,
+  destRoot: string,
+  files: readonly string[],
+  failures: RollbackFailure[],
+  label: string | undefined,
+): Promise<void> {
+  for (const rel of files) {
+    const abs = path.join(srcRoot, rel);
+    const dst = path.join(destRoot, rel);
+    try {
+      await fsp.mkdir(path.dirname(dst), { recursive: true });
+      await fsp.copyFile(abs, dst);
+    } catch (err) {
+      // The snapshot is never removed, so `abs` is still there.
+      failures.push({ path: labelled(label, rel), reason: `restore failed: ${reasonOf(err)}`, backup: abs });
+    }
+  }
+}
+
+/**
+ * Every file and folder under `root`, relative, or undefined when `root`
+ * does not exist. An unreadable folder is a failure, listed in `unreadable`;
+ * `isSnapshot` says whether its path is a backup worth naming.
+ */
 async function listTree(
   root: string,
   failures: RollbackFailure[],
   label: string | undefined,
-): Promise<{ files: string[]; dirs: string[] }> {
-  const files: string[] = [];
-  const dirs: string[] = [];
+  isSnapshot: boolean,
+  skip: readonly string[] = [],
+): Promise<Listing | undefined> {
+  try {
+    await fsp.lstat(root);
+  } catch (err) {
+    if (errnoCode(err) === 'ENOENT') return undefined;
+    failures.push({ path: label ?? '.', reason: `read failed: ${reasonOf(err)}`, ...(isSnapshot ? { backup: root } : {}) });
+    return { files: [], dirs: [], unreadable: [''] };
+  }
+  const skipped = skip.map((p) => path.normalize(p));
+  const listing: Listing = { files: [], dirs: [], unreadable: [] };
   const walk = async (dir: string): Promise<void> => {
     let entries;
     try {
       entries = await fsp.readdir(dir, { withFileTypes: true });
     } catch (err) {
-      failures.push({ path: labelled(label, path.relative(root, dir)) || '.', reason: `readdir failed: ${reasonOf(err)}`, backup: dir });
+      const rel = path.relative(root, dir);
+      listing.unreadable.push(rel);
+      failures.push({
+        path: labelled(label, rel) || '.',
+        reason: `readdir failed: ${reasonOf(err)}`,
+        ...(isSnapshot ? { backup: dir } : {}),
+      });
       return;
     }
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       const rel = path.relative(root, full);
+      if (skipped.some((p) => rel === p || rel.startsWith(p + path.sep))) continue;
       if (entry.isDirectory()) {
-        dirs.push(rel);
+        listing.dirs.push(rel);
         await walk(full);
       } else {
-        files.push(rel);
+        listing.files.push(rel);
       }
     }
   };
   await walk(root);
-  return { files, dirs };
+  return listing;
 }
 
+async function removeLogged(abs: string, label: string, failures: RollbackFailure[]): Promise<void> {
+  try {
+    // Retries Windows' transient EBUSY / EPERM / ENOTEMPTY.
+    await removePath(abs);
+  } catch (err) {
+    failures.push({ path: label, reason: `remove failed: ${reasonOf(err)}` });
+  }
+}
+
+async function isSymlink(abs: string): Promise<boolean> {
+  return fsp.lstat(abs).then((s) => s.isSymbolicLink(), () => false);
+}
+
+/** The vault-relative POSIX path of `rel` under `label`. */
 function labelled(label: string | undefined, rel: string): string {
-  if (!label) return rel;
-  return rel ? path.join(label, rel) : label;
+  const joined = label ? (rel ? path.join(label, rel) : label) : rel;
+  return joined.split(path.sep).join('/');
 }

@@ -83,6 +83,32 @@ describe('restoreDirExactly (#264)', () => {
   });
 });
 
+describe('restoreDirExactly, edge cases (#264)', () => {
+  const canSymlink = process.platform !== 'win32';
+
+  it.skipIf(!canSymlink)('replaces a symlink at a restored path with the file, never writing through it', async () => {
+    await write(snap(), 'a.njk', 'old a');
+    const outside = path.join(root, 'outside.txt');
+    await fsp.writeFile(outside, 'not ours');
+    await fsp.mkdir(dest(), { recursive: true });
+    await fsp.symlink(outside, path.join(dest(), 'a.njk'));
+    const failures: RollbackFailure[] = [];
+    await restoreDirExactly(snap(), dest(), failures);
+    expect(await fsp.readFile(outside, 'utf-8')).toBe('not ours');
+    expect((await fsp.lstat(path.join(dest(), 'a.njk'))).isSymbolicLink()).toBe(false);
+    expect(await fsp.readFile(path.join(dest(), 'a.njk'), 'utf-8')).toBe('old a');
+  });
+
+  it('reports failure paths as POSIX paths under the label', async () => {
+    await write(snap(), 'sub/a.njk', 'old');
+    // A file where the restore needs a folder: the copy into it fails.
+    await write(dest(), 'sub', 'a file in the way');
+    const failures: RollbackFailure[] = [];
+    await restoreTree(snap(), dest(), failures, { label: '.shardmind/templates' });
+    expect(failures.map((f) => f.path)).toEqual(['.shardmind/templates/sub/a.njk']);
+  });
+});
+
 describe('restoreTree', () => {
   it('copies the snapshot over and leaves files it does not hold (the vault root holds the user\'s files)', async () => {
     await write(snap(), 'note.md', 'old');

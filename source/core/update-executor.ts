@@ -752,15 +752,35 @@ async function snapshotForRollback(
     ),
     (async () => {
       const templatesSrc = path.join(vaultRoot, CACHED_TEMPLATES);
+      let existed = true;
       try {
         await fsp.cp(templatesSrc, path.join(cacheBackupDir, CACHED_TEMPLATES), {
           recursive: true,
         });
       } catch (err) {
         if (!isEnoent(err)) throw err;
+        existed = false;
       }
+      // Written last, once the copy is whole: the rollback restores the
+      // template cache exactly only when it knows the snapshot is (#264).
+      await fsp.writeFile(path.join(backupDir, TEMPLATES_SNAPSHOT_MARKER), JSON.stringify({ existed }));
     })(),
   ]);
+}
+
+/** Records whether `.shardmind/templates/` existed when the snapshot was taken (#264). */
+const TEMPLATES_SNAPSHOT_MARKER = 'templates-snapshot.json';
+
+/** The marker, or undefined when the snapshot never finished (or is unreadable). */
+async function readTemplatesMarker(backupDir: string): Promise<{ existed: boolean } | undefined> {
+  try {
+    const parsed = JSON.parse(await fsp.readFile(path.join(backupDir, TEMPLATES_SNAPSHOT_MARKER), 'utf-8')) as {
+      existed?: unknown;
+    };
+    return typeof parsed.existed === 'boolean' ? { existed: parsed.existed } : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function copyOptional(src: string, dst: string): Promise<void> {
@@ -807,13 +827,21 @@ export async function rollbackUpdate(
   await restoreTree(filesDir, vaultRoot, failures);
 
   const cacheDir = path.join(backupDir, 'cache');
-  await restoreTree(cacheDir, vaultRoot, failures, { skip: [CACHED_TEMPLATES] });
-  // `cacheTemplates` rewrote the template cache whole: replace it, so the
-  // new version's added templates go, and so does a cache there was none
-  // of before (#264).
-  await restoreDirExactly(path.join(cacheDir, CACHED_TEMPLATES), path.join(vaultRoot, CACHED_TEMPLATES), failures, {
-    label: CACHED_TEMPLATES,
-  });
+  // `cacheTemplates` rewrote the template cache whole: restore it exactly,
+  // so the new version's added templates go, and so does a cache there was
+  // none of before (#264). Only when the snapshot says it is complete: a
+  // snapshot cut short by a failed copy restores by copying over, as it
+  // never touches templates it did not hold.
+  const marker = await readTemplatesMarker(backupDir);
+  await restoreTree(cacheDir, vaultRoot, failures, marker === undefined ? {} : { skip: [CACHED_TEMPLATES] });
+  if (marker !== undefined) {
+    await restoreDirExactly(
+      marker.existed ? path.join(cacheDir, CACHED_TEMPLATES) : path.join(backupDir, 'no-templates-cache'),
+      path.join(vaultRoot, CACHED_TEMPLATES),
+      failures,
+      { label: CACHED_TEMPLATES },
+    );
+  }
 
   // Folders the run created (a new file's folder, a rename's new folder on a
   // case-sensitive filesystem, #195), once nothing is left in them (#258).
