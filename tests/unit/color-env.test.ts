@@ -76,11 +76,11 @@ describe('load order in source/cli.ts', () => {
 
   it('imports statically only modules that cannot load chalk', () => {
     expect(staticImports('cli.ts').sort()).toEqual(
-      ['./core/cancellation.js', './core/color-env.js', './core/json-run.js', 'node:module'].sort(),
+      ['./core/cancellation.js', './core/color-env.js', './core/json-run.js', './core/stdout-closed.js', 'node:module'].sort(),
     );
   });
 
-  it.each(['core/cancellation.ts', 'core/color-env.ts', 'core/json-run.ts'])('%s imports nothing beyond node built-ins', (rel) => {
+  it.each(['core/cancellation.ts', 'core/color-env.ts', 'core/json-run.ts', 'core/stdout-closed.ts'])('%s imports nothing beyond node built-ins', (rel) => {
     expect(staticImports(rel).filter((spec) => !spec.startsWith('node:'))).toEqual([]);
   });
 

@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { installStdinCancellation } from './core/cancellation.js';
 import { applyNoColor } from './core/color-env.js';
 import { isJsonRun, markNonInteractive } from './core/json-run.js';
+import { exitQuietlyWhenStdoutCloses } from './core/stdout-closed.js';
 
 // NO_COLOR turns colour off unless FORCE_COLOR is set (#37). chalk, which Ink
 // colours through, reads the environment once when it is first imported, so
@@ -9,17 +10,17 @@ import { isJsonRun, markNonInteractive } from './core/json-run.js';
 // dynamically below, never statically above this line.
 applyNoColor(process.env);
 
+// A reader that closes stdout early (`shardmind --json | head -1`) ends the run
+// quietly with 141 once it has finished, not with a bug report (#252).
+// Installed before anything can write.
+exitQuietlyWhenStdoutCloses(process);
+
 // A --json run writes in a terminal exactly what it writes piped (#198; see
 // core/json-run.ts), so this too runs before anything loads Ink. stdin is
 // left alone: the stdin SIGINT bridge reads a non-TTY stdin directly, which
 // on a real terminal would stop a backgrounded run (SIGTTIN).
 const jsonRun = isJsonRun(process.argv.slice(2));
 if (jsonRun) markNonInteractive(process.stdout);
-
-// A reader that closes stdout early (`shardmind --json | head -1`) ends the run
-// quietly with 141 once it has finished, not with a bug report (#252).
-const { exitQuietlyWhenStdoutCloses } = await import('./core/stdout-closed.js');
-exitQuietlyWhenStdoutCloses(process);
 
 // A throw that escapes every command (a command module that fails to load, a
 // rejection nobody awaited) is printed as plain text, since Ink may not be

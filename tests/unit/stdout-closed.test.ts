@@ -27,16 +27,29 @@ function fakeProcess() {
 }
 
 describe('exitQuietlyWhenStdoutCloses', () => {
-  it('does not end the run at EPIPE: later writes are dropped, their callbacks still called', () => {
+  it('does not end the run at EPIPE: later writes are dropped, their callbacks still called', async () => {
     const { proc, stdout, written } = fakeProcess();
     exitQuietlyWhenStdoutCloses(proc);
     stdout.emit('error', epipe());
     let called = false;
     const returned = stdout.write('after the pipe closed', () => (called = true));
-    expect(written).toEqual([]);
+    // On a later tick, as a stream calls it.
+    expect(called).toBe(false);
+    await new Promise((resolve) => process.nextTick(resolve));
     expect(called).toBe(true);
+    expect(written).toEqual([]);
     expect(returned).toBe(true);
     expect(proc.exitCode).toBeUndefined();
+  });
+
+  it('exits 141 when the run exits before the stream has emitted its EPIPE', () => {
+    // A failed write's callback runs before 'error' is emitted; a run that
+    // exits from that callback must still exit 141.
+    const { proc, stdout } = fakeProcess();
+    exitQuietlyWhenStdoutCloses(proc);
+    Object.assign(stdout, { errored: epipe() });
+    proc.emit('exit', 0);
+    expect(proc.exitCode).toBe(STDOUT_CLOSED_EXIT_CODE);
   });
 
   it('exits 141 when the run would have exited 0', () => {

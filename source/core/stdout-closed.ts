@@ -8,18 +8,24 @@
  * by `head` ends: quietly, with 141 (128 + SIGPIPE). The run itself is not
  * cut short: an update or adopt in its write pass finishes, or rolls back,
  * through its own paths, so a closed pipe never leaves a half-written vault.
+ *
+ * Imports nothing, so `cli.ts` can load it statically and install it before
+ * anything writes.
  */
 
 import type { EventEmitter } from 'node:events';
-import { errnoCode } from '../runtime/errno.js';
 
 /** 128 + SIGPIPE: what a shell reports for a process a closed pipe stopped. */
 export const STDOUT_CLOSED_EXIT_CODE = 141;
 
 type Write = (chunk: string | Uint8Array, ...rest: unknown[]) => boolean;
 
+function isEpipe(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'EPIPE';
+}
+
 export function exitQuietlyWhenStdoutCloses(proc: {
-  stdout: EventEmitter & { write: Write | NodeJS.WritableStream['write'] };
+  stdout: EventEmitter & { write: Write | NodeJS.WritableStream['write']; errored?: unknown };
   on(event: 'exit', listener: (code: number) => void): unknown;
   exitCode?: number | string | null | undefined;
 }): void {
@@ -28,18 +34,23 @@ export function exitQuietlyWhenStdoutCloses(proc: {
     // Once closed, the stream reports the rest of its failed writes too.
     if (closed) return;
     // Rethrown, it stays an uncaught exception, which the crash handler reports.
-    if (errnoCode(error) !== 'EPIPE') throw error;
+    if (!isEpipe(error)) throw error;
     closed = true;
     const dropped: Write = (_chunk, ...rest) => {
-      // Ink waits on a write's callback before it exits.
+      // Ink waits on a write's callback before it exits. Called on a later
+      // tick, as a stream calls it.
       const callback = rest.find((r): r is () => void => typeof r === 'function');
-      callback?.();
+      if (callback) process.nextTick(callback);
       return true;
     };
     proc.stdout.write = dropped as NodeJS.WritableStream['write'];
   });
   proc.on('exit', (code) => {
+    // The stream calls a failed write's callback before it emits 'error', so
+    // a run that exits from that callback has not seen the event yet; the
+    // stream's recorded error says the pipe closed all the same.
+    const pipeClosed = closed || isEpipe(proc.stdout.errored);
     // A run that failed on its own keeps its code.
-    if (closed && code === 0) proc.exitCode = STDOUT_CLOSED_EXIT_CODE;
+    if (pipeClosed && code === 0) proc.exitCode = STDOUT_CLOSED_EXIT_CODE;
   });
 }
