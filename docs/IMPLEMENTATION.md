@@ -1413,7 +1413,7 @@ export function applyNoColor(env: NodeJS.ProcessEnv): void;
 1. If `FORCE_COLOR` is set, even to an empty string, return. The explicit opt-in wins, and chalk reads it as before.
 2. If `NO_COLOR` is set to a non-empty value, set `env.FORCE_COLOR = '0'`, which chalk reads as level 0. An empty `NO_COLOR` does nothing (no-color.org).
 
-Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` loads `pastel` and `./cli-options.js` with `await import()` after it, because a static import would load Ink, and with it chalk, before any statement runs. Hook subprocesses inherit the resulting `FORCE_COLOR=0`. `--json` output is `JSON.stringify`, written outside Ink, and carries no ANSI whatever the environment.
+Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` loads `pastel` and `./cli-options.js` with `await import()` after it, because a static import would load Ink, and with it chalk, before any statement runs. Hook subprocesses inherit the resulting `FORCE_COLOR=0`. `--json` output is `JSON.stringify`, written outside Ink, so a piped `--json` run carries no ANSI whatever the colour variables say. With stdout a terminal, Ink still writes cursor codes around it (#198).
 
 ---
 
