@@ -2,6 +2,7 @@ import fsp from 'node:fs/promises';
 import { isUtf8 } from 'node:buffer';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { errnoCode } from '../runtime/errno.js';
 
 export async function pathExists(absolutePath: string): Promise<boolean> {
   try {
@@ -9,6 +10,33 @@ export async function pathExists(absolutePath: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** Errors a recursive remove hits while another process (a virus scanner, a search indexer) holds a file in the tree. */
+const TRANSIENT_RM_CODES = new Set(['ENOTEMPTY', 'EBUSY', 'EPERM']);
+
+/**
+ * Remove a file or folder tree; a path that does not exist is not an error.
+ * On Windows a scanner or indexer can still hold a file just written, and the
+ * remove then fails with ENOTEMPTY, EBUSY or EPERM until it lets go (#191):
+ * those are retried up to `maxRetries` times, `retryDelay` ms apart and
+ * growing, and the original error is thrown if they do not clear. Any other
+ * error is thrown at once.
+ */
+export async function removePath(
+  absolutePath: string,
+  { maxRetries = 5, retryDelay = 100 }: { maxRetries?: number; retryDelay?: number } = {},
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fsp.rm(absolutePath, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = errnoCode(err);
+      if (attempt >= maxRetries || code === undefined || !TRANSIENT_RM_CODES.has(code)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, retryDelay * (attempt + 1)));
+    }
   }
 }
 
