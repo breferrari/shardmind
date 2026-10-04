@@ -851,7 +851,10 @@ describe('update applies rename migrations (#178)', () => {
       expect(await vaultTree()).toEqual(before);
     });
 
-    it("a failure between a folder's two renames leaves the vault as it was", async () => {
+    it("a failure between a folder's two renames leaves the vault as it was", async (ctx) => {
+      // Only a case-folding filesystem renames the folder in place; on a
+      // case-sensitive one the two spellings are two folders and no hop exists.
+      if (!(await foldsCase())) ctx.skip();
       await install();
       await write('brain/mine.md', 'mine\n');
       const before = await vaultTree();
