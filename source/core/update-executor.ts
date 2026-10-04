@@ -21,6 +21,7 @@ import type {
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
+import { missingFolders, recordCreatedFolders, readCreatedFolders, removeCreatedFolders } from './created-folders.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
@@ -678,13 +679,11 @@ function folderChangesOf(pairs: ReadonlyArray<readonly [string, string]>): Array
   return [...byFrom.values()].sort((a, b) => a.from.split('/').length - b.from.split('/').length);
 }
 
-const FOLDERS_FILE = 'folders.json';
-
 /**
- * Record, before any write, which folders on the way to every path the run
- * touches already exist, so a rollback removes the ones the run created
- * (`<backupDir>/folders.json`). On a case-folding filesystem a folder under
- * another spelling counts as existing.
+ * Record, before any write, the folders on the way to every path the run
+ * touches that do not exist, and every new spelling of a folder renamed by
+ * case, so a rollback removes the ones the run created (#195, #258). One
+ * mechanism with install and adopt (`created-folders.ts`).
  */
 async function recordFolders(
   vaultRoot: string,
@@ -692,33 +691,10 @@ async function recordFolders(
   folderMoves: ReadonlyArray<{ from: string; to: string }>,
   backupDir: string,
 ): Promise<void> {
-  const folders = new Set<string>();
-  const addFolders = (rel: string, includeLast: boolean) => {
-    const segments = rel.split('/');
-    for (let i = 1; i < segments.length + (includeLast ? 1 : 0); i++) folders.add(segments.slice(0, i).join('/'));
-  };
-  for (const rel of [...touched.writes, ...touched.deletes]) addFolders(rel, false);
-  for (const move of folderMoves) addFolders(move.to, true);
-  const created = await mapConcurrent([...folders], SNAPSHOT_CONCURRENCY, async (rel) =>
-    (await pathExists(path.join(vaultRoot, rel))) ? null : rel,
-  );
-  await fsp.writeFile(
-    path.join(backupDir, FOLDERS_FILE),
-    JSON.stringify(created.filter((rel): rel is string => rel !== null)),
-    'utf-8',
-  );
-}
-
-/** Remove the folders the run created that are empty again, deepest first. */
-async function removeCreatedFolders(vaultRoot: string, backupDir: string): Promise<void> {
-  let created: string[];
-  try {
-    created = JSON.parse(await fsp.readFile(path.join(backupDir, FOLDERS_FILE), 'utf-8')) as string[];
-  } catch {
-    return;
-  }
-  created.sort((a, b) => b.split('/').length - a.split('/').length);
-  for (const rel of created) await fsp.rmdir(path.join(vaultRoot, rel)).catch(() => {});
+  const created = await missingFolders(vaultRoot, [...touched.writes, ...touched.deletes], {
+    folders: folderMoves.map((move) => move.to),
+  });
+  await recordCreatedFolders(backupDir, created);
 }
 
 async function snapshotForRollback(
@@ -837,9 +813,13 @@ export async function rollbackUpdate(
   const cacheDir = path.join(backupDir, 'cache');
   await restoreTree(cacheDir, vaultRoot, failures);
 
-  // Folders the run created (a rename's new folder on a case-sensitive
-  // filesystem, #195), once nothing is left in them.
-  await removeCreatedFolders(vaultRoot, backupDir);
+  // Folders the run created (a new file's folder, a rename's new folder on a
+  // case-sensitive filesystem, #195), once nothing is left in them (#258).
+  try {
+    failures.push(...(await removeCreatedFolders(vaultRoot, await readCreatedFolders(backupDir))));
+  } catch (err) {
+    failures.push({ path: 'folders.json', reason: `folder record unreadable: ${reasonOf(err)}` });
+  }
 
   return failures;
 }
