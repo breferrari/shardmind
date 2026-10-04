@@ -81,7 +81,7 @@ Thrown by `source/core/download.ts`.
 
 **Meaning:** The downloaded bytes weren't a valid tar archive.
 
-**Typical cause:** The URL didn't point at a tarball, GitHub served a redirect page, or the archive is corrupted.
+**Typical cause:** The URL didn't point at a tarball, GitHub served a redirect page, or the archive is corrupted. Also raised for an entry whose declared size is not a number (#32), which only a malformed or crafted archive has.
 
 **Remedy:** Open the tarball URL in a browser to see what's actually served. Verify the tag exists.
 
@@ -95,7 +95,7 @@ Thrown by `source/core/download.ts`.
 
 ### `DOWNLOAD_LIMIT_INVALID`
 
-**Meaning:** `SHARDMIND_MAX_SHARD_SIZE` or `SHARDMIND_MAX_SHARD_ENTRIES` is set to something that is not a positive whole number (with an optional `K`/`M`/`G` suffix for the size). It is refused rather than ignored, so a typo never silently removes or changes a limit.
+**Meaning:** `SHARDMIND_MAX_SHARD_SIZE` or `SHARDMIND_MAX_SHARD_ENTRIES` is set to something that is not a positive whole number (with an optional `K`/`M`/`G` suffix for the size). It is refused rather than ignored, so a typo never silently removes or changes a limit. A variable set to an empty string counts as invalid: unset it instead.
 
 **Remedy:** Fix or unset the variable.
 

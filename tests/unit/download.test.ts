@@ -5,6 +5,7 @@ import { createReadStream } from 'node:fs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { downloadShard } from '../../source/core/download.js';
 import * as tar from 'tar';
+import zlib from 'node:zlib';
 
 const FIXTURE_TARBALL = path.resolve('tests/fixtures/shards/minimal-shard.tar.gz');
 
@@ -292,6 +293,39 @@ describe('downloadShard', () => {
       await expect(downloadShard('https://example.com/tarball')).rejects.toMatchObject({
         code: 'SHARD_TOO_LARGE',
         message: expect.stringMatching(/entries/),
+      });
+      expect(await leftovers()).toEqual([]);
+    });
+
+    it('refuses an entry whose pax size is not a number, instead of losing count (#32)', async () => {
+      process.env['SHARDMIND_MAX_SHARD_SIZE'] = '4K';
+      // Hand-built: a pax header that sets `size=abc`, then a 64 KiB entry.
+      // A non-numeric pax size must not turn the byte count into a string
+      // that later entries slip past.
+      const block = (fields: ConstructorParameters<typeof tar.Header>[0]) => {
+        const h = new tar.Header(fields);
+        h.encode();
+        return h.block!;
+      };
+      const pad = (b: Buffer) => Buffer.concat([b, Buffer.alloc((512 - (b.length % 512)) % 512)]);
+      const file = (name: string, body: Buffer) => [
+        block({ path: name, type: 'File', size: body.length, mode: 0o644, mtime: new Date(0) }),
+        pad(body),
+      ];
+      const pax = Buffer.from('12 size=abc\n');
+      const archive = Buffer.concat([
+        ...file('shard/.shardmind/shard.yaml', Buffer.from('apiVersion: v1\nname: x\nnamespace: t\nversion: 0.1.0\n')),
+        ...file('shard/.shardmind/shard-schema.yaml', Buffer.from('schema_version: 1\nvalues: {}\ngroups: []\n')),
+        block({ path: 'shard/PaxHeader/big.bin', type: 'ExtendedHeader', size: pax.length, mode: 0o644, mtime: new Date(0) }),
+        pad(pax),
+        ...file('shard/big.bin', Buffer.alloc(64 * 1024)),
+        Buffer.alloc(1024),
+      ]);
+      const tgz = path.join(privateTmp, 'pax.tar.gz');
+      await fs.writeFile(tgz, zlib.gzipSync(archive));
+      globalThis.fetch = vi.fn().mockResolvedValue(createMockResponse(tgz));
+      await expect(downloadShard('https://example.com/tarball')).rejects.toMatchObject({
+        code: expect.stringMatching(/^(SHARD_TOO_LARGE|DOWNLOAD_INVALID_TARBALL)$/),
       });
       expect(await leftovers()).toEqual([]);
     });

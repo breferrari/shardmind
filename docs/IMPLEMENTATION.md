@@ -329,6 +329,8 @@ interface TempShard {
 - Network failure → `DOWNLOAD_HTTP_ERROR` with the underlying message.
 - Empty body → `DOWNLOAD_HTTP_ERROR`.
 - Tarball corrupted → `DOWNLOAD_INVALID_TARBALL`.
+- Extraction would pass `SHARDMIND_MAX_SHARD_SIZE` (256 MiB) or `SHARDMIND_MAX_SHARD_ENTRIES` (100,000), counted from each entry's declared size before its body is written → `SHARD_TOO_LARGE`; an entry whose declared size is not a number → `DOWNLOAD_INVALID_TARBALL`. Temp dir removed (#32).
+- An override that is not a positive whole number → `DOWNLOAD_LIMIT_INVALID`, before any network or disk work.
 - Missing `.shardmind/shard.yaml` → `DOWNLOAD_MISSING_MANIFEST`.
 - Missing `.shardmind/shard-schema.yaml` → `DOWNLOAD_MISSING_SCHEMA`.
 - Disk full, or any other error from the fetch-hash-extract pipeline or from `tar` → `DOWNLOAD_INVALID_TARBALL` (with the underlying message). Only a failure of the initial temp-dir `mkdir` propagates as the raw OS error.

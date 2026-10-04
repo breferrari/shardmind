@@ -173,30 +173,50 @@ async function fetchAndExtract(
     // compressed archive (a decompression bomb) stops before filling the disk.
     let bytes = 0;
     let entries = 0;
+    let stopped = false;
+    const stop = (err: ShardMindError): false => {
+      if (!stopped) extractor.abort(err);
+      stopped = true;
+      return false;
+    };
     const extractor = tar.x({
       strip: 1,
       C: tempDir,
       filter: (_path, entry) => {
+        if (stopped) return false;
         entries += 1;
-        bytes += 'size' in entry ? entry.size : 0;
+        // A pax `size` that is not a number stays a string in node-tar; added
+        // to the count it would turn it into a string every later entry
+        // compares past. Such an entry is refused.
+        const size: unknown = 'size' in entry ? entry.size : 0;
+        if (typeof size !== 'number' || !Number.isFinite(size) || size < 0) {
+          return stop(
+            new ShardMindError(
+              `Shard archive entry ${String(_path)} declares no valid size`,
+              'DOWNLOAD_INVALID_TARBALL',
+              'The archive is malformed or crafted; do not install it.',
+            ),
+          );
+        }
+        bytes += size;
         const tripped =
           bytes > limits.bytes ? `${limits.bytes} bytes` : entries > limits.entries ? `${limits.entries} entries` : null;
         if (tripped === null) return true;
-        extractor.abort(
+        return stop(
           new ShardMindError(
             `Shard archive is larger than the limit of ${tripped}`,
             'SHARD_TOO_LARGE',
             'Raise SHARDMIND_MAX_SHARD_SIZE or SHARDMIND_MAX_SHARD_ENTRIES only for a shard you trust. See docs/ERRORS.md#shard_too_large.',
           ),
         );
-        return false;
       },
     });
     await pipeline(nodeStream, hashTap, extractor, { signal });
   } catch (err) {
     if (signal.aborted) throw new DownloadCancelledError();
     await safeCleanup(tempDir);
-    if (err instanceof ShardMindError && err.code === 'SHARD_TOO_LARGE') throw err;
+    // The extraction's own refusals (a limit, a malformed entry) keep their code.
+    if (err instanceof ShardMindError) throw err;
     const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(
       `Downloaded archive is not a valid tarball: ${message}`,
