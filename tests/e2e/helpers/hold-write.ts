@@ -38,7 +38,9 @@ export function holdWrite(opts: HoldWriteOptions): void {
   injectFaults({
     beforeWrite: {
       nth: opts.nth,
-      under: opts.under,
+      // The CLI writes through its real working directory: on macOS the temp
+      // folder is a symlink (/var → /private/var), so match on the real path.
+      under: fs.realpathSync.native(opts.under),
       hook: () => {
         fs.writeFileSync(opts.marker, '');
         return released;
