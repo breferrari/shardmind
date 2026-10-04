@@ -37,3 +37,30 @@ export function isJsonRun(argv: readonly string[]): boolean {
 export function markNonInteractive(stream: { isTTY?: boolean }): void {
   Object.defineProperty(stream, 'isTTY', { value: false, configurable: true, writable: true });
 }
+
+type Write = (chunk: string | Uint8Array, ...rest: unknown[]) => boolean;
+
+/**
+ * Keeps a `--json` document's single trailing newline (#231). At unmount Ink
+ * in non-interactive mode writes its last frame plus `'\n'`; under --json the
+ * frame is empty, so a lone `'\n'` followed the document. Once a write has
+ * carried content, a later write of exactly `'\n'` is dropped (its callback
+ * still fires, since Ink waits on it before exiting). Nothing else is touched.
+ */
+export function dropTrailingBlankWrites(stream: Pick<NodeJS.WritableStream, 'write'>): void {
+  const write = stream.write.bind(stream) as Write;
+  let wroteContent = false;
+  const filtered: Write = (chunk, ...rest) => {
+    const isNewline = typeof chunk === 'string' ? chunk === '\n' : chunk.length === 1 && chunk[0] === 0x0a;
+    if (wroteContent && isNewline) {
+      const callback = rest.find((r): r is () => void => typeof r === 'function');
+      callback?.();
+      return true;
+    }
+    // Decoded only until the document starts, not for every later write.
+    if (!wroteContent) wroteContent = (typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8')).trim() !== '';
+    return write(chunk, ...rest);
+  };
+  // `write` is overloaded; the filter forwards every overload's arguments as is.
+  stream.write = filtered as NodeJS.WritableStream['write'];
+}

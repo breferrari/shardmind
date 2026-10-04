@@ -79,6 +79,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **A crash outside any command is reported the same way.** An error that escapes every command, for example a part of shardmind that fails to load, used to print Node's raw stack trace. Now it prints the message, the report link and the stack, and exits 1. An error while a screen draws, which showed Ink's own error box and exited 0, now shows the same report and exits 1. Ctrl+C still exits 130.
 - `--json`: the `error` object gains `stack`. It holds the stack trace for a bug and is `null` for every other error. For a problem with your machine, `hint` says what to do; `code` stays `null`, as for any error outside shardmind's error registry.
 
+### Fixed (`--json` trailing newline — #231)
+
+- **Every `--json` document ends with exactly one newline.** `update`, `adopt` and `shardmind --json` used to write an extra blank line after the document, so a byte-exact comparison or a line-based reader saw an empty last line.
+
 ### Changed (`_each` files from a string list — #227)
 
 - **An `_each` template now names each file after its list item when the list holds strings or numbers.** A `list` value entered in the wizard is a list of strings, and every item used to be written to the same `<folder>/unknown.md`, so only the last one survived. Now `people: [Alice, Bob]` writes `people/Alice.md` and `people/Bob.md`. Object items are still named by `slug`, else `name`.

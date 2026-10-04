@@ -148,7 +148,7 @@ Each authoring and CLI proposal is built, or declined with a reason that survive
 | ⬜ | Decide what a bare owner/repo install does while shardmind/registry is empty | [#200](https://github.com/breferrari/shardmind/issues/200) |
 | ⬜ | Decide who keeps .shardmind/logs/ out of a vault's git history | [#201](https://github.com/breferrari/shardmind/issues/201) |
 | ✅ | Show a stack trace and a report link for an unexpected error | [#225](https://github.com/breferrari/shardmind/issues/225) |
-| ⬜ | End every --json document with a single newline | [#231](https://github.com/breferrari/shardmind/issues/231) |
+| ✅ | End every --json document with a single newline | [#231](https://github.com/breferrari/shardmind/issues/231) |
 | ⬜ | Refuse a second shardmind run on a vault while one is in progress | [#253](https://github.com/breferrari/shardmind/issues/253) |
 
 ## Phase 8 — release and test tooling
