@@ -118,6 +118,8 @@ export interface UpdateSummary {
   conflictsKeptMine: number;
   conflictsSkipped: number;
   conflictsAcceptedNew: number;
+  /** Resolved in the user's editor (#50). */
+  conflictsEdited: number;
   autoMergeStats: MergeStats;
   wroteFiles: string[];
   deletedFiles: string[];
@@ -253,6 +255,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       conflictsKeptMine: 0,
       conflictsSkipped: 0,
       conflictsAcceptedNew: 0,
+      conflictsEdited: 0,
       autoMergeStats: { linesUnchanged: 0, linesAutoMerged: 0 },
       wroteFiles: [],
       deletedFiles: [],
@@ -490,7 +493,15 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         outputPath: action.path,
         action: action.kind,
       });
-      if (resolution === 'accept_new') {
+      if (typeof resolution === 'object') {
+        // Edited in the user's editor (#50): their text, written as text
+        // (an edit is never offered for a binary file), and tracked as
+        // their modified copy at the shard's hash, the §4.7 baseline (#150).
+        if (!ctx.dryRun) await writeAction(ctx.vaultRoot, { path: action.path, content: resolution.content });
+        ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'modified');
+        ctx.summary.wroteFiles.push(action.path);
+        ctx.summary.conflictsEdited++;
+      } else if (resolution === 'accept_new') {
         if (!ctx.dryRun) {
           // Copy-origin: writeAction copies the bytes; a UTF-8 write of
           // `newContent` mangles binary (#63).

@@ -245,6 +245,42 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     expect(await read(HOME)).toContain('My own welcome line.');
   });
 
+  // #50: the user resolved the conflict in their editor.
+  describe('edited in the editor', () => {
+    const V2 = welcome('Welcome to your vault, {{ user_name }}! (v2)');
+
+    it('writes the edit and records the file modified at the shard render, not the edit (#150)', async () => {
+      await install();
+      await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.');
+      const shard2 = await shardAt('0.2.0', V2);
+      const { result } = await update(shard2, { [HOME]: { kind: 'edited', content: 'Hand-merged by me.\n' } });
+      expect(await read(HOME)).toBe('Hand-merged by me.\n');
+      const entry = await recorded(HOME);
+      expect(entry.ownership).toBe('modified');
+      expect(entry.rendered_hash).not.toBe(sha256('Hand-merged by me.\n'));
+      expect(result.summary.conflictsEdited).toBe(1);
+      expect(result.summary.wroteFiles).toContain(HOME);
+    });
+
+    it('keeps the edit through the next update that changes the template, merging instead of replacing', async () => {
+      await install();
+      await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.');
+      await update(await shardAt('0.2.0', V2), { [HOME]: { kind: 'edited', content: (await read(HOME)) + '\nmy hand-merged line\n' } });
+      await update(await shardAt('0.3.0', welcome('Welcome to your vault, {{ user_name }}! (v3)')));
+      expect(await read(HOME)).toContain('my hand-merged line');
+    });
+
+    it('a dry run writes neither the edit nor state', async () => {
+      await install();
+      await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.');
+      const before = await read(HOME);
+      const stateBefore = await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8');
+      await update(await shardAt('0.2.0', V2), { [HOME]: { kind: 'edited', content: 'not written\n' } }, true);
+      expect(await read(HOME)).toBe(before);
+      expect(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')).toBe(stateBefore);
+    });
+  });
+
   it('a file kept with skip survives the next update that does not change its template', async () => {
     await install();
     await editFile(HOME, 'Welcome to your vault, Alice.', 'My own welcome line.');
