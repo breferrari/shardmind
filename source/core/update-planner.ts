@@ -216,7 +216,12 @@ export interface PlanUpdateInput {
   removedFileDecisions: Record<string, 'delete' | 'keep'>;
 }
 
-export type ConflictResolution = 'accept_new' | 'keep_mine' | 'skip';
+/**
+ * `keep_and_track` (#165) is keep mine that also tracks a preexisting
+ * add-collision as the user's modified copy, for that file alone; on a file
+ * already tracked it is the same as `keep_mine`.
+ */
+export type ConflictResolution = 'accept_new' | 'keep_mine' | 'keep_and_track' | 'skip';
 
 export interface SchemaAdditions {
   /** Required value keys in the new schema that are missing from current values. */

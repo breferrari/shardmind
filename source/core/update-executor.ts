@@ -507,16 +507,17 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         // modified at the NEW RENDER's hash: recording the user's hash
         // would make the next drift read their bytes as engine-owned and
         // overwrite them silently (#150).
-        if (action.preexisting && !ctx.adoptPreexisting) {
+        if (action.preexisting && !ctx.adoptPreexisting && resolution !== 'keep_and_track') {
           // Left untracked; it will be raised again next update (#61).
           delete ctx.nextFiles[action.path];
           ctx.summary.keptUntracked.push(action.path);
         } else {
-          // A modified file — or, with --adopt-preexisting, the user's own
-          // file at a newly added path, now tracked as their modified copy.
+          // A modified file — or the user's own file at a newly added path,
+          // tracked as their modified copy by --adopt-preexisting or by
+          // "Keep mine and track it" for this file (#165).
           ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'modified');
         }
-        if (resolution === 'keep_mine') ctx.summary.conflictsKeptMine++;
+        if (resolution === 'keep_mine' || resolution === 'keep_and_track') ctx.summary.conflictsKeptMine++;
         else ctx.summary.conflictsSkipped++;
       }
       ctx.summary.conflictsResolved++;
