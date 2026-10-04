@@ -1408,7 +1408,7 @@ Honours `NO_COLOR` (#37). Ink colours every `<Text color>` and `dimColor` throug
 
 ```typescript
 export function applyNoColor(env: NodeJS.ProcessEnv): void;
-export function stripSgr(text: string): string;
+export function sanitizeHookText(text: string, keepSgr: boolean): string;
 ```
 
 And in `source/components/hook-output.ts`, the display wrapper (it reads chalk's level, so it lives outside `core/`):
@@ -1423,7 +1423,14 @@ export function hookOutputForDisplay(text: string): string;
 
 `applyNoColor` writes `FORCE_COLOR=0` into `process.env`, so every child process, hook subprocesses included, sees `FORCE_COLOR` set although the user set only `NO_COLOR`. chalk, Node's `getColorDepth` and the common colour libraries read `'0'` as off. A tool that only tests whether `FORCE_COLOR` is present would turn colour on. The env route is kept rather than setting `chalk.level` in-process, because it reaches every chalk instance and the hook subprocesses.
 
-`hookOutputForDisplay` reads `chalk.level` (chalk is a direct dependency for this, pinned to Ink's ^5 range so the tree holds one copy). It strips when the level is 0, so hook output is coloured exactly when our own output is, whatever heuristics chalk applies (TERM, CI vendors, `FORCE_COLOR` parsing). It strips before the summary trims or checks for emptiness, and the live tail strips only the lines it shows. `stripSgr` removes SGR sequences only: CSI (`ESC [` or U+009B), parameters of digits, `;` and `:` (truecolor's colon form), then final `m`. A lone ESC, an unterminated CSI and every other sequence are left as they are. Non-colour control sequences in hook output are #204. `hookOutputForDisplay` is what `HookProgress` and `HookSummarySection` render: hook output (shard code) with its own colour codes dropped when ours are off.
+`hookOutputForDisplay` is `sanitizeHookText(text, chalk.level > 0)`, and it is what `HookProgress` and `HookSummarySection` render. Those two components are the only places hook output reaches the user: hooks run with piped stdio, `--json` never carries hook output, and the on-disk log (`.shardmind/logs/<slot>.log`, the raw bytes, the full record) is named but never printed. Reading `chalk.level` (chalk is a direct dependency for this, pinned to Ink's ^5 range so the tree holds one copy) keeps hook colour exactly in step with our own, whatever heuristics chalk applies (TERM, CI vendors, `FORCE_COLOR` parsing). The summary sanitizes before it trims or checks for emptiness, and the live tail sanitizes only the lines it shows.
+
+`sanitizeHookText` (#204) keeps hook output to text. A hook is shard code, often third-party, and terminal control sequences in its output could set the window title, write the clipboard (OSC 52), render a link whose text hides its target (OSC 8) or corrupt the frame. Ink 7 already drops non-SGR CSI and non-link OSC from `Text`, but not OSC 8 or C0 controls, and the engine does not rely on Ink for this:
+
+1. `\r\n` is a newline. A lone `\r` rewrites the line, as a terminal shows a progress bar: of each line, only the text after its last `\r` is kept.
+2. SGR (`CSI` with parameters of digits, `;` and `:`, final `m`) is kept when `keepSgr`, else removed.
+3. Removed: every other CSI (`ESC [` or U+009B, parameter bytes 0x30–0x3F, intermediate bytes 0x20–0x2F, final byte 0x40–0x7E); OSC (`ESC ]` or U+009D) through BEL or ST (`ESC \` or U+009C); DCS, SOS, PM and APC (`ESC P`, `ESC X`, `ESC ^`, `ESC _` and U+0090, U+0098, U+009E, U+009F) through ST; other escapes (`ESC`, optional bytes 0x20–0x2F, a final 0x30–0x7E); C0 controls except `\t` and `\n`; DEL; other C1 controls (U+0080–U+009F).
+4. Unterminated sequences cannot swallow output. A lone ESC is removed by itself. An OSC, DCS, SOS, PM or APC with no terminator loses only its introducer, and its payload stays as inert text. An unterminated CSI loses its introducer and parameter bytes.
 
 Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` loads `pastel` and `./cli-options.js` with `await import()` after it, because a static import would load Ink, and with it chalk, before any statement runs. Hook subprocesses inherit the resulting `FORCE_COLOR=0`. `--json` output is `JSON.stringify`, written outside Ink, so a piped `--json` run carries no ANSI whatever the colour variables say. With stdout a terminal, Ink still writes cursor codes around it (#198).
 
