@@ -998,7 +998,7 @@ rollbackInstall(vaultRoot: string, writtenPaths: string[], backups?: BackupRecor
 - **`backupCollisions` is transactional**: when a rename throws, every earlier rename in the call is moved back, so the vault is as it was before the call. A rename-back that fails leaves the content at its backup path, and the `BACKUP_FAILED` hint names that path so the user can move it back. Exception: `uniqueBackupPath` runs outside that `try`, so when it runs out of names (`BACKUP_FAILED`, no free name up to `.999`) the earlier renames in the call are not walked back (defect, #209). An interrupted loop (`shouldStop`) returns the moves made so far; `onMoved` has already registered each one for the SIGINT handler.
 - **`rollbackInstall(vaultRoot, writtenPaths, backups)`** is best effort and swallows every error (the primary failure is already being reported): unlink each written path deepest-first; `rmdir` each parent directory of a written path deepest-first (only empty ones go); remove `.shardmind/` entirely; then `restoreBackups(backups)` last, so backups land on paths the removals freed. `restoreBackups` removes whatever is at the original path and renames the backup back, per entry; failures are collected and returned, not thrown.
 - **Point of no return**: the command layer rolls back only when `runInstall` throws (and not in dry run). Once `runInstall` returns, the install stands; a later failure is reported, not rolled back, because the old install is already gone. (State.json alone is not the line: `writeValuesFile` runs after `writeState` and can still throw `VALUES_FILE_COLLISION`, which rolls back.) A SIGINT during the install calls `rollbackInstall` with the live `onFileWritten` / `onMoved` lists.
-- **Current behaviour on a throw from `runInstall`** (defect, #207): the command layer calls `rollbackInstall` with an empty written list, because `use-install-machine` assigns `written` only after `runInstall` returns. Backups and set-aside paths are restored and `.shardmind/` is removed, but files already written stay in the vault.
+- **On a throw from `runInstall`**, the command layer rolls back every path `runInstall` reported through `onFileWritten` (each is reported just before its write, so a partly written file is included), then restores backups and set-aside paths (#207). It clears the rollback guard first, so a Ctrl+C during that rollback does not start a second one.
 
 **Error cases**:
 - `VAULT_PATH_UNSAFE`: a planned output, an `_each` output, or one of the engine's own paths is a symlink, sits under a symlinked folder, is a hard-linked file, or exists only under a different case (§4.20).
@@ -1772,7 +1772,7 @@ If install fails mid-render (e.g., template error on file 23 of 47):
 3. Show error with the specific template that failed
 4. Exit cleanly — vault is in pre-install state
 
-That is the intent. Today the error path (a throw from `runInstall`) restores backups and removes `.shardmind/` but leaves the files already written, because it rolls back with an empty written list (defect, #207; see §4.11b). A SIGINT rollback does delete them.
+The error path (a throw from `runInstall`) and a SIGINT rollback both remove every file the install wrote, through the same `rollbackPartialInstall` (#207; see §4.11b).
 
 ---
 
