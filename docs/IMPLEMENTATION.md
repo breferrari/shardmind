@@ -1739,7 +1739,7 @@ The status command takes no lock. Its update-check cache write never creates `.s
 
 **Known limits.**
 - Staleness is judged by PID on the same host, so runs must share a PID namespace. Two containers that share a hostname and a bind-mounted vault, but not a PID namespace, are not supported.
-- An empty or cut-off lock (a run killed between create and write) is never taken over automatically. The error says it is safe to delete.
+- An empty or cut-off lock (a run killed between create and write) is never taken over automatically. An empty one is refused with "An empty .shardmind.lock was left by a crashed run; delete it if no shardmind is running"; a cut-off one with the unreadable-lock message, whose hint names both files as safe to delete.
 
 `commands/hooks/use-vault-lock.ts` wraps it for the three machines:
 - `take()` at the start of the run effect (not under `--dry-run`). A stale takeover's note goes through Ink's `useStderr`.

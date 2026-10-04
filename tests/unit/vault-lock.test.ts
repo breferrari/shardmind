@@ -136,7 +136,8 @@ describe('acquireVaultLock (#253)', () => {
       err = e;
     }
     expect(err).toMatchObject({ code: 'VAULT_LOCKED' });
-    expect((err as { hint?: string }).hint).toMatch(/safe to delete/);
+    expect((err as Error).message).toBe('An empty .shardmind.lock was left by a crashed run; delete it if no shardmind is running');
+    expect((err as { hint?: string }).hint).toContain('.shardmind.lock.takeover');
     expect(await fsp.readFile(lockPath(), 'utf-8')).toBe('');
   });
 

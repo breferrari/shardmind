@@ -90,7 +90,7 @@ export function acquireVaultLock(
     if (created instanceof Error) continue; // EPERM: on Windows, a delete still pending.
     const found = inspect(file);
     if (found.kind === 'none') continue;
-    if (found.kind !== 'holder') throw lockedError(undefined, mine.hostname);
+    if (found.kind !== 'holder') throw lockedError(undefined, mine.hostname, found.empty === true);
     if (!isStale(found.holder)) throw lockedError(found.holder, mine.hostname);
     if (removeStale(vaultRoot, found.holder, mine, isStale)) tookOver = found.holder;
   }
@@ -161,7 +161,11 @@ function removeStale(
   }
 }
 
-type Inspection = { kind: 'none' } | { kind: 'holder'; holder: VaultLockInfo } | { kind: 'unreadable' };
+type Inspection =
+  | { kind: 'none' }
+  | { kind: 'holder'; holder: VaultLockInfo }
+  /** `empty`: a zero-byte file, the mark of a run killed between create and write. */
+  | { kind: 'unreadable'; empty?: boolean };
 
 function inspect(file: string): Inspection {
   let text: string;
@@ -171,6 +175,7 @@ function inspect(file: string): Inspection {
   } catch (err) {
     return errnoCode(err) === 'ENOENT' ? { kind: 'none' } : { kind: 'unreadable' };
   }
+  if (text.trim() === '') return { kind: 'unreadable', empty: true };
   try {
     const parsed = JSON.parse(text) as Partial<VaultLockInfo>;
     if (
@@ -231,8 +236,15 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
-function lockedError(holder: VaultLockInfo | undefined, hostname: string): ShardMindError {
+function lockedError(holder: VaultLockInfo | undefined, hostname: string, empty = false): ShardMindError {
   const hint = `Wait for that run to finish, then run again. If no shardmind process is running (it crashed, or the lock was synced or committed into the vault), ${LOCK_FILE} (and ${LOCK_TAKEOVER_FILE}, if present) in the vault folder is safe to delete.`;
+  if (empty) {
+    return new ShardMindError(
+      `An empty ${LOCK_FILE} was left by a crashed run; delete it if no shardmind is running`,
+      'VAULT_LOCKED',
+      `It is in the vault folder. A run writes its lock in an instant, so an empty one is almost always left over; ${LOCK_TAKEOVER_FILE}, if present, is safe to delete with it.`,
+    );
+  }
   if (!holder) {
     return new ShardMindError(`The vault is locked by ${LOCK_FILE}, which could not be read as a shardmind lock`, 'VAULT_LOCKED', hint);
   }

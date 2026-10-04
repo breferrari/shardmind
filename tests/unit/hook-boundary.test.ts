@@ -179,6 +179,7 @@ describe('snapshotUnmanaged', () => {
   it("never reports the engine's run lock at the vault root (#253)", async () => {
     await write('Home.md');
     await write('.shardmind.lock');
+    await write('.shardmind.lock.takeover');
     const walk = await snapshotUnmanaged(dir, EMPTY_IGNORE);
     expect(walk).toEqual(snap(['Home.md']));
   });

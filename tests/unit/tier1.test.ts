@@ -29,6 +29,7 @@ describe('Tier 1 exclusion set', () => {
     it('excludes the run lock at the root, so no shard can ship one (#253)', () => {
       expect(isTier1Excluded('.shardmind.lock')).toBe(true);
       expect(isTier1Excluded('.SHARDMIND.LOCK')).toBe(true);
+      expect(isTier1Excluded('.shardmind.lock.takeover')).toBe(true);
       expect(isTier1Excluded('notes/.shardmind.lock')).toBe(false);
     });
 

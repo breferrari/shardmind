@@ -118,6 +118,12 @@ describe('findUnsafeVaultPaths (#163)', () => {
     expect((err as ShardMindError).message).toContain('.shardmind.lock (symlink)');
   });
 
+  it.skipIf(!canSymlink)('checks the takeover guard at the vault root too (#253)', async () => {
+    await fsp.symlink(path.join(outside, 'y'), path.join(vault, '.shardmind.lock.takeover'));
+    const err = await assertSafeVaultPaths(vault, []).catch((e: unknown) => e);
+    expect((err as ShardMindError).message).toContain('.shardmind.lock.takeover (symlink)');
+  });
+
   it.skipIf(!caseFolds)('flags a deleted file whose name on disk differs only in case', async () => {
     await fsp.writeFile(path.join(vault, 'foo.md'), 'renamed by the user');
     expect(await findUnsafeVaultPaths(vault, [], ['Foo.md'])).toEqual([{ path: 'Foo.md', reason: 'case-mismatch' }]);
