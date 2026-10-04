@@ -71,6 +71,7 @@ export type ErrorCode =
   | 'DOWNLOAD_MISSING_SCHEMA'
   | 'SHARD_TOO_LARGE'
   | 'DOWNLOAD_LIMIT_INVALID'
+  | 'VALIDATE_TARGET_INVALID'
 
   // Templating / rendering
   | 'RENDER_TEMPLATE_ERROR'

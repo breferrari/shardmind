@@ -74,6 +74,20 @@ describe('lintShard (#34)', () => {
     expect(errors(wrongType)[0]!.message).toMatch(/qmd_enabled/);
   });
 
+  it('stops at a failed computed default instead of echoing it as an error per template', async () => {
+    await edit('.shardmind/shard-schema.yaml', (s) =>
+      s.replace('groups:', '  broken_default:\n    type: string\n    message: "Broken"\n    default: "{{ nosuchvalue | nosuchfilter }}"\n    group: setup\n\ngroups:'),
+    );
+    const result = await lintShard(shard, {});
+    expect(errors(result).map((f) => f.code)).toEqual(['COMPUTED_DEFAULT_FAILED']);
+  });
+
+  it('stops at invalid values instead of rendering every template with them', async () => {
+    await write('brain/Uses Purpose.md.njk', '{{ vault_purpose | nosuchfilter }}\n');
+    const result = await lintShard(shard, { values: { vault_purpose: 'not-an-option' } });
+    expect(errors(result).map((f) => f.code)).toEqual(['VALUES_INVALID']);
+  });
+
   it('reports a supplied key the schema does not declare', async () => {
     const result = await lintShard(shard, { values: { usr_name: 'typo' } });
     expect(errors(result).map((f) => f.code)).toEqual(['VALUES_FILE_INVALID']);
@@ -119,5 +133,15 @@ describe('parseValidateArgv (#34)', () => {
     expect(parseValidateArgv(['shard', '--json'])).toEqual({ target: 'shard' });
     expect(parseValidateArgv(['--values', 'v.yaml', 'shard'])).toEqual({ target: 'shard', valuesFile: 'v.yaml' });
     expect(parseValidateArgv(['shard', '--values=v.yaml', '--verbose'])).toEqual({ target: 'shard', valuesFile: 'v.yaml' });
+    expect(parseValidateArgv(['--json', '--', '--weird-name'])).toEqual({ target: '--weird-name' });
+    expect(() => parseValidateArgv(['--values'])).toThrow(expect.objectContaining({ code: 'VALIDATE_TARGET_INVALID' }));
+    expect(() => parseValidateArgv(['--values', '--json'])).toThrow(expect.objectContaining({ code: 'VALIDATE_TARGET_INVALID' }));
+  });
+
+  it('refuses a path-shaped target that is missing or a file, never looking it up as a reference', async () => {
+    const { validateShard } = await import('../../source/core/validate-shard.js');
+    await expect(validateShard(path.join(root, 'nope'), {})).rejects.toMatchObject({ code: 'VALIDATE_TARGET_INVALID' });
+    await expect(validateShard('./nope', {})).rejects.toMatchObject({ code: 'VALIDATE_TARGET_INVALID' });
+    await expect(validateShard(path.join(shard, 'CLAUDE.md'), {})).rejects.toMatchObject({ code: 'VALIDATE_TARGET_INVALID' });
   });
 });

@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp } from 'ink';
 import zod from 'zod';
 import { Spinner } from '../components/ui.js';
 import { updateCheckOption } from './hooks/update-check-option.js';
 import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 import { resolveEngineVersion } from './hooks/cli-version.js';
+import { useSigintRollback } from './hooks/shared.js';
 import { validateShard, type ValidateReport } from '../core/validate-shard.js';
 import { ShardMindError } from '../runtime/types.js';
 
@@ -40,10 +41,25 @@ export default function Validate({ args, options }: Props) {
   const { exit } = useApp();
   const banner = useSelfUpdateBanner({ updateCheck });
   const [phase, setPhase] = useState<Phase>({ kind: 'checking' });
+  // A downloaded shard's cleanup, registered before the fetch so a Ctrl+C
+  // mid-download removes the temp dir before exiting 130 (#57).
+  const cleanupRef = useRef<(() => Promise<void>) | null>(null);
+  useSigintRollback({
+    isActive: () => cleanupRef.current !== null,
+    rollback: async () => {
+      await cleanupRef.current?.();
+    },
+  });
 
   useEffect(() => {
     let live = true;
-    validateShard(target, { ...(valuesFile ? { valuesFile } : {}), engineVersion: resolveEngineVersion() }).then(
+    validateShard(target, {
+      ...(valuesFile ? { valuesFile } : {}),
+      engineVersion: resolveEngineVersion(),
+      onTempDir: (cleanup) => {
+        cleanupRef.current = cleanup;
+      },
+    }).then(
       (report) => {
         if (!live) return;
         if (report.errors > 0) process.exitCode = 1;

@@ -1598,9 +1598,6 @@ Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` 
 
 ---
 
-## 5. Runtime Module: `shardmind/runtime`
-
-
 ### 4.22 `lint-shard.ts`
 
 Check a shard directory the way install would, collecting every finding (#34; #35's pre-install check calls the same function). Pure of Ink; never runs shard code.
@@ -1610,7 +1607,7 @@ interface LintFinding { severity: 'error' | 'warning'; code: string; message: st
 lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: string }): Promise<{ findings: LintFinding[] }>
 ```
 
-1. `parseManifest`; on a `ShardMindError`, record it and stop (nothing after can run). With `engineVersion`, `assertEngineCompatible`, recorded.
+1. `parseManifest`; on a `ShardMindError`, record it and stop (nothing after can run). Steps 3 and 4 stop the same way after a failed computed default or invalid values, so one root cause is not echoed as an error per template. With `engineVersion`, `assertEngineCompatible`, recorded.
 2. `parseSchema`; on error, record and stop.
 3. Values: `opts.values` over each value's default, then `resolveComputedDefaults`. Every value declares a default (`parseSchema` refuses one that does not), so no value is made up. `buildValuesValidator(schema)` on the result; failures recorded.
 4. `resolveModules(schema, every module included, shardDir)`; on error, record and stop.
@@ -1656,6 +1653,9 @@ Build zod schema from `ShardSchema` (same logic as `schema.ts:buildValuesValidat
 6. Return `{ valid, noteType, missing, extra }`
 
 ---
+
+## 5. Runtime Module: `shardmind/runtime`
+
 
 ## 6. Ink Components
 

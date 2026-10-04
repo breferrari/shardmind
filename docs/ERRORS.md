@@ -99,6 +99,12 @@ Thrown by `source/core/download.ts`.
 
 **Remedy:** Fix or unset the variable.
 
+### `VALIDATE_TARGET_INVALID`
+
+**Meaning:** `shardmind validate` was given a path that is a file, or a path that does not exist, or `--values` with no file. A target spelled as a path (`./shard`, `/abs/path`, `..\\x`) is never looked up as a shard reference, so a typo gets this error instead of a registry lookup.
+
+**Remedy:** Pass the shard's folder (the one holding `.shardmind/shard.yaml`), or a reference such as `github:owner/repo#branch`.
+
 ### `DOWNLOAD_MISSING_MANIFEST`
 
 **Meaning:** The extracted tarball has no `shard.yaml` at its root.

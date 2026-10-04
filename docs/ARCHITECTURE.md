@@ -975,7 +975,7 @@ Implementation modules: `source/core/adopt-planner.ts` (IMPLEMENTATION §4.17), 
 
 ### 10.5b `shardmind validate [dir | shard]` — Check a Shard Before Publishing
 
-For shard authors: finds what would break an install before a user hits it (#34). The target is a local shard directory (default `.`) or any shard reference `install` accepts, downloaded through the same path (`downloadShard`, including its size and entry limits, #32) into a temporary directory that is removed on every exit, error included.
+For shard authors: finds what would break an install before a user hits it (#34). The target is a local shard directory (default `.`) or any shard reference `install` accepts, downloaded through the same path (`downloadShard`, including its size and entry limits, #32) into a temporary directory that is removed on every exit, error and Ctrl+C included. A reference whose manifest or schema cannot be loaded fails in that download, as it does for install, and is reported as `ok: false` rather than as findings. A target spelled as a path that is missing or is a file is refused (`VALIDATE_TARGET_INVALID`), never looked up as a reference.
 
 It runs install's own steps in check mode (`lintShard`, `core/lint-shard.ts`, which #35's pre-install check reuses) and collects every finding instead of stopping at the first: the manifest and schema parse, the engine-version requirement, the values, module resolution with every module included, and a render of every template. **It never runs shard code**: no hook slot executes, for a local directory or a downloaded shard.
 

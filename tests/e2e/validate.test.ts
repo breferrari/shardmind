@@ -140,6 +140,12 @@ describe('shardmind validate (#34)', () => {
     expect((await fs.readdir(tmp)).filter((n) => n.startsWith('shardmind-'))).toEqual([]);
   });
 
+  it('prints help for --help even with --json', async () => {
+    const result = await run(['validate', '--help', '--json']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/Usage: shardmind validate/);
+  });
+
   it('reports a reference it cannot fetch as ok: false and exits 1', async () => {
     const result = await run(['validate', 'github:acme/no-such-shard', '--json']);
     expect(result.status).toBe(1);

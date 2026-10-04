@@ -83,14 +83,21 @@ export async function lintShard(
       hint: 'Remove it, or fix its name to match a key under `values`.',
     });
   }
-  let values: Record<string, unknown> = { ...(opts.values ?? {}) };
+  // Validated without the undeclared keys, so each is reported once.
+  let values: Record<string, unknown> = Object.fromEntries(
+    Object.entries(opts.values ?? {}).filter(([key]) => key in schema.values),
+  );
   for (const [key, def] of Object.entries(schema.values)) {
     if (values[key] === undefined && def.default !== undefined && !isComputed(def.default)) values[key] = def.default;
   }
+  // A failed computed default leaves later values unset, and invalid values
+  // would fail every template that uses them: stop at the root cause rather
+  // than list its echoes.
   try {
     values = resolveComputedDefaults(schema, values);
   } catch (err) {
     error(err);
+    return done();
   }
   const parsed = buildValuesValidator(schema).safeParse(values);
   if (!parsed.success) {
@@ -101,6 +108,7 @@ export async function lintShard(
         message: `Value '${issue.path.join('.')}' is invalid: ${issue.message}`,
       });
     }
+    return done();
   }
 
   const selections: ModuleSelections = Object.fromEntries(Object.keys(schema.modules).map((id) => [id, 'included']));
