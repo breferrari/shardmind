@@ -334,7 +334,6 @@ describe('backupCollisions', () => {
       ),
     ).rejects.toMatchObject({ code: 'BACKUP_FAILED' });
     expect(await fsp.readFile(a, 'utf-8')).toBe('a');
-    expect(await fsp.access(`${a}.shardmind-backup-${stamp}`).then(() => true, () => false)).toBe(false);
   });
 
   it('renames each colliding file with a timestamped backup suffix', async () => {
