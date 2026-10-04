@@ -1647,7 +1647,7 @@ lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: st
 5. `renderFile` for every render entry with `buildRenderContext(manifest, values, selections)`; each failure is recorded with the entry's output path.
 6. `findOutputClashes` over `plannedOutputRefs` (`output-clash.ts`), with `_each` lists expanded with these values (#240). Every clash is reported: across two different modules as the warning `LINT_OUTPUT_CLASH_ACROSS_MODULES` (they may be alternatives a user picks between), otherwise as an `OUTPUT_PATH_CLASH` error. #35's install check counts a clash, like an invalid value, as the prefill's when it disappears with the defaults alone.
 7. Warnings: a module whose paths match no file in the walk; a group no value belongs to.
-8. `external_tools`: a `when` that names no `boolean` value in the schema is an `EXTERNAL_TOOL_WHEN_INVALID` error. No tool is ever run (#138).
+8. `external_tools`: a `when` that names no `boolean` value in the schema is an `EXTERNAL_TOOL_WHEN_INVALID` error. Checked right after step 2, so a step that stops later cannot hide it. No tool is ever run (#138).
 
 
 ### 4.23 `json-run.ts`
