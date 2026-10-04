@@ -32,11 +32,15 @@ import {
   removedFilesNeedingDecision,
   type ConflictResolution,
 } from '../../source/core/update-planner.js';
-import { runUpdate } from '../../source/core/update-executor.js';
+import { runUpdate, rollbackUpdate } from '../../source/core/update-executor.js';
 import { defaultModuleSelections, resolveComputedDefaults } from '../../source/core/install-planner.js';
 import { runInstall } from '../../source/core/install-executor.js';
 import { buildRenderContext } from '../../source/core/renderer.js';
 import { renamesBetween, applyRenames } from '../../source/core/rename-migrations.js';
+import { sha256 } from '../../source/core/fs-utils.js';
+import React from 'react';
+import { render } from 'ink-testing-library';
+import { useSigintRollback } from '../../source/commands/hooks/shared.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -132,6 +136,7 @@ describe('update applies rename migrations (#178)', () => {
     resolution: ConflictResolution = 'keep_mine',
     dryRun = false,
     beforeRun?: () => Promise<void>,
+    runOptions: Partial<Parameters<typeof runUpdate>[0]> = {},
   ) {
     const state = (await readState(vault)) as ShardState;
     const values = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
@@ -170,6 +175,7 @@ describe('update applies rename migrations (#178)', () => {
       tarballSha256: `sha-${manifest.version}`,
       newTempDir: shardDir,
       dryRun,
+      ...runOptions,
     });
     return { plan, result, removed };
   }
@@ -725,6 +731,276 @@ describe('update applies rename migrations (#178)', () => {
       // 0.3.0: neither template is volatile, and the file is the engine's.
       await update(await shardAt('0.3.0', { from: v2, edits: { [HOME_SRC]: (s) => s + '\nChanged in 0.3.0.\n' } }));
       expect(await read(HOME)).toContain('Changed in 0.3.0.');
+    });
+  });
+
+  describe("a folder's case change needs no migration (#195)", () => {
+    const NEW_NOTE = 'Brain/North Star.md';
+    /** The release that renames the folder brain/ to Brain/, with `edits` keyed by the new paths. */
+    const folderCase = (version: string, edits: SourceEdits = {}) =>
+      shardAt(version, { moves: { brain: 'Brain' }, edits });
+    const changeNote = { 'Brain/North Star.md.njk': (src: string) => src.replace('# North Star', '# North Star (v2)') };
+    const foldsCase = async () => {
+      await fsp.writeFile(path.join(root, 'Case-Probe'), '');
+      return fsp.access(path.join(root, 'case-probe')).then(() => true, () => false);
+    };
+    /** The vault root's entries spelled as the filesystem stores them, for the brain folder. */
+    const brainNames = async () => (await fsp.readdir(vault)).filter((n) => n.toLowerCase() === 'brain').sort();
+
+    /** Every path under the vault as stored (exact case) with its content's hash, minus the update's own backups. */
+    async function vaultTree(): Promise<Record<string, string>> {
+      const out: Record<string, string> = {};
+      const walk = async (rel: string): Promise<void> => {
+        for (const e of await fsp.readdir(path.join(vault, rel), { withFileTypes: true })) {
+          const r = rel === '' ? e.name : `${rel}/${e.name}`;
+          if (r === '.shardmind/backups') continue;
+          if (e.isDirectory()) {
+            out[`${r}/`] = 'dir';
+            await walk(r);
+          } else {
+            out[r] = sha256(await fsp.readFile(path.join(vault, r)));
+          }
+        }
+      };
+      await walk('');
+      return out;
+    }
+
+    it('moves the folder and its files to the new case, keeping state and bytes', async () => {
+      await install();
+      const { result } = await update(await folderCase('0.2.0'));
+      expect(await brainNames()).toEqual(['Brain']);
+      // A rendered note (it carries a render date), under its new folder case.
+      expect(await read(NEW_NOTE)).toContain('# North Star');
+      const state = await files();
+      expect(state[NOTE]).toBeUndefined();
+      expect(state[NEW_NOTE]?.ownership).toBe('managed');
+      expect(result.summary.renamedFiles).toEqual([{ from: NOTE, to: NEW_NOTE }]);
+    });
+
+    it("merges the user's edits with the shard's change under the new folder case", async () => {
+      await install();
+      const note = await read(NOTE);
+      await write(NOTE, note.replace('## Goals\n\n-', '## Goals\n\n- Ship v6'));
+      const { plan } = await update(await folderCase('0.2.0', changeNote));
+      expect(plan.pendingConflicts).toEqual([]);
+      const merged = await read(NEW_NOTE);
+      expect(merged).toContain('- Ship v6');
+      expect(merged).toContain('# North Star (v2)');
+      expect(await brainNames()).toEqual(['Brain']);
+    });
+
+    it("moves the user's own files with the folder on a case-folding filesystem", async (ctx) => {
+      if (!(await foldsCase())) ctx.skip();
+      await install();
+      await write('brain/mine.md', 'mine\n');
+      await update(await folderCase('0.2.0'));
+      expect(await brainNames()).toEqual(['Brain']);
+      expect(await fsp.readdir(path.join(vault, 'Brain'))).toContain('mine.md');
+    });
+
+    it("leaves the user's own files under the old folder on a case-sensitive filesystem", async (ctx) => {
+      if (await foldsCase()) ctx.skip();
+      await install();
+      await write('brain/mine.md', 'mine\n');
+      await update(await folderCase('0.2.0'));
+      expect(await brainNames()).toEqual(['Brain', 'brain']);
+      expect(await fsp.readdir(path.join(vault, 'brain'))).toEqual(['mine.md']);
+      expect(await read('brain/mine.md')).toBe('mine\n');
+    });
+
+    it('removes the old folder once the update empties it, on every filesystem', async () => {
+      await install();
+      await update(await folderCase('0.2.0'));
+      expect(await brainNames()).toEqual(['Brain']);
+    });
+
+    /** Fail the `n`th write of a vault file (not under .shardmind/). */
+    function failVaultWrite(n: number): void {
+      const realWrite = fsp.writeFile;
+      let count = 0;
+      vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+        const rel = path.relative(vault, String(file));
+        if (!rel.startsWith('..') && !rel.startsWith('.shardmind') && ++count === n) throw new Error('disk full');
+        return realWrite(file, data, opts as Parameters<typeof realWrite>[2]);
+      });
+    }
+
+    it('a failure after the folder rename, before any write, leaves the vault as it was', async () => {
+      await install();
+      await write('brain/mine.md', 'mine\n');
+      const before = await vaultTree();
+      const v2 = await folderCase('0.2.0', changeNote);
+      failVaultWrite(1);
+      await expect(update(v2)).rejects.toMatchObject({ code: 'UPDATE_WRITE_FAILED' });
+      vi.restoreAllMocks();
+      expect(await vaultTree()).toEqual(before);
+    });
+
+    it('a failure mid write pass leaves the vault as it was', async () => {
+      await install();
+      await write('brain/mine.md', 'mine\n');
+      const before = await vaultTree();
+      const v2 = await folderCase('0.2.0', {
+        ...changeNote,
+        'Home.md.njk': (src) => src + '\nChanged in 0.2.0.\n',
+      });
+      failVaultWrite(2);
+      await expect(update(v2)).rejects.toMatchObject({ code: 'UPDATE_WRITE_FAILED' });
+      vi.restoreAllMocks();
+      expect(await vaultTree()).toEqual(before);
+    });
+
+    it("a failure between a folder's two renames leaves the vault as it was", async (ctx) => {
+      // Only a case-folding filesystem renames the folder in place; on a
+      // case-sensitive one the two spellings are two folders and no hop exists.
+      if (!(await foldsCase())) ctx.skip();
+      await install();
+      await write('brain/mine.md', 'mine\n');
+      const before = await vaultTree();
+      const v2 = await folderCase('0.2.0', changeNote);
+      // The folder's hop into its new spelling fails; on a case-folding
+      // filesystem it is then at its temporary name.
+      const realRename = fsp.rename;
+      vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+        if (path.basename(String(to)) === 'Brain') throw new Error('rename interrupted');
+        return realRename(from, to);
+      });
+      await expect(update(v2)).rejects.toThrow();
+      vi.restoreAllMocks();
+      expect(await vaultTree()).toEqual(before);
+    });
+
+    it("a failure moving a file into the new folder leaves the vault as it was, where folders do not fold", async (ctx) => {
+      // A case-sensitive filesystem has no folder hop: each file moves on its
+      // own into a new folder, and that move is what can fail here.
+      if (await foldsCase()) ctx.skip();
+      // A copied file under brain/: unchanged bytes, so it moves by rename
+      // (a rendered note is re-rendered with a fresh date and written instead).
+      const v1 = await shardAt('0.1.0', { edits: { 'brain/static.md': () => 'static\n' } });
+      await install(v1);
+      await write('brain/mine.md', 'mine\n');
+      const before = await vaultTree();
+      const v2 = await shardAt('0.2.0', { from: v1, moves: { brain: 'Brain' } });
+      const realRename = fsp.rename;
+      vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+        if (String(to).endsWith(path.join('Brain', 'static.md'))) throw new Error('rename interrupted');
+        return realRename(from, to);
+      });
+      await expect(update(v2)).rejects.toThrow();
+      vi.restoreAllMocks();
+      expect(await vaultTree()).toEqual(before);
+    });
+
+    it('moves a nested folder whose case changes, and a failure mid-way leaves the vault as it was', async () => {
+      // 0.1.0 ships brain/Sub/Deep.md; 0.2.0 renames brain/ to Brain/ and Sub/ to sub/.
+      const v1 = await shardAt('0.1.0', { edits: { 'brain/Sub/Deep.md': () => 'deep\n' } });
+      await install(v1);
+      await write('brain/Sub/mine.md', 'mine\n');
+      const before = await vaultTree();
+      const nested = (version: string, edits: SourceEdits = {}) =>
+        shardAt(version, { from: v1, moves: { brain: 'Brain', 'Brain/Sub': 'Brain/sub' }, edits });
+      failVaultWrite(1);
+      await expect(update(await nested('0.2.0', changeNote))).rejects.toMatchObject({ code: 'UPDATE_WRITE_FAILED' });
+      vi.restoreAllMocks();
+      expect(await vaultTree()).toEqual(before);
+      await update(await nested('0.2.0'));
+      expect(Object.keys(await files())).toEqual(expect.arrayContaining(['Brain/North Star.md', 'Brain/sub/Deep.md']));
+      expect(await read('Brain/sub/Deep.md')).toBe('deep\n');
+      if (await foldsCase()) {
+        expect(await brainNames()).toEqual(['Brain']);
+        expect((await fsp.readdir(path.join(vault, 'Brain'))).filter((n) => n.toLowerCase() === 'sub')).toEqual(['sub']);
+        expect(await fsp.readdir(path.join(vault, 'Brain', 'sub'))).toContain('mine.md');
+      }
+    });
+
+    it("a real SIGINT mid-update, through the command's rollback handler, leaves the vault as it was", async () => {
+      await install();
+      await write('brain/mine.md', 'mine\n');
+      const before = await vaultTree();
+      const v2 = await folderCase('0.2.0', changeNote);
+      let backupDir: string | undefined;
+      const added: string[] = [];
+      let blocked = false;
+      let release!: (err: Error) => void;
+      const held = new Promise<never>((_, reject) => {
+        release = reject;
+      });
+      const realWrite = fsp.writeFile;
+      vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+        if (String(file).toLowerCase().endsWith(path.join('brain', 'north star.md').toLowerCase())) {
+          blocked = true;
+          await held;
+        }
+        return realWrite(file, data, opts as Parameters<typeof realWrite>[2]);
+      });
+      // The update command's handler, mounted as the command mounts it, with
+      // the process exit it ends in stubbed.
+      const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as typeof process.exit);
+      const Handler = () => {
+        useSigintRollback({
+          isActive: () => backupDir !== undefined,
+          rollback: async () => {
+            await rollbackUpdate(vault, backupDir!, added);
+          },
+        });
+        return null;
+      };
+      const ui = render(React.createElement(Handler));
+      const running = update(v2, 'keep_mine', false, undefined, {
+        onBackupReady: (dir) => {
+          backupDir = dir;
+        },
+        onFileTouched: (rel, introduced) => {
+          if (introduced) added.push(rel);
+        },
+      }).catch(() => undefined);
+      await vi.waitFor(() => expect(blocked).toBe(true), { timeout: 10_000 });
+      process.emit('SIGINT');
+      await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(130), { timeout: 10_000 });
+      expect(await vaultTree()).toEqual(before);
+      ui.unmount();
+      release(new Error('interrupted'));
+      await running;
+      vi.restoreAllMocks();
+    });
+
+    it('a Ctrl+C mid-update, rolled back from the backup and touched paths the SIGINT handler holds, leaves the vault as it was', async () => {
+      await install();
+      await write('brain/mine.md', 'mine\n');
+      const before = await vaultTree();
+      const v2 = await folderCase('0.2.0', changeNote);
+      // Hold the note's write open, then roll back the way the update command's
+      // SIGINT handler does: from the backup dir and the paths it was told of.
+      let backupDir: string | undefined;
+      const added: string[] = [];
+      let blocked = false;
+      let release!: (err: Error) => void;
+      const held = new Promise<never>((_, reject) => {
+        release = reject;
+      });
+      const realWrite = fsp.writeFile;
+      vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+        if (String(file).toLowerCase().endsWith(path.join('brain', 'north star.md').toLowerCase())) {
+          blocked = true;
+          await held;
+        }
+        return realWrite(file, data, opts as Parameters<typeof realWrite>[2]);
+      });
+      const running = update(v2, 'keep_mine', false, undefined, {
+        onBackupReady: (dir) => {
+          backupDir = dir;
+        },
+        onFileTouched: (rel, introduced) => {
+          if (introduced) added.push(rel);
+        },
+      }).catch(() => undefined);
+      await vi.waitFor(() => expect(blocked).toBe(true), { timeout: 10_000 });
+      await rollbackUpdate(vault, backupDir!, added);
+      expect(await vaultTree()).toEqual(before);
+      release(new Error('interrupted'));
+      await running;
+      vi.restoreAllMocks();
     });
   });
 });

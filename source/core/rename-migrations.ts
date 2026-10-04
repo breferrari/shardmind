@@ -51,8 +51,9 @@ const fold = (rel: string): string => rel.normalize('NFC').toLowerCase();
  * which needs no `migrations` entry: a tracked path the new shard no longer
  * ships, and an untracked new path in the same folder that equals it
  * ignoring case. Paired only when unambiguous: no other tracked or shipped
- * path folds to the same name, and no declared rename names either side. A
- * folder whose case changes is not paired (#195).
+ * path folds to the same name, and no declared rename names either side.
+ * Folders on the way may change case too, as a whole (`dropSplitFolders`,
+ * #195).
  */
 export function caseOnlyRenames(
   tracked: Iterable<string>,
@@ -77,36 +78,95 @@ export function caseOnlyRenames(
     if (declared.has(from) || declaredTargets.has(to)) continue;
     result.set(from, to);
   }
-  return result;
-}
-
-/** Two paths in the same folder whose names differ only in case (#169). */
-export function isCaseOnlyRename(from: string, to: string): boolean {
-  return from !== to && path.posix.dirname(from) === path.posix.dirname(to) && fold(from) === fold(to);
+  return dropSplitFolders(result, newPaths);
 }
 
 /**
- * Whether two paths of a case-only pair reach one file: one name folded onto
- * the other. Decided by the folder's listing: both spellings listed are two
- * files; one listed, with both reachable, is one entry under two names. A
- * listing that spells neither as given (a third Unicode normalization) falls
- * back to the file index, as `bigint` (an NTFS index exceeds 2^53) and never
- * 0, which FAT and some network filesystems report for every file.
+ * Two paths that differ only in case (or Unicode normalization), in the file
+ * name (#169) or in any folder on the way (#195).
+ */
+export function isCaseOnlyRename(from: string, to: string): boolean {
+  return from !== to && fold(from) === fold(to);
+}
+
+/**
+ * The folders a case-only pair renames, shallowest first: each folder prefix
+ * whose last segment's spelling differs, old spelling → new (#195).
+ */
+export function folderChanges(from: string, to: string): Array<{ from: string; to: string }> {
+  const a = from.split('/');
+  const b = to.split('/');
+  const out: Array<{ from: string; to: string }> = [];
+  for (let i = 0; i < a.length - 1; i++) {
+    if (a[i] !== b[i]) out.push({ from: a.slice(0, i + 1).join('/'), to: b.slice(0, i + 1).join('/') });
+  }
+  return out;
+}
+
+/**
+ * A folder whose case a pair changes moves whole or not at all (#195): every
+ * pair under an old folder spelling is dropped when that spelling maps to two
+ * new ones, or when a shipped path keeps the old spelling or a third one.
+ */
+function dropSplitFolders(pairs: Map<string, string>, newPaths: ReadonlySet<string>): Map<string, string> {
+  const spellings = new Map<string, Set<string>>();
+  for (const [from, to] of pairs) {
+    for (const change of folderChanges(from, to)) {
+      const set = spellings.get(change.from) ?? new Set<string>();
+      set.add(change.to);
+      spellings.set(change.from, set);
+    }
+  }
+  const split = new Set<string>();
+  for (const [old, news] of spellings) {
+    const [only] = news;
+    if (news.size > 1 || only === undefined) {
+      split.add(old);
+      continue;
+    }
+    const depth = old.split('/').length;
+    for (const shipped of newPaths) {
+      const segments = shipped.split('/');
+      if (segments.length <= depth) continue;
+      const prefix = segments.slice(0, depth).join('/');
+      if (prefix !== only && fold(prefix) === fold(old)) {
+        split.add(old);
+        break;
+      }
+    }
+  }
+  if (split.size === 0) return pairs;
+  return new Map([...pairs].filter(([from, to]) => !folderChanges(from, to).some((c) => split.has(c.from))));
+}
+
+/**
+ * Whether two paths of a case-only pair reach one file or folder, one
+ * spelling folded onto the other. Decided segment by segment from the folder
+ * listings: where the spellings differ, a parent that lists both holds two
+ * entries; one that lists one holds one entry under both names. A listing
+ * that spells neither as given (a third Unicode normalization) falls back to
+ * the file index, as `bigint` (an NTFS index exceeds 2^53) and never 0, which
+ * FAT and some network filesystems report for every file.
  */
 export async function sameFile(vaultRoot: string, a: string, b: string): Promise<boolean> {
   const stat = (rel: string) => fsp.lstat(path.join(vaultRoot, rel), { bigint: true }).catch(() => null);
-  const [x, y, names] = await Promise.all([
-    stat(a),
-    stat(b),
-    fsp.readdir(path.join(vaultRoot, path.posix.dirname(a))).catch(() => null),
-  ]);
+  const [x, y] = await Promise.all([stat(a), stat(b)]);
   if (x === null || y === null) return false;
-  if (names !== null) {
-    const hasA = names.includes(path.posix.basename(a));
-    const hasB = names.includes(path.posix.basename(b));
-    if (hasA || hasB) return hasA !== hasB;
+  const sa = a.split('/');
+  const sb = b.split('/');
+  if (sa.length !== sb.length) return false;
+  let undecided = false;
+  for (let i = 0; i < sa.length; i++) {
+    const nameA = sa[i]!;
+    const nameB = sb[i]!;
+    if (nameA === nameB) continue;
+    const names = await fsp.readdir(path.join(vaultRoot, ...sa.slice(0, i))).catch(() => null);
+    const hasA = names?.includes(nameA) ?? false;
+    const hasB = names?.includes(nameB) ?? false;
+    if (hasA && hasB) return false;
+    if (!hasA && !hasB) undecided = true;
   }
-  return x.ino !== 0n && x.dev === y.dev && x.ino === y.ino;
+  return !undecided || (x.ino !== 0n && x.dev === y.dev && x.ino === y.ino);
 }
 
 /**
@@ -119,31 +179,102 @@ export async function isFreeFor(vaultRoot: string, from: string, to: string): Pr
   return isCaseOnlyRename(from, to) && sameFile(vaultRoot, from, to);
 }
 
+/** Whether the folder holding `rel` lists its last segment exactly as `rel` spells it. */
+async function spelledAs(vaultRoot: string, rel: string): Promise<boolean> {
+  const names = await fsp.readdir(path.join(vaultRoot, path.posix.dirname(rel))).catch(() => null);
+  return names?.includes(path.posix.basename(rel)) ?? false;
+}
+
+/** One in-place case rename, recorded before it starts so a rollback can undo it. */
+export interface CaseHop {
+  from: string;
+  to: string;
+  /** The temporary name between the two renames. */
+  tmp: string;
+}
+
+/** Records a hop before it starts (`<backupDir>/case-renames.json`, see `caseJournal`). */
+export type CaseJournal = (hop: CaseHop) => Promise<void>;
+
 /**
- * Give `from`'s file the name `to` when both reach the same file (a case-only
- * rename on a case-folding filesystem, #169): through a temporary name in the
- * same folder, since some filesystems ignore a rename to a name they fold to
- * the same one. The temporary path joins `addedPaths` before the first
- * rename, so a rollback after a failure between the two removes it and puts
- * the old file back from its snapshot. Returns false, having done nothing,
- * when the two are not the same file.
+ * Give `from`'s file or folder the spelling `to` when both reach the same
+ * entry (a case-only rename on a case-folding filesystem, #169, #195):
+ * through a temporary name beside it, since some filesystems ignore a rename
+ * to a name they fold to the same one. The hop is journaled before the first
+ * rename, and for a file the temporary path also joins `addedPaths`, so a
+ * rollback after a failure between the two puts the old name back. Returns
+ * false, having done nothing, when the two are not the same entry.
  */
 export async function renameCaseInPlace(
   vaultRoot: string,
   from: string,
   to: string,
-  addedPaths: string[],
+  addedPaths: string[] | null,
+  journal?: CaseJournal,
 ): Promise<boolean> {
   if (!isCaseOnlyRename(from, to) || !(await sameFile(vaultRoot, from, to))) return false;
+  // Only a folder on the way changed case, and that folder was renamed: the
+  // entry already has its new spelling.
+  if (await spelledAs(vaultRoot, to)) return true;
   const tmp = path.posix.join(
     path.posix.dirname(to),
     `.${path.posix.basename(to)}.shardmind-case-${crypto.randomBytes(4).toString('hex')}`,
   );
-  addedPaths.push(tmp);
+  await journal?.({ from, to, tmp });
+  addedPaths?.push(tmp);
   await fsp.rename(path.join(vaultRoot, from), path.join(vaultRoot, tmp));
   await fsp.rename(path.join(vaultRoot, tmp), path.join(vaultRoot, to));
-  addedPaths.splice(addedPaths.indexOf(tmp), 1);
+  if (addedPaths) addedPaths.splice(addedPaths.indexOf(tmp), 1);
   return true;
+}
+
+const CASE_JOURNAL = 'case-renames.json';
+
+/**
+ * A journal that appends each hop to `<backupDir>/case-renames.json`, written
+ * to a temporary file and renamed over it, so a kill mid-write leaves the
+ * previous whole journal rather than a truncated one.
+ */
+export function caseJournal(backupDir: string): CaseJournal {
+  const hops: CaseHop[] = [];
+  const file = path.join(backupDir, CASE_JOURNAL);
+  return async (hop) => {
+    hops.push(hop);
+    await fsp.writeFile(`${file}.tmp`, JSON.stringify(hops), 'utf-8');
+    await fsp.rename(`${file}.tmp`, file);
+  };
+}
+
+/**
+ * Undo the journaled hops in `backupDir`, newest first: a hop stopped at its
+ * temporary name goes back to the old name; a finished one is renamed back
+ * in place. Returns the hops it could not undo, with why.
+ */
+export async function undoCaseHops(
+  vaultRoot: string,
+  backupDir: string,
+): Promise<Array<{ path: string; reason: string }>> {
+  let hops: CaseHop[];
+  try {
+    hops = JSON.parse(await fsp.readFile(path.join(backupDir, CASE_JOURNAL), 'utf-8')) as CaseHop[];
+  } catch (err) {
+    // No journal: the run renamed nothing in place. An unreadable one is a
+    // rollback that cannot be completed, and says so.
+    if (isEnoent(err)) return [];
+    return [{ path: CASE_JOURNAL, reason: `case-rename journal unreadable: ${err instanceof Error ? err.message : String(err)}` }];
+  }
+  const failures: Array<{ path: string; reason: string }> = [];
+  for (const hop of [...hops].reverse()) {
+    try {
+      const tmpAbs = path.join(vaultRoot, hop.tmp);
+      const atTmp = await fsp.lstat(tmpAbs).then(() => true, () => false);
+      if (atTmp) await fsp.rename(tmpAbs, path.join(vaultRoot, hop.from));
+      else await renameCaseInPlace(vaultRoot, hop.to, hop.from, null);
+    } catch (err) {
+      failures.push({ path: hop.from, reason: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return failures;
 }
 
 /**
@@ -211,6 +342,7 @@ export async function moveToFreePath(
   to: string,
   addedPaths: string[],
   command: MovingCommand,
+  journal?: CaseJournal,
 ): Promise<void> {
   try {
     await assertRenameTargetFree(vaultRoot, from, to, command);
@@ -219,7 +351,7 @@ export async function moveToFreePath(
     if (i >= 0) addedPaths.splice(i, 1);
     throw err;
   }
-  if (await renameCaseInPlace(vaultRoot, from, to, addedPaths)) return;
+  if (await renameCaseInPlace(vaultRoot, from, to, addedPaths, journal)) return;
   const toAbs = path.join(vaultRoot, to);
   await fsp.mkdir(path.dirname(toAbs), { recursive: true });
   try {
@@ -245,7 +377,7 @@ export interface AppliedRenames {
  * new shard, claimed by no other rename, and free on disk; otherwise it is
  * dropped and the update removes and adds as it would without it. A new path
  * another rename vacates in the same update counts as taken. Case-only
- * changes of a file name join the declared renames (`caseOnlyRenames`, #169),
+ * changes of a path join the declared renames (`caseOnlyRenames`, #169, #195),
  * and a case-only new path that reaches its old file counts as free
  * (`isFreeFor`). Reads the disk, writes nothing.
  */

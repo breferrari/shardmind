@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ShardManifestSchema } from '../../source/core/manifest.js';
-import { caseOnlyRenames, parseFromVersion, renamesBetween, sameFile } from '../../source/core/rename-migrations.js';
+import { caseOnlyRenames, parseFromVersion, renamesBetween, sameFile, undoCaseHops } from '../../source/core/rename-migrations.js';
 import { foldsCase } from '../helpers/fs-capabilities.js';
 
 const caseFolds = await foldsCase();
@@ -113,9 +113,29 @@ describe('caseOnlyRenames (#169)', () => {
     expect(pairs(['Foo.md', 'FOO.md'], ['foo.md'])).toEqual({});
   });
 
-  it('pairs nothing when a folder changes case (#195)', () => {
-    expect(pairs(['Notes/Foo.md'], ['notes/Foo.md'])).toEqual({});
-    expect(pairs(['Notes/Foo.md'], ['notes/foo.md'])).toEqual({});
+  it('pairs a path whose folder changes case, with or without its name (#195)', () => {
+    expect(pairs(['Notes/Foo.md'], ['notes/Foo.md'])).toEqual({ 'Notes/Foo.md': 'notes/Foo.md' });
+    expect(pairs(['Notes/Foo.md'], ['notes/foo.md'])).toEqual({ 'Notes/Foo.md': 'notes/foo.md' });
+    expect(pairs(['Brain/Notes/A.md'], ['brain/notes/A.md'])).toEqual({ 'Brain/Notes/A.md': 'brain/notes/A.md' });
+  });
+
+  it('moves a folder only as a whole: every file under it pairs, or none does (#195)', () => {
+    expect(pairs(['Notes/A.md', 'Notes/B.md'], ['notes/A.md', 'notes/B.md'])).toEqual({
+      'Notes/A.md': 'notes/A.md',
+      'Notes/B.md': 'notes/B.md',
+    });
+    // B.md is still shipped under the old spelling, so the folder cannot move.
+    expect(pairs(['Notes/A.md', 'Notes/B.md'], ['notes/A.md', 'Notes/B.md'])).toEqual({});
+    // A file the new shard drops leaves with the update; it does not hold the folder.
+    expect(pairs(['Notes/A.md', 'Notes/Gone.md'], ['notes/A.md'])).toEqual({ 'Notes/A.md': 'notes/A.md' });
+  });
+
+  it('pairs nothing when one old folder would take two new spellings (#195)', () => {
+    expect(pairs(['Notes/A.md', 'Notes/B.md'], ['notes/A.md', 'NOTES/B.md'])).toEqual({});
+  });
+
+  it('a nested folder holding the old spelling blocks its parent too (#195)', () => {
+    expect(pairs(['Brain/A.md', 'Brain/Sub/B.md'], ['brain/A.md', 'Brain/Sub/B.md'])).toEqual({});
   });
 
   it('pairs nothing when the old path is still shipped or the new one is already tracked', () => {
@@ -161,6 +181,29 @@ describe('sameFile (#169)', () => {
     await fsp.writeFile(path.join(dir, 'Foo.md'), 'x');
     await fsp.writeFile(path.join(dir, 'foo.md'), 'y');
     expect(await sameFile(dir, 'Foo.md', 'foo.md')).toBe(false);
+  });
+
+  it.skipIf(!caseFolds)('is true for two folder spellings of one file on a case-folding filesystem (#195)', async () => {
+    await fsp.mkdir(path.join(dir, 'Notes'));
+    await fsp.writeFile(path.join(dir, 'Notes', 'Foo.md'), 'x');
+    expect(await sameFile(dir, 'Notes/Foo.md', 'notes/Foo.md')).toBe(true);
+    expect(await sameFile(dir, 'Notes/Foo.md', 'notes/foo.md')).toBe(true);
+  });
+
+  it.skipIf(caseFolds)('is false for two folders whose names differ only in case (#195)', async () => {
+    await fsp.mkdir(path.join(dir, 'Notes'));
+    await fsp.mkdir(path.join(dir, 'notes'));
+    await fsp.writeFile(path.join(dir, 'Notes', 'Foo.md'), 'x');
+    await fsp.writeFile(path.join(dir, 'notes', 'Foo.md'), 'y');
+    expect(await sameFile(dir, 'Notes/Foo.md', 'notes/Foo.md')).toBe(false);
+  });
+
+  it('undoCaseHops reports an unreadable journal instead of undoing nothing silently (#195)', async () => {
+    expect(await undoCaseHops(dir, dir)).toEqual([]);
+    await fsp.writeFile(path.join(dir, 'case-renames.json'), '[{"from":"a","to":"A","tm');
+    const failures = await undoCaseHops(dir, dir);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]!.reason).toMatch(/journal unreadable/);
   });
 
   it('is false when either path reaches nothing', async () => {
