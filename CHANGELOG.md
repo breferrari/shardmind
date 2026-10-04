@@ -16,6 +16,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **Install, update and adopt are interrupted mid-write by a real SIGINT in the E2E suite**, on every OS (the stdin-ETX bridge on Windows). A test-only preload holds the CLI at a vault write; each run must exit 130 and leave the vault as it was.
 
+### Changed (Pastel vendored; one chalk in every install — #277)
+
+- **shardmind no longer depends on Pastel or `@inkjs/ui`.** Its command-line framework is now ShardMind's own copy of Pastel 4.0.1, so a global install carries one copy of chalk and 29 fewer packages. Commands, options, help and error messages behave as before.
+- **shardmind no longer reads a `package.json` above your vault on every run.** Pastel looked for one to default the program's name and version, which shardmind always gives.
+
 ### Internal (one rollback contract for every pipeline — #267)
 
 - **Install, update and adopt now share one fault-injection contract.** 241 table rows fail a write, a rename, a mkdir or a restore, or press Ctrl+C at each step. After every row, the vault must be byte-identical to before, except what the error names. It found #264 and #269. `npm run test:coverage` reports coverage, with no thresholds yet.
