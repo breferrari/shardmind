@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (two adopts never share a snapshot folder — #248)
+
+- **Each adopt now keeps its snapshot of your files in its own folder.** Adopt named the folder to the second and reused one that was already there. A retry within the same second, after an adopt that failed and kept its snapshot, wrote over the first copies, and its own rollback could then delete them. It now names the folder the way update does, to the millisecond and never reusing one.
+
 ### Fixed (a rollback that can't put your files back says so — #247)
 
 - **A failed install, update or adopt no longer says "Rolled back" when a file could not be put back.** If the rollback could not restore a file (a permission error, or a file held open by another program), the command now fails with `ROLLBACK_INCOMPLETE`. It names every path left behind and where its backup is, so you can copy it back by hand. Adopt and install used to report success here, leaving your file under a backup name. A Ctrl+C rollback prints the same list before it exits.
