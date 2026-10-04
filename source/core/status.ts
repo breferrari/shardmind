@@ -183,8 +183,10 @@ export async function buildStatusReport(
               state.modules,
             )
           : Promise.resolve(null),
-        schema
-          ? lintFrontmatter(vaultRoot, drift, schema, cap(MAX_FRONTMATTER_ISSUES))
+        // The lint walks drift's files; after a failed detection it would
+        // check nothing and report a clean 0/0.
+        schema && detected
+          ? lintFrontmatter(vaultRoot, detected, schema, cap(MAX_FRONTMATTER_ISSUES))
           : Promise.resolve(null),
         probeEnvironment(),
       ])

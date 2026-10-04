@@ -389,6 +389,7 @@ describe('statusResult (#139)', () => {
       report({ values: { ...base.values, valid: false, total: 0, checked: false } }),
     );
     expect(out.installed && out.values.valid).toBeNull();
+    expect(out.installed && out.values.total).toBeNull();
   });
 
   it('sorts invalid value keys and frontmatter issues too', () => {
@@ -412,15 +413,14 @@ describe('statusResult (#139)', () => {
     expect(out.installed && out.frontmatter!.issues.map((i) => i.path)).toEqual(['a.md', 'z.md']);
   });
 
-  it('reports the normalized version and a usable shard id from a hand-broken state.json', () => {
+  it('reports the shard and version the human view shows, not raw state.json fields', () => {
     const base = report();
+    // A hand-broken state.json; the manifest (cached, or synthesized from
+    // state by the report) is what the header renders.
     const out = statusResult(
-      report({
-        state: { ...base.state, version: '', shard: '' },
-        update: { kind: 'unknown', current: 'unknown', reason: 'cache-miss' },
-      }),
+      report({ state: { ...base.state, version: '', shard: ' acme ' } }),
     );
-    expect(out).toMatchObject({ version: 'unknown', shard: 'shardmind/minimal' });
+    expect(out).toMatchObject({ version: '0.1.0', shard: 'shardmind/minimal' });
   });
 
   it('carries ref and resolvedSha for a #<ref> install', () => {

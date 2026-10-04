@@ -314,7 +314,8 @@ export type StatusResult =
       readonly values: {
         /** Null when the cached schema is unavailable, so nothing was validated. */
         readonly valid: boolean | null;
-        readonly total: number;
+        /** Null with `valid`: without the schema the declared count is unknown. */
+        readonly total: number | null;
         readonly invalidKeys: readonly string[];
         readonly fileMissing: boolean;
       };
@@ -347,15 +348,12 @@ export function statusResult(report: StatusReport | null): StatusResult {
     .sort((a, b) => byPath(a.path, b.path));
   return {
     installed: true,
-    // state.json is read without field validation; take the identity and
-    // version the report already normalized (the manifest falls back to
-    // one synthesized from state, the update check to 'unknown').
-    shard:
-      typeof state.shard === 'string' && state.shard.trim() !== ''
-        ? state.shard
-        : `${manifest.namespace}/${manifest.name}`,
+    // state.json is read without field validation, so take the identity
+    // and version the human header shows: the cached manifest, or one the
+    // report synthesized from state with 'unknown' for anything unusable.
+    shard: `${manifest.namespace}/${manifest.name}`,
     source: state.source,
-    version: report.update.current,
+    version: manifest.version,
     ...(state.ref === undefined ? {} : { ref: state.ref }),
     ...(state.resolvedSha === undefined ? {} : { resolvedSha: state.resolvedSha }),
     installedAt: state.installed_at,
@@ -378,7 +376,7 @@ export function statusResult(report: StatusReport | null): StatusResult {
     modules: report.modules,
     values: {
       valid: report.values.checked ? report.values.valid : null,
-      total: report.values.total,
+      total: report.values.checked ? report.values.total : null,
       invalidKeys: [...report.values.invalidKeys].sort(byPath),
       fileMissing: report.values.fileMissing,
     },

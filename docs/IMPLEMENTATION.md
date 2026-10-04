@@ -975,9 +975,9 @@ Returns `null` when the vault has no `.shardmind/state.json` — the "not in a s
 2. In parallel:
    - Load cached manifest via `parseManifest(.shardmind/shard.yaml)` (failure → synthesize a minimal manifest from `state.shard` + warning).
    - Load cached schema via `parseSchema(.shardmind/shard-schema.yaml)` (failure → values/frontmatter sections degrade + warning).
-   - `detectDrift(vaultRoot, state)` (failure → empty drift + warning).
+   - `detectDrift(vaultRoot, state)` (failure → empty drift, `drift.failed: true`, an error warning, and no frontmatter lint, so no section reports an unchecked result as clean).
    - Resolve update availability via `core/update-check.getLatestVersion(vaultRoot, state.source, now)`, unless `skipUpdateCheck` (then report `unknown`).
-   - Validate `shard-values.yaml` via `buildValuesValidator(schema).safeParse()`.
+   - Validate `shard-values.yaml` via `buildValuesValidator(schema).safeParse()` (no cached schema → `values.checked: false`).
 3. If `verbose`, fan three independent passes out via `Promise.all`:
    - **Per-modified-file diff.** For each entry in `drift.modified` (capped at 20), read the cached template from `.shardmind/templates/<relative>`, render with current values + selections via `renderString(...)`, diff rendered base against actual disk content via `diffLines` (CRLF + UTF-8-BOM normalized first), and record `{ linesAdded, linesRemoved }`. Every failure step (missing template / render throw / unreadable file) surfaces as a `skipped` variant. Bounded by `MODIFIED_DIFF_CONCURRENCY = 8` to cap disk + heap pressure.
    - **Frontmatter lint.** Walk drift's `managed + modified` `.md` files with `mapConcurrent(16, …)`, run `validateFrontmatter()`, collect missing-key rows (capped at 20).

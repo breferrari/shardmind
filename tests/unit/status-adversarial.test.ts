@@ -477,8 +477,11 @@ describe('status (adversarial)', () => {
       JSON.stringify({ ...state, files: null }, null, 2),
       'utf-8',
     );
-    const report = await buildStatusReport(vault, { verbose: false, skipUpdateCheck: true });
+    const report = await buildStatusReport(vault, { verbose: true, skipUpdateCheck: true });
     expect(report!.drift.failed).toBe(true);
+    // The frontmatter lint walks drift's files, so with none it checked
+    // nothing: null, not a clean 0/0.
+    expect(report!.frontmatter).toBeNull();
     expect(report!.warnings.some((w) => w.severity === 'error' && /Drift detection failed/.test(w.message))).toBe(true);
   });
 

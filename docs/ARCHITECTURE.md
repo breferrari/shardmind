@@ -797,10 +797,10 @@ Full diagnostic output. Replaces the old `doctor` command concept.
 
 - **Not in a shard-managed vault**: `ok: true`, `result: { "installed": false }`, exit 0. A directory without `.shardmind/state.json` is an answer, not a failure.
 - **Installed**: `ok: true`, exit 0, and `result` holds:
-  - `installed: true`, `shard`, `source`, `version`, `ref` and `resolvedSha` (only for a `#<ref>` install), `installedAt`, `updatedAt`. `shard` and `version` are the values the human view shows, so a hand-broken `state.json` reads `unknown` rather than an empty string.
+  - `installed: true`, `shard`, `source`, `version`, `ref` and `resolvedSha` (only for a `#<ref>` install), `installedAt`, `updatedAt`. `shard` and `version` are what the human view's header shows: the cached manifest's, or `unknown` for whatever a hand-broken `state.json` makes unusable.
   - `update`: the update-check answer as is. `kind` is `up-to-date`, `available` (with `latest` and `cacheAge`) or `unknown` (with `reason`), and `current` is always present.
   - `files`: `counts` (`managed`, `modified`, `volatile`, `missing`, `orphaned`); `modified`, a list of `{ path }`, where `--verbose` adds `linesAdded` and `linesRemoved`, or `diffSkipped` with the reason the diff could not run; and `missing` and `orphaned` as path lists. `files` is `null` when drift detection failed: then nothing was checked, and an error-severity entry in `warnings` names the cause. Zero counts always mean "checked, and none".
-  - `modules` (`included`, `excluded`), `values` (`valid`, `total`, `invalidKeys`, `fileMissing`). `valid` is `null` when the cached schema could not be loaded, so the values were never validated.
+  - `modules` (`included`, `excluded`), `values` (`valid`, `total`, `invalidKeys`, `fileMissing`). `valid` and `total` are `null` when the cached schema could not be loaded, so the values were never validated. `frontmatter` is likewise `null` when drift detection failed, since the lint walks drift's files.
   - `frontmatter` and `environment`: `null` without `--verbose`, the §10.3 sections with it.
   - `warnings`: the findings the human view shows, each with `severity`, `message` and, when present, `hint`.
 - **Failure** (for example, a corrupt `state.json`): `ok: false`, `error` (`code`, `message`, `hint`), **exit 1**. The human status view is ambient and exits 0 on an error it can show; a document saying `ok: false` exits non-zero so `$?` and the body agree.
