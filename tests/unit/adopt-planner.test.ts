@@ -85,6 +85,21 @@ describe('classifyAdoption', () => {
     await harness.cleanup();
   });
 
+  it('refuses _each items that name the same file before classifying (#234)', async () => {
+    await makeShardSource(harness.tempShard, { 'people/_each.md.njk': '# {{ item }}\n' });
+    await expect(
+      classifyAdoption({
+        vaultRoot: harness.vault,
+        schema: emptySchema(),
+        manifest: manifest(),
+        tempDir: harness.tempShard,
+        values: { people: ['alice', 'Alice'] },
+        selections: {},
+        now: FIXED_DATE,
+      }),
+    ).rejects.toMatchObject({ code: 'RENDER_ITERATOR_NAME_CLASH' });
+  });
+
   it('case 3: empty user vault → every shard file is shardOnly', async () => {
     await makeShardSource(harness.tempShard, {
       'README.md': '# repo\n',

@@ -428,6 +428,12 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 **Remedy:** Ensure the named value in `shard-values.yaml` is a list.
 
+### `RENDER_ITERATOR_NAME_CLASH`
+
+**Meaning:** Two items of an `_each` template's list name the same file: identical, differing only in case, or equal after sanitizing (`Bob/Ops` and `Bob-Ops`). The second would overwrite the first, and on a case-insensitive filesystem the vault would track two names for one file. Refused before anything is written, in install, update and adopt (#234).
+
+**Remedy:** Give each item a name that differs by more than case or by characters a file name cannot hold, or a `slug` or `name` if it has neither. The list is usually the user's own: a `list` value typed at the wizard, or `values.<key>` in `shard-values.yaml`. The message names the value, both items and the file. A vault installed before #234 with such a list can't update until `shard-values.yaml` is fixed.
+
 ---
 
 ## Update / merge
@@ -605,7 +611,7 @@ These are **not** thrown `ShardMindError`s — they don't appear in the `ErrorCo
 If you're a shard author and hit a code that feels authoring-side, the specifically author-facing ones are:
 - `SCHEMA_RESERVED_NAME`, `SCHEMA_VALIDATION_FAILED`
 - `COMPUTED_DEFAULT_FAILED`, `COMPUTED_DEFAULT_INVALID`
-- `RENDER_FAILED`, `RENDER_FRONTMATTER_ERROR`, `RENDER_ITERATOR_ERROR`
+- `RENDER_FAILED`, `RENDER_FRONTMATTER_ERROR`, `RENDER_ITERATOR_ERROR`, `RENDER_ITERATOR_NAME_CLASH`
 - `DOWNLOAD_MISSING_MANIFEST`, `DOWNLOAD_MISSING_SCHEMA`
 - `HOOK_SLOT_CONFLICT` (thrown), plus the non-fatal hook warnings `HOOK_BOOTSTRAP_MANAGED_WRITE`, `HOOK_PERSONALIZE_UNMANAGED_CREATE`, `HOOK_BOUNDARY_INCOMPLETE`, `HOOK_BOUNDARY_IGNORE_INVALID`, `HOOK_POST_INSTALL_DEPRECATED`
 

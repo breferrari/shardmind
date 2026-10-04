@@ -136,6 +136,67 @@ describe('renderFile', () => {
       ]);
     });
 
+    it.each([
+      ['after sanitizing', ['Bob/Ops', 'Bob-Ops']],
+      ['by case only', ['alice', 'Alice']],
+      ['exactly', ['Alice', 'Alice']],
+      ['a string and an object', ['alice', { slug: 'Alice' }]],
+      ['a number and a string', [3, '3']],
+      ['in different Unicode forms', ['Caf\u00e9', 'Cafe\u0301']],
+    ])('eachOutputPaths refuses items that name the same file %s (#234)', (_label, list) => {
+      let err: unknown;
+      try {
+        eachOutputPaths('people/_each.md', list);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toMatchObject({ code: 'RENDER_ITERATOR_NAME_CLASH' });
+      // The message names the file, so the user can find the clashing items.
+      expect(String((err as Error).message)).toMatch(/people\//);
+    });
+
+    it('says which value to fix and where, without dumping whole items (#234)', () => {
+      let err: { message: string; hint?: string } | undefined;
+      try {
+        eachOutputPaths('people/_each.md', [{ name: 'alice', bio: 'x'.repeat(500) }, 'Alice']);
+      } catch (e) {
+        err = e as typeof err;
+      }
+      expect(err!.message).toContain('values.people');
+      expect(err!.message).not.toContain('xxxx');
+      expect(err!.hint).toContain('shard-values.yaml');
+    });
+
+    it('tells items without a slug or name apart from a real clash (#234)', () => {
+      let err: { message: string; hint?: string } | undefined;
+      try {
+        eachOutputPaths('notes/_each.md', [{ title: 'A' }, { title: 'B' }]);
+      } catch (e) {
+        err = e as typeof err;
+      }
+      expect(err!.message).toContain('no slug or name');
+      expect(err!.hint).toContain('slug or name');
+    });
+
+    it('renderFile refuses a clashing list the same way, the path update and adopt render through (#234)', async () => {
+      const os = await import('node:os');
+      const tmpDir = path.join(os.tmpdir(), `renderer-test-${crypto.randomUUID()}`);
+      await fs.mkdir(tmpDir, { recursive: true });
+      await fs.writeFile(path.join(tmpDir, '_each.md.njk'), '# {{ item }}\n');
+      try {
+        const env = createRenderer(tmpDir);
+        const entry = makeEntry({
+          sourcePath: path.join(tmpDir, '_each.md.njk'),
+          outputPath: 'people/_each.md',
+          iterator: 'people',
+        });
+        const ctx = makeContext({ values: { people: ['alice', 'Alice'] } });
+        await expect(renderFile(entry, ctx, env)).rejects.toMatchObject({ code: 'RENDER_ITERATOR_NAME_CLASH' });
+      } finally {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it('eachOutputPaths refuses a null item with RENDER_ITERATOR_ERROR, not a crash', () => {
       expect(() => eachOutputPaths('people/_each.md', ['Alice', null])).toThrow(
         expect.objectContaining({ code: 'RENDER_ITERATOR_ERROR' }),
@@ -292,18 +353,12 @@ describe('renderFile', () => {
           outputPath: 'notes/_each.md',
           iterator: 'notes',
         });
-        const ctx = makeContext({
-          values: {
-            notes: [
-              { name: 'OnlySpaces', slug: '   ' },
-              { name: 'Empty', slug: '' },
-            ],
-          },
-        });
-
-        const results = await renderFile(entry, ctx, env) as import('../../source/runtime/types.js').RenderedFile[];
-        for (const r of results) {
-          expect(r.outputPath).toBe('notes/_.md');
+        // One item per render: two that both fall back to `_` name the same
+        // file, which is refused (#234).
+        for (const item of [{ name: 'OnlySpaces', slug: '   ' }, { name: 'Empty', slug: '' }]) {
+          const ctx = makeContext({ values: { notes: [item] } });
+          const results = await renderFile(entry, ctx, env) as import('../../source/runtime/types.js').RenderedFile[];
+          expect(results.map((r) => r.outputPath)).toEqual(['notes/_.md']);
         }
       } finally {
         await fs.rm(tmpDir, { recursive: true, force: true });

@@ -314,13 +314,15 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       }
     });
 
-    it('planOutputs lists a path two items share once, so its collision is backed up once', async () => {
+    it('planOutputs refuses two items that name the same file, before anything is written (#234)', async () => {
       const shard = await eachShard();
       try {
         const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
-        const values = { people: [{ name: 'Alice' }, { name: 'Alice' }] };
-        const { outputs } = await planOutputs(schema, shard, defaultModuleSelections(schema), values);
-        expect(outputs.map((o) => o.outputPath)).toEqual(['people/Alice.md']);
+        const values = { people: [{ name: 'Alice' }, { name: 'alice' }] };
+        await expect(
+          planOutputs(schema, shard, defaultModuleSelections(schema), values),
+        ).rejects.toMatchObject({ code: 'RENDER_ITERATOR_NAME_CLASH' });
+        expect(await fsp.readdir(vault)).toEqual([]);
       } finally {
         await fsp.rm(shard, { recursive: true, force: true });
       }
