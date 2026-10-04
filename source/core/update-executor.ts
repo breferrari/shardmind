@@ -865,8 +865,9 @@ export async function rollbackUpdate(
   const failures: RollbackFailure[] = [];
 
   // Put back the old spelling of every file or folder renamed in place by
-  // case (#169, #195) first, so the snapshot's paths below land where they
-  // were.
+  // case (#169, #195). Either order with the restore below gives the same
+  // tree on a case-folding filesystem (mutation-checked against the rollback
+  // tests); undo-first is chosen for readability.
   failures.push(...(await undoCaseHops(vaultRoot, backupDir)));
 
   // Remove anything we newly introduced first so the restore-step can't

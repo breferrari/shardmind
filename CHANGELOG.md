@@ -57,6 +57,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
   - On Linux the shard's files move to the new folder, yours stay under the old spelling, and the old folder is removed only once it is empty.
   - A rollback, including Ctrl+C, puts every name back as it was.
   - A folder that would only partly move, because a shipped file keeps the old spelling, is refused as before.
+- **A Ctrl+C in the middle of a case-only rename no longer leaves a temporary file behind** (a gap in the #169 fix, closed before any release). Every in-place case rename is recorded in the update's backup before it starts, and the rollback undoes it from that record.
 
 ### Fixed (a release that only changes a file name's case — #169)
 
