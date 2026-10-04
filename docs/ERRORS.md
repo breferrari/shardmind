@@ -342,6 +342,12 @@ Thrown by `source/core/install-planner.ts` and `source/core/install-executor.ts`
 
 **Remedy:** Check permissions at the path referenced in the error. Clean up stale `*.shardmind-backup-*` backup paths if you somehow have a thousand of them.
 
+### `CANCELLED`
+
+**Meaning:** An install, update or adopt was cancelled with Ctrl+C while it was writing (#249). Thrown by `throwIfCancelled` in `source/core/cancellation.ts`, which each executor calls before every write, so the run stops between two writes and is then rolled back once. The process exits 130.
+
+**Remedy:** None needed: the vault is as it was before the run. If the rollback could not put everything back, the message printed on exit lists what is left (`ROLLBACK_INCOMPLETE`).
+
 ### `ROLLBACK_INCOMPLETE`
 
 **Meaning:** An install, update or adopt failed, and rolling it back could not put every file back (#247). Thrown by `source/core/rollback-report.ts` for all three commands. The message starts with the original failure and its code, then lists each path the rollback could not restore or remove, with the reason and, when there is one, where that file's backup is: a `*.shardmind-backup-*` path for install, a file under `.shardmind/backups/update-*/` or `.shardmind/backups/adopt-*/files/` for update and adopt. The adopt snapshot is kept when a restore from it failed. The exit code is 1, and `--json` carries the same message.
