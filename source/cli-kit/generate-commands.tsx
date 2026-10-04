@@ -1,3 +1,8 @@
+/*
+ * From pastel@4.0.1 (https://github.com/vadimdemedes/pastel at fe4ce10046a55d0492a35b1ae08f54b5c64775e4), generate-commands.tsx.
+ * Copyright (c) Vadym Demedes. MIT: see cli-kit/LICENSE.
+ */
+
 import {Command as CommanderCommand} from 'commander';
 import {type ComponentType} from 'react';
 import type {Command} from './internal-types.js';

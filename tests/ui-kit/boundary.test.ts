@@ -61,9 +61,6 @@ describe('ui-kit boundary (#43)', () => {
     const found: string[] = [];
     for (const dir of ['source', 'tests']) {
       for (const file of sourceFiles(path.join(REPO, dir))) {
-        // Pastel, vendored byte for byte and not yet adapted (#277); the
-        // next commit swaps its import and removes this exemption.
-        if (file.startsWith(path.join(REPO, 'source', 'cli-kit') + path.sep)) continue;
         if (specifiers(fs.readFileSync(file, 'utf-8')).some((spec) => spec === '@inkjs/ui' || spec.startsWith('@inkjs/ui/'))) {
           found.push(path.relative(REPO, file));
         }

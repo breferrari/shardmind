@@ -1,7 +1,12 @@
+/*
+ * From pastel@4.0.1 (https://github.com/vadimdemedes/pastel at fe4ce10046a55d0492a35b1ae08f54b5c64775e4), index.ts.
+ * Copyright (c) Vadym Demedes. MIT: see cli-kit/LICENSE.
+ * Modified by Brenno Ferrari: no read of the package.json above the current directory (read-package-up).
+ */
+
 import {fileURLToPath} from 'node:url';
 import process from 'node:process';
 import {Command} from 'commander';
-import {readPackageUp} from 'read-package-up';
 import generateCommand from './generate-command.js';
 import readCommands from './read-commands.js';
 import generateCommands from './generate-commands.js';
@@ -11,17 +16,17 @@ import type {CommandArgumentConfig, CommandOptionConfig} from './types.js';
 
 export type Options = {
 	/**
-	 * Program name. Defaults to `name` in the nearest package.json or the name of the executable.
+	 * Program name. Defaults to the name of the executable.
 	 */
 	name?: string;
 
 	/**
-	 * Version. Defaults to `version` in the nearest package.json.
+	 * Version. No `--version` option without it.
 	 */
 	version?: string;
 
 	/**
-	 * Description. Defaults to `description` in the nearest package.json.
+	 * Description, unless the index command describes itself.
 	 */
 	description?: string;
 
@@ -63,19 +68,14 @@ export default class Pastel {
 			program.name(this.options.name);
 		}
 
-		const package_ = await readPackageUp();
-
-		const version = this.options.version ?? package_?.packageJson.version;
+		const {version} = this.options;
 
 		if (version) {
 			program.version(version, '-v, --version', 'Show version number');
 		}
 
 		const description =
-			indexCommand?.description ??
-			this.options.description ??
-			package_?.packageJson.description ??
-			'';
+			indexCommand?.description ?? this.options.description ?? '';
 
 		program.description(description);
 		program.helpOption('-h, --help', 'Show help');

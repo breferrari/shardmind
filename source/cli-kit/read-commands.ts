@@ -1,7 +1,13 @@
+/*
+ * From pastel@4.0.1 (https://github.com/vadimdemedes/pastel at fe4ce10046a55d0492a35b1ae08f54b5c64775e4), read-commands.ts.
+ * Copyright (c) Vadym Demedes. MIT: see cli-kit/LICENSE.
+ * Modified by Brenno Ferrari: decamelize from lib/decamelize.ts.
+ */
+
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
-import decamelize from 'decamelize';
+import decamelize from './lib/decamelize.js';
 import type {CommandExports, Command} from './internal-types.js';
 
 const readCommands = async (

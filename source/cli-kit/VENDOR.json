@@ -1,0 +1,65 @@
+{
+  "commit": "fe4ce10046a55d0492a35b1ae08f54b5c64775e4",
+  "copyright": "Vadym Demedes",
+  "files": {
+    "_app.tsx": {
+      "modified": false,
+      "upstream": "_app.tsx"
+    },
+    "generate-arguments.tsx": {
+      "change": "decamelize from lib/decamelize.ts.",
+      "modified": true,
+      "upstream": "generate-arguments.tsx"
+    },
+    "generate-command.tsx": {
+      "change": "StatusMessage from the ui-kit instead of @inkjs/ui.",
+      "modified": true,
+      "upstream": "generate-command.tsx"
+    },
+    "generate-commands.tsx": {
+      "modified": false,
+      "upstream": "generate-commands.tsx"
+    },
+    "generate-options.ts": {
+      "change": "decamelize and plur from lib/.",
+      "modified": true,
+      "upstream": "generate-options.ts"
+    },
+    "index.ts": {
+      "change": "no read of the package.json above the current directory (read-package-up).",
+      "modified": true,
+      "upstream": "index.ts"
+    },
+    "internal-types.ts": {
+      "modified": false,
+      "upstream": "internal-types.ts"
+    },
+    "read-commands.ts": {
+      "change": "decamelize from lib/decamelize.ts.",
+      "modified": true,
+      "upstream": "read-commands.ts"
+    },
+    "read-custom-app.ts": {
+      "modified": false,
+      "upstream": "read-custom-app.ts"
+    },
+    "types.ts": {
+      "modified": false,
+      "upstream": "types.ts"
+    }
+  },
+  "kit": "cli-kit",
+  "license": "MIT",
+  "modifiedBy": "Brenno Ferrari",
+  "package": "pastel",
+  "repository": "https://github.com/vadimdemedes/pastel",
+  "schemaVersion": 1,
+  "sourceRoot": "source",
+  "tag": "v4.0.1",
+  "tagPattern": "v{version}",
+  "tarball": {
+    "integrity": "sha512-YvXkCmKxMJ/VidM9ua13J8Udr2RK9/ZIwn8OCQhNdxBojiaLbEZIGrgwr1WpPi9w4J0gtAWTt6Pqub8REbZwWg==",
+    "url": "https://registry.npmjs.org/pastel/-/pastel-4.0.1.tgz"
+  },
+  "version": "4.0.1"
+}

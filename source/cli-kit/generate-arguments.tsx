@@ -1,3 +1,9 @@
+/*
+ * From pastel@4.0.1 (https://github.com/vadimdemedes/pastel at fe4ce10046a55d0492a35b1ae08f54b5c64775e4), generate-arguments.tsx.
+ * Copyright (c) Vadym Demedes. MIT: see cli-kit/LICENSE.
+ * Modified by Brenno Ferrari: decamelize from lib/decamelize.ts.
+ */
+
 import {isDeepStrictEqual} from 'node:util';
 import {Argument} from 'commander';
 import {
@@ -8,7 +14,7 @@ import {
 	ZodOptional,
 	ZodTuple,
 } from 'zod';
-import decamelize from 'decamelize';
+import decamelize from './lib/decamelize.js';
 import {type CommandArguments} from './internal-types.js';
 import {type CommandArgumentConfig} from './types.js';
 

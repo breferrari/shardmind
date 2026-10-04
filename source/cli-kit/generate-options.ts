@@ -1,6 +1,12 @@
+/*
+ * From pastel@4.0.1 (https://github.com/vadimdemedes/pastel at fe4ce10046a55d0492a35b1ae08f54b5c64775e4), generate-options.ts.
+ * Copyright (c) Vadym Demedes. MIT: see cli-kit/LICENSE.
+ * Modified by Brenno Ferrari: decamelize and plur from lib/.
+ */
+
 import {isDeepStrictEqual} from 'node:util';
 import {Option} from 'commander';
-import decamelize from 'decamelize';
+import decamelize from './lib/decamelize.js';
 import {
 	ZodArray,
 	ZodBoolean,
@@ -10,7 +16,7 @@ import {
 	ZodOptional,
 	ZodSet,
 } from 'zod';
-import plur from 'plur';
+import plur from './lib/plur.js';
 import {type CommandOptions} from './internal-types.js';
 import {type CommandOptionConfig} from './types.js';
 

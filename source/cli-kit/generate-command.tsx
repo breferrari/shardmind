@@ -1,8 +1,14 @@
+/*
+ * From pastel@4.0.1 (https://github.com/vadimdemedes/pastel at fe4ce10046a55d0492a35b1ae08f54b5c64775e4), generate-command.tsx.
+ * Copyright (c) Vadym Demedes. MIT: see cli-kit/LICENSE.
+ * Modified by Brenno Ferrari: StatusMessage from the ui-kit instead of @inkjs/ui.
+ */
+
 import process from 'node:process';
 import {type Command as CommanderCommand} from 'commander';
 import {render} from 'ink';
 import React, {type ComponentType} from 'react';
-import {StatusMessage} from '@inkjs/ui';
+import {StatusMessage} from '../ui-kit/index.js';
 import {fromZodError} from 'zod-validation-error';
 import {type Command} from './internal-types.js';
 import generateOptions from './generate-options.js';

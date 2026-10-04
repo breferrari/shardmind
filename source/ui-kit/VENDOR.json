@@ -1,0 +1,161 @@
+{
+  "commit": "14b1145da0123a48cfc2f0ec9ff33dff0633f464",
+  "copyright": "Vadym Demedes",
+  "files": {
+    "components/alert/alert.tsx": {
+      "change": "no default React import.",
+      "modified": true,
+      "upstream": "components/alert/alert.tsx"
+    },
+    "components/alert/index.ts": {
+      "modified": false,
+      "upstream": "components/alert/index.ts"
+    },
+    "components/alert/theme.ts": {
+      "change": "glyphs from lib/figures.ts; typed theme parameters.",
+      "modified": true,
+      "upstream": "components/alert/theme.ts"
+    },
+    "components/badge/badge.tsx": {
+      "change": "no default React import.",
+      "modified": true,
+      "upstream": "components/badge/badge.tsx"
+    },
+    "components/badge/index.ts": {
+      "modified": false,
+      "upstream": "components/badge/index.ts"
+    },
+    "components/badge/theme.ts": {
+      "modified": false,
+      "upstream": "components/badge/theme.ts"
+    },
+    "components/progress-bar/index.ts": {
+      "modified": false,
+      "upstream": "components/progress-bar/index.ts"
+    },
+    "components/progress-bar/progress-bar.tsx": {
+      "change": "no default React import.",
+      "modified": true,
+      "upstream": "components/progress-bar/progress-bar.tsx"
+    },
+    "components/progress-bar/theme.ts": {
+      "change": "glyphs from lib/figures.ts.",
+      "modified": true,
+      "upstream": "components/progress-bar/theme.ts"
+    },
+    "components/select/index.ts": {
+      "modified": false,
+      "upstream": "components/select/index.ts"
+    },
+    "components/select/select-option.tsx": {
+      "change": "glyphs from lib/figures.ts instead of the figures package.",
+      "modified": true,
+      "upstream": "components/select/select-option.tsx"
+    },
+    "components/select/select.tsx": {
+      "change": "no default React import.",
+      "modified": true,
+      "upstream": "components/select/select.tsx"
+    },
+    "components/select/theme.ts": {
+      "change": "typed theme parameters.",
+      "modified": true,
+      "upstream": "components/select/theme.ts"
+    },
+    "components/select/use-select-state.ts": {
+      "change": "onChange fires once per Enter, with the choice read from the reducer (ShardMind #103, vadimdemedes/ink-ui#26, typed-ahead keys); focus starts on defaultValue; dead previousValue removed.",
+      "modified": true,
+      "upstream": "components/select/use-select-state.ts"
+    },
+    "components/select/use-select.ts": {
+      "modified": false,
+      "upstream": "components/select/use-select.ts"
+    },
+    "components/spinner/index.ts": {
+      "modified": false,
+      "upstream": "components/spinner/index.ts"
+    },
+    "components/spinner/spinner.tsx": {
+      "change": "no default React import.",
+      "modified": true,
+      "upstream": "components/spinner/spinner.tsx"
+    },
+    "components/spinner/theme.ts": {
+      "modified": false,
+      "upstream": "components/spinner/theme.ts"
+    },
+    "components/spinner/use-spinner.ts": {
+      "change": "frames from lib/spinners.ts instead of cli-spinners.",
+      "modified": true,
+      "upstream": "components/spinner/use-spinner.ts"
+    },
+    "components/status-message/index.ts": {
+      "modified": false,
+      "upstream": "components/status-message/index.ts"
+    },
+    "components/status-message/status-message.tsx": {
+      "change": "no default React import.",
+      "modified": true,
+      "upstream": "components/status-message/status-message.tsx"
+    },
+    "components/status-message/theme.ts": {
+      "change": "glyphs from lib/figures.ts.",
+      "modified": true,
+      "upstream": "components/status-message/theme.ts"
+    },
+    "components/status-message/types.ts": {
+      "modified": false,
+      "upstream": "components/status-message/types.ts"
+    },
+    "components/text-input/index.ts": {
+      "modified": false,
+      "upstream": "components/text-input/index.ts"
+    },
+    "components/text-input/text-input.tsx": {
+      "change": "draws Ink Text segments instead of a chalk string.",
+      "modified": true,
+      "upstream": "components/text-input/text-input.tsx"
+    },
+    "components/text-input/theme.ts": {
+      "modified": false,
+      "upstream": "components/text-input/theme.ts"
+    },
+    "components/text-input/use-text-input-state.ts": {
+      "change": "onChange fires once per change of the text (vadimdemedes/ink-ui#26); dead previousValue removed.",
+      "modified": true,
+      "upstream": "components/text-input/use-text-input-state.ts"
+    },
+    "components/text-input/use-text-input.ts": {
+      "change": "cursor and placeholder as Ink Text segments instead of chalk strings.",
+      "modified": true,
+      "upstream": "components/text-input/use-text-input.ts"
+    },
+    "lib/option-map.ts": {
+      "modified": false,
+      "upstream": "lib/option-map.ts"
+    },
+    "theme.tsx": {
+      "change": "cut to the components the ui-kit holds, with no deepmerge and no any.",
+      "modified": true,
+      "upstream": "theme.tsx"
+    },
+    "types.ts": {
+      "modified": false,
+      "upstream": "types.ts"
+    }
+  },
+  "kit": "ui-kit",
+  "license": "MIT",
+  "modifiedBy": "Brenno Ferrari",
+  "package": "@inkjs/ui",
+  "repository": "https://github.com/vadimdemedes/ink-ui",
+  "schemaVersion": 1,
+  "sourceRoot": "source",
+  "tag": "v2.0.0",
+  "tagPattern": "v{version}",
+  "tarball": {
+    "integrity": "sha512-5+8fJmwtF9UvikzLfph9sA+LS+l37Ij/szQltkuXLOAXwNkBX9innfzh4pLGXIB59vKEQUtc6D4qGvhD7h3pAg==",
+    "url": "https://registry.npmjs.org/@inkjs/ui/-/ui-2.0.0.tgz"
+  },
+  "version": "2.0.0"
+}
