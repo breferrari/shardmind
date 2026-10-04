@@ -63,7 +63,7 @@ The suite fails only on real defects, on all three operating systems.
 | ✅ | Stop dist/ changing while E2E tests spawn the CLI | [#176](https://github.com/breferrari/shardmind/issues/176) |
 | ✅ | Read a fast-exiting CLI's last output in the PTY harness | [#177](https://github.com/breferrari/shardmind/issues/177) |
 | ✅ | Retry temp-dir removal on Windows (ENOTEMPTY/EBUSY/EPERM) | [#191](https://github.com/breferrari/shardmind/issues/191) |
-| ⬜ | Stop cli.test.ts update scenarios timing out on Windows CI | [#218](https://github.com/breferrari/shardmind/issues/218) |
+| ✅ | Stop cli.test.ts update scenarios timing out on Windows CI | [#218](https://github.com/breferrari/shardmind/issues/218) |
 
 ## Phase 4 — close what already shipped
 
