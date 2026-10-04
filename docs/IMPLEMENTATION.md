@@ -1243,6 +1243,8 @@ interface AdoptPlan {
 
 **Dependencies**: `core/modules` (resolveModules), `core/renderer` (createRenderer + renderFile + buildRenderContext), `core/fs-utils` (sha256 + mapConcurrent + toPosix), `runtime/errno`.
 
+**Renames (#179)**: with `renames` (old → new, from `renamesBetween(manifest.migrations, fromVersion, manifest.version)`), an output whose path is a rename's new path, absent from the vault, reads the user's bytes from the old path when that exists and is not itself an output, and when no other rename claims the new path. The classification (`matches` / `differs`) records `movedFrom`.
+
 ### 4.18 `adopt-executor.ts`
 
 **Purpose**: Disk-mutating ops for adopt. Counterpart to `adopt-planner.ts` — the planner classifies, this file applies decisions. Pre-flight guards refuse to run on already-managed vaults; snapshot-based rollback restores user content if anything between snapshot staging and the final state-write fails.
@@ -1313,6 +1315,8 @@ buildFileState(c, hash, ownership) = {
 
 **Dependencies**: `core/state` (initShardDir, cacheTemplates, cacheManifest, writeState), `core/install-planner` (hashValues), `core/fs-utils` (mapConcurrent, pathExists), `runtime/errno`, `runtime/vault-paths`.
 
+
+**Renames (#179)**: before any write, each `movedFrom` classification's new path must still be free (`lstat`; refused with `ADOPT_WRITE_FAILED` otherwise), its old path is snapshotted, and its new path joins `addedPaths`. After the classification is applied: a `matches` or `keep_mine` moves the old file to the new path; `use_shard` or a merge, which wrote the new path, deletes the old one. `summary.renamedFiles` lists `{ from, to }`.
 ### 4.19 `self-update-check.ts`
 
 **Purpose**: 24-hour cached "is there a newer shardmind on npm?" lookup. Sibling of §4.15 (`update-check.ts`) — same hardening posture, different subject. §4.15 answers "newer SHARD on GitHub?" and writes a vault-local cache; §4.19 answers "newer ENGINE on npm?" and writes a user-level cache because the engine is global, not per-vault. Powers the cross-cutting `<SelfUpdateBanner>` rendered above every top-level command's UI.
