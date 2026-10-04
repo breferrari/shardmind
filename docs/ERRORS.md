@@ -382,6 +382,12 @@ The engine refuses rather than falling back to schema defaults, because a silent
 
 **Remedy:** Pass `--values <file>` to supply answers, or `--yes` to accept schema defaults deliberately. `--values` alone is sufficient without a TTY.
 
+### `INSTALL_SHARD_INVALID`
+
+**Meaning:** Before asking anything, install checks the downloaded shard the way `shardmind validate` does: every module included, every template rendered with the schema defaults, or with your `--values` over them (a `--values` answer the schema rejects is left to the wizard, and the shard is checked with the defaults instead). At least one check failed, so the install stopped before the wizard and before any write to the vault. The message lists every problem with its code and the file it is about. A template that fails here is a bug in the shard, even when it sits in a module you meant to leave out.
+
+**Remedy:** Shard author: run `shardmind validate` on the shard (with the same `--values` file, if one was passed) and fix what it reports. User: a template that fails only with your `--values` answers is still the shard's to fix, since the schema accepted them; report the problem to the shard's author, or install an earlier version of the shard (`owner/repo@<version>`).
+
 ### `INSTALL_GATE_NON_INTERACTIVE`
 
 **Meaning:** The target directory is already shardmind-managed, so the install needs an answer from the existing-install gate, and there is no interactive terminal to ask for one. `--yes` does **not** answer this gate — overwriting a managed vault is not a default the engine assumes on your behalf.
@@ -508,7 +514,7 @@ Thrown by `source/core/adopt-executor.ts` (and surfaced through `source/commands
 
 ## Walk + `.shardmindignore`
 
-Thrown by `source/core/modules.ts::walkShardSource` and `source/core/shardmindignore.ts::loadShardmindignore` during the install / update walk over the extracted shard. Pre-write — these never leave a partial vault behind because they fire before any `runInstall` / `runUpdate` mutation.
+Thrown by `source/core/modules.ts::walkShardSource` and `source/core/shardmindignore.ts::loadShardmindignore` during the install / update walk over the extracted shard. Pre-write — these never leave a partial vault behind because they fire before any `runInstall` / `runUpdate` mutation. On install, the pre-install check (#35) walks first, so one of these arrives as a line in `INSTALL_SHARD_INVALID`'s list, with its own code.
 
 ### `WALK_SYMLINK_REJECTED`
 

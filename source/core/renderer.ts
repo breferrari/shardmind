@@ -131,6 +131,25 @@ export async function renderFile(
   return buildRenderedFile(entry.outputPath, content, isVolatile);
 }
 
+/**
+ * Compile a template without rendering it, so a syntax error is found even
+ * when there is nothing to render with: an `_each` template over an empty
+ * list renders no file at all (#35).
+ */
+export async function compileTemplate(entry: FileEntry, env: nunjucks.Environment): Promise<void> {
+  const source = await fs.readFile(entry.sourcePath, 'utf-8');
+  try {
+    new nunjucks.Template(source, env, entry.sourcePath, true);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new ShardMindError(
+      `Template error in ${entry.outputPath}: ${message}`,
+      'RENDER_TEMPLATE_ERROR',
+      'Check the template for Nunjucks syntax errors.',
+    );
+  }
+}
+
 function renderEach(
   entry: FileEntry,
   source: string,

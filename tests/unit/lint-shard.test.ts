@@ -3,13 +3,24 @@
  * finding instead of stopping at the first. Never runs shard code.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// A template named `Unreadable…` fails to read with EACCES: an I/O failure,
+// not a problem in the shard (#35).
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs/promises')>();
+  const readFile = ((p: unknown, ...rest: unknown[]) =>
+    String(p).includes('Unreadable')
+      ? Promise.reject(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }))
+      : (real.readFile as (...a: unknown[]) => Promise<unknown>)(p, ...rest)) as typeof real.readFile;
+  return { ...real, readFile, default: { ...real.default, readFile } };
+});
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { lintShard } from '../../source/core/lint-shard.js';
+import { lintShard, assertShardInstallable } from '../../source/core/lint-shard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MINIMAL_SHARD = path.resolve(__dirname, '../../examples/minimal-shard');
@@ -55,6 +66,23 @@ describe('lintShard (#34)', () => {
     const result = await lintShard(shard, {});
     expect(errors(result).map((f) => f.path).sort()).toEqual(['brain/Broken One.md', 'brain/Broken Two.md']);
     for (const f of errors(result)) expect(f.code).toMatch(/^RENDER_/);
+  });
+
+  it('reports frontmatter that is not YAML once rendered (#35)', async () => {
+    await write('brain/Bad Front.md.njk', '---\ntags: [unclosed\n---\nbody\n');
+    const result = await lintShard(shard, {});
+    expect(errors(result)).toMatchObject([{ code: 'RENDER_FRONTMATTER_ERROR', path: 'brain/Bad Front.md' }]);
+  });
+
+  it('renders an undefined variable as empty, as install does: no finding (#35)', async () => {
+    await write('brain/Missing.md.njk', 'Hello {{ no_such_value }}\n');
+    expect((await lintShard(shard, {})).findings).toEqual([]);
+  });
+
+  it('reports a broken template in a removable module: every module is checked (#35)', async () => {
+    await write('extras/Broken.md.njk', '{% endif %}\n');
+    const result = await lintShard(shard, {});
+    expect(errors(result)).toMatchObject([{ path: 'extras/Broken.md' }]);
   });
 
   it('renders with the schema defaults, and with --values over them', async () => {
@@ -143,5 +171,73 @@ describe('parseValidateArgv (#34)', () => {
     await expect(validateShard(path.join(root, 'nope'), {})).rejects.toMatchObject({ code: 'VALIDATE_TARGET_INVALID' });
     await expect(validateShard('./nope', {})).rejects.toMatchObject({ code: 'VALIDATE_TARGET_INVALID' });
     await expect(validateShard(path.join(shard, 'CLAUDE.md'), {})).rejects.toMatchObject({ code: 'VALIDATE_TARGET_INVALID' });
+  });
+});
+
+describe('lintShard: what install renders (#35 review)', () => {
+  const addPeople = () =>
+    edit('.shardmind/shard-schema.yaml', (s) =>
+      s.replace('values:\n', 'values:\n  people:\n    type: list\n    message: "People"\n    default: []\n    group: setup\n\n'),
+    );
+
+  it('compiles an _each template whose list is empty, so its syntax error is still found', async () => {
+    await addPeople();
+    await write('people/_each.md.njk', '{% if %}\n');
+    expect(errors(await lintShard(shard, {}))).toMatchObject([{ code: 'RENDER_TEMPLATE_ERROR', path: 'people/_each.md' }]);
+  });
+
+  it('passes a sound _each template whose list is empty', async () => {
+    await addPeople();
+    await write('people/_each.md.njk', '# {{ item.name }}\n');
+    expect((await lintShard(shard, {})).findings).toEqual([]);
+  });
+
+  it('renders vault_name from the vault the install targets', async () => {
+    await write('brain/Vault.md.njk', '{% if vault_name != "My Vault" %}{{ vault_name | nosuchfilter }}{% endif %}\n');
+    expect(errors(await lintShard(shard, {}))).toHaveLength(1);
+    expect((await lintShard(shard, { vaultRoot: path.join(root, 'My Vault') })).findings).toEqual([]);
+  });
+});
+
+describe('assertShardInstallable (#35)', () => {
+  it('passes a clean shard, and one with warnings only', async () => {
+    await expect(assertShardInstallable(shard, {}, root)).resolves.toBeUndefined();
+    await edit('.shardmind/shard-schema.yaml', (s) => s.replace('groups:', 'groups:\n  - id: empty_group\n    label: "Empty"'));
+    expect(warnings(await lintShard(shard, {}))).not.toEqual([]);
+    await expect(assertShardInstallable(shard, {}, root)).resolves.toBeUndefined();
+  });
+
+  it('lists every error with its code and path in one INSTALL_SHARD_INVALID', async () => {
+    await write('brain/Broken One.md.njk', '{% if %}\n');
+    await write('extras/Broken Two.md.njk', '{{ not_a_function() }}\n');
+    const err = await assertShardInstallable(shard, {}, root).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'INSTALL_SHARD_INVALID' });
+    expect((err as Error).message).toMatch(/2 problems/);
+    expect((err as Error).message).toMatch(/brain\/Broken One\.md: [\s\S]* \[RENDER_\w+\]/);
+    expect((err as Error).message).toMatch(/extras\/Broken Two\.md/);
+  });
+
+  it('lets an engine or I/O failure through as itself, not as a broken shard', async () => {
+    await write('brain/Unreadable.md.njk', 'hello\n');
+    const err = await assertShardInstallable(shard, {}, root).catch((e: unknown) => e);
+    expect(err).not.toMatchObject({ code: 'INSTALL_SHARD_INVALID' });
+    expect((err as Error).message).toMatch(/EACCES/);
+  });
+
+  it('names each file once, and keeps a multi-line message under its bullet', async () => {
+    await write('brain/Bad Front.md.njk', '---\ntags: [unclosed\n---\nbody\n');
+    const message = ((await assertShardInstallable(shard, {}, root).catch((e: unknown) => e)) as Error).message;
+    expect(message.match(/brain[/]Bad Front[.]md/g)).toHaveLength(1);
+    expect(message.split('\n').length).toBeGreaterThan(2);
+    for (const line of message.split('\n').slice(1)) expect(line).toMatch(/^(  - |    )/);
+  });
+
+  it('checks the shard with the defaults when the prefill itself is invalid', async () => {
+    await expect(assertShardInstallable(shard, { vault_purpose: 'not-an-option' }, root)).resolves.toBeUndefined();
+    await write('brain/Broken.md.njk', '{% if %}\n');
+    await expect(assertShardInstallable(shard, { vault_purpose: 'not-an-option' }, root)).rejects.toMatchObject({
+      code: 'INSTALL_SHARD_INVALID',
+      message: expect.stringMatching(/brain\/Broken\.md/),
+    });
   });
 });

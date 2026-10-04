@@ -74,7 +74,8 @@ graph TD
     B["registry.ts<br/>Resolve → source + version"] --> C
     C["download.ts<br/>Fetch tarball → extract to temp"] --> D
     D["manifest.ts<br/>Parse shard.yaml → zod → ShardManifest"] --> E
-    E["schema.ts<br/>Parse shard-schema.yaml → zod → ShardSchema<br/>Generate dynamic values validator"] --> F
+    E["schema.ts<br/>Parse shard-schema.yaml → zod → ShardSchema<br/>Generate dynamic values validator"] --> L
+    L["lint-shard.ts<br/>Render every template with the defaults (or --values)<br/>Any error → INSTALL_SHARD_INVALID, before the wizard"] --> F
 
     F["InstallWizard — Ink TUI<br/>① Value prompts from schema.groups<br/>② Module review (toggle removable)<br/>③ Confirm"] --> G
 
@@ -913,7 +914,7 @@ hashValues(values: Record<string, unknown>): string;   // sha256 hex
 7. **`splitByOwnContent`** (#55): with `mapConcurrent(16)`, a collision is `untouched` when `previous.files[outputPath]` exists, it is a file, and `sha256(bytes) === recorded.rendered_hash`. Everything else, including any read failure and every collision when `previous` is `null`, is `own`. Untouched files are replaced without a prompt, a backup or a mention in the summary.
 8. **`hashValues`**: `sha256(JSON.stringify(stableJson(values)))`. `stableJson` sorts object keys recursively (arrays keep their order) and tracks only the ancestors currently being descended: a true cycle becomes `null`, while a shared but non-cyclic reference (a YAML alias used in two places) is expanded at each position, so aliased and anchor-free YAML with the same content hash identically. The result is `state.values_hash`.
 
-**How `use-install-machine` sequences them**: values (`mergePrefill` → `missingValueKeys` → wizard or `VALUES_MISSING` → `resolveComputedDefaults` → `buildValuesValidator`, §4.4) → `planOutputs` → `assertSafeVaultPaths` on the planned outputs (refused before any prompt, so a dry run and a real run agree) → `detectCollisions` → `splitByOwnContent` → collision prompt for `own` only (`CollisionReview`; `--force` → overwrite; non-interactive → backup). Before the moves, `splitByOwnContent` runs again on `untouched`, since a file edited while the prompt was open is the user's now.
+**How `use-install-machine` sequences them**: first, right after the schema parse and the `--values` load, `assertShardInstallable(tempDir, prefill)` (`lint-shard.ts`, #35): `lintShard(tempDir, { values: prefill })` (§4.22); when the prefill is non-empty and the findings include `VALUES_INVALID` or `COMPUTED_DEFAULT_FAILED`, the answers are wrong, not the shard, so it lints again with the defaults alone and the wizard (or `--yes`'s own `VALUES_INVALID`) handles the answers. Any error finding left stops the install with `INSTALL_SHARD_INVALID` listing every one, before the wizard or any vault write. Warnings do not block. Values typed in the wizard are not known yet, so a template that fails only with them still fails at render time, rolled back. Then values (`mergePrefill` → `missingValueKeys` → wizard or `VALUES_MISSING` → `resolveComputedDefaults` → `buildValuesValidator`, §4.4) → `planOutputs` → `assertSafeVaultPaths` on the planned outputs (refused before any prompt, so a dry run and a real run agree) → `detectCollisions` → `splitByOwnContent` → collision prompt for `own` only (`CollisionReview`; `--force` → overwrite; non-interactive → backup). Before the moves, `splitByOwnContent` runs again on `untouched`, since a file edited while the prompt was open is the user's now.
 
 **Error cases**:
 - `COMPUTED_DEFAULT_FAILED`: the Nunjucks expression threw (hint carries the Nunjucks message).
@@ -1600,7 +1601,7 @@ Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` 
 
 ### 4.22 `lint-shard.ts`
 
-Check a shard directory the way install would, collecting every finding (#34; #35's pre-install check calls the same function). Pure of Ink; never runs shard code.
+Check a shard directory the way install would, collecting every finding (#34). Install calls it before the wizard (#35, §4.11a), without `engineVersion` since it has already asserted the engine range. Pure of Ink; never runs shard code.
 
 ```typescript
 interface LintFinding { severity: 'error' | 'warning'; code: string; message: string; hint?: string; path?: string }

@@ -15,7 +15,7 @@ import { assertEngineCompatible, parseManifest } from './manifest.js';
 import { buildValuesValidator, parseSchema } from './schema.js';
 import { resolveComputedDefaults } from './install-planner.js';
 import { resolveModules } from './modules.js';
-import { buildRenderContext, createRenderer, renderFile } from './renderer.js';
+import { buildRenderContext, compileTemplate, createRenderer, renderFile } from './renderer.js';
 
 export interface LintFinding {
   severity: 'error' | 'warning';
@@ -33,11 +33,19 @@ export interface LintResult {
 
 export async function lintShard(
   shardDir: string,
-  opts: { values?: Record<string, unknown>; engineVersion?: string },
+  opts: {
+    values?: Record<string, unknown>;
+    engineVersion?: string;
+    /** The vault being installed into, for `vault_name` / `vault_slug`; `''` without it. */
+    vaultRoot?: string;
+    /** Throw an error that is not a ShardMindError (an engine bug, an I/O failure) instead of listing it. */
+    rethrowUnexpected?: boolean;
+  },
 ): Promise<LintResult> {
   const findings: LintFinding[] = [];
   const error = (err: unknown, filePath?: string): void => {
     const known = err instanceof ShardMindError;
+    if (!known && opts.rethrowUnexpected) throw err;
     findings.push({
       severity: 'error',
       code: known ? err.code : 'UNEXPECTED',
@@ -120,11 +128,14 @@ export async function lintShard(
     return done();
   }
 
-  const context = buildRenderContext(manifest, values, selections);
+  const context = buildRenderContext(manifest, values, selections, new Date(), opts.vaultRoot);
   const env = createRenderer(shardDir);
   for (const entry of resolution.render) {
     try {
-      await renderFile(entry, context, env);
+      const list = entry.iterator ? values[entry.iterator] : undefined;
+      // An `_each` over an empty list renders nothing, so compile it instead.
+      if (Array.isArray(list) && list.length === 0) await compileTemplate(entry, env);
+      else await renderFile(entry, context, env);
     } catch (err) {
       error(err, entry.outputPath);
     }
@@ -160,3 +171,44 @@ function isComputed(value: unknown): boolean {
   return typeof value === 'string' && value.includes('{{');
 }
 
+/** The error findings, warnings dropped. */
+export function errorFindings(findings: readonly LintFinding[]): LintFinding[] {
+  return findings.filter((f) => f.severity === 'error');
+}
+
+/** Codes `lintShard` emits when the values are wrong, not the shard (its values step). */
+const VALUE_CODES = new Set(['VALUES_INVALID', 'COMPUTED_DEFAULT_FAILED']);
+
+/**
+ * Install's pre-wizard check (#35): `lintShard` for the vault it installs
+ * into, with the `--values` prefill over the defaults. A prefill the schema
+ * rejects is the user's to fix in the wizard (or a later VALUES_INVALID under
+ * --yes), so the shard is then checked with the defaults alone. Any error left
+ * throws INSTALL_SHARD_INVALID listing every one; warnings never block. An
+ * engine bug or an I/O failure is thrown as itself, not blamed on the shard.
+ */
+export async function assertShardInstallable(
+  shardDir: string,
+  prefill: Record<string, unknown>,
+  vaultRoot: string,
+): Promise<void> {
+  const lint = (values: Record<string, unknown>) =>
+    lintShard(shardDir, { values, vaultRoot, rethrowUnexpected: true }).then((r) => errorFindings(r.findings));
+  let errors = await lint(prefill);
+  if (Object.keys(prefill).length > 0 && errors.some((f) => VALUE_CODES.has(f.code))) {
+    errors = await lint({});
+  }
+  if (errors.length === 0) return;
+  // Path, message and code, as `shardmind validate` lists them. The path is
+  // left out when the message already names it, and a multi-line message
+  // stays indented under its bullet.
+  const lines = errors.map((f) => {
+    const where = f.path && !f.message.includes(f.path) ? `${f.path}: ` : '';
+    return `  - ${where}${f.message} [${f.code}]`.replace(/\n/g, '\n    ');
+  });
+  throw new ShardMindError(
+    `The shard has ${errors.length} problem${errors.length === 1 ? '' : 's'}; nothing was asked or written:\n${lines.join('\n')}`,
+    'INSTALL_SHARD_INVALID',
+    'Shard author: run `shardmind validate` on the shard. User: report it to the shard author, or install an earlier version.',
+  );
+}
