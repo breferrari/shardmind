@@ -28,7 +28,7 @@ import {
   rollbackCreatedFolders,
 } from './created-folders.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
-import { pathExists, mapConcurrent, toPosix } from './fs-utils.js';
+import { pathExists, mapConcurrent, settleAll, toPosix } from './fs-utils.js';
 import { restoreDirExactly, restoreTree } from './restore-tree.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
@@ -734,14 +734,16 @@ async function snapshotForRollback(
 
   const filesBackupDir = path.join(backupDir, 'files');
   const cacheBackupDir = path.join(backupDir, 'cache');
-  await Promise.all([
+  await settleAll([
     fsp.mkdir(filesBackupDir, { recursive: true }),
     fsp.mkdir(cacheBackupDir, { recursive: true }),
   ]);
 
   // Copy snapshots with bounded concurrency. ENOENT is expected for
   // `missing` entries and any uninitialized cache file — tolerate both.
-  await Promise.all([
+  // Every branch settles before a failure is thrown, so none writes into the
+  // snapshot while the rollback reads it (#274).
+  await settleAll([
     mapConcurrent([...toSnapshot], SNAPSHOT_CONCURRENCY, (rel) =>
       copyOptional(path.join(vaultRoot, rel), path.join(filesBackupDir, rel)),
     ),

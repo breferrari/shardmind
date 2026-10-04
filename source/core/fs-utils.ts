@@ -59,6 +59,20 @@ export function toPosix(from: string, to: string): string {
  * returned array. Used to cap file-descriptor pressure when fanning
  * out disk reads (drift detection, update merge planning, snapshots).
  */
+/**
+ * Like `Promise.all` for steps that write, but it rejects only once every
+ * step has settled, with the first error: a caller that rolls back on the
+ * rejection must not race a step still writing (#274).
+ */
+export async function settleAll<T extends readonly unknown[]>(
+  steps: readonly [...{ [K in keyof T]: Promise<T[K]> }],
+): Promise<T> {
+  const outcomes = await Promise.allSettled(steps);
+  const failed = outcomes.find((o): o is PromiseRejectedResult => o.status === 'rejected');
+  if (failed) throw failed.reason;
+  return outcomes.map((o) => (o as PromiseFulfilledResult<unknown>).value) as unknown as T;
+}
+
 export async function mapConcurrent<T, R>(
   items: readonly T[],
   concurrency: number,
@@ -66,14 +80,23 @@ export async function mapConcurrent<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let cursor = 0;
+  // The first failure stops the hand-out, and the call rejects only once the
+  // tasks already running have settled: a caller that rolls back on the
+  // rejection must not race writes still under way (#274).
+  let failure: { error: unknown } | null = null;
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (true) {
+    while (failure === null) {
       const i = cursor++;
       if (i >= items.length) return;
-      results[i] = await fn(items[i]!);
+      try {
+        results[i] = await fn(items[i]!);
+      } catch (error) {
+        failure ??= { error };
+      }
     }
   });
   await Promise.all(workers);
+  if (failure !== null) throw (failure as { error: unknown }).error;
   return results;
 }
 
