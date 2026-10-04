@@ -110,6 +110,21 @@ hooks:
 | `hooks.post-update` | no | Path relative to shard root. Additive managed-file edits on update (`ctx.newFiles`). See §6. |
 | `hooks.post-install` | no | **Deprecated** — legacy combined hook. Mutually exclusive with the slots above (`HOOK_SLOT_CONFLICT`). Honored until ≥0.3.0; migrate to `bootstrap` + `personalize`. |
 | `hooks.timeout_ms` | no | Per-slot timeout in ms. Default 30000; range 1000–600000. |
+| `migrations` | no | Path renames between releases: `[{ from, to, renames: { "<old path>": "<new path>" } }]`. `shardmind update` carries the user's edits to the new path. See below. |
+
+### Renaming a file between releases
+
+Declare the move in the release that makes it, so users who edited the file keep their edits at the new path:
+
+```yaml
+migrations:
+  - from: "5.1.0"
+    to: "6.1.0"
+    renames:
+      "brain/philosophy.md": "brain/manifesto.md"
+```
+
+A rename applies to an update from installed version I to target T when `I < to ≤ T`; renames chain in `to` order (a→b at 6.1, then b→c at 6.2, gives a→c). It is skipped, and the update behaves as it would without it (the old file removed or kept, the new one added), when the old path is not tracked, the new path is already tracked or not produced by the new shard (an excluded module), anything already sits at the new path on disk, or two old paths chain to the same new path. Keep every past migration in `shard.yaml`: a user updating from an old release needs the whole chain.
 
 ## 4. `shard-schema.yaml` — the schema
 

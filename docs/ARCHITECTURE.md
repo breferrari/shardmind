@@ -214,6 +214,14 @@ hooks:
   personalize: .shardmind/hooks/personalize.ts
   post-update: .shardmind/hooks/post-update.ts
 
+# Path renames between releases, applied by `shardmind update` (#178).
+# Optional; see SHARD-LAYOUT.md §Rename migrations.
+migrations:
+  - from: "5.1.0"
+    to: "6.1.0"
+    renames:
+      "brain/philosophy.md": "brain/manifesto.md"
+
 # v0.1: dependencies are vendored by the shard author.
 # ShardMind validates version compatibility but does not fetch.
 ```
