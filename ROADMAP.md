@@ -122,7 +122,7 @@ Each authoring and CLI proposal is built, or declined with a reason that survive
 |---|---|---|
 | ✅ | Enforce tarball size cap in downloadShard | [#32](https://github.com/breferrari/shardmind/issues/32) |
 | ✅ | VaultFS abstraction with built-in rollback tracking (declined) | [#33](https://github.com/breferrari/shardmind/issues/33) |
-| ⬜ | VaultFS abstraction with built-in rollback tracking | [#33](https://github.com/breferrari/shardmind/issues/33) |
+| ✅ | VaultFS abstraction with built-in rollback tracking | [#33](https://github.com/breferrari/shardmind/issues/33) |
 | ⬜ | shardmind validate <shard> command | [#34](https://github.com/breferrari/shardmind/issues/34) |
 | ⬜ | Pre-install template syntax lint | [#35](https://github.com/breferrari/shardmind/issues/35) |
 | ⬜ | Debug logging (SHARDMIND_DEBUG env var) | [#36](https://github.com/breferrari/shardmind/issues/36) |
