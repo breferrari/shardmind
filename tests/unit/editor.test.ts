@@ -9,6 +9,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import {
   editInEditor,
   hasConflictMarkers,
@@ -138,6 +139,20 @@ describe('hasConflictMarkers (#50)', () => {
 });
 
 describe('withSigintHeld (#50)', () => {
+  it.skipIf(process.platform === 'win32')(
+    'swallows a real Ctrl+C queued while the editor blocks, and hands the next one to the listeners',
+    () => {
+      const child = spawnSync(
+        process.execPath,
+        ['--import', 'tsx', path.join(import.meta.dirname, 'fixtures', 'sigint-held-child.ts')],
+        { encoding: 'utf-8', timeout: 20_000 },
+      );
+      expect(child.status, child.stderr).toBe(0);
+      expect(JSON.parse(child.stdout)).toEqual({ during: 0, afterHold: 0, afterRestore: 1 });
+    },
+    30_000,
+  );
+
   it("swallows a Ctrl+C that arrives while the editor runs, then gives SIGINT back to its listeners", async () => {
     const handler = vi.fn();
     process.on('SIGINT', handler);

@@ -1680,7 +1680,7 @@ type EditOutcome = { kind: 'saved'; content: string } | { kind: 'cancelled'; det
    - `fileName` is the vault file's basename, so the editor sees its extension. On Windows, `%` and `"` in it become `_`, since cmd.exe expands `%VAR%` even inside double quotes.
 3. **Running the editor.** It runs `<command> <quoted path>` through the shell (`spawnSync`, `stdio: 'inherit'`), so a command with arguments such as `code --wait` works. The path is double-quoted on Windows and single-quoted elsewhere, with embedded quotes escaped.
 4. **Outcomes.**
-   - An editor that cannot start, a signal, a non-zero exit, or a temp copy that cannot be written or read back (moved, deleted) is `cancelled`.
+   - An editor that cannot start, a signal, a non-zero exit, a temp copy that cannot be created (its note says so), or one that cannot be read back (moved, deleted) is `cancelled`.
    - A file saved byte-identical to what was written is `cancelled`, with a note that a window editor must wait (`VISUAL="code --wait"`).
    - Anything else is `saved`, with the content as saved.
 
@@ -1688,7 +1688,10 @@ type EditOutcome = { kind: 'saved'; content: string } | { kind: 'cancelled'; det
 5. **Cleanup.** The edit directory is removed on every path. A failed removal (a window editor still holding it, Windows `EBUSY`) is left to the run's temp-dir cleanup and never changes the outcome.
 6. **`hasConflictMarkers`**: a line that starts with `<<<<<<< ` or `>>>>>>> `. A lone `=======` line is a Markdown setext underline, not a marker.
 7. **`withTerminalReleased`**: `setRawMode(false)` before `fn`, `setRawMode(true)` after, on every path. The caller passes the stdin stream's own `setRawMode`, not Ink's: Ink counts its raw-mode users and would not leave raw mode while the prompt holds it.
-8. **`withSigintHeld`**: removes the SIGINT listeners for `fn` and puts them back on the next turn of the event loop. An editor that leaves the terminal cooked lets Ctrl+C reach node too, queued while `spawnSync` blocks, and that Ctrl+C must cancel the edit, not the update and its choices so far.
+8. **`withSigintHeld`**: an editor that leaves the terminal cooked lets Ctrl+C reach node too, queued in libuv while `spawnSync` blocks, and that Ctrl+C must cancel the edit, not the update and its choices so far.
+   - A no-op listener goes on before the SIGINT listeners come off, and they come back before it goes. SIGINT always has a listener: with none, Node closes its signal handle and a signal takes the default action.
+   - The queued signal is delivered in the poll phase of the loop turn after `fn`. The restore waits for the check phase after that (two `setImmediate`s), so the no-op listener takes it.
+   - `rawListeners` keeps a `once` listener a `once`. A nested call just runs `fn`.
 
 **In the prompt.** A `saved` result with markers left returns to the prompt, saying so, with three choices:
 - Edit again;
@@ -1798,7 +1801,7 @@ interface DiffViewProps {
   result: MergeResult;
   preexisting?: boolean;      // PendingConflict.preexisting: an untracked file at a path the new version adds
   adoptPreexisting?: boolean; // the run's --adopt-preexisting flag (#61)
-  canEdit?: boolean;          // $VISUAL or $EDITOR is set (#50)
+  canEdit?: boolean;          // $VISUAL or $EDITOR is set, and the terminal supports raw mode (#50)
   editNote?: string;          // why the last edit came back (cancelled, unchanged)
   editHasMarkers?: boolean;   // the last edit was saved with conflict markers
   attempt?: number;           // edit rounds on this file: each is a new prompt round

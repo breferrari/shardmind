@@ -152,7 +152,7 @@ export default function DiffView({
         )}
         {editHasMarkers && (
           <Text color="yellow">
-            {'Your edit still has conflict markers (lines starting <<<<<<<, =======, >>>>>>>). Edit again, use it as is with the markers, or keep yours.'}
+            {'Your edit still has conflict markers (lines starting <<<<<<< or >>>>>>>). Edit again, use it as is with the markers, or keep yours.'}
           </Text>
         )}
         {editNote && <Text color="yellow">{editNote}</Text>}

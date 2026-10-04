@@ -38,10 +38,16 @@ export function editInEditor(
 ): EditOutcome {
   const platform = opts.platform ?? process.platform;
   let editDir: string | undefined;
+  let file: string;
   try {
     editDir = fs.mkdtempSync(path.join(opts.dir, 'shardmind-edit-'));
-    const file = path.join(editDir, safeFileName(fileName, platform));
+    file = path.join(editDir, safeFileName(fileName, platform));
     fs.writeFileSync(file, content, 'utf-8');
+  } catch (err) {
+    removeQuietly(editDir);
+    return cancelled(`The temp copy for the editor could not be created: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
     const run = spawnSync(`${opts.command} ${quoteForShell(file, platform)}`, { shell: true, stdio: 'inherit' });
     if (run.error) return cancelled(`${opts.command} could not start: ${run.error.message}`);
     if (run.signal) return cancelled(`${opts.command} was stopped (${run.signal})`);
@@ -56,17 +62,20 @@ export function editInEditor(
     }
     return { kind: 'saved', content: saved };
   } catch (err) {
-    // The temp copy could not be written or read back (moved, deleted, disk full).
+    // The editor moved or deleted the temp copy.
     return cancelled(`The edit could not be read back: ${err instanceof Error ? err.message : String(err)}`);
   } finally {
-    if (editDir !== undefined) {
-      try {
-        fs.rmSync(editDir, { recursive: true, force: true });
-      } catch {
-        // A window editor can still hold it open (Windows EBUSY); it is under
-        // the run's temp dir, which is removed when the command ends.
-      }
-    }
+    removeQuietly(editDir);
+  }
+}
+
+function removeQuietly(dir: string | undefined): void {
+  if (dir === undefined) return;
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // A window editor can still hold it open (Windows EBUSY); it is under the
+    // run's temp dir, which is removed when the command ends.
   }
 }
 
@@ -91,26 +100,39 @@ export function withTerminalReleased<T>(setRawMode: ((on: boolean) => void) | un
   }
 }
 
+let sigintHeld = false;
+
 /**
  * Run `fn` with SIGINT held: a Ctrl+C in an editor that leaves the terminal
- * cooked also reaches node, queued until `fn` returns, and must cancel the
- * edit, not the update. The listeners come back on the next turn of the
- * event loop, after any such signal is delivered; then `onRestored` runs.
+ * cooked also reaches node, queued in libuv while `spawnSync` blocks, and it
+ * must cancel the edit, not the update and its choices so far.
+ *
+ * A no-op listener goes on before the others come off, and the others come
+ * back before it goes, so SIGINT always has a listener: with none, Node would
+ * close its signal handle and a signal in that window would take the default
+ * action and kill the process. The queued signal is delivered in the poll
+ * phase of the loop turn after `fn` returns; the restore waits for the check
+ * phase after that one (two `setImmediate`s), so the no-op listener takes it.
+ * `rawListeners` keeps a `once` listener a `once`. A nested call just runs
+ * `fn`. `onRestored` runs once the listeners are back.
  */
 export function withSigintHeld<T>(fn: () => T, onRestored?: () => void): T {
-  const listeners = process.listeners('SIGINT');
+  if (sigintHeld) return fn();
+  sigintHeld = true;
   const hold = (): void => {};
-  for (const l of listeners) process.off('SIGINT', l);
+  const listeners = process.rawListeners('SIGINT') as Array<(...args: unknown[]) => void>;
   process.on('SIGINT', hold);
+  for (const l of listeners) process.removeListener('SIGINT', l);
   const restore = (): void => {
-    process.off('SIGINT', hold);
     for (const l of listeners) process.on('SIGINT', l);
+    process.removeListener('SIGINT', hold);
+    sigintHeld = false;
     onRestored?.();
   };
   try {
     return fn();
   } finally {
-    setImmediate(restore);
+    setImmediate(() => setImmediate(restore));
   }
 }
 
