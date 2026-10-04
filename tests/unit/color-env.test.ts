@@ -76,11 +76,11 @@ describe('load order in source/cli.ts', () => {
 
   it('imports statically only modules that cannot load chalk', () => {
     expect(staticImports('cli.ts').sort()).toEqual(
-      ['./core/cancellation.js', './core/color-env.js', 'node:module'].sort(),
+      ['./core/cancellation.js', './core/color-env.js', './core/json-run.js', 'node:module'].sort(),
     );
   });
 
-  it.each(['core/cancellation.ts', 'core/color-env.ts'])('%s imports nothing beyond node built-ins', (rel) => {
+  it.each(['core/cancellation.ts', 'core/color-env.ts', 'core/json-run.ts'])('%s imports nothing beyond node built-ins', (rel) => {
     expect(staticImports(rel).filter((spec) => !spec.startsWith('node:'))).toEqual([]);
   });
 
@@ -101,6 +101,19 @@ describe('load order in source/cli.ts', () => {
     const firstImportIndex = statements.findIndex(hasDynamicImport);
     expect(applyIndex).toBeGreaterThan(-1);
     expect(firstImportIndex).toBeGreaterThan(applyIndex);
+  });
+
+  it('marks a --json run non-interactive at the top level before any statement that imports (#198)', () => {
+    const statements = parse('cli.ts').statements;
+    const hasDynamicImport = (node: ts.Node): boolean =>
+      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
+      (ts.forEachChild(node, hasDynamicImport) ?? false);
+    const markIndex = statements.findIndex(
+      (s) => ts.isIfStatement(s) && s.getText().includes('isJsonRun(') && s.getText().includes('markStdoutNonInteractive('),
+    );
+    const firstImportIndex = statements.findIndex(hasDynamicImport);
+    expect(markIndex).toBeGreaterThan(-1);
+    expect(firstImportIndex).toBeGreaterThan(markIndex);
   });
 });
 

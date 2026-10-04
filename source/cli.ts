@@ -1,12 +1,19 @@
 import { createRequire } from 'node:module';
 import { installStdinCancellation } from './core/cancellation.js';
 import { applyNoColor } from './core/color-env.js';
+import { isJsonRun, markStdoutNonInteractive } from './core/json-run.js';
 
 // NO_COLOR turns colour off unless FORCE_COLOR is set (#37). chalk, which Ink
 // colours through, reads the environment once when it is first imported, so
 // this runs before Pastel loads Ink: Pastel and cli-options are imported
 // dynamically below, never statically above this line.
 applyNoColor(process.env);
+
+// A --json run writes one document and nothing else, in a terminal byte for
+// byte what it writes to a pipe (#198). A mounted Ink app in a TTY wraps its
+// frame in cursor codes even when it renders nothing; Ink decides from
+// stdout.isTTY, so mark stdout non-interactive before anything loads Ink.
+if (isJsonRun(process.argv.slice(2))) markStdoutNonInteractive(process.stdout);
 
 // A throw that escapes every command (a command module that fails to load, a
 // rejection nobody awaited) is printed as plain text, since Ink may not be

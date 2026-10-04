@@ -178,6 +178,13 @@ export interface PtyHandle {
   /** Cell-grid view of what the child has rendered. */
   screen: VirtualScreen;
   /**
+   * Every byte the child wrote to the terminal so far, stdout and stderr
+   * merged (a PTY has one channel), with the line discipline's CRLF. For
+   * byte-level assertions the cell grid cannot make, such as "no escape
+   * sequence at all" (#198).
+   */
+  raw: () => string;
+  /**
    * Resolve when the screen reaches the predicate. Times out via
    * `opts.timeoutMs` (default 30_000) and throws including the most
    * recent serialized screen, which is what makes failures
@@ -296,7 +303,9 @@ export async function spawnCliPty(
   // `waitForExit`'s `screen.settled()`. `void` makes the
   // fire-and-forget intent explicit and quiets the no-floating-promises
   // lint that ts strict + vitest surface for unhandled returns.
+  let raw = '';
   pty.onData((chunk) => {
+    raw += chunk;
     void screen.feed(chunk);
   });
 
@@ -448,7 +457,7 @@ export async function spawnCliPty(
     screen.dispose();
   };
 
-  return { pid: pty.pid, write, screen, waitForScreen, sigint, waitForExit, kill, dispose };
+  return { pid: pty.pid, write, screen, raw: () => raw, waitForScreen, sigint, waitForExit, kill, dispose };
 }
 
 /**
