@@ -85,7 +85,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | | Task | Issue |
 |---|---|---|
 | ⬜ | Make the test suite independent of FORCE_COLOR | [#159](https://github.com/breferrari/shardmind/issues/159) |
-| ⬜ | Drop LineInterner workaround once node-diff3 ships the prototype-lookup fix | [#49](https://github.com/breferrari/shardmind/issues/49) |
+| ✅ | Drop LineInterner workaround once node-diff3 ships the prototype-lookup fix | [#49](https://github.com/breferrari/shardmind/issues/49) |
 | ⬜ | NO_COLOR / FORCE_COLOR respect across Ink components | [#37](https://github.com/breferrari/shardmind/issues/37) |
 | ⬜ | Agent/headless ergonomics: non-interactive mode, JSON output, per-file plan, value detection | [#139](https://github.com/breferrari/shardmind/issues/139) |
 | ⬜ | Apply a shard release that only changes a file's case | [#169](https://github.com/breferrari/shardmind/issues/169) |
