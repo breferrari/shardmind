@@ -35,10 +35,7 @@ export const JSON_SCHEMA_VERSION = 1;
 export type JsonCommand = 'status' | 'adopt' | 'update' | 'validate';
 
 export interface JsonErrorPayload {
-  /**
-   * Stable `ErrorCode` when the failure was a `ShardMindError`; the errno code
-   * (`EACCES`) for an error from the user's machine (#225); else null.
-   */
+  /** Stable `ErrorCode` when the failure was a `ShardMindError`, else null. */
   readonly code: string | null;
   readonly message: string;
   /** Remediation text; null when the error carried none. */
@@ -74,9 +71,10 @@ export function jsonFailure(command: JsonCommand, error: unknown): JsonEnvelope 
 function toJsonError(error: unknown): JsonErrorPayload {
   // The version only reaches the report link, which --json does not carry.
   const d = describeError(error, undefined);
-  return d.kind === 'bug'
-    ? { code: null, message: d.message, hint: null, stack: d.stack }
-    : { code: d.code, message: d.message, hint: d.hint, stack: null };
+  // `code` stays a registry code or null: an environment error's errno code
+  // is in its message, and its hint says what to do.
+  if (d.kind === 'bug') return { code: null, message: d.message, hint: null, stack: d.stack };
+  return { code: d.kind === 'known' ? d.code : null, message: d.message, hint: d.hint, stack: null };
 }
 
 /**

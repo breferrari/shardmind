@@ -3,7 +3,7 @@
  * report link carries, and the plain-text view the top-level handler prints.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { z } from 'zod';
@@ -58,6 +58,24 @@ describe('describeError (#225)', () => {
     },
   );
 
+  it('knows a ShardMindError from another bundle by its name and code, as the top-level handler sees it', () => {
+    // dist/cli.js and dist/commands/* each bundle their own ShardMindError class.
+    class ShardMindError extends Error {
+      constructor(message: string, readonly code: string, readonly hint?: string) {
+        super(message);
+        this.name = 'ShardMindError';
+      }
+    }
+    expect(describeError(new ShardMindError('nope', 'SHARD_NOT_FOUND', 'spell it'), '0.1.9', VAULT)).toEqual({
+      kind: 'known',
+      message: 'nope',
+      code: 'SHARD_NOT_FOUND',
+      hint: 'spell it',
+    });
+    const impostor = Object.assign(new Error('x'), { name: 'ShardMindError' });
+    expect(describeError(impostor, '0.1.9', VAULT).kind).toBe('bug');
+  });
+
   it('treats ENOENT inside the working directory (the vault) as the environment', () => {
     const at = path.join(VAULT, 'brain', 'note.md');
     expect(describeError(errno('ENOENT', `ENOENT: no such file, open '${at}'`, at), '0.1.9', VAULT)).toMatchObject({
@@ -70,6 +88,25 @@ describe('describeError (#225)', () => {
     const at = path.resolve('/tmp/shardmind-abc/x.njk');
     expect(describeError(errno('ENOENT', 'ENOENT', at), '0.1.9', VAULT).kind).toBe('bug');
     expect(describeError(errno('ENOENT', 'ENOENT'), '0.1.9', VAULT).kind).toBe('bug');
+  });
+
+  it('counts the vault folder itself, and a name inside it that starts with two dots, as the vault', () => {
+    for (const at of [VAULT, path.join(VAULT, '..sync-conflict.md')]) {
+      expect(describeError(errno('ENOENT', 'ENOENT', at), '0.1.9', VAULT).kind).toBe('environment');
+    }
+  });
+
+  it('does not throw when the working directory itself is gone', () => {
+    const spy = vi.spyOn(process, 'cwd').mockImplementation(() => {
+      throw errno('ENOENT', 'ENOENT: process.cwd failed, uv_cwd');
+    });
+    try {
+      expect(describeError(errno('EACCES', 'EACCES'), '0.1.9').kind).toBe('environment');
+      expect(describeError(errno('ENOENT', 'ENOENT', path.join(VAULT, 'x.md')), '0.1.9').kind).toBe('bug');
+      expect(describeError(new TypeError('boom'), '0.1.9').kind).toBe('bug');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('does not take a sibling folder that shares the vault prefix for the vault', () => {
@@ -115,6 +152,10 @@ describe('formatErrorPlain (#225)', () => {
   });
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('installCrashHandlers (#225)', () => {
   function harness() {
     const proc = new EventEmitter();
@@ -128,6 +169,15 @@ describe('installCrashHandlers (#225)', () => {
     const { proc, written, exits } = harness();
     proc.emit('uncaughtException', new TypeError('escaped'));
     expect(written.join('')).toMatch(/escaped[\s\S]*This is a bug in shardmind/);
+    expect(exits).toEqual([1]);
+  });
+
+  it('reports only the first crash, so a second one during teardown is not printed twice', () => {
+    const { proc, written, exits } = harness();
+    proc.emit('uncaughtException', new TypeError('first'));
+    proc.emit('unhandledRejection', new TypeError('second'));
+    expect(written.join('')).toContain('first');
+    expect(written.join('')).not.toContain('second');
     expect(exits).toEqual([1]);
   });
 

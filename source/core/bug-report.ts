@@ -43,13 +43,18 @@ export type ErrorDescription =
   | { kind: 'environment'; message: string; code: string; hint: string }
   | { kind: 'bug'; message: string; url: string; stack: string | null };
 
-export function describeError(error: unknown, version: string | undefined, cwd: string = process.cwd()): ErrorDescription {
+/**
+ * `cwd` defaults to the working directory, read only for an ENOENT and
+ * guarded: it throws when the vault folder itself has been removed.
+ */
+export function describeError(error: unknown, version: string | undefined, cwd?: string): ErrorDescription {
   const message = error instanceof Error ? error.message : String(error);
-  if (error instanceof ShardMindError) {
-    return { kind: 'known', message, code: error.code, hint: error.hint ?? null };
+  const known = asShardMindError(error);
+  if (known) {
+    return { kind: 'known', message, code: known.code, hint: known.hint ?? null };
   }
   const code = errnoCode(error);
-  if (code !== undefined && code in ENVIRONMENT_HINTS && (code !== 'ENOENT' || isInside(errnoPath(error), cwd))) {
+  if (code !== undefined && code in ENVIRONMENT_HINTS && (code !== 'ENOENT' || isInside(errnoPath(error), cwd ?? currentDir()))) {
     return { kind: 'environment', message, code, hint: ENVIRONMENT_HINTS[code]! };
   }
   return {
@@ -77,12 +82,19 @@ export function formatErrorPlain(error: unknown, version: string | undefined, cw
   return `${lines.join('\n')}\n`;
 }
 
-/** Print a throw that escaped every command, and exit 1 (#225). SIGINT is not touched. */
+/**
+ * Print a throw that escaped every command, and exit 1 (#225). Only the first
+ * is printed: a second one during teardown would repeat the report. SIGINT is
+ * not touched.
+ */
 export function installCrashHandlers(
   proc: { on(event: 'uncaughtException' | 'unhandledRejection', listener: (error: unknown) => void): unknown },
   opts: { version: string | undefined; write: (text: string) => void; exit: (code: number) => void },
 ): void {
+  let crashed = false;
   const crash = (error: unknown): void => {
+    if (crashed) return;
+    crashed = true;
     opts.write(formatErrorPlain(error, opts.version));
     opts.exit(1);
   };
@@ -95,8 +107,31 @@ function errnoPath(error: unknown): string | undefined {
   return typeof at === 'string' ? at : undefined;
 }
 
-function isInside(target: string | undefined, dir: string): boolean {
-  if (target === undefined) return false;
+/** The folder itself, or anything under it. */
+function isInside(target: string | undefined, dir: string | undefined): boolean {
+  if (target === undefined || dir === undefined) return false;
   const rel = path.relative(path.resolve(dir), path.resolve(target));
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+  return !path.isAbsolute(rel) && rel.split(/[\\/]/)[0] !== '..';
+}
+
+function currentDir(): string | undefined {
+  try {
+    return process.cwd();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A ShardMindError by its name and a string code, not only `instanceof`:
+ * `dist/cli.js` and `dist/commands/*` each bundle their own copy of the
+ * class, so an error a command throws fails `instanceof` in the top-level
+ * handler.
+ */
+function asShardMindError(error: unknown): { code: string; hint?: string | undefined } | undefined {
+  if (error instanceof ShardMindError) return error;
+  if (!(error instanceof Error) || error.name !== 'ShardMindError') return undefined;
+  const { code, hint } = error as { code?: unknown; hint?: unknown };
+  if (typeof code !== 'string') return undefined;
+  return { code, hint: typeof hint === 'string' ? hint : undefined };
 }
