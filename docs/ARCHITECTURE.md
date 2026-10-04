@@ -1631,14 +1631,18 @@ staying hermetic. No test reaches the public internet.
   The **test harness** delivers ETX on Windows and a real signal on POSIX;
   `signalAt: { afterMs }` times the interrupt against a slowed-down stub
   tarball (`stub.setTarballDelay(ms)`) since non-TTY Ink renders only the
-  final frame and pattern-based timing isn't reliable. The interrupt
-  fires at 1.5 s inside a 4 s tarball hold: after the CLI has started and
-  registered its SIGINT handler (about 0.5-1 s on CI runners), before any
-  write. Both SIGINT E2E scenarios run on every CI cell, Windows included.
-  They were skipped on GitHub Actions Windows runners until #57: traced
-  there, the ETX byte reached the child within milliseconds of startup,
-  before any handler existed, and only the bridge's exit-130 fallback ran.
-  The production bridge is not gated: real Windows users get the same
+  final frame and pattern-based timing isn't reliable. The stub holds the
+  tarball GET and the interrupt fires when that request arrives
+  (`stub.waitForTarballRequest()` → `signalAt.when`): by then the CLI has
+  mounted its SIGINT handler and created its download temp dir, and no
+  write has started. The scenarios assert that the handler's cleanup
+  removed that dir, which the bridge's exit-130 fallback would leave.
+  Install, update and adopt run on every CI cell, Windows included; they
+  were skipped on GitHub Actions Windows runners until #57, where a fixed
+  500 ms delay was found to fire before any handler existed. The
+  write-phase rollback branch (`installingRef`) is not reached by these
+  scenarios on any OS; #57 tracks whether to add a seam for it. The
+  production bridge is not gated: real Windows users get the same
   cancellation behavior as POSIX.
 - **Exit code contract**: install and update set `process.exitCode = 1`
   on error-phase transitions so scripting / CI can detect failures. The

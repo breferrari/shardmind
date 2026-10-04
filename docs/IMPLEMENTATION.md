@@ -1713,7 +1713,7 @@ Afternoon:
                         + VERSION_NOT_FOUND + SHARD_NOT_FOUND +
                         REGISTRY_INVALID_REF + VALUES_MISSING + collision
                         backup + dry-run-over-collision + SIGINT rollback
-                        (every OS; see §19.7 and #57)
+                        (every OS, on the held tarball request; see §19.7)
       → Update    (7): UPDATE_NO_INSTALL typed error, up-to-date,
                        real bump + file add, auto-merge on non-conflict,
                        UPDATE_SOURCE_MISMATCH on corrupted state.source,
