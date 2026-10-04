@@ -19,6 +19,7 @@ import {
   restoreBackups,
   carryOverBackups,
   discardSetAside,
+  carryOverUserEntries,
 } from '../../source/core/install-executor.js';
 import { ShardMindError, type ShardSchema } from '../../source/runtime/types.js';
 
@@ -682,5 +683,49 @@ describe('defaultModuleSelections', () => {
 
     const selections = defaultModuleSelections(s);
     expect(selections).toEqual({ core: 'included', extras: 'included' });
+  });
+});
+
+describe('carryOverUserEntries (#237)', () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await fsp.mkdtemp(path.join(os.tmpdir(), 'carry-own-'));
+  });
+  afterEach(async () => {
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+
+  async function setUp(oldEntries: Record<string, string>, newEntries: Record<string, string> = {}) {
+    const old = path.join(root, '.shardmind.shardmind-backup-x');
+    const vault = path.join(root, 'vault');
+    for (const [dir, entries] of [[old, oldEntries], [path.join(vault, '.shardmind'), newEntries]] as const) {
+      for (const [rel, content] of Object.entries(entries)) {
+        await fsp.mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+        await fsp.writeFile(path.join(dir, rel), content);
+      }
+    }
+    return { old, vault };
+  }
+
+  it("moves the owner's entries and leaves every engine entry behind", async () => {
+    const { old, vault } = await setUp({
+      'boundary-ignore': 'archive/\n',
+      'notes/why.md': 'mine\n',
+      'state.json': '{}',
+      'update-check.json': '{}',
+      'templates/a.md': 'x',
+      'Logs/bootstrap.log': 'engine log, user-cased folder',
+    });
+    await carryOverUserEntries(old, vault);
+    expect((await fsp.readdir(path.join(vault, '.shardmind'))).sort()).toEqual(['boundary-ignore', 'notes']);
+    expect((await fsp.readdir(old)).sort()).toEqual(['Logs', 'state.json', 'templates', 'update-check.json']);
+  });
+
+  it('keeps both when the new folder already has the name', async () => {
+    const { old, vault } = await setUp({ 'boundary-ignore': 'old\n' }, { 'boundary-ignore': 'new\n' });
+    await carryOverUserEntries(old, vault);
+    const sm = path.join(vault, '.shardmind');
+    expect(await fsp.readFile(path.join(sm, 'boundary-ignore'), 'utf-8')).toBe('new\n');
+    expect(await fsp.readFile(path.join(sm, 'boundary-ignore-1'), 'utf-8')).toBe('old\n');
   });
 });

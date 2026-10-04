@@ -51,6 +51,18 @@ const ENGINE_WRITE_PATHS: readonly string[] = [
   ),
 ];
 
+/**
+ * The top-level names under `.shardmind/` that the engine owns, from the
+ * same list the guard checks. Anything else in the folder is the vault
+ * owner's (such as `boundary-ignore`, #190): an install's rollback never
+ * removes it (#215) and a reinstall carries it forward (#237). Lower-cased,
+ * so a name in the user's casing on a case-folding volume still matches.
+ */
+export const ENGINE_SHARDMIND_ENTRIES: ReadonlySet<string> = new Set(
+  ENGINE_WRITE_PATHS.filter((p) => p.startsWith(SHARDMIND_DIR + path.sep) || p.startsWith(`${SHARDMIND_DIR}/`))
+    .map((p) => p.slice(SHARDMIND_DIR.length + 1).split(/[\\/]/)[0]!.toLowerCase()),
+);
+
 /** Paths named in the error message before "and N more". */
 const MAX_LISTED_PATHS = 10;
 

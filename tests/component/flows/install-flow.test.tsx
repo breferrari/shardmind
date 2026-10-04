@@ -791,6 +791,38 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     }
   }, 60_000);
 
+  it("--force reinstall keeps the user's own .shardmind/ files (#237)", async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({
+      stub,
+      shardRef: SHARD_REF,
+      values: DEFAULT_VALUES,
+      prefix: 's237-force-keeps-own',
+    });
+    try {
+      // The vault owner's own file in the engine's folder (#190), and a
+      // nested one, alongside the engine's entries.
+      const ignore = 'archive/\n';
+      await vault.writeFile('.shardmind/boundary-ignore', ignore);
+      await vault.writeFile('.shardmind/notes/why.md', 'my notes\n');
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault.root, options: { force: true } });
+      await waitFor(r.lastFrame, (f) => /4 questions to answer/.test(f), 30_000);
+      await driveMinimalWizard(r, 'Bob');
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
+      expect(await vault.readFile('.shardmind/boundary-ignore')).toBe(ignore);
+      expect(await vault.readFile('.shardmind/notes/why.md')).toBe('my notes\n');
+      // The new install's own state, not the old one's.
+      expect(await vault.readFile('shard-values.yaml')).toContain('Bob');
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
+
   // ───── Scenario 15: dry run → Overwrite removes nothing (#55) ─────
 
   it('15. --dry-run → collision review → Overwrite leaves the file alone (#55)', async () => {

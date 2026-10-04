@@ -30,7 +30,7 @@ import {
 } from './state.js';
 import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
-import { assertSafeVaultPaths } from './vault-path-guard.js';
+import { assertSafeVaultPaths, ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
 import {
   SHARDMIND_DIR,
   VALUES_FILE,
@@ -153,6 +153,32 @@ export async function backupCollisions(
 }
 
 /**
+ * Move the vault owner's own entries (everything not in
+ * `ENGINE_SHARDMIND_ENTRIES`) from a reinstall's old `.shardmind/` into the
+ * new one, so a reinstall keeps them (#237). An entry whose name the new
+ * folder already has moves under `<name>-<n>`, as `carryOverBackups` does,
+ * so nothing is dropped when the old folder is deleted.
+ */
+export async function carryOverUserEntries(oldStateDir: string, vaultRoot: string): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(oldStateDir);
+  } catch (err) {
+    if (isEnoent(err)) return;
+    throw err;
+  }
+  const own = entries.filter((entry) => !ENGINE_SHARDMIND_ENTRIES.has(entry.toLowerCase()));
+  if (own.length === 0) return;
+  const to = path.join(vaultRoot, SHARDMIND_DIR);
+  await fsp.mkdir(to, { recursive: true });
+  for (const entry of own) {
+    let target = path.join(to, entry);
+    for (let n = 1; await pathExists(target); n++) target = path.join(to, `${entry}-${n}`);
+    await fsp.rename(path.join(oldStateDir, entry), target);
+  }
+}
+
+/**
  * Move the `backups/` of an old `.shardmind/` that a reinstall set aside
  * into the new one, before the old one is deleted (#55). An update's or
  * an adopt's snapshot can be the only copy of the user's earlier files.
@@ -180,8 +206,8 @@ export async function carryOverBackups(oldStateDir: string, vaultRoot: string): 
 /**
  * Delete what an install set aside only to restore on failure, once it
  * has succeeded (#55). The old `.shardmind/` (`oldState`) first hands its
- * `backups/` to the new one; if that fails it stays set aside, so nothing
- * is lost. Best effort: it never throws, because the install it follows
+ * `backups/` and the vault owner's own entries (#237) to the new one; if
+ * that fails it stays set aside, so nothing is lost. Best effort: it never throws, because the install it follows
  * is already committed.
  */
 export async function discardSetAside(
@@ -193,6 +219,7 @@ export async function discardSetAside(
     if (record === oldState) {
       try {
         await carryOverBackups(record.backupPath, vaultRoot);
+        await carryOverUserEntries(record.backupPath, vaultRoot);
       } catch {
         continue;
       }
