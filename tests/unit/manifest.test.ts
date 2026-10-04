@@ -476,3 +476,74 @@ describe('hooks lifecycle slots (#102)', () => {
     }
   });
 });
+
+describe('external_tools (#138)', () => {
+  const base = { apiVersion: 'v1' as const, name: 'test', namespace: 'ns', version: '1.0.0' };
+  const qmd = { package: '@tobilu/qmd', version: '>=2.5.0', command: 'qmd' };
+  const parse = (tools: unknown) => ShardManifestSchema.safeParse({ ...base, external_tools: tools });
+
+  it('is optional', () => {
+    expect(ShardManifestSchema.parse(base).external_tools).toBeUndefined();
+  });
+
+  it('defaults args to --version and optional to false', () => {
+    const parsed = ShardManifestSchema.parse({ ...base, external_tools: { qmd } });
+    expect(parsed.external_tools?.['qmd']).toEqual({ ...qmd, args: ['--version'], optional: false });
+  });
+
+  it('keeps optional, when and explicit args', () => {
+    const tool = { ...qmd, args: ['version', '--json'], optional: true, when: 'qmd_enabled' };
+    expect(ShardManifestSchema.parse({ ...base, external_tools: { qmd: tool } }).external_tools?.['qmd']).toEqual(tool);
+  });
+
+  it.each([
+    ['a shell sequence', 'qmd & calc'],
+    ['a relative path', '../x'],
+    ['an absolute path', 'C:\tools\qmd'],
+    ['a POSIX path', '/usr/bin/qmd'],
+    ['a space', 'q md'],
+    ['an uppercase first letter', 'Qmd'],
+    ['an empty name', ''],
+  ])('refuses a command with %s', (_name, command) => {
+    expect(parse({ qmd: { ...qmd, command } }).success).toBe(false);
+  });
+
+  it.each([
+    ['cmd.exe sequencing', '--version&calc'],
+    ['a variable', '%PATH%'],
+    ['a pipe', 'a|b'],
+    ['a redirect', '>out'],
+    ['a caret', 'a^b'],
+    ['a quote', '"x"'],
+    ['delayed expansion', '!x!'],
+    ['a space inside one arg', '--version now'],
+    ['a POSIX sequence', 'a;b'],
+    ['a substitution', '$(id)'],
+    ['an empty arg', ''],
+  ])('refuses an arg with %s', (_name, arg) => {
+    expect(parse({ qmd: { ...qmd, args: [arg] } }).success).toBe(false);
+  });
+
+  it.each([['--version'], ['-v'], ['version'], ['--format=json'], ['v1.2']])('accepts the arg %s', (arg) => {
+    expect(parse({ qmd: { ...qmd, args: [arg] } }).success).toBe(true);
+  });
+
+  it.each([
+    ['an empty range', ''],
+    ['whitespace', '  '],
+    ['not a range', 'latest'],
+  ])('refuses a version that is %s', (_name, version) => {
+    expect(parse({ qmd: { ...qmd, version } }).success).toBe(false);
+  });
+
+  it.each([['a shell sequence', 'qmd; rm -rf ~'], ['a space', '@tobilu /qmd'], ['uppercase', 'QMD']])(
+    'refuses a package with %s',
+    (_name, pkg) => {
+      expect(parse({ qmd: { ...qmd, package: pkg } }).success).toBe(false);
+    },
+  );
+
+  it('refuses a tool name outside the command pattern', () => {
+    expect(parse({ 'qmd & calc': qmd }).success).toBe(false);
+  });
+});
