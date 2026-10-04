@@ -48,6 +48,19 @@ describe('ui-kit TextInput', () => {
     expect(onChange).toHaveBeenLastCalledWith('abc');
   });
 
+  it('fires onChange only when the text changes, never on a parent re-render (vadimdemedes/ink-ui#26)', async () => {
+    const onChange = vi.fn();
+    const r = render(<TextInput onChange={(v) => onChange(v)} />);
+    await tick();
+    r.stdin.write('x');
+    await tick();
+    r.rerender(<TextInput onChange={(v) => onChange(v)} />);
+    await tick();
+    r.rerender(<TextInput onChange={(v) => onChange(v)} />);
+    await tick();
+    expect(onChange.mock.calls).toEqual([['x']]);
+  });
+
   it('shows the placeholder while empty', () => {
     const { lastFrame } = render(<TextInput placeholder="REINSTALL" />);
     expect(lastFrame()).toContain('EINSTALL');

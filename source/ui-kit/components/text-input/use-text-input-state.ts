@@ -1,4 +1,4 @@
-import {useReducer, useCallback, useEffect, type Reducer, useMemo} from 'react';
+import {useReducer, useCallback, useEffect, useRef, type Reducer, useMemo} from 'react';
 
 type State = {
 	previousValue: string;
@@ -183,11 +183,19 @@ export const useTextInputState = ({
 		onSubmit?.(state.value);
 	}, [state.value, suggestion, insert, onSubmit]);
 
+	// Notify once per change of the text (ShardMind fix, the approach of
+	// vadimdemedes/ink-ui#27). Upstream compared `previousValue !== value`,
+	// which stays true after an edit, so every parent re-render with a new
+	// callback fired onChange again (vadimdemedes/ink-ui#26).
+	const lastNotifiedValue = useRef(state.value);
 	useEffect(() => {
-		if (state.value !== state.previousValue) {
-			onChange?.(state.value);
+		if (state.value === lastNotifiedValue.current || !onChange) {
+			return;
 		}
-	}, [state.previousValue, state.value, onChange]);
+
+		lastNotifiedValue.current = state.value;
+		onChange(state.value);
+	}, [state.value, onChange]);
 
 	return {
 		...state,
