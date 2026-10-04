@@ -2,7 +2,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { looksBinary, mapConcurrent, removePath } from '../../source/core/fs-utils.js';
+import { looksBinary, mapConcurrent, removePath, settleAll } from '../../source/core/fs-utils.js';
 
 // git's convention: a NUL byte in the first 8 KB means binary. The update
 // planner relies on it to keep binary files out of the line merge (#63), and
@@ -158,5 +158,23 @@ describe('mapConcurrent (#274)', () => {
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('settleAll (#274)', () => {
+  it('returns every value in order when all steps succeed', async () => {
+    expect(await settleAll([Promise.resolve(1), Promise.resolve('two')] as const)).toEqual([1, 'two']);
+  });
+
+  it('rejects with the first error only once every step has settled', async () => {
+    let slowDone = false;
+    const slow = new Promise<void>((r) =>
+      setTimeout(() => {
+        slowDone = true;
+        r();
+      }, 30),
+    );
+    await expect(settleAll([Promise.reject(new Error('first')), slow, Promise.reject(new Error('second'))])).rejects.toThrow('first');
+    expect(slowDone).toBe(true);
   });
 });
