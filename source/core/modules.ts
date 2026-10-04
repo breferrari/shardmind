@@ -10,7 +10,7 @@ import { ShardMindError } from '../runtime/types.js';
 import { isTier1Excluded } from './tier1.js';
 import { loadShardmindignore, type IgnoreFilter } from './shardmindignore.js';
 
-const VOLATILE_MARKER = '{# shardmind: volatile #}';
+export const VOLATILE_MARKER = '{# shardmind: volatile #}';
 
 /**
  * Parent-directory names that activate per-name `mod.commands` / `mod.agents`
@@ -210,7 +210,12 @@ function extractIterator(relPath: string): string | null {
   return path.basename(dir);
 }
 
-async function detectVolatile(filePath: string): Promise<boolean> {
+/**
+ * Whether a template source starts with the volatile marker: its first 256
+ * bytes, leading whitespace skipped. Shared with drift, which reads the
+ * cached copy of an installed template (#210).
+ */
+export async function detectVolatile(filePath: string): Promise<boolean> {
   const handle = await fsp.open(filePath, 'r');
   try {
     const buf = Buffer.alloc(256);

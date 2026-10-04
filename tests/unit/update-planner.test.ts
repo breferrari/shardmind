@@ -819,7 +819,7 @@ describe('planUpdate', () => {
           'brain/Log.md': makeFileState({
             template: `brain/Log.md.njk`,
             rendered_hash: sha256('template\n'),
-            ownership: 'user',
+            ownership: 'managed',
           }),
         },
       }), drift },

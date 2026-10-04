@@ -4,6 +4,10 @@
  * user's edits, to the new path. Spec: docs/SHARD-LAYOUT.md §Rename
  * migrations; IMPLEMENTATION.md §4.11 step 0 and §4.12 step 4a.
  *
+ * Also: update reads volatility from the templates (#210), at the end of
+ * this file, which has the harness for installing one release and updating
+ * to another.
+ *
  * `update()` wires the pieces the way the update machine does: renames
  * between the installed and target versions, re-keyed state and drift,
  * the removed-files list, the plan, then the executor.
@@ -375,7 +379,7 @@ describe('update applies rename migrations (#178)', () => {
     expect(await read('AGENTS.md')).toBe('Already here.\n');
   });
 
-  it('restores a volatile file the user deleted at the new path, without failing', async () => {
+  it('leaves a volatile file the user deleted deleted at the new path, without failing (#210)', async () => {
     const v1 = await shardAt('0.1.0', { edits: { 'log.md.njk': () => `${VOLATILE_MARKER}\nStarts empty.\n` } });
     await install(v1);
     await fsp.rm(path.join(vault, 'log.md'));
@@ -385,9 +389,11 @@ describe('update applies rename migrations (#178)', () => {
       migrations: `  - from: "0.1.0"\n    to: "0.2.0"\n    renames:\n      "log.md": "logs/log.md"\n`,
     });
     await update(v2);
-    // Missing, so restored there from the template, as without a rename.
-    expect(await read('logs/log.md')).toContain('Starts empty.');
+    // Volatile, so never re-rendered (#210): a deleted one stays deleted, and
+    // its state entry moves to the new path.
+    expect(await exists('logs/log.md')).toBe(false);
     expect((await files())['log.md']).toBeUndefined();
+    expect((await files())['logs/log.md']).toBeDefined();
   });
 
   it('drops a rename whose old path the new shard still ships', async () => {
@@ -438,7 +444,7 @@ describe('update applies rename migrations (#178)', () => {
     // A volatile entry for a file that is gone: the move has nothing to carry.
     const withVolatile: ShardState = {
       ...state,
-      files: { ...state.files, 'log.md': { template: 'log.md.njk', rendered_hash: 'x', ownership: 'user' } as never },
+      files: { ...state.files, 'log.md': { template: 'log.md.njk', rendered_hash: 'x', ownership: 'managed' } },
     };
     const zero = { silent: 0, overwritten: 0, adopted: 0, autoMerged: 0, conflicts: 0, volatile: 1, added: 0, deleted: 0, keptAsUser: 0, restored: 0 };
     const result = await runUpdate({
@@ -632,6 +638,93 @@ describe('update applies rename migrations (#178)', () => {
       expect(await read(COPY)).toBe(before);
       expect((await fsp.readdir(vault)).filter((n) => n.includes('shardmind-case'))).toEqual([]);
       expect(Object.keys(await files())).toContain(COPY);
+    });
+  });
+
+  describe('update reads volatility from the templates (#210)', () => {
+    const HOME = 'Home.md';
+    const HOME_SRC = 'Home.md.njk';
+    const mark = (src: string) => (src.startsWith(VOLATILE_MARKER) ? src : `${VOLATILE_MARKER}\n${src}`);
+    const unmark = (src: string) => src.replace(`${VOLATILE_MARKER}\n`, '');
+
+    it('records a volatile output as managed on install, as state written before #210 did', async () => {
+      const v1 = await shardAt('0.1.0', { edits: { [HOME_SRC]: mark } });
+      await install(v1);
+      expect((await files())[HOME]?.ownership).toBe('managed');
+    });
+
+    it("leaves a volatile file the user edited alone when its template changes upstream", async () => {
+      const v1 = await shardAt('0.1.0', { edits: { [HOME_SRC]: mark } });
+      await install(v1);
+      await write(HOME, 'My own home page.\n');
+      const v2 = await shardAt('0.2.0', { from: v1, edits: { [HOME_SRC]: (s) => s + '\nChanged in 0.2.0.\n' } });
+      const { plan } = await update(v2);
+      expect(plan.actions.find((a) => a.path === HOME)?.kind).toBe('skip_volatile');
+      expect(plan.pendingConflicts).toEqual([]);
+      expect(await read(HOME)).toBe('My own home page.\n');
+    });
+
+    it('does not re-render a volatile file the user left alone when its template changes', async () => {
+      const v1 = await shardAt('0.1.0', { edits: { [HOME_SRC]: mark } });
+      await install(v1);
+      const before = await read(HOME);
+      await update(await shardAt('0.2.0', { from: v1, edits: { [HOME_SRC]: (s) => s + '\nChanged in 0.2.0.\n' } }));
+      expect(await read(HOME)).toBe(before);
+    });
+
+    it('does not restore a volatile file the user deleted', async () => {
+      const v1 = await shardAt('0.1.0', { edits: { [HOME_SRC]: mark } });
+      await install(v1);
+      await fsp.rm(path.join(vault, HOME));
+      const v2 = await shardAt('0.2.0', { from: v1 });
+      await update(v2);
+      expect(await exists(HOME)).toBe(false);
+      // The entry is kept, as it moves with a rename (the renamed case
+      // above), and a later run reads it as volatile, never as missing.
+      expect((await files())[HOME]).toBeDefined();
+      const drift = await detectDrift(vault, (await readState(vault)) as ShardState);
+      expect(drift.missing.map((e) => e.path)).not.toContain(HOME);
+      expect(drift.volatile.map((e) => e.path)).toContain(HOME);
+      await update(await shardAt('0.3.0', { from: v2 }));
+      expect(await exists(HOME)).toBe(false);
+    });
+
+    it("keeps a volatile file the release drops, as the user's, on this update and the next", async () => {
+      const v1 = await shardAt('0.1.0', { edits: { [HOME_SRC]: mark } });
+      await install(v1);
+      await write(HOME, 'My own home page.\n');
+      const v2 = await shardAt('0.2.0', { from: v1, edits: { [HOME_SRC]: null } });
+      const { plan } = await update(v2);
+      expect(plan.actions.find((a) => a.path === HOME)?.kind).toBe('keep_as_user');
+      expect(await read(HOME)).toBe('My own home page.\n');
+      expect((await files())[HOME]).toBeUndefined();
+      // Untracked now, so the next update, whose cache no longer holds the
+      // template, leaves it alone too.
+      await update(await shardAt('0.3.0', { from: v2 }));
+      expect(await read(HOME)).toBe('My own home page.\n');
+    });
+
+    it('skips a file whose template turns volatile in the new release', async () => {
+      await install();
+      await write(HOME, 'My own home page.\n');
+      const v2 = await shardAt('0.2.0', { edits: { [HOME_SRC]: (s) => mark(s) + '\nChanged in 0.2.0.\n' } });
+      const { plan } = await update(v2);
+      expect(plan.actions.find((a) => a.path === HOME)?.kind).toBe('skip_volatile');
+      expect(plan.pendingConflicts).toEqual([]);
+      expect(await read(HOME)).toBe('My own home page.\n');
+    });
+
+    it('updates a file again as managed once its template stops being volatile, from the release after', async () => {
+      const v1 = await shardAt('0.1.0', { edits: { [HOME_SRC]: mark } });
+      await install(v1);
+      const before = await read(HOME);
+      // 0.2.0 drops the marker: the installed (cached) template still has it.
+      const v2 = await shardAt('0.2.0', { from: v1, edits: { [HOME_SRC]: (s) => unmark(s) + '\nChanged in 0.2.0.\n' } });
+      await update(v2);
+      expect(await read(HOME)).toBe(before);
+      // 0.3.0: neither template is volatile, and the file is the engine's.
+      await update(await shardAt('0.3.0', { from: v2, edits: { [HOME_SRC]: (s) => s + '\nChanged in 0.3.0.\n' } }));
+      expect(await read(HOME)).toContain('Changed in 0.3.0.');
     });
   });
 });

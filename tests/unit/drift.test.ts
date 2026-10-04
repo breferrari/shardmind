@@ -193,7 +193,7 @@ describe('merge engine (fixture-driven)', () => {
 
 async function assertVolatile(dir: string, scenario: Scenario, files: FixtureFiles): Promise<void> {
   expect(scenario.expected_action).toBe('skip');
-  const report = await buildVolatileDriftReport(dir, files.actualContent);
+  const report = await buildVolatileDriftReport(dir, files.actualContent, files.oldTemplate);
   expect(report.volatile).toHaveLength(1);
   expect(report.volatile[0]?.path).toBe(`${dir}.md`);
 }
@@ -261,20 +261,23 @@ async function assertStandardMerge(
  * Build a minimal vault on disk with one volatile file and run detectDrift
  * against it. Verifies that drift reports a volatile entry without attempting
  * to hash-compare the content — the gate that makes the update command skip
- * volatile files.
+ * volatile files. Volatility comes from the cached template, which carries
+ * the marker, while state records the file `managed`, as install does (#210).
  */
-async function buildVolatileDriftReport(dir: string, actualContent: string) {
+async function buildVolatileDriftReport(dir: string, actualContent: string, oldTemplate: string) {
   const vaultRoot = path.join(os.tmpdir(), `drift-volatile-${crypto.randomUUID()}`);
   await fsp.mkdir(vaultRoot, { recursive: true });
   try {
     const relPath = `${dir}.md`;
     await fsp.writeFile(path.join(vaultRoot, relPath), actualContent, 'utf-8');
+    await fsp.mkdir(path.join(vaultRoot, '.shardmind', 'templates'), { recursive: true });
+    await fsp.writeFile(path.join(vaultRoot, '.shardmind', 'templates', 'volatile.md.njk'), oldTemplate, 'utf-8');
 
     const state = makeShardState({ files: {
       [relPath]: {
         template: 'volatile.md.njk',
         rendered_hash: 'stale-hash-that-does-not-match-on-purpose',
-        ownership: 'user',
+        ownership: 'managed',
       },
     } });
 

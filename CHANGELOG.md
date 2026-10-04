@@ -13,6 +13,12 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **`NO_COLOR` now turns colour off in a terminal.** Any non-empty value works, per [no-color.org](https://no-color.org); an empty one does not. `FORCE_COLOR` still turns colour on, even when piped, and wins when both are set. `--help` output, and `--json` output read through a pipe, carry no colour codes. A hook's own colour codes are dropped from its displayed output when colour is off.
 - **A negative `FORCE_COLOR` no longer crashes the CLI on Linux and macOS.** It is treated as `0`.
 
+### Fixed (volatile files on update — #210)
+
+- **`shardmind update` no longer overwrites or merges a volatile file** (its template starts with `{# shardmind: volatile #}`). Install records such files as managed, and update did not tell them apart, so a daily note or an index you edit freely could be replaced by a new render.
+  - Update now reads volatility from the templates, the installed one or the new one, so existing vaults are fixed on their next update, and a template that turns volatile in a release is skipped from that release on.
+  - A volatile file you deleted stays deleted.
+
 ### Added (exclude a folder from the write-boundary check — #190)
 
 - **A vault can list folders the `personalize` write-boundary check skips**, in `.shardmind/boundary-ignore`, one gitignore-style pattern per line. Use it for a folder that is unreadable for good, which otherwise warns `HOOK_BOUNDARY_INCOMPLETE` on every install.

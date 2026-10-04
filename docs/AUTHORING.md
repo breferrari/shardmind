@@ -321,7 +321,7 @@ Values are spread into the top level too. `{{ user_name }}` works the same as `{
 
 ### The volatile marker
 
-A template whose first non-whitespace content is `{# shardmind: volatile #}` renders as a volatile file. `shardmind update` skips overwriting volatile files even when the template changed — useful for LLM-maintained indexes, daily notes, wiki-style TOCs. The marker is stripped from the output.
+A template whose first non-whitespace content is `{# shardmind: volatile #}` renders as a volatile file. `shardmind update` skips volatile files even when the template changed: it never re-renders, merges, overwrites or restores them. A file counts as volatile when the marker is on its template in either the installed release or the new one, so adding the marker in a release protects files from that release on. Useful for LLM-maintained indexes, daily notes, wiki-style TOCs. The marker is stripped from the output.
 
 ```
 {# shardmind: volatile #}

@@ -97,7 +97,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ⬜ | Roll back the files a failed install already wrote | [#207](https://github.com/breferrari/shardmind/issues/207) |
 | ⬜ | Gate a templated command or agent by its name | [#208](https://github.com/breferrari/shardmind/issues/208) |
 | ⬜ | Undo collision backups when a backup name cannot be found | [#209](https://github.com/breferrari/shardmind/issues/209) |
-| ⬜ | Decide whether update skips volatile files that install recorded as managed | [#210](https://github.com/breferrari/shardmind/issues/210) |
+| ✅ | Decide whether update skips volatile files that install recorded as managed | [#210](https://github.com/breferrari/shardmind/issues/210) |
 | ⬜ | Back up user files at the paths an _each template expands to | [#214](https://github.com/breferrari/shardmind/issues/214) |
 | ⬜ | Keep the user's .shardmind/ files and empty folders when a fresh install rolls back | [#215](https://github.com/breferrari/shardmind/issues/215) |
 

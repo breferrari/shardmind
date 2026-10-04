@@ -1343,7 +1343,7 @@ export interface ShardState {
 export interface FileState {
   template: string | null;
   rendered_hash: string;
-  ownership: 'managed' | 'modified' | 'user';
+  ownership: 'managed' | 'modified';  // volatility is read from the template, not recorded here (#210)
   iterator_key?: string;
 }
 
