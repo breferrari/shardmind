@@ -106,6 +106,7 @@ hooks:
 | `requires.obsidian` | no | Semver range. Advisory only in v0.1. |
 | `requires.node` | no | Semver range. Applied when hooks run. |
 | `requires.shardmind` | no | Semver range the running engine must satisfy. **Enforced** — install/update/adopt refuse with `SHARDMIND_VERSION_MISMATCH` before any vault write when the engine is older. Absent → no check. Declare it once your shard depends on an engine feature (e.g. the post-#102 hook lifecycle). See §6. |
+| `external_tools` | no | Command-line tools the shard needs, each with a version range. Checked before install, adopt and update write anything; a required one that is unmet refuses with `EXTERNAL_TOOL_UNMET`. See [Declaring the command-line tools your shard needs](#declaring-the-command-line-tools-your-shard-needs). |
 | `dependencies` | no | Array of `{ name, namespace, version }`. Vendored in v0.1 (pre-install manually); auto-fetched in v0.2+. |
 | `hooks.bootstrap` | no | Path string, or `{ script, fingerprint? }`. Unmanaged-path setup. Runs on install/adopt + on update when `fingerprint` changes. See §6. |
 | `hooks.personalize` | no | Path relative to shard root. Managed-file edits. Runs on install/adopt only; skipped when values are defaults. See §6. |
@@ -129,6 +130,25 @@ migrations:
 A rename applies to an update from installed version I to target T when `I < to ≤ T`; renames chain in `to` order (a→b at 6.1, then b→c at 6.2, gives a→c). It is skipped, and the update behaves as it would without it (the old file removed or kept, the new one added), when the old path is not tracked or the new shard still ships it, the new path is already tracked (even by a file another rename moves away in the same update) or not produced by the new shard (an excluded module), anything already sits at the new path on disk, or two old paths chain to the same new path. Paths are written as they are tracked: no `./`, empty or `.` segments, no trailing slash, nothing under `.shardmind/` or `.git/`. A case-only rename is #169. Keep every past migration in `shard.yaml`: a user updating from an old release needs the whole chain.
 
 The same chain serves `shardmind adopt --from-version <v>`, for a user who cloned release `<v>` before the engine managed their vault: a file at an old path is adopted at its new one and moved there. Users of a shard that has renamed files should pass the release they cloned.
+
+### Declaring the command-line tools your shard needs
+
+If your shard depends on a tool installed outside the vault (obsidian-mind needs `qmd` for semantic search), declare it with the version range you need. Install, adopt, and an update that installs a new version check it before writing anything, so a user with a missing or stale tool hears about it at once, not through subtle failures later (#138):
+
+```yaml
+external_tools:
+  qmd:
+    package: "@tobilu/qmd"   # what the user installs
+    version: ">=2.5.0"       # the range your templates and hooks rely on
+    command: qmd             # the executable, by name
+    args: ["--version"]      # optional; this is the default
+    optional: true           # warn instead of refusing
+    when: qmd_enabled        # optional; skip the check when this boolean value is false
+```
+
+The engine finds `command` on `PATH`, runs it with `args`, and reads the first version in its output. A required tool that is missing or out of range refuses the run with `EXTERNAL_TOOL_UNMET`. An optional one is listed in the summary. Either way the hint is `npm i -g <package>@"<range>"`, which installs a version inside your range. The engine never installs the tool itself.
+
+Keep `command` and `args` plain: an executable name, and arguments made of letters, digits, `.`, `_`, `=` and `-`. The tool runs without a shell, and anything else is refused when `shard.yaml` is read. A dry run and `shardmind validate` never run the tool. `validate` does check that `when` names a boolean value. See [`SHARD-LAYOUT.md §External tools`](SHARD-LAYOUT.md#external-tools) for the full contract.
 
 ## 4. `shard-schema.yaml` — the schema
 

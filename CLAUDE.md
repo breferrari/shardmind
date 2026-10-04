@@ -162,6 +162,7 @@ shardmind/
 │   │   ├── RemovedFilesReview.tsx     # Update: per-file keep/delete decision
 │   │   ├── HookProgress.tsx           # Live output tail while a post-install/-update hook runs
 │   │   ├── HookSummarySection.tsx     # Four-branch hook outcome render, shared by Summary + UpdateSummary
+│   │   ├── ExternalToolsSection.tsx   # Unmet optional external tools / dry-run note, shared by the three summaries (#138)
 │   │   ├── SelfUpdateBanner.tsx       # One-line "newer shardmind on npm" notice, rendered above each command (#113)
 │   │   ├── Summary.tsx                # Final install report
 │   │   ├── UpdateSummary.tsx          # Final update report
@@ -212,6 +213,7 @@ shardmind/
 │   │   ├── json-run.ts                # A terminal --json run behaves as piped: stdout non-interactive before Ink (#198)
 │   │   ├── editor.ts                  # Open in editor: $VISUAL/$EDITOR, temp copy, raw-mode handoff (#50)
 │   │   ├── created-folders.ts         # The folders a run created, removed by its rollback (#258)
+│   │   ├── external-tools.ts          # Check external_tools against their ranges; no-shell probe (#138)
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   └── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
@@ -387,6 +389,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `editor.ts` | §4.24 | Open a conflict in `$VISUAL` / `$EDITOR`: temp copy, outcome (saved / cancelled), raw-mode handoff, marker check (#50) |
 | `vault-lock.ts` | §4.25 | One run per vault: `<vault>/.shardmind.lock` (wx), `VAULT_LOCKED`, stale same-host takeover, release + exit backstop (#253) |
 | `created-folders.ts` | §4.11b, §4.12 (4a), §4.18 | The folders a run created, for install / update / adopt rollbacks (#258) |
+| `external-tools.ts` | §4.26 | Check a shard's `external_tools` against their version ranges before install / adopt / update write (`EXTERNAL_TOOL_UNMET`); the probe runs without a shell (#138) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
