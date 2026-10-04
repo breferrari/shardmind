@@ -413,7 +413,6 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         backups,
       });
 
-      let written: string[] = [];
       // Once state.json is written the install stands: a later failure is
       // reported, never rolled back, or it would take the new install with it
       // after the old one is gone.
@@ -458,7 +457,6 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
             }
           },
         });
-        written = runResult.writtenPaths;
 
         // State.json is now on disk — we're past the point-of-no-return.
         // Clear the rollback guard BEFORE firing the hook so a SIGINT
@@ -523,7 +521,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       } catch (err) {
         const rollBack = !dryRun && !committed;
         if (rollBack) {
-          await rollbackInstall(vaultRoot, written, [...backups, ...setAside]).catch(() => {});
+          // Every path `runInstall` wrote before it threw, as `onFileWritten`
+          // reported it (#207). Its own return value never arrives on this
+          // path, so the files written before the failure would stay.
+          await rollbackInstall(vaultRoot, writtenPathsRef.current, [...backups, ...setAside]).catch(() => {});
         }
         installingRef.current = false;
         finish({

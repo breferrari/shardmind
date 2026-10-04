@@ -823,6 +823,40 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await vault.cleanup();
     }
   }, 60_000);
+  // ───── A fresh install whose render fails mid-write leaves nothing behind (#207) ─────
+
+  it('fresh install whose render fails after earlier files are written → the directory is left empty (#207)', async () => {
+    const { stub } = getCtx();
+    const vaultRoot = await makeVaultDir('s207-fresh-rollback');
+    const workDir = await makeVaultDir('s207-tarball');
+    try {
+      // zz- sorts last in the walk, so the files before it are already on
+      // disk when its render throws.
+      const tarPath = await buildCustomTarball({
+        version: '0.1.0',
+        prefix: 'broken-render-fresh-0.1.0',
+        manifestOverrides: { hooks: {}, name: 'minimal', namespace: 'shardmind' },
+        outDir: workDir,
+        mutate: async (work) => {
+          await fs.writeFile(path.join(work, 'zz-broken.md.njk'), '{{ not_a_function() }}\n');
+        },
+      });
+      stub.setRef(SLUG_BROKEN, 'v0.1.0', STUB_SHA, tarPath);
+      const r = mountInstall({
+        shardRef: `github:${SLUG_BROKEN}#v0.1.0`,
+        vaultRoot,
+        options: { defaults: true },
+      });
+      await waitFor(() => r.frames.join('\n'), (f) => /RENDER_TEMPLATE_ERROR/.test(f), 30_000);
+      await tick(200);
+      expect(r.frames.join('\n')).toMatch(/Rolled back partial install/);
+      expect(await fs.readdir(vaultRoot)).toEqual([]);
+    } finally {
+      await cleanupVault(vaultRoot);
+      await cleanupVault(workDir);
+    }
+  }, 60_000);
+
   // ───── Scenario 18: gate → Reinstall with --yes backs up only the user's own content (#55) ─────
 
   it("18. gate → Reinstall with --yes → only the edited file is backed up, the old install's untouched files are not (#55)", async () => {
