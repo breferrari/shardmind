@@ -207,6 +207,7 @@ export default function Update({ options }: Props) {
             hooks={phase.hooks}
             dryRun={phase.dryRun}
             backupDir={phase.backupDir}
+            externalTools={phase.externalTools}
           />
         </CommandFrame>
       );

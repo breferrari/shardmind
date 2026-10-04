@@ -53,6 +53,35 @@ describe('lintShard (#34)', () => {
     expect(result.findings).toEqual([]);
   });
 
+  describe('external_tools (#138)', () => {
+    const declareTool = (extra: string) =>
+      edit('.shardmind/shard.yaml', (y) =>
+        `${y}\nexternal_tools:\n  shardmind-no-such-tool:\n    package: no-such-tool\n    version: ">=1.0.0"\n    command: shardmind-no-such-tool\n${extra}`,
+      );
+
+    it('accepts a when that names a boolean value', async () => {
+      await declareTool('    when: qmd_enabled\n');
+      expect((await lintShard(shard, {})).findings).toEqual([]);
+    });
+
+    it.each([
+      ['a string value', 'user_name'],
+      ['no value at all', 'no_such_value'],
+    ])('reports a when that names %s as EXTERNAL_TOOL_WHEN_INVALID', async (_name, key) => {
+      await declareTool(`    when: ${key}\n`);
+      const found = errors(await lintShard(shard, {})).filter((f) => f.code === 'EXTERNAL_TOOL_WHEN_INVALID');
+      expect(found).toHaveLength(1);
+      expect(found[0]!.message).toContain('shardmind-no-such-tool');
+      expect(found[0]!.message).toContain(key);
+    });
+
+    // A tool missing from PATH would be reported if lint ran it.
+    it('never runs a declared tool', async () => {
+      await declareTool('');
+      expect((await lintShard(shard, {})).findings).toEqual([]);
+    });
+  });
+
   it('reports two files that name one output, before anyone installs (#240)', async () => {
     // A template and a static file whose outputs differ only in case.
     await write('brain/Ideas.md.njk', '# ideas\n');

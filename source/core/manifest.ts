@@ -44,6 +44,31 @@ const RenameMigrationSchema = z
     }
   });
 
+// External tools (#138). The patterns keep shard text out of any shell's
+// parser: the probe is spawned without a shell, and on Windows a .cmd shim
+// goes through cmd.exe (core/external-tools.ts), where none of
+// & | < > ^ % " ! or whitespace may appear. See SHARD-LAYOUT.md §External tools.
+export const TOOL_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
+export const TOOL_ARG_PATTERN = /^[A-Za-z0-9._=-]+$/;
+const ToolNameSchema = z.string().regex(TOOL_NAME_PATTERN, 'Must be an executable name: lowercase letters, digits, ., _ and -');
+const ToolArgSchema = z.string().regex(TOOL_ARG_PATTERN, 'Must use only letters, digits, ., _, = and -');
+const NpmPackageSchema = z
+  .string()
+  .regex(/^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/, 'Must be an npm package name');
+const SemverRangeSchema = z
+  .string()
+  .refine(v => v.trim().length > 0 && semver.validRange(v) !== null, 'Must be a valid, non-empty semver range');
+
+const ExternalToolSchema = z.object({
+  package: NpmPackageSchema,
+  version: SemverRangeSchema,
+  command: ToolNameSchema,
+  args: z.array(ToolArgSchema).default(['--version']),
+  optional: z.boolean().default(false),
+  // A boolean value key; lint checks it names one (EXTERNAL_TOOL_WHEN_INVALID).
+  when: z.string().optional(),
+});
+
 export const ShardManifestSchema = z.object({
   apiVersion: z.literal('v1'),
   name: z.string().regex(/^[a-z0-9-]+$/, 'Must be lowercase alphanumeric with hyphens'),
@@ -64,10 +89,7 @@ export const ShardManifestSchema = z.object({
     // a declared-but-empty `shardmind: ""` would parse clean and then silently
     // disable the check — worse than a typo, because it reads as a constraint.
     // Deliberate match-all (`*`, `x`) stays valid.
-    shardmind: z
-      .string()
-      .refine(v => v.trim().length > 0 && semver.validRange(v) !== null, 'Must be a valid, non-empty semver range')
-      .optional(),
+    shardmind: SemverRangeSchema.optional(),
   }).optional(),
   dependencies: z.array(z.object({
     name: z.string(),
@@ -100,6 +122,8 @@ export const ShardManifestSchema = z.object({
   }).default({}),
   // Path renames between releases (#178). See SHARD-LAYOUT.md §Rename migrations.
   migrations: z.array(RenameMigrationSchema).optional(),
+  // Command-line tools the shard needs (#138). See SHARD-LAYOUT.md §External tools.
+  external_tools: z.record(ToolNameSchema, ExternalToolSchema).optional(),
 });
 
 /**

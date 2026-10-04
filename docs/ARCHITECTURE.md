@@ -219,6 +219,18 @@ hooks:
   personalize: .shardmind/hooks/personalize.ts
   post-update: .shardmind/hooks/post-update.ts
 
+# Command-line tools the shard needs at runtime, checked before install,
+# adopt and update write anything (#138). Optional; see SHARD-LAYOUT.md
+# §External tools.
+external_tools:
+  qmd:
+    package: "@tobilu/qmd"   # install hint: npm i -g @tobilu/qmd@">=2.5.0"
+    version: ">=2.5.0"
+    command: qmd             # an executable name, run without a shell
+    args: ["--version"]      # default ["--version"]
+    optional: true           # warn instead of refusing
+    when: qmd_enabled        # skip the check when this boolean value is false
+
 # Path renames between releases, applied by `shardmind update` (#178).
 # Optional; see SHARD-LAYOUT.md §Rename migrations.
 migrations:

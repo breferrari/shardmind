@@ -211,6 +211,7 @@ export default function Adopt({ args, options }: Props) {
             durationMs={phase.durationMs}
             hooks={phase.hooks}
             dryRun={phase.dryRun}
+            externalTools={phase.externalTools}
           />
         </CommandFrame>
       );

@@ -19,6 +19,7 @@ import {
   setupFlowSuite,
   mountUpdate,
   buildCustomTarball,
+  allFrames,
   driveDiffIteration,
   SHARD_SLUG,
   SHARD_REF,
@@ -39,6 +40,8 @@ const ADD_COLLISION_SLUG = 'acme/add-collision';
 const ADD_COLLISION_REF = `github:${ADD_COLLISION_SLUG}`;
 const RENAME_SLUG = 'acme/rename-migration';
 const RENAME_REF = `github:${RENAME_SLUG}`;
+const TOOLS_SLUG = 'acme/update-external-tools';
+const TOOLS_REF = `github:${TOOLS_SLUG}`;
 
 describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)', () => {
   const getCtx = setupFlowSuite({
@@ -67,6 +70,10 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
+      [TOOLS_SLUG]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
     },
   });
 
@@ -76,6 +83,68 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     // next test's Ctrl+C is ignored and its runs start aborted (#249).
     resetSigintRollbackForTests();
   });
+
+  // ───── External tools (#138) ─────
+  // 0.2.0 declares tools; `node` is on PATH wherever the tests run. The
+  // command exits right after its last frame, so every frame is searched.
+
+  async function installThenOffer(prefix: string, tools: Record<string, unknown>): Promise<Vault> {
+    const { stub } = getCtx();
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-tar-`));
+    const base = { hooks: {}, name: 'update-external-tools', namespace: 'flowtest' };
+    const v01 = await buildCustomTarball({ version: '0.1.0', prefix: `${prefix}-0.1.0`, manifestOverrides: base, outDir: tmpDir });
+    const v02 = await buildCustomTarball({
+      version: '0.2.0',
+      prefix: `${prefix}-0.2.0`,
+      manifestOverrides: { ...base, external_tools: tools },
+      outDir: tmpDir,
+    });
+    stub.setVersion(TOOLS_SLUG, '0.1.0', v01);
+    stub.setLatest(TOOLS_SLUG, '0.1.0');
+    const vault = await createInstalledVault({ stub, shardRef: TOOLS_REF, values: DEFAULT_VALUES, prefix });
+    stub.setVersion(TOOLS_SLUG, '0.2.0', v02);
+    stub.setLatest(TOOLS_SLUG, '0.2.0');
+    return vault;
+  }
+
+  const installedVersion = async (vault: Vault) =>
+    (JSON.parse(await vault.readFile('.shardmind/state.json')) as { version: string }).version;
+
+  it('a required tool out of range → EXTERNAL_TOOL_UNMET, the vault stays on 0.1.0 (#138)', async () => {
+    const vault = await installThenOffer('tools-update-required', {
+      node: { package: 'node', version: '>=999.0.0', command: 'node' },
+    });
+    try {
+      const r = mountUpdate({ vaultRoot: vault.root, options: { yes: true } });
+      const frame = await waitFor(
+        allFrames(r),
+        (f) => /EXTERNAL_TOOL_UNMET/.test(f) && /npm i -g node@">=999\.0\.0"/.test(f),
+        30_000,
+      );
+      expect(frame).toMatch(/node: found \d+\.\d+\.\d+, needs >=999\.0\.0/);
+      expect(await installedVersion(vault)).toBe('0.1.0');
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
+
+  it('an optional tool missing → the update completes and the summary lists it (#138)', async () => {
+    const vault = await installThenOffer('tools-update-optional', {
+      'shardmind-no-such-tool': { package: 'no-such-tool', version: '>=1.0.0', command: 'shardmind-no-such-tool', optional: true },
+    });
+    try {
+      const r = mountUpdate({ vaultRoot: vault.root, options: { yes: true } });
+      const frame = await waitFor(
+        allFrames(r),
+        (f) => /Updated 0\.1\.0 → 0\.2\.0/.test(f) && /shardmind-no-such-tool: not found on PATH/.test(f),
+        30_000,
+      );
+      expect(frame).toMatch(/External tools:/);
+      expect(await installedVersion(vault)).toBe('0.2.0');
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
 
   // ───── Scenario 13: single conflict → keep_mine → ownership='modified' ─────
 

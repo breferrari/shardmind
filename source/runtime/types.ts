@@ -61,6 +61,27 @@ export interface ShardManifest {
   };
   /** Path renames between releases, applied by `shardmind update` (#178). */
   migrations?: RenameMigration[];
+  /**
+   * Command-line tools the shard needs at runtime, keyed by name (#138).
+   * Checked before install, adopt and update write anything. See
+   * SHARD-LAYOUT.md §External tools.
+   */
+  external_tools?: Record<string, ExternalTool>;
+}
+
+export interface ExternalTool {
+  /** npm package to install it from; used only in the install hint. */
+  package: string;
+  /** Semver range the installed version must satisfy. */
+  version: string;
+  /** Executable name, run without a shell. */
+  command: string;
+  /** Arguments that make it print its version. Default `['--version']`. */
+  args: string[];
+  /** True: an unmet tool warns. False: it refuses the run. */
+  optional: boolean;
+  /** A boolean value key; the tool is not checked when that value is false. */
+  when?: string;
 }
 
 export interface ShardDependency {

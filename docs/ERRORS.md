@@ -163,6 +163,20 @@ Thrown by `source/core/manifest.ts`.
 
 **Remedy:** Upgrade the engine — `npm i -g shardmind@latest` — then retry. (Shard authors: the range lives at `requires.shardmind`; absent means no check. See [`docs/AUTHORING.md §3`](AUTHORING.md).)
 
+### `EXTERNAL_TOOL_UNMET`
+
+**Meaning:** The shard declares a command-line tool it needs (`external_tools` in `shard.yaml`), and a required one is missing or outside its version range. Install, adopt, and an update that installs a new version run each declared tool's version command after the values are final and before any vault write, so a refused command leaves the vault untouched. The message names every unmet tool and why: not found on `PATH`, exited non-zero, timed out, printed no version, or the version found and the range it misses (#138). Optional tools that are unmet are listed too, but do not cause the refusal on their own.
+
+**Typical cause:** A tool installed long ago and never updated, or one never installed on this machine.
+
+**Remedy:** Run the install command in the hint, `npm i -g <package>@"<range>"`, which installs a version inside the range the shard declares, then retry. If the shard gates the tool on a value (`when:`), turning that value off skips the check. Shard authors: see [`SHARD-LAYOUT.md §External tools`](SHARD-LAYOUT.md#external-tools).
+
+### `EXTERNAL_TOOL_WHEN_INVALID`
+
+**Meaning:** A tool in `external_tools` has a `when:` key that does not name a `boolean` value in `shard-schema.yaml`. `shardmind validate` reports it as an error, and install refuses with `INSTALL_SHARD_INVALID` listing it (#138).
+
+**Remedy:** Shard author: point `when:` at a boolean value the schema declares, or remove it to check the tool on every install.
+
 ---
 
 ## Schema (`shard-schema.yaml` parsing)

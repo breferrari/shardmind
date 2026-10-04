@@ -367,6 +367,43 @@ The adoption pitch for obsidian-mind v6 users:
 
 Compressed: **clone is free but frozen; install (or adopt) gives you a configured, upgradeable vault.**
 
+## External tools
+
+A shard that needs a command-line tool at runtime declares it, with the version range it needs, so an install or update refuses (or warns) when the tool is missing or too old instead of failing in subtle ways later (#138). In `shard.yaml`:
+
+```yaml
+external_tools:
+  qmd:
+    package: "@tobilu/qmd"
+    version: ">=2.5.0"
+    command: qmd
+    args: ["--version"]
+    optional: true
+    when: qmd_enabled
+```
+
+| Field | Rule |
+|-------|------|
+| key (`qmd`) | The tool's name in messages. Same pattern as `command`. |
+| `package` | The npm package to install it from, used only in the install hint. An npm package name: `^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$`. |
+| `version` | A non-empty semver range, validated at parse time as `requires.shardmind` is. |
+| `command` | The executable to run, by name only: `^[a-z0-9][a-z0-9._-]*$`. No path, no whitespace, no shell metacharacter. |
+| `args` | Optional, default `["--version"]`. Each argument matches `^[A-Za-z0-9._=-]+$`: no whitespace and none of `& \| < > ^ % " !` or any other shell metacharacter. |
+| `optional` | Optional, default `false`. `true`: an unmet tool is a warning and the run continues. `false`: an unmet tool refuses the run. |
+| `when` | Optional. The key of a `boolean` value in `shard-schema.yaml`. When that value is `false`, the tool is not checked. A key the schema does not declare as a boolean is an error in `shardmind validate` and at install (`EXTERNAL_TOOL_WHEN_INVALID`); where it is not caught, the tool is checked, never skipped. |
+
+**When it is checked.** An install, an adopt, and an update that installs a new version check every declared tool after the values are final and before anything is written. An update that is already up to date checks nothing. A dry run never runs a tool: its summary says "external tools not checked (dry run)". `shardmind validate` never runs one either: it checks only the declaration. No shard-supplied command runs in a dry run or in `validate`.
+
+**How it is checked.** The engine finds `command` in the absolute directories on `PATH` (on Windows as a `.com`, `.exe`, `.bat` or `.cmd` file) and runs it with `args` and no shell, for at most 5 seconds. It then reads the version from standard output: the first full `x.y.z`, so a year or a banner before it does not count, or else the first number. A tool that prints its version only on standard error is read as printing none. The tool is:
+- met when that version satisfies `version` (a prerelease above the floor counts, as for `requires.shardmind`);
+- unmet otherwise, with the reason named: not found on `PATH`, exited non-zero, timed out, printed no version, or the version found and the range it misses.
+
+A tool whose check cannot finish is never treated as met.
+
+On Windows, npm installs a global tool as a `.cmd` file, which Node will not start without `cmd.exe`. Such a file is run as `cmd.exe /d /s /c ""<path>" <args>"`, where `<path>` is the absolute path found on `PATH`. The patterns above keep shard text out of `cmd.exe`'s parser, and a found path that contains `% " ^ & | < > !` is not run (unmet, reason named).
+
+**What happens.** A required tool that is unmet refuses the run with `EXTERNAL_TOOL_UNMET`, naming every unmet tool and its reason. The hint installs a version inside the declared range: `npm i -g <package>@"<range>"`. An optional tool that is unmet does not stop the run: the summary lists it under "External tools" with the same hint. The engine never installs a tool itself.
+
 ## Rename migrations
 
 A shard release that moves a file declares it, so an update carries the user's edits to the new path instead of leaving them at the old one and adding the new file fresh (#178). In `shard.yaml`:

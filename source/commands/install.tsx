@@ -141,6 +141,7 @@ export default function Install({ args, options }: Props) {
             keptStale={phase.keptStale}
             hooks={phase.hooks}
             dryRun={phase.dryRun}
+            externalTools={phase.externalTools}
           />
         </CommandFrame>
       );

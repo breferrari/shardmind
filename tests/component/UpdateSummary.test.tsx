@@ -340,3 +340,14 @@ describe('UpdateSummary', () => {
     });
   });
 });
+
+describe('UpdateSummary: external tools (#138)', () => {
+  it('lists an unmet optional tool with its install hint', () => {
+    const line = 'qmd: found 2.0.1, needs >=2.5.0. Install: npm i -g @tobilu/qmd@">=2.5.0"';
+    const { lastFrame } = render(
+      <UpdateSummary summary={summary({})} durationMs={0} migrationWarnings={[]} hooks={[]} externalTools={[line]} />,
+    );
+    expect(lastFrame()).toContain('External tools:');
+    expect(lastFrame()).toContain(line);
+  });
+});

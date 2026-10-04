@@ -2,6 +2,7 @@ import os from 'node:os';
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import HookSummarySection from './HookSummarySection.js';
+import ExternalToolsSection from './ExternalToolsSection.js';
 import type { ShardManifest } from '../runtime/types.js';
 import type { BackupRecord } from '../core/install-executor.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
@@ -33,6 +34,8 @@ interface SummaryProps {
   /** The same, edited by the user: kept, and theirs from now on (#228). */
   keptStale?: string[];
   hooks: HookOutcome[];
+  /** Unmet optional tools, or the dry-run note (#138); from `checkExternalToolsForRun`. */
+  externalTools?: readonly string[];
   dryRun?: boolean;
 }
 
@@ -46,6 +49,7 @@ export default function Summary({
   removed = [],
   keptStale = [],
   hooks,
+  externalTools = [],
   dryRun,
 }: SummaryProps) {
   const seconds = (durationMs / 1000).toFixed(1);
@@ -78,6 +82,8 @@ export default function Summary({
         title={`${dryRun ? 'Would keep' : 'Kept'} ${fileCountLabel(keptStale.length, '')} you edited that the shard no longer has; ${keptStale.length === 1 ? "it's" : "they're"} yours now:`}
         paths={keptStale}
       />
+
+      <ExternalToolsSection lines={externalTools} />
 
       <HookSummarySection outcomes={hooks} />
 

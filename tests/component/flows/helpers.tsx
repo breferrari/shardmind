@@ -465,3 +465,11 @@ export async function driveDiffIteration(
     await tick(40);
   }
 }
+
+/**
+ * Every frame a command drew, joined. A command exits right after its last
+ * frame, so polling `lastFrame` can miss a refusal or a summary.
+ */
+export function allFrames(r: { frames: string[] }): () => string {
+  return () => r.frames.join('\n');
+}

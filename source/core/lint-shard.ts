@@ -78,6 +78,18 @@ export async function lintShard(
     return done();
   }
 
+  // External tools (#138): a `when` must name a boolean value. Checked here,
+  // before any step that stops, and no tool is ever run.
+  for (const [name, tool] of Object.entries(manifest.external_tools ?? {})) {
+    if (tool.when === undefined || schema.values[tool.when]?.type === 'boolean') continue;
+    findings.push({
+      severity: 'error',
+      code: 'EXTERNAL_TOOL_WHEN_INVALID',
+      message: `external_tools.${name}.when names '${tool.when}', which is not a boolean value in shard-schema.yaml`,
+      hint: 'Point `when` at a boolean value the schema declares, or remove it to check the tool on every install.',
+    });
+  }
+
   // Values: supplied ones over the schema's defaults, then computed
   // defaults. Every value declares a default (parseSchema refuses one that
   // does not), so nothing is made up.

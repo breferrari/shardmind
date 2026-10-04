@@ -160,3 +160,12 @@ describe('AdoptSummary', () => {
     expect(lastFrame() ?? '').toContain('Bootstrap hook skipped (dry run).');
   });
 });
+
+describe('AdoptSummary: external tools (#138)', () => {
+  it('shows the dry-run note', () => {
+    const { lastFrame } = render(
+      <AdoptSummary {...baseProps} summary={makeSummary({})} externalTools={['external tools not checked (dry run)']} />,
+    );
+    expect(lastFrame()).toContain('external tools not checked (dry run)');
+  });
+});

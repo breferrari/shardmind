@@ -391,6 +391,17 @@ const ShardManifestSchema = z.object({
     // when absent; clamped to 1_000..600_000 at validation time.
     timeout_ms: z.number().int().min(1_000).max(600_000).optional(),
   }).default({}),
+  // Command-line tools the shard needs (#138), checked by external-tools.ts
+  // (§4.26). command: ^[a-z0-9][a-z0-9._-]*$; each arg: ^[A-Za-z0-9._=-]+$;
+  // package: an npm package name; version: a non-empty semver range.
+  external_tools: z.record(ToolNameSchema, z.object({
+    package: NpmPackageSchema,
+    version: SemverRangeSchema,
+    command: ToolNameSchema,
+    args: z.array(ToolArgSchema).default(['--version']),
+    optional: z.boolean().default(false),
+    when: z.string().optional(),   // a boolean value key; checked by lint (§4.22 step 8)
+  })).optional(),
   // Path renames between releases (#178). Each path relative, POSIX, inside
   // the vault, not under .shardmind/; from < to; new paths unique per entry.
   migrations: z.array(z.object({
@@ -1636,6 +1647,7 @@ lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: st
 5. `renderFile` for every render entry with `buildRenderContext(manifest, values, selections)`; each failure is recorded with the entry's output path.
 6. `findOutputClashes` over `plannedOutputRefs` (`output-clash.ts`), with `_each` lists expanded with these values (#240). Every clash is reported: across two different modules as the warning `LINT_OUTPUT_CLASH_ACROSS_MODULES` (they may be alternatives a user picks between), otherwise as an `OUTPUT_PATH_CLASH` error. #35's install check counts a clash, like an invalid value, as the prefill's when it disappears with the defaults alone.
 7. Warnings: a module whose paths match no file in the walk; a group no value belongs to.
+8. `external_tools`: a `when` that names no `boolean` value in the schema is an `EXTERNAL_TOOL_WHEN_INVALID` error. Checked right after step 2, so a step that stops later cannot hide it. No tool is ever run (#138).
 
 
 ### 4.23 `json-run.ts`
@@ -1750,6 +1762,56 @@ The status command takes no lock. Its update-check cache write never creates `.s
 `commands/hooks/use-vault-lock.ts` wraps it for the three machines:
 - `take()` at the start of the run effect (not under `--dry-run`). A stale takeover's note goes through Ink's `useStderr`.
 - `release()` in `finish`. Not on unmount: a Ctrl+C unmounts the tree while its rollback still restores files, and the `exit` handler releases once the rollback has exited 130.
+
+### 4.26 `external-tools.ts`
+
+Check the command-line tools a shard declares in `external_tools` against their version ranges (#138). Contract: SHARD-LAYOUT.md §External tools. Pure of Ink; the probe runner is passed in, so tests never spawn.
+
+```typescript
+type ToolProbe = (command: string, args: readonly string[]) => Promise<ProbeOutcome>;
+type ProbeOutcome =
+  | { kind: 'output'; stdout: string }
+  | { kind: 'not-found' }
+  | { kind: 'failed'; reason: string };   // non-zero exit, timeout, unsafe path
+
+type ToolResult =
+  | { name: string; status: 'met'; version: string }
+  | { name: string; status: 'skipped' }                              // `when` value is false
+  | { name: string; status: 'unmet'; reason: string; hint: string; optional: boolean };
+
+checkExternalTools(manifest, values, probe): Promise<ToolResult[]>;
+checkExternalToolsForRun(opts: { manifest; values; dryRun: boolean; probe?: ToolProbe }): Promise<string[]>;   // the summary's lines
+makeProbe(opts?: { env?; timeoutMs? }): ToolProbe;
+resolveExecutable(name, env): string | undefined;
+spawnProbe: ToolProbe;   // makeProbe() with process.env and 5 s
+```
+
+1. `checkExternalTools`: one result per declared tool, in declaration order. The probes run at once (`Promise.all`), so the wait is the slowest tool, not their sum.
+   - When `when` names a value that is `false`, the tool is `skipped`. A missing or non-boolean value does not skip it.
+   - Otherwise it runs `probe(command, args)`:
+     - `not-found` → unmet, "not found on PATH";
+     - `failed` → unmet with its reason;
+     - `output` → its version: the first full `x.y.z` (with an optional prerelease) in stdout, so a year or a "Node.js 22" banner before it does not win; only when there is none, the first number `semver.coerce` finds (`qmd 3` → 3.0.0). stderr is not read.
+       - none → unmet, "printed no version";
+       - a version that fails `semver.satisfies(v, range, { includePrerelease: true })` → unmet, "found <v>, needs <range>";
+       - otherwise met.
+   - Each unmet result carries its hint, `npm i -g <package>@"<range>"`.
+2. `checkExternalToolsForRun`, the one call each machine makes after values are final and before any prompt, move or write. It returns the summary's lines, which the machine passes to the summary as they are:
+   - A manifest with no `external_tools` returns `[]`, dry run or not. A dry run of one that declares tools returns `['external tools not checked (dry run)']`. Neither runs a probe.
+   - Otherwise it runs step 1 with `probe ?? spawnProbe`. If any non-optional result is unmet, it throws `EXTERNAL_TOOL_UNMET`: the message lists every unmet tool with its reason (an optional one marked `(optional)`), and the hint lists each install command.
+   - Otherwise it returns one line per unmet optional tool, `<name>: <reason>. Install: <hint>`. Met and skipped tools give no line.
+3. `makeProbe`:
+   - It checks `command` and every arg against the manifest patterns again (`TOOL_NAME_PATTERN`, `TOOL_ARG_PATTERN`), failing with "unsafe command name" / "unsafe argument" before anything runs.
+   - It looks up `command` in the absolute `PATH` entries only: a relative one (`.`, an empty segment) would resolve against the vault, where a shard file could run as the tool. On Windows it tries each `PATHEXT` extension that spawn can start (`.com`, `.exe`, `.bat`, `.cmd`; default `.COM;.EXE;.BAT;.CMD`) in each directory, and a name that already ends in one is tried as it is; elsewhere it takes the first executable file. Nothing found → `not-found`.
+   - A found path containing any of `% " ^ & | < > !` → `failed`, "unsafe path <path>".
+   - A `.cmd` or `.bat` path runs as `cmd.exe /d /s /c ""<path>" <args>"` with `windowsVerbatimArguments`. Node refuses to spawn one directly since the CVE-2024-27980 fix (`EINVAL`). Anything else is spawned directly. Never `shell: true`.
+   - stdin is ignored. stdout is capped at 64 KiB and the run at 5 s: a timeout kills the child → `failed`, "timed out after 5s". A non-zero exit → `failed`, "exited <code>". A spawn error → `not-found` for `ENOENT`, otherwise `failed`, "could not start (<code>)". On a timeout the probe stops reading at once, since a child of cmd.exe can outlive it and hold the pipe.
+
+`validate` and `lintShard` never call `spawnProbe`: lint checks only the declaration (§4.22 step 8).
+
+**Error cases**: `EXTERNAL_TOOL_UNMET` (step 2). The manifest schema rejects bad `command` / `args` / `package` / `version` as `MANIFEST_VALIDATION_FAILED`. lint reports a `when` that names no boolean value as `EXTERNAL_TOOL_WHEN_INVALID`.
+
+---
 
 ## 5. Runtime Module: `shardmind/runtime`
 

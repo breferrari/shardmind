@@ -28,6 +28,7 @@ import {
   makeVaultDir,
   cleanupVault,
   buildCustomTarball,
+  allFrames,
   driveMinimalWizard,
   SHARD_SLUG,
   SHARD_REF,
@@ -49,6 +50,7 @@ const SLUG_VERSION_MISMATCH = 'acme/future-engine';
 const SLUG_BROKEN = 'acme/broken-render';
 const SLUG_DROPPED = 'acme/dropped-files';
 const SLUG_LINT = 'acme/lint-before-wizard';
+const SLUG_TOOLS = 'acme/external-tools';
 
 const canSymlink = await symlinksWork();
 
@@ -91,8 +93,86 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
+      [SLUG_TOOLS]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
     },
   });
+
+  // ───── External tools (#138) ─────
+  // `node` is on PATH wherever the tests run, so a range it cannot meet
+  // refuses for real, and a name nothing provides is reliably missing.
+
+  /** A shard declaring `tools`, served at `#<ref>` on SLUG_TOOLS. */
+  async function toolsShard(ref: string, tools: Record<string, unknown>, outDir: string): Promise<string> {
+    const { stub } = getCtx();
+    const tarPath = await buildCustomTarball({
+      version: '0.1.0',
+      prefix: `external-tools-${ref}`,
+      manifestOverrides: { hooks: {}, name: 'external-tools', namespace: 'flowtest', external_tools: tools },
+      outDir,
+    });
+    stub.setRef(SLUG_TOOLS, ref, STUB_SHA, tarPath);
+    return `github:${SLUG_TOOLS}#${ref}`;
+  }
+
+  const stateWritten = (vault: string) =>
+    fs.stat(path.join(vault, '.shardmind', 'state.json')).then((st) => st.isFile(), () => false);
+
+  it('a required tool out of range → EXTERNAL_TOOL_UNMET before any write, hint inside the range (#138)', async () => {
+    const vault = await makeVaultDir('s-tools-required');
+    try {
+      const ref = await toolsShard('v-required', { node: { package: 'node', version: '>=999.0.0', command: 'node' } }, vault);
+      const r = mountInstall({ shardRef: ref, vaultRoot: vault, options: { defaults: true } });
+      const frame = await waitFor(
+        allFrames(r),
+        (f) => /EXTERNAL_TOOL_UNMET/.test(f) && /node: found \d+\.\d+\.\d+, needs >=999\.0\.0/.test(f) && /npm i -g node@">=999\.0\.0"/.test(f),
+        30_000,
+      );
+      expect(frame).toMatch(/EXTERNAL_TOOL_UNMET/);
+      expect(await stateWritten(vault)).toBe(false);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
+
+  it('an optional tool missing → the install completes and the summary lists it (#138)', async () => {
+    const vault = await makeVaultDir('s-tools-optional');
+    try {
+      const ref = await toolsShard(
+        'v-optional',
+        {
+          'shardmind-no-such-tool': { package: 'no-such-tool', version: '>=1.0.0', command: 'shardmind-no-such-tool', optional: true },
+          node: { package: 'node', version: '>=1.0.0', command: 'node' },
+        },
+        vault,
+      );
+      const r = mountInstall({ shardRef: ref, vaultRoot: vault, options: { defaults: true } });
+      const frame = await waitFor(
+        allFrames(r),
+        (f) => /Installed/.test(f) && /External tools:/.test(f) && /shardmind-no-such-tool: not found on PATH/.test(f),
+        30_000,
+      );
+      expect(frame).toMatch(/npm i -g no-such-tool@">=1\.0\.0"/);
+      expect(frame).not.toMatch(/node:/);
+      expect(await stateWritten(vault)).toBe(true);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
+
+  it('a dry run checks no tool and says so (#138)', async () => {
+    const vault = await makeVaultDir('s-tools-dry-run');
+    try {
+      const ref = await toolsShard('v-dry-run', { node: { package: 'node', version: '>=999.0.0', command: 'node' } }, vault);
+      const r = mountInstall({ shardRef: ref, vaultRoot: vault, options: { defaults: true, dryRun: true } });
+      const frame = await waitFor(allFrames(r), (f) => /external tools not checked \(dry run\)/.test(f), 30_000);
+      expect(frame).not.toMatch(/EXTERNAL_TOOL_UNMET/);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
 
   afterEach(() => {
     cleanup();

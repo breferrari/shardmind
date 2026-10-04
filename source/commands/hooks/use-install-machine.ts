@@ -26,6 +26,7 @@ import { parseManifest, assertEngineCompatible } from '../../core/manifest.js';
 import { resolveEngineVersion } from './cli-version.js';
 import { useVaultLock } from './use-vault-lock.js';
 import { assertShardInstallable } from '../../core/lint-shard.js';
+import { checkExternalToolsForRun } from '../../core/external-tools.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
 import { readState } from '../../core/state.js';
 import {
@@ -98,7 +99,7 @@ export type Phase =
       // but does NOT roll the install back. See docs/ARCHITECTURE.md §9.3 for
       // the Helm-style contract. Shape shared with update via core/hook.ts so
       // `appendHookOutput` narrows generically.
-  | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; fileCount: number; durationMs: number; backups: BackupRecord[]; replaced: string[]; removed: string[]; keptStale: string[]; hooks: HookOutcome[]; dryRun: boolean }
+  | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; fileCount: number; durationMs: number; backups: BackupRecord[]; replaced: string[]; removed: string[]; keptStale: string[]; hooks: HookOutcome[]; dryRun: boolean; externalTools: string[] }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
 
@@ -185,6 +186,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   // Folders the install created, so a rollback leaves the user's own (#215).
   const createdDirsRef = useRef<string[]>([]);
   const backupsRef = useRef<BackupRecord[]>([]);
+  // The external-tools check's summary lines (#138).
+  const externalToolsRef = useRef<string[]>([]);
   // The install in flight, from the first move aside to state.json, which a
   // Ctrl+C stops and waits for (#249). Its abort stops the set-aside loop
   // before its next move (#55) and runInstall before its next write; the
@@ -581,6 +584,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           keptStale,
           hooks: hookOutcomes,
           dryRun: Boolean(dryRun),
+          externalTools: externalToolsRef.current,
         });
       } catch (err) {
         const rollBack = !dryRun && !committed;
@@ -712,6 +716,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         const validator = buildValuesValidator(ctx.schema);
         const validated = validator.parse(result.values) as Record<string, unknown>;
         const validatedResult: WizardResult = { values: validated, selections: result.selections };
+        // With the values final, before any prompt or move (#138).
+        externalToolsRef.current = await checkExternalToolsForRun({ manifest: ctx.manifest, values: validated, dryRun: Boolean(dryRun) });
 
         // With the values, an `_each` template is planned under the paths it
         // expands to, so a user file at one is a collision like any other (#214).

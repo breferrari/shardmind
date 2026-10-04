@@ -2,6 +2,7 @@ import os from 'node:os';
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import HookSummarySection from './HookSummarySection.js';
+import ExternalToolsSection from './ExternalToolsSection.js';
 import MovedFilesList from './MovedFilesList.js';
 import type { ShardManifest } from '../runtime/types.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
@@ -34,6 +35,8 @@ interface AdoptSummaryProps {
   summary: AdoptSummaryData;
   durationMs: number;
   hooks: HookOutcome[];
+  /** Unmet optional tools, or the dry-run note (#138); from `checkExternalToolsForRun`. */
+  externalTools?: readonly string[];
   dryRun?: boolean;
 }
 
@@ -43,6 +46,7 @@ export default function AdoptSummary({
   summary,
   durationMs,
   hooks,
+  externalTools = [],
   dryRun,
 }: AdoptSummaryProps) {
   const seconds = (durationMs / 1000).toFixed(1);
@@ -95,6 +99,8 @@ export default function AdoptSummary({
       </Box>
 
       <MovedFilesList moves={summary.renamedFiles} dryRun={dryRun} />
+
+      <ExternalToolsSection lines={externalTools} />
 
       <HookSummarySection outcomes={hooks} />
 
