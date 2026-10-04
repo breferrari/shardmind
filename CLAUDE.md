@@ -124,6 +124,7 @@ shardmind/
 │   ├── cli-options.ts                # Positional options on Pastel's Commander (#147)
 │   ├── commands/
 │   │   ├── index.tsx                  # Status display (root command)
+│   │   ├── _app.tsx                   # Pastel custom app: wraps every command in CrashBoundary (#225)
 │   │   ├── install.tsx                # shardmind install <shard>
 │   │   ├── update.tsx                 # shardmind update
 │   │   ├── adopt.tsx                  # shardmind adopt <shard>
@@ -140,6 +141,8 @@ shardmind/
 │   │       └── shared.ts              # summarizeHook, useSigintRollback
 │   ├── components/
 │   │   ├── CommandFrame.tsx           # Dry-run banner + keyboard legend
+│   │   ├── ErrorView.tsx              # Every command's error view: known / environment / bug (#225)
+│   │   ├── CrashBoundary.tsx          # Shows a render-time throw through ErrorView, exit 1 (#225)
 │   │   ├── CommandProgress.tsx        # Shared progress UI (install + update)
 │   │   ├── StatusView.tsx             # Quick status (shardmind root command)
 │   │   ├── VerboseView.tsx            # Detailed diagnostics (shardmind --verbose)
@@ -199,6 +202,7 @@ shardmind/
 │   │   ├── lint-shard.ts              # Install's checks in check mode, collecting every finding (#34)
 │   │   ├── validate-shard.ts          # validate target (dir or ref) + headless --json runner (#34)
 │   │   ├── color-env.ts               # NO_COLOR → chalk level 0 before Ink loads; FORCE_COLOR wins (#37)
+│   │   ├── bug-report.ts              # describeError (known / environment / bug), report link, top-level crash handler (#225)
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   └── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
@@ -221,6 +225,7 @@ shardmind/
 │   ├── integration/                   # Multi-module pipeline tests
 │   ├── e2e/                           # Full CLI invocation tests (subprocess)
 │   │   ├── cli.test.ts                # End-to-end scenarios across status / install / update / adopt + post-install hook + Invariant 1 byte-equivalence
+│   │   ├── crash.test.ts              # A bug no error view catches: top-level handler + render-time CrashBoundary, exit 1 (#225)
 │   │   ├── obsidian-mind-contract.test.ts  # v6 contract acceptance suite — install / update / adopt / refs / additive / hook failure / adversarial against the obsidian-mind-like fixture (#92)
 │   │   ├── tui/                       # Layer 2 real-PTY TUI scenarios — node-pty + @xterm/headless drive `dist/cli.js` under a real terminal (#111 Phase 2; macOS + Linux only, Windows skipped via #174)
 │   │   │   ├── helpers/               # pty-cli, virtual-screen, build-fixture-shard
@@ -363,6 +368,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `hook.ts` | §4.16 | Slot-agnostic hook lookup + execute via bundled `tsx` subprocess (non-fatal) |
 | `hook-orchestrator.ts` | §4.16a | Hook lifecycle: slot selection/order, per-slot ctx, write-boundary checks, re-hash, fingerprint persist |
 | `hook-boundary.ts` | §4.16b | Pure detect-and-warn write-boundary detector (managed-write / unmanaged-create) |
+| `bug-report.ts` | §7.2a | `describeError` (known / environment / bug), the version-only report link, the plain-text top-level crash handler (#225) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
