@@ -483,7 +483,7 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 ### `UPDATE_JSON_NEEDS_ANSWERS`
 
-**Meaning:** `shardmind update --dry-run --json` reached decisions the update would ask you about, and `--json` cannot ask. The message names every pending decision, with at most 10 paths each (#230):
+**Meaning:** `shardmind update --dry-run --json` reached decisions the update would ask you about, and `--json` cannot ask. The message names every pending decision, with every path (a JSON document is never capped) (#230):
 
 - **new optional modules**: the new version adds a removable module your install has never chosen;
 - **removed files you edited**: the new version drops files you modified;
