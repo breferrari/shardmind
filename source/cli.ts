@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { installStdinCancellation } from './core/cancellation.js';
 import { applyNoColor } from './core/color-env.js';
-import { isJsonRun, markNonInteractive } from './core/json-run.js';
+import { dropTrailingBlankWrites, isJsonRun, markNonInteractive } from './core/json-run.js';
 import { exitQuietlyWhenStdoutCloses } from './core/stdout-closed.js';
 
 // NO_COLOR turns colour off unless FORCE_COLOR is set (#37). chalk, which Ink
@@ -19,8 +19,13 @@ exitQuietlyWhenStdoutCloses(process);
 // core/json-run.ts), so this too runs before anything loads Ink. stdin is
 // left alone: the stdin SIGINT bridge reads a non-TTY stdin directly, which
 // on a real terminal would stop a backgrounded run (SIGTTIN).
+// The document keeps its single trailing newline: Ink's unmount would add
+// another (#231).
 const jsonRun = isJsonRun(process.argv.slice(2));
-if (jsonRun) markNonInteractive(process.stdout);
+if (jsonRun) {
+  markNonInteractive(process.stdout);
+  dropTrailingBlankWrites(process.stdout);
+}
 
 // A throw that escapes every command (a command module that fails to load, a
 // rejection nobody awaited) is printed as plain text, since Ink may not be

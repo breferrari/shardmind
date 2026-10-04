@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isJsonRun, markNonInteractive } from '../../source/core/json-run.js';
+import { dropTrailingBlankWrites, isJsonRun, markNonInteractive } from '../../source/core/json-run.js';
 
 describe('isJsonRun', () => {
   it.each([
@@ -85,5 +85,56 @@ describe('root options before the subcommand', () => {
       expect(schema.safeParse(true).success, name).toBe(true);
       expect(schema.safeParse('update').success, name).toBe(false);
     }
+  });
+});
+
+describe('dropTrailingBlankWrites (#231)', () => {
+  /** A stand-in for process.stdout that records what reaches it. */
+  function recorder(): { stream: { write: (chunk: unknown, ...rest: unknown[]) => boolean }; out: string[] } {
+    const out: string[] = [];
+    const stream = {
+      write: (chunk: unknown, ...rest: unknown[]): boolean => {
+        out.push(String(chunk));
+        const callback = rest.find((r) => typeof r === 'function') as (() => void) | undefined;
+        callback?.();
+        return true;
+      },
+    };
+    return { stream, out };
+  }
+
+  it("drops Ink's lone newline after the document", () => {
+    const { stream, out } = recorder();
+    dropTrailingBlankWrites(stream);
+    stream.write('{\n  "ok": true\n}\n');
+    stream.write('\n');
+    expect(out.join('')).toBe('{\n  "ok": true\n}\n');
+  });
+
+  it('passes a lone newline written before any content', () => {
+    const { stream, out } = recorder();
+    dropTrailingBlankWrites(stream);
+    stream.write('\n');
+    stream.write('{}\n');
+    expect(out.join('')).toBe('\n{}\n');
+  });
+
+  it('passes every write that carries content', () => {
+    const { stream, out } = recorder();
+    dropTrailingBlankWrites(stream);
+    stream.write('{\n');
+    stream.write('}\n');
+    stream.write('x\n');
+    expect(out.join('')).toBe('{\n}\nx\n');
+  });
+
+  it("still calls a dropped write's callback, which Ink's exit barrier waits on", () => {
+    const { stream } = recorder();
+    dropTrailingBlankWrites(stream);
+    stream.write('{}\n');
+    let called = false;
+    const returned = stream.write('\n', () => (called = true));
+    expect(called).toBe(true);
+    expect(returned).toBe(true);
   });
 });
