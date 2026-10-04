@@ -29,7 +29,9 @@ An update never replaces a file the user changed, and every install gets its own
 | ✅ | List the paths an update replaced in its summary | [#153](https://github.com/breferrari/shardmind/issues/153) |
 | ✅ | qmd_index not personalized on install — every vault collides on the same QMD store | [#137](https://github.com/breferrari/shardmind/issues/137) |
 | ✅ | Root-command options silently shadow same-named subcommand options (`adopt --verbose` does nothing) | [#147](https://github.com/breferrari/shardmind/issues/147) |
-| ⬜ | v0.2: Rename migrations in shard.yaml + shardmind adopt --from-version | [#88](https://github.com/breferrari/shardmind/issues/88) | Unblocked. Suggested proposal accepted.
+| ⬜ | v0.2: Rename migrations in shard.yaml + shardmind adopt --from-version (split into #178, #179) | [#88](https://github.com/breferrari/shardmind/issues/88) |
+| ✅ | Apply shard.yaml rename migrations on update | [#178](https://github.com/breferrari/shardmind/issues/178) |
+| ⬜ | Add adopt --from-version to apply rename migrations | [#179](https://github.com/breferrari/shardmind/issues/179) |
 
 ## Phase 2 — collisions and binary files
 

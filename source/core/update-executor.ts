@@ -81,7 +81,9 @@ export interface UpdateRunnerOptions {
    * Fires after each write with the file's vault-relative path and
    * whether we newly introduced it (as opposed to overwriting an
    * existing on-disk file). Powers the SIGINT rollback's added-paths
-   * list so it can erase only files this run created.
+   * list so it can erase only files this run created. A rename's new
+   * path (#178) fires once before the write pass, after it was checked
+   * free.
    */
   onFileTouched?: (outputPath: string, introduced: boolean) => void;
 }
@@ -133,6 +135,8 @@ export interface UpdateSummary {
    * run sets `adoptPreexisting` (#61).
    */
   keptUntracked: string[];
+  /** Files a rename migration moved, old path → new path (#178). */
+  renamedFiles: Array<{ from: string; to: string }>;
 }
 
 /**
@@ -175,6 +179,11 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // ago, behind prompts. Before the snapshot or any write, dry run included.
   const touched = pathsTheUpdateTouches(plan.actions);
   await assertSafeVaultPaths(vaultRoot, touched.writes, touched.deletes);
+  // A rename's new path was free when planned; refuse before any write if
+  // something arrived there during the prompts (#178).
+  for (const action of plan.actions) {
+    if (action.renamedFrom !== undefined) await assertRenameTargetFree(vaultRoot, action.path, action.renamedFrom);
+  }
 
   const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now);
   const addedPaths: string[] = [];
@@ -187,6 +196,17 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       // means the directory actually contains the restore data the
       // rollback handler will need.
       onBackupReady?.(backupDir!);
+    }
+
+    // A rename's new path is introduced by this run, whichever pass fills it:
+    // registered once, before any write, so a failure or Ctrl+C mid-pass
+    // removes it (#178).
+    if (!dryRun) {
+      for (const action of plan.actions) {
+        if (action.renamedFrom === undefined) continue;
+        addedPaths.push(action.path);
+        onFileTouched?.(action.path, true);
+      }
     }
 
     // Every action that emits an `onProgress 'file'` event counts toward
@@ -212,6 +232,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       addedFiles: [],
       replacedFiles: [],
       keptUntracked: [],
+      renamedFiles: [],
     };
 
     // Two-pass: writes first, deletes second. Writes use mkdir -p so they
@@ -232,6 +253,18 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
         onFileTouched,
         index: ++index,
         total: progressTotal,
+      });
+    }
+    const written = new Set(summary.wroteFiles);
+    for (const action of plan.actions) {
+      if (action.renamedFrom === undefined) continue;
+      await completeRename(action, action.renamedFrom, {
+        written,
+        vaultRoot,
+        nextFiles,
+        summary,
+        addedPaths,
+        dryRun,
       });
     }
     for (const action of plan.actions) {
@@ -404,8 +437,11 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         const introduced =
           action.kind !== 'overwrite' && !(await pathExists(path.join(ctx.vaultRoot, action.path)));
         await writeAction(ctx.vaultRoot, action);
-        if (introduced) ctx.addedPaths.push(action.path);
-        ctx.onFileTouched?.(action.path, introduced);
+        // A rename's new path is registered before the write pass (#178).
+        if (action.renamedFrom === undefined) {
+          if (introduced) ctx.addedPaths.push(action.path);
+          ctx.onFileTouched?.(action.path, introduced);
+        }
       }
       ctx.nextFiles[action.path] = buildFileState(action, action.renderedHash, 'managed');
       ctx.summary.wroteFiles.push(action.path);
@@ -593,6 +629,85 @@ export async function createBackupDir(vaultRoot: string, now: Date): Promise<str
   );
 }
 
+/**
+ * Refuse a rename into a path something now occupies: a file, a folder or a
+ * symlink, dangling or not (`lstat`, not `access`), arrived after planning.
+ */
+async function assertRenameTargetFree(vaultRoot: string, to: string, from: string): Promise<void> {
+  const taken = await fsp.lstat(path.join(vaultRoot, to)).then(() => true, (err: unknown) => !isEnoent(err));
+  if (!taken) return;
+  throw new ShardMindError(
+    `'${to}' is no longer free: '${from}' was to move there`,
+    'UPDATE_WRITE_FAILED',
+    `Something was created at '${to}' after the update was planned. Move or remove it, then run \`shardmind update\` again.`,
+  );
+}
+
+/**
+ * Finish a rename migration's move once the write pass is done (#178). An
+ * action that wrote its new path leaves the old file to delete; one that
+ * wrote nothing (no change, a volatile file, a conflict kept as mine or
+ * skipped) moves the old file across. The state entry moves with it, and
+ * the new path counts as added so a rollback removes it.
+ */
+async function completeRename(
+  action: UpdateAction,
+  from: string,
+  ctx: {
+    vaultRoot: string;
+    nextFiles: Record<string, FileState>;
+    summary: UpdateSummary;
+    addedPaths: string[];
+    dryRun: boolean;
+    /** The paths the write pass wrote. */
+    written: ReadonlySet<string>;
+  },
+): Promise<void> {
+  const to = action.path;
+  // What the write pass did, not a re-derivation of it.
+  const wroteNewPath = ctx.written.has(to);
+  if (!ctx.dryRun) {
+    const fromAbs = path.join(ctx.vaultRoot, from);
+    const toAbs = path.join(ctx.vaultRoot, to);
+    if (wroteNewPath) {
+      await fsp.rm(fromAbs, { force: true });
+    } else {
+      // Checked at the top of the run; something may still arrive during
+      // the write pass. Never move over it, and keep it out of the
+      // rollback's removals.
+      try {
+        await assertRenameTargetFree(ctx.vaultRoot, to, from);
+      } catch (err) {
+        const i = ctx.addedPaths.indexOf(to);
+        if (i >= 0) ctx.addedPaths.splice(i, 1);
+        throw err;
+      }
+      await fsp.mkdir(path.dirname(toAbs), { recursive: true });
+      try {
+        await fsp.rename(fromAbs, toAbs);
+      } catch (err) {
+        // A volatile file the user deleted: its state moves, there is no file to.
+        if (!isEnoent(err)) throw err;
+      }
+    }
+  }
+  // An action that wrote or re-recorded the new path set its own entry;
+  // otherwise the old entry moves across, under the new template keys.
+  const previous = ctx.nextFiles[from];
+  if (ctx.nextFiles[to] === undefined && previous !== undefined) {
+    const keys = action.renamedKeys;
+    ctx.nextFiles[to] = keys
+      ? {
+          ...previous,
+          template: keys.templateKey,
+          ...(keys.iteratorKey === undefined ? {} : { iterator_key: keys.iteratorKey }),
+        }
+      : previous;
+  }
+  delete ctx.nextFiles[from];
+  ctx.summary.renamedFiles.push({ from, to });
+}
+
 async function snapshotForRollback(
   vaultRoot: string,
   plan: UpdatePlan,
@@ -619,6 +734,11 @@ async function snapshotForRollback(
       case 'skip_volatile':
       case 'keep_as_user':
         break;
+    }
+    // A rename deletes or moves its old path, and fills its new one (#178).
+    if (action.renamedFrom !== undefined) {
+      toSnapshot.add(action.renamedFrom);
+      toSnapshot.add(action.path);
     }
   }
 

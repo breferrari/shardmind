@@ -28,6 +28,7 @@ import type {
   ModuleSelections,
   ModuleDefinition,
   MigrationChange,
+  DriftReport,
 } from '../../runtime/types.js';
 import { ShardMindError } from '../../runtime/types.js';
 import { emitJson, jsonSuccess, updatePlanResult } from '../../core/json-output.js';
@@ -51,6 +52,7 @@ import {
   type ConflictResolution,
   type NewFilePlan,
 } from '../../core/update-planner.js';
+import { applyRenames, renamesBetween, type AppliedRenames } from '../../core/rename-migrations.js';
 import { runUpdate, rollbackUpdate, type UpdateSummary } from '../../core/update-executor.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
@@ -425,6 +427,16 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     [],
   );
 
+  /** The rename migrations between the installed and the new version, applied to state and drift (#178). */
+  const resolveRenames = (ctx: PreparedContext, drift: DriftReport, newFilePlan: NewFilePlan) =>
+    applyRenames({
+      vaultRoot,
+      state: ctx.state,
+      drift,
+      renames: renamesBetween(ctx.newManifest.migrations, ctx.state.version, ctx.newManifest.version),
+      newPaths: new Set(newFilePlan.outputs.map((o) => o.outputPath)),
+    });
+
   const continueWithRemovedPrompt = useCallback(
     async (
       ctx: PreparedContext,
@@ -441,10 +453,13 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           renderNewShard(ctx.newSchema, ctx.newTempDir, selections, newRenderContext),
         ]);
         const newPaths = new Set(newFilePlan.outputs.map((o) => o.outputPath));
-        const removedModified = removedFilesNeedingDecision(drift, newPaths);
+        // A renamed file is planned at its new path, so it is not offered
+        // as removed (#178).
+        const renamed = await resolveRenames(ctx, drift, newFilePlan);
+        const removedModified = removedFilesNeedingDecision(renamed.drift, newPaths);
 
         if (removedModified.length === 0 || yes) {
-          await runPlanAndResolve(ctx, values, selections, {}, { drift, newFilePlan });
+          await runPlanAndResolve(ctx, values, selections, {}, { renamed, newFilePlan });
           return;
         }
         setPhase({
@@ -469,21 +484,27 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       values: Record<string, unknown>,
       selections: ModuleSelections,
       removedDecisions: Record<string, 'delete' | 'keep'>,
-      precomputed?: { drift?: Awaited<ReturnType<typeof detectDrift>>; newFilePlan?: NewFilePlan },
+      precomputed?: { renamed?: AppliedRenames; newFilePlan?: NewFilePlan },
     ) => {
       try {
         setPhase({ kind: 'loading', message: 'Planning update…' });
         const newRenderContext = buildRenderContext(ctx.newManifest, values, selections, undefined, vaultRoot);
-        const drift = precomputed?.drift ?? (await detectDrift(vaultRoot, ctx.state));
+        const newFilePlan =
+          precomputed?.newFilePlan ??
+          (await renderNewShard(ctx.newSchema, ctx.newTempDir, selections, newRenderContext));
+        // Each renamed file is planned at its new path (#178).
+        const renamed =
+          precomputed?.renamed ??
+          (await resolveRenames(ctx, await detectDrift(vaultRoot, ctx.state), newFilePlan));
         const plan = await planUpdate({
-          vault: { root: vaultRoot, state: ctx.state, drift },
+          vault: { root: vaultRoot, state: renamed.state, drift: renamed.drift, movedFrom: renamed.movedFrom },
           values: { old: ctx.oldValues, new: values },
           newShard: {
             schema: ctx.newSchema,
             selections,
             tempDir: ctx.newTempDir,
             renderContext: newRenderContext,
-            filePlan: precomputed?.newFilePlan,
+            filePlan: newFilePlan,
           },
           removedFileDecisions: removedDecisions,
         });

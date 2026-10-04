@@ -29,7 +29,7 @@ interface UpdateSummaryProps {
 }
 
 /** Paths shown before the "…and K more" line, as for install's backup list. */
-const REPLACED_VISIBLE = 10;
+const PATHS_VISIBLE = 10;
 
 export default function UpdateSummary({
   summary,
@@ -76,16 +76,28 @@ export default function UpdateSummary({
           <Text dimColor>
             {dryRun ? 'Would replace' : 'Replaced'} with the shard's version:
           </Text>
-          {replaced.slice(0, REPLACED_VISIBLE).map((p) => (
+          {replaced.slice(0, PATHS_VISIBLE).map((p) => (
             <Text key={p}>  · {p}</Text>
           ))}
-          {replaced.length > REPLACED_VISIBLE && (
-            <Text dimColor>  …and {replaced.length - REPLACED_VISIBLE} more</Text>
+          {replaced.length > PATHS_VISIBLE && (
+            <Text dimColor>  …and {replaced.length - PATHS_VISIBLE} more</Text>
           )}
           {dryRun ? (
             <Text dimColor>Full list: add --json to this command</Text>
           ) : (
             backupDir && <Text dimColor>Previous copies: {backupDir}/files/</Text>
+          )}
+        </Box>
+      )}
+
+      {summary.renamedFiles.length > 0 && (
+        <Box flexDirection="column">
+          <Text dimColor>{dryRun ? 'Would move' : 'Moved'} to a new path:</Text>
+          {summary.renamedFiles.slice(0, PATHS_VISIBLE).map(({ from, to }) => (
+            <Text key={to}>  · {from} → {to}</Text>
+          ))}
+          {summary.renamedFiles.length > PATHS_VISIBLE && (
+            <Text dimColor>  …and {summary.renamedFiles.length - PATHS_VISIBLE} more</Text>
           )}
         </Box>
       )}

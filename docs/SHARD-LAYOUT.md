@@ -363,6 +363,22 @@ The adoption pitch for obsidian-mind v6 users:
 
 Compressed: **clone is free but frozen; install (or adopt) gives you a configured, upgradeable vault.**
 
+## Rename migrations
+
+A shard release that moves a file declares it, so an update carries the user's edits to the new path instead of leaving them at the old one and adding the new file fresh (#178). In `shard.yaml`:
+
+```yaml
+migrations:
+  - from: "5.1.0"
+    to: "6.1.0"
+    renames:
+      "brain/philosophy.md": "brain/manifesto.md"
+```
+
+A rename applies to an update from installed version I to target T when `I < to ≤ T`; renames chain in `to` order (a→b at 6.1, then b→c at 6.2, gives a→c). It is skipped, and the update behaves as it would without it (the old file removed or kept, the new one added), when the old path is not tracked or the new shard still ships it, the new path is already tracked (even by a file another rename moves away in the same update) or not produced by the new shard (an excluded module), anything already sits at the new path on disk, or two old paths chain to the same new path. Paths are written as they are tracked: no `./`, empty or `.` segments, no trailing slash, nothing under `.shardmind/` or `.git/`. A case-only rename is #169.
+
+A renamed file is planned at its new path as the old one would have been at the same path: managed → overwritten (or moved, if unchanged); modified → three-way merged against the old path's cached template, or moved with the user's bytes when the shard did not change it, or offered in the conflict prompt (Keep mine moves the user's bytes); volatile → moved; missing → restored at the new path. The old path is deleted after the writes. A missing `migrations` field is a no-op. Not a removed file: a renamed file is never offered in the removed-files prompt.
+
 ## Out of scope — deferred to v0.2
 
 Criterion: **obsidian-mind v6 does not need these to install, configure, or upgrade cleanly.** Each is a clean additive extension — deferring doesn't force retroactive design changes.
@@ -371,7 +387,7 @@ Criterion: **obsidian-mind v6 does not need these to install, configure, or upgr
 |----------|----------------------|---------------------------------------|
 | `rendered_files` opt-in (Nunjucks at vault-visible paths) | obsidian-mind uses post-install hook to personalize `brain/North Star.md`; no `{{ }}` at vault-visible paths | New optional field in `shard.yaml`; `renderer.ts` extended to include files in the list during install. Existing `rendered_files: undefined` behavior stays |
 | `.shardmindignore` negation (`!pattern`) | obsidian-mind's patterns are simple excludes; no negation needed | Parser upgrade; existing glob-only files keep working |
-| Rename migrations + `adopt --from-version` | v6.0 = v5.1's structure + `.shardmind/` sidecar (zero renames vs v5.1). **If a future obsidian-mind release introduces renames, rename migrations must ship before that release** | New `migrations` field in `shard.yaml`; update-planner + adopt-planner consume it. Missing field = no-op (current behavior) |
+| `adopt --from-version` | v6.0 = v5.1's structure + `.shardmind/` sidecar (zero renames vs v5.1) | Adopt applies the `migrations` rename chain from `--from-version` before classifying (#179). Rename migrations on update shipped with #178 (§Rename migrations) |
 | Shard composition (multi-shard per vault) | One shard per vault in v0.1 | State.json extends from `{shard, version}` to `{shards: [...]}`; single-shard remains the special case. No break |
 | Dependency fetching | Shards vendor deps (obsidian-mind already does this) | `shard.yaml` gets `dependencies: []`; engine fetches on install. No break |
 | Structural variants | obsidian-mind is a single shard | Future feature; orthogonal to layout |

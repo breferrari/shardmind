@@ -46,7 +46,7 @@ const PLAN_IO_CONCURRENCY = 16;
  * survive the round-trip byte-for-byte. Text-origin actions omit this
  * field and the executor writes `content` as UTF-8.
  */
-export type UpdateAction =
+export type UpdateAction = (
   | {
       kind: 'noop';
       path: string;
@@ -107,7 +107,21 @@ export type UpdateAction =
   | { kind: 'add'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string; copyFromSourcePath?: string }
   | { kind: 'restore_missing'; path: string; content: string; renderedHash: string; templateKey: string | null; iteratorKey?: string; copyFromSourcePath?: string }
   | { kind: 'delete'; path: string }
-  | { kind: 'keep_as_user'; path: string };
+  | { kind: 'keep_as_user'; path: string }
+) & {
+  /**
+   * Set when the action's path is a rename's new path (#178): the file was
+   * tracked at this old path. The executor deletes it after writing the new
+   * path, or moves it there when nothing new is written.
+   */
+  renamedFrom?: string;
+  /**
+   * The new path's template keys, set with `renamedFrom`. An entry the
+   * executor moves as it is (no change, a volatile file) records them, so a
+   * later merge finds its base in the new shard's cache.
+   */
+  renamedKeys?: { templateKey: string; iteratorKey?: string };
+};
 
 /**
  * The state entry recorded for a modified file the update leaves on disk.
@@ -162,6 +176,12 @@ export interface PlanUpdateInput {
     root: string;
     state: ShardState;
     drift: DriftReport;
+    /**
+     * New path → old path for each rename migration that applies (#178):
+     * `state` and `drift` are already keyed by the new paths
+     * (`applyRenames`), and the file is still at the old one.
+     */
+    movedFrom?: ReadonlyMap<string, string>;
   };
   /**
    * Values on each side of the migration. `old` is what the renderer
@@ -384,11 +404,19 @@ const WRITE_ACTIONS = new Set<UpdateAction['kind']>([
  */
 export function pathsTheUpdateTouches(actions: readonly UpdateAction[]): { writes: string[]; deletes: string[] } {
   const writes = actions.filter(
-    (a) => WRITE_ACTIONS.has(a.kind) || (a.kind === 'noop' && a.reason === ALREADY_NEW_VERSION),
+    (a) =>
+      WRITE_ACTIONS.has(a.kind) ||
+      (a.kind === 'noop' && a.reason === ALREADY_NEW_VERSION) ||
+      // A rename writes or moves into its new path, whatever the kind (#178).
+      a.renamedFrom !== undefined,
   );
   return {
     writes: writes.map((a) => a.path),
-    deletes: actions.filter((a) => a.kind === 'delete').map((a) => a.path),
+    deletes: [
+      ...actions.filter((a) => a.kind === 'delete').map((a) => a.path),
+      // A rename removes or moves its old path (#178).
+      ...actions.flatMap((a) => (a.renamedFrom === undefined ? [] : [a.renamedFrom])),
+    ],
   };
 }
 
@@ -400,6 +428,10 @@ export function pathsTheUpdateTouches(actions: readonly UpdateAction[]): { write
 export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   const { vault, values, newShard, removedFileDecisions } = input;
   const { root: vaultRoot, state: currentState, drift } = vault;
+  const movedFrom = vault.movedFrom ?? new Map<string, string>();
+  // `state` and `drift` are keyed by a renamed file's new path while its bytes
+  // are still at the old one (#178): every vault read goes through here.
+  const diskPathOf = (rel: string): string => movedFrom.get(rel) ?? rel;
   const { old: oldValues, new: newValues } = values;
   const {
     schema: newSchema,
@@ -536,7 +568,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       }
 
       const [actualRead, oldBytes] = await Promise.all([
-        readBytesAndHash(path.join(vaultRoot, entry.path)),
+        readBytesAndHash(path.join(vaultRoot, diskPathOf(entry.path))),
         readCachedTemplate(vaultRoot, fileState.template),
       ]);
       if (actualRead === null) {
@@ -760,6 +792,14 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       pendingConflicts.push({ path: action.path, result: action.result, preexisting: action.preexisting });
       counts.conflicts++;
     }
+  }
+
+  for (const action of actions) {
+    const from = movedFrom.get(action.path);
+    const target = newByPath.get(action.path);
+    if (from === undefined || target === undefined) continue;
+    action.renamedFrom = from;
+    action.renamedKeys = targetKeys(target, newTempDir);
   }
 
   // Refuse before any prompt or `--json` plan, so a dry run reports what

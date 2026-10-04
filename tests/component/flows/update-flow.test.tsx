@@ -35,6 +35,8 @@ const REMOVED_FILE_SLUG = 'acme/removed-file';
 const REMOVED_FILE_REF = `github:${REMOVED_FILE_SLUG}`;
 const ADD_COLLISION_SLUG = 'acme/add-collision';
 const ADD_COLLISION_REF = `github:${ADD_COLLISION_SLUG}`;
+const RENAME_SLUG = 'acme/rename-migration';
+const RENAME_REF = `github:${RENAME_SLUG}`;
 
 describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)', () => {
   const getCtx = setupFlowSuite({
@@ -56,6 +58,10 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         latest: '0.1.0',
       },
       [ADD_COLLISION_SLUG]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
+      [RENAME_SLUG]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
@@ -469,6 +475,47 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     expect(prompt.replace(/\s+/g, ' ')).toContain('tracks it as your modified copy');
     expect(content).toBe('My own note.\n');
     expect(entry?.ownership).toBe('modified');
+  }, 90_000);
+
+  // ───── Scenario 17f: a declared rename carries the user's edit to the new path (#178) ─────
+
+  it("17f. update with a rename migration moves the user's edited file and lists it (#178)", async () => {
+    const { stub } = getCtx();
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rename-'));
+    try {
+      const manifestOverrides = { hooks: {}, name: 'rename-migration', namespace: 'flowtest' };
+      const v01 = await buildCustomTarball({ version: '0.1.0', prefix: 'rename-0.1.0', manifestOverrides, outDir: tmpDir });
+      const v02 = await buildCustomTarball({
+        version: '0.2.0',
+        prefix: 'rename-0.2.0',
+        manifestOverrides: {
+          ...manifestOverrides,
+          migrations: [{ from: '0.1.0', to: '0.2.0', renames: { 'CLAUDE.md': 'AGENTS.md' } }],
+        },
+        outDir: tmpDir,
+        mutate: async (work) => {
+          await fs.rename(path.join(work, 'CLAUDE.md'), path.join(work, 'AGENTS.md'));
+        },
+      });
+      stub.setVersion(RENAME_SLUG, '0.1.0', v01);
+      stub.setLatest(RENAME_SLUG, '0.1.0');
+      const vault = await createInstalledVault({ stub, shardRef: RENAME_REF, values: DEFAULT_VALUES, prefix: 's17f-rename' });
+      try {
+        await vault.writeFile('CLAUDE.md', 'My own agent notes.\n');
+        stub.setVersion(RENAME_SLUG, '0.2.0', v02);
+        stub.setLatest(RENAME_SLUG, '0.2.0');
+        const r = mountUpdate({ vaultRoot: vault.root, options: { yes: true } });
+        const frame = await waitFor(r.lastFrame, (f) => /Updated 0\.1\.0 → 0\.2\.0/.test(f), 30_000);
+        expect(frame).toContain('Moved to a new path:');
+        expect(frame).toContain('CLAUDE.md → AGENTS.md');
+        expect(await vault.readFile('AGENTS.md')).toBe('My own agent notes.\n');
+        expect(await vault.exists('CLAUDE.md')).toBe(false);
+      } finally {
+        await vault.cleanup();
+      }
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
   }, 90_000);
 
   // ───── Scenario 18: upgrade target declares an unsatisfiable engine → refuse (#121) ─────

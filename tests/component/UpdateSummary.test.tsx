@@ -32,9 +32,33 @@ function summary(overrides: Partial<Summary> = {}): Summary {
     addedFiles: [],
     replacedFiles: [],
     keptUntracked: [],
+    renamedFiles: [],
     ...overrides,
   };
 }
+
+describe('UpdateSummary renamed files (#178)', () => {
+  it('lists each file a rename migration moved, old path to new', () => {
+    const { lastFrame } = render(
+      <UpdateSummary
+        summary={summary({ renamedFiles: [{ from: 'CLAUDE.md', to: 'AGENTS.md' }] })}
+        durationMs={0}
+        migrationWarnings={[]}
+        hooks={[]}
+      />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Moved to a new path:');
+    expect(frame).toContain('CLAUDE.md → AGENTS.md');
+  });
+
+  it('shows no moved section when nothing was renamed', () => {
+    const { lastFrame } = render(
+      <UpdateSummary summary={summary()} durationMs={0} migrationWarnings={[]} hooks={[]} />,
+    );
+    expect(lastFrame() ?? '').not.toContain('Moved to a new path');
+  });
+});
 
 describe('UpdateSummary', () => {
   it('renders the version bump and core action counts', () => {
