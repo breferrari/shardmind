@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (NO_COLOR — #37)
+
+- **`NO_COLOR` now turns colour off in a terminal.** Any non-empty value works, per [no-color.org](https://no-color.org); an empty one does not. `FORCE_COLOR` still turns colour on, even when piped, and wins when both are set. `--help` and `--json` output carry no colour codes.
+
 ### Added (exclude a folder from the write-boundary check — #190)
 
 - **A vault can list folders the `personalize` write-boundary check skips**, in `.shardmind/boundary-ignore`, one gitignore-style pattern per line. Use it for a folder that is unreadable for good, which otherwise warns `HOOK_BOUNDARY_INCOMPLETE` on every install.
