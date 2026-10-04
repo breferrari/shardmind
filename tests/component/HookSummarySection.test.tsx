@@ -153,6 +153,24 @@ describe('HookSummarySection', () => {
     expect(frame).toContain('move artifact creation to the bootstrap hook');
   });
 
+  it('renders an incomplete personalize walk naming the unreadable folders', () => {
+    const frame = out([
+      { slot: 'personalize', summary: { exitCode: 0, violation: { kind: 'incomplete', paths: ['.', '.cache'] } } },
+    ]).lastFrame() ?? '';
+    expect(frame).toContain('Personalize hook boundary check incomplete: could not read ., .cache');
+  });
+
+  it('lists unreadable folders beside an unmanaged-create violation', () => {
+    const frame = out([
+      {
+        slot: 'personalize',
+        summary: { exitCode: 0, violation: { kind: 'unmanaged-create', paths: ['x.json'], unreadable: ['.qmd'] } },
+      },
+    ]).lastFrame() ?? '';
+    expect(frame).toContain('Personalize hook created unmanaged file(s): x.json');
+    expect(frame).toContain('Could not read .qmd');
+  });
+
   it('renders a deprecation warning for a legacy post-install run', () => {
     const frame = out([{ slot: 'post-install', summary: { exitCode: 0, deprecated: true } }]).lastFrame() ?? '';
     expect(frame).toContain('Post-install hook completed.');

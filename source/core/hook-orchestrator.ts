@@ -44,6 +44,7 @@ import {
   detectUnmanagedCreates,
   snapshotUnmanaged,
   type HookViolation,
+  type UnmanagedSnapshot,
 } from './hook-boundary.js';
 import { rehashManagedFiles, snapshotTrackedHashes, writeState, type RehashResult } from './state.js';
 import { loadShardmindignore, parseShardmindignore, type IgnoreFilter } from './shardmindignore.js';
@@ -186,7 +187,7 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
 
     // Baseline for personalize's unmanaged-create check, taken right before
     // the hook runs (so bootstrap's own artifacts are already in the baseline).
-    let unmanagedBefore: Set<string> | undefined;
+    let unmanagedBefore: UnmanagedSnapshot | undefined;
     if (job.boundary === 'unmanaged-create') {
       ignore ??= await loadIgnoreSafe(plan.vaultRoot);
       unmanagedBefore = await snapshotUnmanaged(plan.vaultRoot, ignore);
@@ -366,6 +367,7 @@ function summarize(
   const merged: HookSummary = summary ? { ...summary } : {};
   if (extra.violation) {
     merged.violation = { kind: extra.violation.kind, paths: extra.violation.paths };
+    if (extra.violation.unreadable) merged.violation.unreadable = extra.violation.unreadable;
   }
   if (extra.deprecated) merged.deprecated = true;
   return merged;

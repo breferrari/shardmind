@@ -183,9 +183,11 @@ export interface HookSummary {
   /**
    * A detected write-boundary crossing (detect-and-warn). The bytes were
    * left in place; the UI renders a non-fatal warning naming the paths.
+   * `incomplete` names folders the personalize walk could not read, and
+   * `unreadable` lists them beside an `unmanaged-create` finding.
    * See `source/core/hook-boundary.ts`.
    */
-  violation?: { kind: 'managed-write' | 'unmanaged-create'; paths: string[] };
+  violation?: { kind: 'managed-write' | 'unmanaged-create' | 'incomplete'; paths: string[]; unreadable?: string[] };
   stdout?: string;
   stderr?: string;
   exitCode?: number;
