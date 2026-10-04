@@ -368,6 +368,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         }
 
         if (ctx.newRequiredKeys.length > 0) {
+          if (json) {
+            throw jsonNeedsAnswers(
+              `new required values (${ctx.newRequiredKeys.join(', ')})`,
+              'Add them to shard-values.yaml; --yes cannot supply new required values either.',
+            );
+          }
           setPhase({ kind: 'prompt-new-values', ctx });
           return;
         }
@@ -414,6 +420,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     (ctx: PreparedContext, values: Record<string, unknown>) => {
       const validated = validateValues(ctx.newSchema, values);
       if (ctx.newOptionalModules.length > 0) {
+        if (json) {
+          throw jsonNeedsAnswers(
+            `new optional modules (${ctx.newOptionalModules.map((m) => m.id).join(', ')})`,
+            'Add --yes to include them, or run without --json to choose.',
+          );
+        }
         setPhase({ kind: 'prompt-new-modules', ctx, values: validated });
         return;
       }
@@ -457,6 +469,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         if (removedModified.length === 0 || yes) {
           await runPlanAndResolve(ctx, values, selections, {}, { renamed, newFilePlan });
           return;
+        }
+        if (json) {
+          throw jsonNeedsAnswers(
+            `removed files you edited (${removedModified.join(', ')})`,
+            'Add --yes to keep them, or run without --json to choose.',
+          );
         }
         setPhase({
           kind: 'prompt-removed-files',
@@ -751,6 +769,16 @@ function throwNoInstall(): never {
     'UPDATE_NO_INSTALL',
     'Run `shardmind install <shard>` first, then come back to update.',
   );
+}
+
+/**
+ * The error for a --json run that reached a decision it would prompt for
+ * (#230). update.tsx renders nothing under --json, so a prompt would wait
+ * unseen and no document would be written; this becomes the run's one JSON
+ * failure document instead.
+ */
+function jsonNeedsAnswers(decision: string, hint: string): ShardMindError {
+  return new ShardMindError(`--json cannot answer the update's question about ${decision}`, 'UPDATE_JSON_NEEDS_ANSWERS', hint);
 }
 
 /**
