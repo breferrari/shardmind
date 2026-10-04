@@ -75,7 +75,7 @@ Issues whose work already landed elsewhere get verified against the code and clo
 | ✅ | Command namespace prefix for discoverability | [#25](https://github.com/breferrari/shardmind/issues/25) |
 | ✅ | Topic-based meeting prep command (/prep-topic) | [#26](https://github.com/breferrari/shardmind/issues/26) |
 | ✅ | npm publishing setup — claim-publish retry + NPM_TOKEN | [#27](https://github.com/breferrari/shardmind/issues/27) |
-| ⬜ | Encode state-schema migration rules (uses v0.1 framework) | [#40](https://github.com/breferrari/shardmind/issues/40) |
+| ✅ | Encode state-schema migration rules (uses v0.1 framework) | [#40](https://github.com/breferrari/shardmind/issues/40) |
 
 ## Phase 5 — engine defects and dependency drift
 
@@ -451,7 +451,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] Debug logging (`SHARDMIND_DEBUG` env var) ([#36](https://github.com/breferrari/shardmind/issues/36))
 - [ ] `NO_COLOR` / `FORCE_COLOR` respect across Ink components ([#37](https://github.com/breferrari/shardmind/issues/37))
 - [ ] Alternate registry configurability (GHE, private, custom URL) ([#39](https://github.com/breferrari/shardmind/issues/39))
-- [ ] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
+- [x] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
 - [ ] Re-evaluate `@inkjs/ui` dependency ([#43](https://github.com/breferrari/shardmind/issues/43))
 - [x] Drop `LineInterner` workaround once `node-diff3` releases the prototype-lookup fix ([#49](https://github.com/breferrari/shardmind/issues/49))
 - [ ] `$EDITOR` integration for DiffView conflict resolution ([#50](https://github.com/breferrari/shardmind/issues/50))

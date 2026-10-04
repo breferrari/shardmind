@@ -512,7 +512,7 @@ The bridge between desired and actual state.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "shard": "breferrari/obsidian-mind",
   "source": "github:breferrari/obsidian-mind",
   "version": "3.5.0",
@@ -545,6 +545,7 @@ The bridge between desired and actual state.
 ```
 
 Key fields:
+- `schema_version` — the shape of this file, not the shard's version. See §8.2.
 - `source` — where to fetch updates from. Read by `shardmind update`. User never re-specifies.
 - `modules` — which modules are included/excluded. Persists across updates. User can change during update.
 - `files` — per-file hash tracking for drift detection.
@@ -552,6 +553,16 @@ Key fields:
 ### 8.1 Cached Templates
 
 `.shardmind/templates/` stores the templates that produced the current rendered files. This is the **base** in three-way merge during update.
+
+### 8.2 Schema migrations
+
+`state.json` outlives the engine that wrote it: a vault installed by an older shardmind is read by a newer one. `readState` compares the file's `schema_version` with `STATE_SCHEMA_VERSION` (`source/core/state.ts`) and, when they differ, runs the chain in `source/core/state-migrator.ts`, one `StateMigration` per bump. The first rule, v1 → v2, came with the hook lifecycle split (#102) and only stamps the version, because the new `bootstrap_fingerprint` field is optional. A version with no chain to the current one fails with `STATE_UNSUPPORTED_VERSION`, and the engine never migrates downward.
+
+A future shape change slots in the same way:
+
+1. Bump `STATE_SCHEMA_VERSION`.
+2. Add one `{ fromVersion, toVersion, apply }` entry that turns the previous shape into the new one, including the new `schema_version`. `writeState` accepts only the current version.
+3. Add a unit test of the rule (`tests/unit/state-migrator.test.ts`), and extend the E2E case that runs `status` and `update` on a vault whose `state.json` is at the previous version (`tests/e2e/cli.test.ts`, #40).
 
 ---
 
@@ -1718,7 +1729,7 @@ staying hermetic. No test reaches the public internet.
 |------|-------------|-------------|
 | **Dependency fetching** | Shard authors vendor deps in v0.1. Recursive download loop adds complexity. | `registry.ts` gains a `fetchDependencies()` method. |
 | **Uninstall / eject** | Manual for v0.1: delete `.shardmind/` and `shard-values.yaml`. Vault keeps working. | `shardmind eject` command. ShardMind is additive, not load-bearing. |
-| **Shard composition** | One shard per vault in v0.1. `state.json` has `schema_version: 1` — bump to 2 with `shards[]` when composition ships. | Affects state.json design, module conflict resolution, partial rendering. |
+| **Shard composition** | One shard per vault in v0.1. `state.json` is at `schema_version: 2` (#102); composition bumps it to 3 with `shards[]`, through a `state-migrator.ts` rule (§8.2). | Affects state.json design, module conflict resolution, partial rendering. |
 | **Structural variants** | Different purposes need different folder structures. For v0.1: different purposes = different shards. | `modules.structure` with purpose-driven variants. Reshape doc is the design spec. |
 | **SOUL guided creation** | Ship as empty template in v0.1. | `guided_files` in schema, third install phase. |
 | **`shardmind init`** | For shard authors. You are the first shard author. Build by hand. | Scaffolds `shard.yaml`, `shard-schema.yaml`, `templates/` from prompts. |
