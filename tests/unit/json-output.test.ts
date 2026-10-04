@@ -20,9 +20,11 @@ import {
   emitJson,
   jsonFailure,
   jsonSuccess,
+  statusResult,
   updatePlanResult,
 } from '../../source/core/json-output.js';
 import { ShardMindError } from '../../source/runtime/types.js';
+import type { StatusReport } from '../../source/runtime/types.js';
 import type { AdoptClassification, AdoptPlan } from '../../source/core/adopt-planner.js';
 import type { UpdateAction, UpdatePlan } from '../../source/core/update-planner.js';
 
@@ -251,5 +253,181 @@ describe('updatePlanResult', () => {
       }],
     };
     expect(updatePlanResult(merged, { dryRun: true }).files[0]!.shardHash).toBe('render-e');
+  });
+});
+
+describe('statusResult (#139)', () => {
+  function report(overrides: Partial<StatusReport> = {}): StatusReport {
+    return {
+      manifest: { apiVersion: 'v1', name: 'minimal', namespace: 'shardmind', version: '0.1.0', dependencies: [], hooks: {} } as never,
+      state: {
+        schema_version: 2,
+        shard: 'shardmind/minimal',
+        source: 'github:acme/demo',
+        version: '0.1.0',
+        tarball_sha256: 'sha',
+        installed_at: '2026-10-01T00:00:00.000Z',
+        updated_at: '2026-10-02T00:00:00.000Z',
+        values_hash: 'vh',
+        modules: { brain: 'included', perf: 'excluded' },
+        files: { 'Home.md': { template: 'Home.md', rendered_hash: 'h', ownership: 'modified' } },
+      },
+      installedAgo: '3 days ago',
+      updatedAgo: '2 days ago',
+      drift: {
+        managed: 4,
+        modified: 2,
+        volatile: 1,
+        missing: 1,
+        orphaned: 1,
+        modifiedPaths: ['Home.md', 'brain/Notes.md'],
+        modifiedChanges: null,
+        orphanedPaths: ['old.md'],
+        missingPaths: ['gone.md'],
+        truncated: false,
+        failed: false,
+      },
+      update: { kind: 'available', current: '0.1.0', latest: '0.2.0', cacheAge: 'fresh' },
+      modules: { included: ['brain'], excluded: ['perf'] },
+      values: { valid: true, total: 4, invalidKeys: [], invalidCount: 0, fileMissing: false, checked: true },
+      frontmatter: null,
+      environment: null,
+      warnings: [{ severity: 'info', message: 'v0.2.0 available', hint: "Run 'shardmind update'." }],
+      ...overrides,
+    };
+  }
+
+  it('answers installed: false for a directory that is not a managed vault', () => {
+    expect(statusResult(null)).toEqual({ installed: false });
+  });
+
+  it('maps the installed vault without the display-only fields', () => {
+    const out = statusResult(report());
+    expect(out).toMatchObject({
+      installed: true,
+      shard: 'shardmind/minimal',
+      source: 'github:acme/demo',
+      version: '0.1.0',
+      installedAt: '2026-10-01T00:00:00.000Z',
+      updatedAt: '2026-10-02T00:00:00.000Z',
+      update: { kind: 'available', current: '0.1.0', latest: '0.2.0', cacheAge: 'fresh' },
+      modules: { included: ['brain'], excluded: ['perf'] },
+      values: { valid: true, total: 4, invalidKeys: [], fileMissing: false },
+      frontmatter: null,
+      environment: null,
+      warnings: [{ severity: 'info', message: 'v0.2.0 available', hint: "Run 'shardmind update'." }],
+    });
+    const json = JSON.stringify(out);
+    // Relative times are a rendering of installedAt/updatedAt, and the
+    // per-file state is engine bookkeeping; neither belongs in the document.
+    expect(json).not.toContain('days ago');
+    expect(json).not.toContain('rendered_hash');
+    expect(out).not.toHaveProperty('ref');
+  });
+
+  it('lists every file bucket with its counts', () => {
+    const out = statusResult(report());
+    expect(out.installed && out.files).toEqual({
+      counts: { managed: 4, modified: 2, volatile: 1, missing: 1, orphaned: 1 },
+      modified: [{ path: 'Home.md' }, { path: 'brain/Notes.md' }],
+      missing: ['gone.md'],
+      orphaned: ['old.md'],
+    });
+  });
+
+  it('adds line counts or the skip reason to each modified file under --verbose', () => {
+    const base = report();
+    const out = statusResult(
+      report({
+        drift: {
+          ...base.drift,
+          modifiedChanges: [
+            { path: 'Home.md', linesAdded: 3, linesRemoved: 1 },
+            { path: 'brain/Notes.md', skipped: true, reason: 'no-template' },
+          ],
+        },
+      }),
+    );
+    expect(out.installed && out.files.modified).toEqual([
+      { path: 'Home.md', linesAdded: 3, linesRemoved: 1 },
+      { path: 'brain/Notes.md', diffSkipped: 'no-template' },
+    ]);
+  });
+
+  it('sorts modified and missing by path, keeping each line count with its file', () => {
+    const base = report();
+    const out = statusResult(
+      report({
+        drift: {
+          ...base.drift,
+          // Drift lists these in state.json key order, not sorted.
+          modifiedPaths: ['z.md', 'a.md'],
+          modifiedChanges: [
+            { path: 'z.md', linesAdded: 9, linesRemoved: 0 },
+            { path: 'a.md', linesAdded: 1, linesRemoved: 2 },
+          ],
+          missingPaths: ['y.md', 'b.md'],
+        },
+      }),
+    );
+    expect(out.installed && out.files.modified).toEqual([
+      { path: 'a.md', linesAdded: 1, linesRemoved: 2 },
+      { path: 'z.md', linesAdded: 9, linesRemoved: 0 },
+    ]);
+    expect(out.installed && out.files.missing).toEqual(['b.md', 'y.md']);
+  });
+
+  it('gives files: null when drift detection failed, never a clean zero count', () => {
+    const base = report();
+    const out = statusResult(report({ drift: { ...base.drift, failed: true } }));
+    expect(out.installed && out.files).toBeNull();
+  });
+
+  it('gives values.valid: null when the values could not be checked', () => {
+    const base = report();
+    const out = statusResult(
+      report({ values: { ...base.values, valid: false, total: 0, checked: false } }),
+    );
+    expect(out.installed && out.values.valid).toBeNull();
+    expect(out.installed && out.values.total).toBeNull();
+  });
+
+  it('sorts invalid value keys and frontmatter issues too', () => {
+    const base = report();
+    const out = statusResult(
+      report({
+        values: { ...base.values, valid: false, invalidKeys: ['z_key', 'a_key'], invalidCount: 2 },
+        frontmatter: {
+          valid: 1,
+          total: 3,
+          issues: [
+            { path: 'z.md', missing: ['date'], noteType: null },
+            { path: 'a.md', missing: ['title'], noteType: 'person' },
+          ],
+          issueCount: 2,
+          truncated: false,
+        },
+      }),
+    );
+    expect(out.installed && out.values.invalidKeys).toEqual(['a_key', 'z_key']);
+    expect(out.installed && out.frontmatter!.issues.map((i) => i.path)).toEqual(['a.md', 'z.md']);
+  });
+
+  it('reports the shard and version the human view shows, not raw state.json fields', () => {
+    const base = report();
+    // A hand-broken state.json; the manifest (cached, or synthesized from
+    // state by the report) is what the header renders.
+    const out = statusResult(
+      report({ state: { ...base.state, version: '', shard: ' acme ' } }),
+    );
+    expect(out).toMatchObject({ version: '0.1.0', shard: 'shardmind/minimal' });
+  });
+
+  it('carries ref and resolvedSha for a #<ref> install', () => {
+    const base = report();
+    const out = statusResult(
+      report({ state: { ...base.state, ref: 'main', resolvedSha: 'a'.repeat(40) } }),
+    );
+    expect(out).toMatchObject({ ref: 'main', resolvedSha: 'a'.repeat(40) });
   });
 });

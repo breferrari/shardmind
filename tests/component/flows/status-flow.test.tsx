@@ -7,7 +7,7 @@
  * the views have real data to display.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { cleanup } from 'ink-testing-library';
 
 import {
@@ -105,6 +105,45 @@ describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)'
       // count-line shape rather than a specific filename.
       expect(frame).toMatch(/\d+ managed/);
     } finally {
+      if (vault) await vault.cleanup();
+    }
+  }, 60_000);
+
+  // ───── `shardmind --json` → one document on stdout, no frame (#139) ─────
+
+  it('`shardmind --json` → renders no frame and writes one status document to stdout', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    let vault: Vault | null = null;
+    const written: string[] = [];
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    });
+    try {
+      vault = await createInstalledVault({
+        stub,
+        shardRef: SHARD_REF,
+        values: DEFAULT_VALUES,
+        prefix: 's26-status-json',
+      });
+      const r = mountStatus({ vaultRoot: vault.root, options: { json: true } });
+      await waitFor(() => written.join(''), (out) => out.endsWith('}\n'), 15_000);
+      expect((r.lastFrame() ?? '').trim()).toBe('');
+      expect(written).toHaveLength(1);
+      const doc = JSON.parse(written[0]!) as {
+        command: string;
+        ok: boolean;
+        result: { installed: boolean; shard: string; files: { counts: { modified: number } } };
+      };
+      expect(doc.command).toBe('status');
+      expect(doc.ok).toBe(true);
+      expect(doc.result.installed).toBe(true);
+      expect(doc.result.shard).toMatch(/shardmind\/minimal/);
+      expect(doc.result.files.counts.modified).toBe(0);
+    } finally {
+      spy.mockRestore();
       if (vault) await vault.cleanup();
     }
   }, 60_000);

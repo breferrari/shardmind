@@ -2,8 +2,9 @@
  * Root command — `shardmind` (no args).
  *
  * Renders the vault's status dashboard. Pastel wires this to the root
- * command because the file is `commands/index.tsx`; the only flag is
- * `--verbose` (verbose: detailed diagnostics for every section).
+ * command because the file is `commands/index.tsx`. `--verbose` adds
+ * detailed diagnostics for every section; `--json` writes the report as
+ * one JSON document instead (ARCHITECTURE §10.3a, #139).
  *
  * The command is a thin dispatcher on top of `useStatusReport`:
  *   booting / loading → Spinner
@@ -19,6 +20,7 @@
  * See docs/ARCHITECTURE.md §10.2–10.3 and docs/IMPLEMENTATION.md §4.14.
  */
 
+import { useEffect } from 'react';
 import { Box, Text } from 'ink';
 import zod from 'zod';
 import { updateCheckOption } from './hooks/update-check-option.js';
@@ -27,6 +29,7 @@ import { Spinner, StatusMessage } from '../components/ui.js';
 import StatusView from '../components/StatusView.js';
 import VerboseView from '../components/VerboseView.js';
 import { ShardMindError, assertNever } from '../runtime/types.js';
+import { emitJson, jsonFailure, jsonSuccess, statusResult } from '../core/json-output.js';
 import { useStatusReport } from './hooks/use-status-report.js';
 import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 
@@ -35,6 +38,10 @@ export const options = zod.object({
     .boolean()
     .default(false)
     .describe('Show full diagnostics (values, modules, files, frontmatter, environment)'),
+  json: zod
+    .boolean()
+    .default(false)
+    .describe('Emit the status report as one JSON document instead of the TUI'),
   updateCheck: updateCheckOption,
 });
 
@@ -43,9 +50,38 @@ type Props = {
 };
 
 export default function Index({ options }: Props) {
-  const { verbose, updateCheck } = options;
-  const { phase } = useStatusReport({ vaultRoot: process.cwd(), verbose });
-  const banner = useSelfUpdateBanner({ updateCheck });
+  const { verbose, updateCheck, json } = options;
+  const { phase } = useStatusReport({ vaultRoot: process.cwd(), verbose, uncapped: json });
+  // Chrome is suppressed under --json so stdout is exactly one JSON document.
+  const banner = useSelfUpdateBanner({ updateCheck: updateCheck && !json });
+
+  // Under --json the document goes straight to stdout once the report
+  // settles; an Ink frame would wrap it at the terminal width. The human
+  // view exits 0 on an error it can show, but a document that says
+  // `ok: false` exits 1 so `$?` and the body agree. `useStatusReport`
+  // already exits the app on every terminal phase.
+  useEffect(() => {
+    if (!json) return;
+    switch (phase.kind) {
+      case 'booting':
+      case 'loading':
+        return;
+      case 'not-in-vault':
+        emitJson(jsonSuccess('status', statusResult(null)));
+        return;
+      case 'ready':
+        emitJson(jsonSuccess('status', statusResult(phase.report)));
+        return;
+      case 'error':
+        emitJson(jsonFailure('status', phase.error));
+        process.exitCode = 1;
+        return;
+      default:
+        assertNever(phase);
+    }
+  }, [json, phase]);
+
+  if (json) return null;
 
   // Hoist phase rendering into a single expression so the self-update
   // banner can sit above every status variant without each switch arm

@@ -31,6 +31,8 @@ export interface UseStatusReportInput {
   verbose: boolean;
   /** Skip the update-check network call (CI / offline-first test modes). */
   skipUpdateCheck?: boolean;
+  /** Lift the report's list caps (`--json` lists every file, #139). */
+  uncapped?: boolean;
 }
 
 export type StatusPhase =
@@ -45,7 +47,7 @@ export interface UseStatusReportOutput {
 }
 
 export function useStatusReport(input: UseStatusReportInput): UseStatusReportOutput {
-  const { vaultRoot, verbose, skipUpdateCheck } = input;
+  const { vaultRoot, verbose, skipUpdateCheck, uncapped } = input;
   const { exit } = useApp();
   const [phase, setPhase] = useState<StatusPhase>({ kind: 'booting' });
 
@@ -72,6 +74,7 @@ export function useStatusReport(input: UseStatusReportInput): UseStatusReportOut
         const report = await buildStatusReport(vaultRoot, {
           verbose,
           skipUpdateCheck: skipUpdateCheck ?? false,
+          uncapped,
         });
         if (disposed) return;
         if (!report) {
@@ -97,7 +100,7 @@ export function useStatusReport(input: UseStatusReportInput): UseStatusReportOut
     };
     // `vaultRoot` and `verbose` are const per command invocation; exit is
     // stable across renders. Kept in the dep array for lint cleanliness.
-  }, [vaultRoot, verbose, skipUpdateCheck, exit]);
+  }, [vaultRoot, verbose, skipUpdateCheck, uncapped, exit]);
 
   return { phase };
 }

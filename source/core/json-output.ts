@@ -18,6 +18,14 @@
  */
 
 import { ShardMindError } from '../runtime/types.js';
+import type {
+  StatusEnvironmentReport,
+  StatusFrontmatterSummary,
+  StatusModuleSummary,
+  StatusReport,
+  StatusWarning,
+  UpdateStatus,
+} from '../runtime/types.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
 import type { UpdateAction, UpdatePlan } from './update-planner.js';
 
@@ -168,7 +176,7 @@ export function adoptPlanResult(
     ...plan.matches.map((e) => adoptFile(e, 'matches')),
     ...plan.differs.map((e) => adoptFile(e, 'differs')),
     ...plan.shardOnly.map((e) => adoptFile(e, 'shard-only')),
-  ].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  ].sort((a, b) => byPath(a.path, b.path));
 
   return {
     dryRun: opts.dryRun,
@@ -252,6 +260,139 @@ export function updatePlanResult(
     counts: plan.counts,
     files: plan.actions
       .map(updateFile)
-      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+      .sort((a, b) => byPath(a.path, b.path)),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Status report (#139) — `shardmind --json`. Spec: ARCHITECTURE §10.3a.
+//
+// The read-side counterpart of the plans above: is this a managed vault,
+// installed vs latest, and which files diverge. Built from a report produced
+// with `uncapped: true`, so every list is whole. Relative times ("3 days
+// ago") and per-file state bookkeeping are rendering and engine detail, and
+// stay out.
+// ---------------------------------------------------------------------------
+
+export interface StatusModifiedFile {
+  readonly path: string;
+  /** `--verbose` only: lines on disk that the shard's render does not have. */
+  readonly linesAdded?: number;
+  /** `--verbose` only: lines of the shard's render missing on disk. */
+  readonly linesRemoved?: number;
+  /** `--verbose` only: why the line diff could not run for this file. */
+  readonly diffSkipped?: 'no-template' | 'render-failed' | 'read-failed';
+}
+
+export type StatusResult =
+  | { readonly installed: false }
+  | {
+      readonly installed: true;
+      readonly shard: string;
+      readonly source: string;
+      readonly version: string;
+      /** Only for a `github:owner/repo#<ref>` install. */
+      readonly ref?: string;
+      readonly resolvedSha?: string;
+      readonly installedAt: string;
+      readonly updatedAt: string;
+      readonly update: UpdateStatus;
+      /** Null when drift detection failed: nothing was checked (§10.3a). */
+      readonly files: {
+        readonly counts: {
+          readonly managed: number;
+          readonly modified: number;
+          readonly volatile: number;
+          readonly missing: number;
+          readonly orphaned: number;
+        };
+        readonly modified: readonly StatusModifiedFile[];
+        readonly missing: readonly string[];
+        readonly orphaned: readonly string[];
+      } | null;
+      readonly modules: StatusModuleSummary;
+      readonly values: {
+        /** Null when the cached schema is unavailable, so nothing was validated. */
+        readonly valid: boolean | null;
+        /** Null with `valid`: without the schema the declared count is unknown. */
+        readonly total: number | null;
+        readonly invalidKeys: readonly string[];
+        readonly fileMissing: boolean;
+      };
+      /** `--verbose` only; null otherwise. */
+      readonly frontmatter: {
+        readonly valid: number;
+        readonly total: number;
+        readonly issues: StatusFrontmatterSummary['issues'];
+      } | null;
+      /** `--verbose` only; null otherwise. */
+      readonly environment: StatusEnvironmentReport | null;
+      readonly warnings: readonly StatusWarning[];
+    };
+
+/** `report` is null when the directory has no `.shardmind/state.json`. */
+export function statusResult(report: StatusReport | null): StatusResult {
+  if (report === null) return { installed: false };
+  const { state, drift, manifest } = report;
+  // Drift lists modified and missing files in state.json key order; the
+  // document promises path order (§10.3a). Line counts carry their own path.
+  const changes = new Map((drift.modifiedChanges ?? []).map((c) => [c.path, c]));
+  const modified = drift.modifiedPaths
+    .map((p): StatusModifiedFile => {
+      const change = changes.get(p);
+      if (!change) return { path: p };
+      return 'skipped' in change
+        ? { path: p, diffSkipped: change.reason }
+        : { path: p, linesAdded: change.linesAdded, linesRemoved: change.linesRemoved };
+    })
+    .sort((a, b) => byPath(a.path, b.path));
+  return {
+    installed: true,
+    // state.json is read without field validation, so take the identity
+    // and version the human header shows: the cached manifest, or one the
+    // report synthesized from state with 'unknown' for anything unusable.
+    shard: `${manifest.namespace}/${manifest.name}`,
+    source: state.source,
+    version: manifest.version,
+    ...(state.ref === undefined ? {} : { ref: state.ref }),
+    ...(state.resolvedSha === undefined ? {} : { resolvedSha: state.resolvedSha }),
+    installedAt: state.installed_at,
+    updatedAt: state.updated_at,
+    update: report.update,
+    files: drift.failed
+      ? null
+      : {
+          counts: {
+            managed: drift.managed,
+            modified: drift.modified,
+            volatile: drift.volatile,
+            missing: drift.missing,
+            orphaned: drift.orphaned,
+          },
+          modified,
+          missing: [...drift.missingPaths].sort(byPath),
+          orphaned: [...drift.orphanedPaths].sort(byPath),
+        },
+    modules: report.modules,
+    values: {
+      valid: report.values.checked ? report.values.valid : null,
+      total: report.values.checked ? report.values.total : null,
+      invalidKeys: [...report.values.invalidKeys].sort(byPath),
+      fileMissing: report.values.fileMissing,
+    },
+    frontmatter: report.frontmatter
+      ? {
+          valid: report.frontmatter.valid,
+          total: report.frontmatter.total,
+          issues: [...report.frontmatter.issues].sort((a, b) => byPath(a.path, b.path)),
+        }
+      : null,
+    environment: report.environment,
+    warnings: report.warnings,
+  };
+}
+
+/** Code-unit order: every `--json` list sorts by this, so runs diff cleanly. */
+function byPath(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }

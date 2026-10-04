@@ -291,6 +291,7 @@ export function mountAdopt(opts: {
 export interface StatusOptions {
   verbose?: boolean;
   updateCheck?: boolean;
+  json?: boolean;
 }
 
 export function mountStatus(opts: {
@@ -303,6 +304,7 @@ export function mountStatus(opts: {
       options={{
         verbose: false,
         updateCheck: true,
+        json: false,
         ...opts.options,
       }}
     />,

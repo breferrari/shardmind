@@ -791,6 +791,22 @@ Full diagnostic output. Replaces the old `doctor` command concept.
 - **Shard-specific environment rows** like `"QMD not installed"` require a shard to contribute diagnostics. v0.1 has no `status` hook type (hooks are post-install and post-update only), so the Environment section ships with Node.js version and a PATH-lookup answer for the Obsidian CLI. Shard-contributed diagnostics are a future enhancement.
 - **Update-available line** is cache-backed (24h TTL; see `docs/IMPLEMENTATION.md §4.15`). When the cache answer is stale — network offline but a previous check exists — the line suffixes `(cached)` so the user can tell.
 
+### 10.3a `shardmind --json` — Status for Scripts and Agents
+
+`--json` turns the status report into one JSON document on stdout and nothing else: no banner, no Ink frame. It uses the same envelope as `update` and `adopt` (`source/core/json-output.ts`): `schemaVersion`, `command: "status"`, `ok`, then `result` or `error`.
+
+- **Not in a shard-managed vault**: `ok: true`, `result: { "installed": false }`, exit 0. A directory without `.shardmind/state.json` is an answer, not a failure.
+- **Installed**: `ok: true`, exit 0, and `result` holds:
+  - `installed: true`, `shard`, `source`, `version`, `ref` and `resolvedSha` (only for a `#<ref>` install), `installedAt`, `updatedAt`. `shard` and `version` are what the human view's header shows: the cached manifest's, or `unknown` for whatever a hand-broken `state.json` makes unusable.
+  - `update`: the update-check answer as is. `kind` is `up-to-date`, `available` (with `latest` and `cacheAge`) or `unknown` (with `reason`), and `current` is always present.
+  - `files`: `counts` (`managed`, `modified`, `volatile`, `missing`, `orphaned`); `modified`, a list of `{ path }`, where `--verbose` adds `linesAdded` and `linesRemoved`, or `diffSkipped` with the reason the diff could not run; and `missing` and `orphaned` as path lists. `files` is `null` when drift detection failed: then nothing was checked, and an error-severity entry in `warnings` names the cause. Zero counts always mean "checked, and none".
+  - `modules` (`included`, `excluded`), `values` (`valid`, `total`, `invalidKeys`, `fileMissing`). `valid` and `total` are `null` when the cached schema could not be loaded, so the values were never validated. `frontmatter` is likewise `null` when drift detection failed, since the lint walks drift's files.
+  - `frontmatter` and `environment`: `null` without `--verbose`, the §10.3 sections with it.
+  - `warnings`: the findings the human view shows, each with `severity`, `message` and, when present, `hint`.
+- **Failure** (for example, a corrupt `state.json`): `ok: false`, `error` (`code`, `message`, `hint`), **exit 1**. The human status view is ambient and exits 0 on an error it can show; a document saying `ok: false` exits non-zero so `$?` and the body agree.
+
+Lists are uncapped and sorted by path. The terminal views sample at 20 entries, and the document never does.
+
 ### 10.4 `shardmind install <shard>` — Install Flow
 
 ```

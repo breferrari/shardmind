@@ -963,6 +963,7 @@ buildStatusReport(
     verbose: boolean;
     now?: number;              // injectable clock for tests
     skipUpdateCheck?: boolean; // offline/CI mode
+    uncapped?: boolean;        // lift every list cap (`--json`, §10.3a)
   },
 ): Promise<StatusReport | null>
 ```
@@ -974,9 +975,9 @@ Returns `null` when the vault has no `.shardmind/state.json` — the "not in a s
 2. In parallel:
    - Load cached manifest via `parseManifest(.shardmind/shard.yaml)` (failure → synthesize a minimal manifest from `state.shard` + warning).
    - Load cached schema via `parseSchema(.shardmind/shard-schema.yaml)` (failure → values/frontmatter sections degrade + warning).
-   - `detectDrift(vaultRoot, state)` (failure → empty drift + warning).
+   - `detectDrift(vaultRoot, state)` (failure → empty drift, `drift.failed: true`, an error warning, and no frontmatter lint, so no section reports an unchecked result as clean).
    - Resolve update availability via `core/update-check.getLatestVersion(vaultRoot, state.source, now)`, unless `skipUpdateCheck` (then report `unknown`).
-   - Validate `shard-values.yaml` via `buildValuesValidator(schema).safeParse()`.
+   - Validate `shard-values.yaml` via `buildValuesValidator(schema).safeParse()` (no cached schema → `values.checked: false`).
 3. If `verbose`, fan three independent passes out via `Promise.all`:
    - **Per-modified-file diff.** For each entry in `drift.modified` (capped at 20), read the cached template from `.shardmind/templates/<relative>`, render with current values + selections via `renderString(...)`, diff rendered base against actual disk content via `diffLines` (CRLF + UTF-8-BOM normalized first), and record `{ linesAdded, linesRemoved }`. Every failure step (missing template / render throw / unreadable file) surfaces as a `skipped` variant. Bounded by `MODIFIED_DIFF_CONCURRENCY = 8` to cap disk + heap pressure.
    - **Frontmatter lint.** Walk drift's `managed + modified` `.md` files with `mapConcurrent(16, …)`, run `validateFrontmatter()`, collect missing-key rows (capped at 20).
@@ -990,6 +991,7 @@ Returns `null` when the vault has no `.shardmind/state.json` — the "not in a s
 - `MAX_INVALID_VALUE_KEYS = 20` with `invalidCount` preserving the pre-cap total.
 - `FRONTMATTER_READ_CONCURRENCY = 16` (matches `SNAPSHOT_CONCURRENCY` in update-executor).
 - `MODIFIED_DIFF_CONCURRENCY = 8` for the per-file render + diff pass.
+- `uncapped: true` lifts the three list caps (and the 20-file cap on the per-modified-file diff), so `shardmind --json` lists every file. The concurrency bounds stay.
 
 **Deviations from the spec** (`docs/ARCHITECTURE.md §10.2–10.3`):
 - Flavor text like `"you added a custom section"` is rendered as a plain path without a natural-language summary — semantic diff of user edits would require an LLM. Numeric `+N/−M` counts **are** shipped.

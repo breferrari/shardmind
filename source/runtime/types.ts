@@ -489,6 +489,12 @@ export interface StatusDriftSummary {
   missingPaths: string[];
   /** True if any `*Paths` list is truncated (caller can render "… and N more"). */
   truncated: boolean;
+  /**
+   * True when drift detection threw: every count is then zero because
+   * nothing was checked, not because nothing drifted. An error-severity
+   * warning carries the cause.
+   */
+  failed: boolean;
 }
 
 /**
@@ -553,6 +559,11 @@ export interface StatusValuesSummary {
   invalidCount: number;
   /** True when the values file itself couldn't be read or parsed. */
   fileMissing: boolean;
+  /**
+   * False when the cached schema could not be loaded, so the values were
+   * never validated: `valid: false` then means "unknown", not "invalid".
+   */
+  checked: boolean;
 }
 
 export interface StatusFrontmatterSummary {
