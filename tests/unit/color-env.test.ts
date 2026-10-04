@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { applyNoColor, stripSgr } from '../../source/core/color-env.js';
+import { applyNoColor, sanitizeHookText } from '../../source/core/color-env.js';
 
 function applied(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const copy = { ...env };
@@ -104,8 +104,8 @@ describe('load order in source/cli.ts', () => {
   });
 });
 
-describe('stripSgr', () => {
-  it.each([
+describe('sanitizeHookText', () => {
+  const SGR_CASES: Array<[string, string, string]> = [
     ['basic colour and reset', '\x1b[32mgreen\x1b[0m', 'green'],
     ['bare reset', 'a\x1b[mb', 'ab'],
     ['several parameters', '\x1b[1;4;31mx\x1b[22;24;39m', 'x'],
@@ -113,17 +113,71 @@ describe('stripSgr', () => {
     ['truecolor, semicolons', '\x1b[38;2;255;100;0mt', 't'],
     ['truecolor, colons', '\x1b[38:2::255:100:0mt', 't'],
     ['8-bit CSI', '\u009b31mred\u009b0m', 'red'],
-  ])('strips %s', (_name, input, expected) => {
-    expect(stripSgr(input)).toBe(expected);
+  ];
+
+  it.each(SGR_CASES)('removes SGR when colour is off: %s', (_name, input, plain) => {
+    expect(sanitizeHookText(input, false)).toBe(plain);
+  });
+
+  it.each(SGR_CASES)('keeps SGR when colour is on: %s', (_name, input) => {
+    expect(sanitizeHookText(input, true)).toBe(input);
   });
 
   it.each([
-    ['a lone ESC', 'a\x1bb'],
-    ['an unterminated CSI', 'x\x1b[31'],
-    ['a cursor-up (not colour; #204)', 'x\x1b[1A'],
-    ['an OSC title (not colour; #204)', '\x1b]0;title\x07'],
-    ['plain text with brackets', 'array[0m]'],
+    ['OSC 52 clipboard write, BEL', 'a\x1b]52;c;aGk=\x07b', 'ab'],
+    ['OSC 52 clipboard write, ST', 'a\x1b]52;c;aGk=\x1b\\b', 'ab'],
+    ['OSC 0 title', 'a\x1b]0;pwned\x07b', 'ab'],
+    ['8-bit OSC and ST', 'a\u009d0;pwned\u009cb', 'ab'],
+    ['OSC 8 hyperlink, keeping its text', '\x1b]8;;https://evil.example\x07click\x1b]8;;\x07', 'click'],
+    ['cursor-up', 'a\x1b[1Ab', 'ab'],
+    ['erase display', 'a\x1b[2Jb', 'ab'],
+    ['private-mode CSI', 'a\x1b[?25lb', 'ab'],
+    ['CSI with an intermediate byte', 'a\x1b[1 qb', 'ab'],
+    ['a non-SGR CSI ending in m-like params', 'a\x1b[?1mb', 'ab'],
+    ['DCS through ST', 'a\x1bP1$tx\x1b\\b', 'ab'],
+    ['APC through ST', 'a\x1b_payload\x1b\\b', 'ab'],
+    ['PM through ST', 'a\x1b^payload\x1b\\b', 'ab'],
+    ['8-bit DCS through ST', 'a\u0090payload\u009cb', 'ab'],
+    ['ESC c (reset)', 'a\x1bcb', 'ab'],
+    ['ESC 7 (save cursor)', 'a\x1b7b', 'ab'],
+    ['ESC ( B (charset)', 'a\x1b(Bb', 'ab'],
+    ['BEL', 'a\x07b', 'ab'],
+    ['BS', 'a\x08b', 'ab'],
+    ['VT and FF', 'a\x0b\x0cb', 'ab'],
+    ['NUL and other C0', 'a\x00\x01\x1fb', 'ab'],
+    ['DEL', 'a\x7fb', 'ab'],
+    ['a C1 control', 'a\u0085b', 'ab'],
+  ])('removes %s, colour on or off', (_name, input, expected) => {
+    expect(sanitizeHookText(input, true)).toBe(expected);
+    expect(sanitizeHookText(input, false)).toBe(expected);
+  });
+
+  it.each([
+    ['a progress bar', 'build 10%\rbuild 50%\rbuild 100%', 'build 100%'],
+    ['a CR per line', 'a 1\ra 2\nb 1\rb 2\n', 'a 2\nb 2\n'],
+    ['CRLF line endings', 'one\r\ntwo\r\n', 'one\ntwo\n'],
+    ['a trailing CR', 'done\r', ''],
+  ])('treats a lone CR as rewriting the line: %s', (_name, input, expected) => {
+    expect(sanitizeHookText(input, true)).toBe(expected);
+  });
+
+  it.each([
+    ['a lone ESC at the end', 'text\x1b', 'text'],
+    ['a lone ESC before a newline', 'one\x1b\ntwo', 'one\ntwo'],
+    ['an OSC with no terminator', 'a\x1b]52;c;aGk=\nnext line\n', 'a52;c;aGk=\nnext line\n'],
+    ['a DCS with no terminator', 'a\x1bPpayload\nnext', 'apayload\nnext'],
+    ['a CSI cut off at the end', 'x\x1b[3', 'x'],
+    ['a CSI cut off before a newline', 'x\x1b[31\ny', 'x\ny'],
+  ])('cannot swallow output with %s', (_name, input, expected) => {
+    expect(sanitizeHookText(input, true)).toBe(expected);
+  });
+
+  it.each([
+    ['tabs and newlines', 'a\tb\nc\n'],
+    ['Unicode and emoji', 'café ✓ 🎉 日本語'],
+    ['plain text with brackets', 'array[0m] ]52;'],
   ])('leaves %s alone', (_name, input) => {
-    expect(stripSgr(input)).toBe(input);
+    expect(sanitizeHookText(input, true)).toBe(input);
+    expect(sanitizeHookText(input, false)).toBe(input);
   });
 });
