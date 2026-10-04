@@ -141,6 +141,16 @@ describe('attachStdinCancellation — pipe (unchanged)', () => {
     expect(d.emitSigint).toHaveBeenCalledTimes(1);
   });
 
+  it('also sees Ctrl+C when stdin has a string encoding set', async () => {
+    const stdin = fakeStdin(false);
+    stdin.setEncoding('utf8');
+    const d = deps(true);
+    attachStdinCancellation(stdin, d);
+    stdin.push(`y${ETX}`);
+    await tick();
+    expect(d.emitSigint).toHaveBeenCalledTimes(1);
+  });
+
   it('exits 130 when no SIGINT handler is registered', async () => {
     const stdin = fakeStdin(false);
     const d = deps(false);

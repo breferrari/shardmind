@@ -36,6 +36,7 @@
  */
 
 const ETX = 0x03;
+const ETX_CHAR = String.fromCharCode(ETX);
 
 /** What the bridge does on Ctrl+C; injectable so tests need no real process. */
 export interface CancellationDeps {
@@ -75,7 +76,7 @@ export function attachStdinCancellation(stdin: StdinLike, deps: CancellationDeps
   // always observable to the parent.
   const onData = (chunk: Buffer | string): void => {
     // Buffers unless someone set an encoding on stdin; both have includes().
-    if (!(typeof chunk === 'string' ? chunk.includes('') : chunk.includes(ETX))) return;
+    if (!(typeof chunk === 'string' ? chunk.includes(ETX_CHAR) : chunk.includes(ETX))) return;
     if (!deps.emitSigint()) deps.exit(130);
   };
 
