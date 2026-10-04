@@ -16,6 +16,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **Updating a file an `_each` template wrote, after you edited it, now merges with its name in place.** The update rendered the old and new template without the file's list item, so `{{ item }}` came out empty on both sides. A template change then looked like a conflict on a line you never touched, and **Accept new** wrote that line without the name. Both sides now render with the file's own item, so your edits merge with the shard's change as for any other file.
 
+### Changed (faster merges of long files with repeated lines — #170)
+
+- **`shardmind update` merges a long file with many repeated lines in milliseconds, not seconds.** Merging your edits into a shard file that repeats its lines a lot (a long table, log or checklist) used to slow down sharply as the file grew: 8,000 lines took over 2 seconds, and 4,000 identical lines took 31. They now take 23 ms and 0.3 s. Every merge result is exactly what it was before; a test checks the new code against the old on thousands of random files.
+
 ### Fixed (a reinstall keeps your files under `.shardmind/` — #237)
 
 - **Reinstalling over an existing install keeps your own files under `.shardmind/`.** A reinstall (`install --force`, or Reinstall at the prompt) kept only the old install's backups and deleted everything else in the folder, including your `boundary-ignore`, which was also missing while the new install's hooks ran. Anything in `.shardmind/` that isn't the engine's own is now carried into the new install.

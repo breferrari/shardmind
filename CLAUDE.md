@@ -178,6 +178,7 @@ shardmind/
 │   │   ├── state-migrator.ts          # Forward-migrate state.json (v0.2 hook, v0.1 scaffolding)
 │   │   ├── drift.ts                   # Ownership detection + drift analysis
 │   │   ├── differ.ts                  # Three-way merge (node-diff3)
+│   │   ├── diff3.ts                   # node-diff3's diff3MergeRegions, ported with a fast LCS for repeated lines (#170)
 │   │   ├── migrator.ts                # Apply schema migrations to values
 │   │   ├── modules.ts                 # Shard-root walker + module resolution + file gating
 │   │   ├── tier1.ts                   # Engine-enforced source-side path exclusions
@@ -346,6 +347,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `registry.ts` | §4.1 | Resolve shard ref → GitHub URL (registry / direct / `#<ref>` commit resolution / `/releases` listing with prerelease policy) |
 | `drift.ts` | §4.8 | Ownership detection + drift analysis |
 | `differ.ts` | §4.9 | Three-way merge via node-diff3 |
+| `diff3.ts` | §4.9 | node-diff3's `diff3MergeRegions`, ported with a binary-search LCS; regions identical to node-diff3's (#170) |
 | `migrator.ts` | §4.10 | Apply schema migrations to values |
 | `install-planner.ts` | §4.11a | Pure install plan (outputs, collisions, value-coercion, computed defaults) |
 | `install-executor.ts` | §4.11b | Apply install plan with transactional backup + rollback |
