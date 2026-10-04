@@ -1,7 +1,6 @@
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
-import { ShardMindError } from '../runtime/types.js';
-import { bugReportUrl } from '../core/bug-report.js';
+import { describeError } from '../core/bug-report.js';
 
 interface ErrorViewProps {
   error: unknown;
@@ -14,33 +13,33 @@ interface ErrorViewProps {
 }
 
 /**
- * Every command's error view (#225). A ShardMindError is a known failure:
- * its message, code and hint. Anything else is a bug in shardmind: the
- * message, a link to report it, and the stack, which stays on this machine.
+ * Every command's error view (#225), rendered from `describeError`. A
+ * ShardMindError, or an error from the user's machine (a full disk, a
+ * permission), shows its code and hint. Anything else is a bug in shardmind:
+ * the message, a link to report it, and the stack, which stays on this machine.
  */
 export default function ErrorView({ error, version, detail, lead }: ErrorViewProps) {
-  const message = error instanceof Error ? error.message : String(error);
-  const shown = lead ? `${lead}: ${message}` : message;
-  if (error instanceof ShardMindError) {
+  const d = describeError(error, version);
+  const shown = lead ? `${lead}: ${d.message}` : d.message;
+  if (d.kind !== 'bug') {
     return (
       <Box flexDirection="column" gap={1}>
         <StatusMessage variant="error">{shown}</StatusMessage>
-        <Text dimColor>code: {error.code}</Text>
-        {error.hint && <Text>{error.hint}</Text>}
+        <Text dimColor>code: {d.code}</Text>
+        {d.hint && <Text>{d.hint}</Text>}
         {detail && <Text dimColor>{detail}</Text>}
       </Box>
     );
   }
-  const stack = error instanceof Error && error.stack ? error.stack : null;
   return (
     <Box flexDirection="column" gap={1}>
       <StatusMessage variant="error">{shown}</StatusMessage>
       {detail && <Text dimColor>{detail}</Text>}
       <Box flexDirection="column">
         <Text>This is a bug in shardmind. Please report it:</Text>
-        <Text color="cyan">{bugReportUrl(version)}</Text>
+        <Text color="cyan">{d.url}</Text>
       </Box>
-      {stack && <Text dimColor>{stack}</Text>}
+      {d.stack && <Text dimColor>{d.stack}</Text>}
     </Box>
   );
 }

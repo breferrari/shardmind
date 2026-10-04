@@ -35,6 +35,16 @@ describe('ErrorView (#225)', () => {
     expect(frame).toMatch(/issues\/new\?body=shardmind\+0\.1\.9(?!\S)/);
   });
 
+  it('shows an error from the environment with its code and a hint, not as a bug (#225)', () => {
+    const err = Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+    const frame = text(render(<ErrorView error={err} version="0.1.9" />).lastFrame());
+    expect(frame).toContain('ENOSPC: no space left on device, write');
+    expect(frame).toContain('code: ENOSPC');
+    expect(frame).toMatch(/disk is full/i);
+    expect(frame).not.toContain('This is a bug');
+    expect(frame).not.toContain('issues/new');
+  });
+
   it('shows a thrown non-Error as a bug too, without a stack', () => {
     const frame = text(render(<ErrorView error="something odd" />).lastFrame());
     expect(frame).toContain('something odd');

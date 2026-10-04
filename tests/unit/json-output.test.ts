@@ -81,6 +81,12 @@ describe('json envelope', () => {
     expect(env.error).toEqual({ code: null, message: 'kaboom', hint: null, stack: err.stack });
   });
 
+  it("gives an error from the environment its errno code and hint, and no stack (#225)", () => {
+    const env = jsonFailure('update', Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
+    expect(env.error).toMatchObject({ code: 'EACCES', message: 'EACCES: permission denied', stack: null });
+    expect(env.error?.hint).toMatch(/permission/i);
+  });
+
   it('survives a non-Error throw', () => {
     expect(jsonFailure('update', 'a string').error).toEqual({ code: null, message: 'a string', hint: null, stack: null });
   });

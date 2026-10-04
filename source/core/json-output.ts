@@ -17,7 +17,7 @@
  * bump it, but a removal or a reshape will.
  */
 
-import { ShardMindError } from '../runtime/types.js';
+import { describeError } from './bug-report.js';
 import type {
   StatusEnvironmentReport,
   StatusFrontmatterSummary,
@@ -35,12 +35,15 @@ export const JSON_SCHEMA_VERSION = 1;
 export type JsonCommand = 'status' | 'adopt' | 'update' | 'validate';
 
 export interface JsonErrorPayload {
-  /** Stable `ErrorCode` when the failure was a `ShardMindError`, else null. */
+  /**
+   * Stable `ErrorCode` when the failure was a `ShardMindError`; the errno code
+   * (`EACCES`) for an error from the user's machine (#225); else null.
+   */
   readonly code: string | null;
   readonly message: string;
   /** Remediation text; null when the error carried none. */
   readonly hint: string | null;
-  /** The stack of an unexpected error (not a `ShardMindError`, #225); null otherwise. */
+  /** The stack of a bug in shardmind (#225); null for a known or environment error. */
   readonly stack: string | null;
 }
 
@@ -69,18 +72,11 @@ export function jsonFailure(command: JsonCommand, error: unknown): JsonEnvelope 
 }
 
 function toJsonError(error: unknown): JsonErrorPayload {
-  if (error instanceof ShardMindError) {
-    return {
-      code: error.code,
-      message: error.message,
-      hint: error.hint ?? null,
-      stack: null,
-    };
-  }
-  if (error instanceof Error) {
-    return { code: null, message: error.message, hint: null, stack: error.stack ?? null };
-  }
-  return { code: null, message: String(error), hint: null, stack: null };
+  // The version only reaches the report link, which --json does not carry.
+  const d = describeError(error, undefined);
+  return d.kind === 'bug'
+    ? { code: null, message: d.message, hint: null, stack: d.stack }
+    : { code: d.code, message: d.message, hint: d.hint, stack: null };
 }
 
 /**
