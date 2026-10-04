@@ -89,10 +89,9 @@ afterEach(async () => {
 describe('DIST_ARTIFACTS', () => {
   it('names one artifact per entry in tsup.config.ts', () => {
     // Drift guard: a command added to tsup.config.ts must be checked too.
-    const configs = Array.isArray(tsupConfig) ? tsupConfig : [tsupConfig];
-    const fromConfig = configs.flatMap((c: { entry?: unknown }) =>
-      Object.keys(c.entry as Record<string, string>).map((name) => `dist/${name}.js`),
-    );
+    // tsup.config.ts exports an array of plain option objects with object entries.
+    const configs = [tsupConfig].flat() as Array<{ entry: Record<string, string> }>;
+    const fromConfig = configs.flatMap((c) => Object.keys(c.entry).map((name) => `dist/${name}.js`));
     expect([...DIST_ARTIFACTS].sort()).toEqual(fromConfig.sort());
   });
 
