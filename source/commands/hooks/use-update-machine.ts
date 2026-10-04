@@ -51,6 +51,7 @@ import {
   type ConflictResolution,
   type NewFilePlan,
 } from '../../core/update-planner.js';
+import { applyRenames, renamesBetween } from '../../core/rename-migrations.js';
 import { runUpdate, rollbackUpdate, type UpdateSummary } from '../../core/update-executor.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
@@ -441,7 +442,16 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           renderNewShard(ctx.newSchema, ctx.newTempDir, selections, newRenderContext),
         ]);
         const newPaths = new Set(newFilePlan.outputs.map((o) => o.outputPath));
-        const removedModified = removedFilesNeedingDecision(drift, newPaths);
+        // A renamed file is planned at its new path, so it is not offered
+        // as removed (#178).
+        const renamed = await applyRenames({
+          vaultRoot,
+          state: ctx.state,
+          drift,
+          renames: renamesBetween(ctx.newManifest.migrations, ctx.state.version, ctx.newManifest.version),
+          newPaths,
+        });
+        const removedModified = removedFilesNeedingDecision(renamed.drift, newPaths);
 
         if (removedModified.length === 0 || yes) {
           await runPlanAndResolve(ctx, values, selections, {}, { drift, newFilePlan });
@@ -475,15 +485,27 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         setPhase({ kind: 'loading', message: 'Planning update…' });
         const newRenderContext = buildRenderContext(ctx.newManifest, values, selections, undefined, vaultRoot);
         const drift = precomputed?.drift ?? (await detectDrift(vaultRoot, ctx.state));
+        const newFilePlan =
+          precomputed?.newFilePlan ??
+          (await renderNewShard(ctx.newSchema, ctx.newTempDir, selections, newRenderContext));
+        // Rename migrations between the installed and the new version: each
+        // renamed file is planned at its new path (#178).
+        const renamed = await applyRenames({
+          vaultRoot,
+          state: ctx.state,
+          drift,
+          renames: renamesBetween(ctx.newManifest.migrations, ctx.state.version, ctx.newManifest.version),
+          newPaths: new Set(newFilePlan.outputs.map((o) => o.outputPath)),
+        });
         const plan = await planUpdate({
-          vault: { root: vaultRoot, state: ctx.state, drift },
+          vault: { root: vaultRoot, state: renamed.state, drift: renamed.drift, movedFrom: renamed.movedFrom },
           values: { old: ctx.oldValues, new: values },
           newShard: {
             schema: ctx.newSchema,
             selections,
             tempDir: ctx.newTempDir,
             renderContext: newRenderContext,
-            filePlan: precomputed?.newFilePlan,
+            filePlan: newFilePlan,
           },
           removedFileDecisions: removedDecisions,
         });
