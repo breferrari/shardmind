@@ -92,7 +92,7 @@ cd "$CANCEL_DIR"
 
 - Process exits with status 130 (SIGINT) within ~1s.
 - `.shardmind/` does not exist; `shard-values.yaml` does not exist; no `*.shardmind-backup-*` files; no managed-path content. The dir is exactly as it was pre-run modulo the empty mktemp shell.
-- Repeat with Ctrl+C during the `running-hook` phase (post-confirm, after the wizard). The rollback widens: addedPaths files are deleted, partial YAML writes are reverted. Check post-run state matches pre-run (empty directory modulo the mktemp shell).
+- Repeat with Ctrl+C during the `running-hook` phase (post-confirm, after the wizard). The process exits 130 and the install **stays committed**: `.shardmind/state.json` and `shard-values.yaml` exist and the managed files are written. The machines clear their rollback flags before the hook runs (`docs/IMPLEMENTATION.md §4.16`), because the vault is complete by then and a hook is non-fatal. Only the hook's own work is cut short (#155).
 
 ## Result table
 

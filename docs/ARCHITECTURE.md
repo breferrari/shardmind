@@ -1661,9 +1661,21 @@ staying hermetic. No test reaches the public internet.
   (`0x03`, the ASCII form of Ctrl+C) and calls `process.emit('SIGINT')`
   inside the child's own process — where every `process.on('SIGINT', ...)`
   handler, including `useSigintRollback`, fires exactly as it would on
-  POSIX. TTY users keep the native console-signal path on both platforms
-  — the stdin listener attaches only when `stdin.isTTY` is falsy on boot
-  so Ink's keyboard handling doesn't fight for stdin bytes.
+  POSIX.
+
+  A TTY needs the bridge too (#155). Ink's prompts put the terminal in raw
+  mode, where Ctrl+C arrives as the byte `0x03` rather than a signal, and
+  Ink's default `exitOnCtrlC` unmounts the app on it (Pastel exposes no
+  way to turn that off): no SIGINT handler ran, and a cancelled install
+  exited 0. In a TTY the bridge wraps `stdin.setRawMode` and, only while
+  raw mode is on, observes the bytes Ink reads through a passive `data`
+  listener. Ink's `readable` listener is attached for exactly that span,
+  and with one attached Node emits `data` from inside each `read()`
+  without switching the stream to flowing mode. Ink still receives every
+  byte, keystrokes typed between prompts stay buffered, and on `0x03` the
+  bridge emits SIGINT (or exits 130 when no handler is registered). So
+  Ctrl+C exits 130 at any prompt. Outside raw mode the kernel delivers a
+  real SIGINT, as before.
 
   The **test harness** delivers ETX on Windows and a real signal on POSIX.
   Non-TTY Ink renders only the final frame, so output patterns cannot time
