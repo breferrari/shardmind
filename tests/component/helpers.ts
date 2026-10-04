@@ -47,7 +47,7 @@ interface Writable {
 /**
  * Type a string one character at a time with a tick between each write.
  *
- * Why not write the whole string at once: @inkjs/ui TextInput's submit
+ * Why not write the whole string at once: the ui-kit TextInput's submit
  * callback captures `state.value` in a useCallback closure. Multiple
  * writes in the same microtask get batched into a single render, which
  * can leave the submit closure stale relative to the rendered value.

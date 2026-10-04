@@ -1,11 +1,16 @@
 /*
  * From @inkjs/ui 2.0.0 (github.com/vadimdemedes/ink-ui, commit 14b1145),
  * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
- * Modified by Brenno Ferrari: cut to Select and TextInput, with no deepmerge and no any.
+ * Modified by Brenno Ferrari: cut to the components the ui-kit holds, with no deepmerge and no any.
  */
 
 import {type ReactNode, createContext, useContext} from 'react';
+import alertTheme from './components/alert/theme.js';
+import badgeTheme from './components/badge/theme.js';
+import progressBarTheme from './components/progress-bar/theme.js';
 import selectTheme from './components/select/theme.js';
+import spinnerTheme from './components/spinner/theme.js';
+import statusMessageTheme from './components/status-message/theme.js';
 import textInputTheme from './components/text-input/theme.js';
 
 export type Theme = {
@@ -21,7 +26,12 @@ export type ComponentStyles = Record<string, unknown>;
 
 export const defaultTheme: Theme = {
 	components: {
+		Alert: alertTheme,
+		Badge: badgeTheme,
+		ProgressBar: progressBarTheme,
 		Select: selectTheme,
+		Spinner: spinnerTheme,
+		StatusMessage: statusMessageTheme,
 		TextInput: textInputTheme,
 	},
 };

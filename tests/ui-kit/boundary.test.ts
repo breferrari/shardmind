@@ -57,6 +57,18 @@ describe('ui-kit boundary (#43)', () => {
     expect(deep).toEqual([]);
   });
 
+  it('leaves no import of @inkjs/ui anywhere in source/ or tests/ (#273)', () => {
+    const found: string[] = [];
+    for (const dir of ['source', 'tests']) {
+      for (const file of sourceFiles(path.join(REPO, dir))) {
+        if (specifiers(fs.readFileSync(file, 'utf-8')).some((spec) => spec === '@inkjs/ui' || spec.startsWith('@inkjs/ui/'))) {
+          found.push(path.relative(REPO, file));
+        }
+      }
+    }
+    expect(found).toEqual([]);
+  });
+
   it('carries its licence and provenance with it', () => {
     expect(fs.readFileSync(path.join(KIT, 'LICENSE'), 'utf-8')).toMatch(/MIT License/);
     expect(fs.readFileSync(path.join(KIT, 'PROVENANCE.md'), 'utf-8')).toMatch(/14b1145da0123a48cfc2f0ec9ff33dff0633f464/);
