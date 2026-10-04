@@ -73,7 +73,7 @@ Issues whose work already landed elsewhere get verified against the code and clo
 |---|---|---|
 | ✅ | Command namespace prefix for discoverability | [#25](https://github.com/breferrari/shardmind/issues/25) |
 | ✅ | Topic-based meeting prep command (/prep-topic) | [#26](https://github.com/breferrari/shardmind/issues/26) |
-| ⬜ | npm publishing setup — claim-publish retry + NPM_TOKEN | [#27](https://github.com/breferrari/shardmind/issues/27) |
+| ✅ | npm publishing setup — claim-publish retry + NPM_TOKEN | [#27](https://github.com/breferrari/shardmind/issues/27) |
 | ⬜ | Encode state-schema migration rules (uses v0.1 framework) | [#40](https://github.com/breferrari/shardmind/issues/40) |
 
 ## Phase 5 — engine defects and dependency drift
