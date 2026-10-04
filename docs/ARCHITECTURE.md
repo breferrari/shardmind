@@ -1008,6 +1008,7 @@ The update-check cache (`.shardmind/update-check.json`, 24h TTL) is stable-only.
 | **pastel** | CLI framework — file-system routing, zod arg parsing, Commander under the hood |
 | **ink** | React renderer for terminal (Yoga flexbox) |
 | **@inkjs/ui** | Pre-built components: Select, TextInput, ConfirmInput, Spinner, ProgressBar, Badge, StatusMessage |
+| **chalk** | The colour decision Ink already makes; read it (`chalk.level`), don't re-derive it. Pinned to Ink's range (^5) so the tree keeps one deduped copy (#37) |
 | **react** | Required peer dependency |
 
 ### 11.2 Core Layer

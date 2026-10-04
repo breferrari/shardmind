@@ -102,6 +102,7 @@ Every PR for a v6 issue must demonstrate in its description:
 | **Pastel** | CLI framework — file-system routing, zod arg parsing, Commander under the hood |
 | **Ink** + **@inkjs/ui** | React terminal renderer + pre-built components |
 | **React** | Required peer dep for Ink |
+| **chalk** | The colour decision Ink already makes; read `chalk.level`, don't re-derive it. Same range as Ink's (^5), one deduped copy (#37) |
 | **Nunjucks** | Template engine (`{{ }}` syntax). Config: `autoescape: false` |
 | **yaml** (eemeli/yaml) | YAML parsing. TypeScript-typed, comment-preserving |
 | **tar** (node-tar) | Tarball download + extraction |
