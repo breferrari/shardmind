@@ -12,6 +12,14 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **Install now backs up a file of yours at a path an `_each` template writes.** A template like `people/_each.md.njk` writes one file per list item (`people/alice.md`). Those names weren't known when install checked for existing files, so a file of yours at one was overwritten with no prompt and no backup. They are now checked like every other path.
 
+### Added (`shardmind validate` for shard authors — #34)
+
+- **`shardmind validate [dir | shard]` checks a shard before you publish it.** It runs the checks an install would, on a shard directory (default `.`) or a reference such as `github:you/shard#branch`: it parses `shard.yaml` and `shard-schema.yaml`, checks the engine-version requirement and the values, resolves every module and renders every template. It lists every problem with its error code, not just the first, and exits 1 when there is an error.
+  - It never runs the shard's hooks.
+  - `--values <file>` renders with your values instead of the schema defaults. A key the schema does not declare, or a value of the wrong type, is reported.
+  - `--json` writes the findings as one document, with no terminal control codes even in a terminal.
+  - An author-facing command: the three commands a vault owner uses (status, install, update), plus adopt, are unchanged.
+
 ### Fixed (Ctrl+C at a prompt — #155)
 
 - **Ctrl+C at a wizard or review prompt now exits 130, not 0.** In a terminal, Ink's prompts run in raw mode, where Ctrl+C arrives as a keystroke rather than a signal. Ink then closed the app on its own, the engine's cancellation handler never ran, and a cancelled `install`, `update` or `adopt` reported success to `$?`. The cancellation bridge now sees that keystroke and cancels the same way a signal does: in-flight writes roll back and the exit code is 130. Nothing on disk changes for a cancel at a wizard prompt, which was already the case.
