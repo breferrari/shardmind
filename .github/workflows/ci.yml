@@ -41,7 +41,7 @@ jobs:
       # Build before test: the E2E suite (tests/e2e/) spawns dist/cli.js as
       # a subprocess. Without a fresh build, those tests would fail with a
       # cryptic "Cannot find module 'dist/cli.js'" before any assertion
-      # runs. The E2E harness has its own build-once guard as a fallback
-      # for local dev, but CI runs a hermetic install so we rebuild here.
+      # runs. The vitest global setup (tests/global-setup.ts) also builds
+      # dist/ when it is stale, for local dev; here it finds dist/ fresh.
       - run: npm run build
       - run: npm test

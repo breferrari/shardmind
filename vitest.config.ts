@@ -9,6 +9,8 @@ export default defineConfig({
       'tests/integration/**/*.test.ts',
       'tests/e2e/**/*.test.ts',
     ],
+    // Builds dist/ once, before any worker spawns dist/cli.js (#176).
+    globalSetup: ['tests/global-setup.ts'],
     testTimeout: 30000, // integration/e2e tests may download tarballs
     passWithNoTests: true,
   },

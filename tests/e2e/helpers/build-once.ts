@@ -1,15 +1,19 @@
 /**
- * Idempotent build guard for the E2E suite.
+ * Build guard for the suites that spawn `dist/cli.js` (E2E, Layer 2 PTY, and
+ * the Layer 1 flow tests through `createInstalledVault`).
  *
- * The E2E tests run `dist/cli.js` as a subprocess, which means the build
- * artifact must exist before any test spawns. `ensureBuilt()` is called
- * once in `beforeAll` and short-circuits when the on-disk artifact is
- * newer than every source file — so repeated test runs on an untouched
- * tree don't pay the ~3s tsup cost.
+ * `dist/` is built once per vitest run, in the main process, before any worker
+ * starts: `tests/global-setup.ts` calls `buildIfStale()`, and again before each
+ * watch-mode rerun. Workers call `ensureBuilt()`, which only checks that the
+ * artifacts exist and never writes `dist/`.
  *
- * CI runs `npm run build` explicitly before `npm test` (see
- * .github/workflows/ci.yml). This guard exists for the local
- * developer flow where running `npm test` after an edit should Just Work.
+ * Workers must not build (#176). Vitest runs each test file in its own worker,
+ * so a per-process memo still let every E2E file run `tsup` at once on a stale
+ * tree, and tsup's `clean: true` emptied `dist/` under any test that was
+ * spawning the CLI at that moment.
+ *
+ * CI runs `npm run build` before `npm test` (see .github/workflows/ci.yml), so
+ * the global setup finds `dist/` fresh there and skips the build.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -21,19 +25,30 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 export const REPO_ROOT = path.resolve(__dirname, '../../..');
-export const DIST_CLI = path.join(REPO_ROOT, 'dist', 'cli.js');
-export const DIST_RUNTIME = path.join(REPO_ROOT, 'dist', 'runtime', 'index.js');
+export const DIST_CLI = distCli(REPO_ROOT);
+export const DIST_RUNTIME = distRuntime(REPO_ROOT);
 
-let builtOncePromise: Promise<void> | null = null;
+function distCli(root: string): string {
+  return path.join(root, 'dist', 'cli.js');
+}
+
+function distRuntime(root: string): string {
+  return path.join(root, 'dist', 'runtime', 'index.js');
+}
 
 /**
- * Builds `dist/` if any source file is newer than `dist/cli.js`, else
- * returns instantly. Memoized per-process so parallel test workers don't
- * race on tsup invocations.
+ * Worker-side check: resolves when `dist/` holds the artifacts the tests
+ * spawn, rejects otherwise. Never builds — see the file header.
  */
-export function ensureBuilt(): Promise<void> {
-  if (!builtOncePromise) builtOncePromise = doBuild();
-  return builtOncePromise;
+export async function ensureBuilt(root: string = REPO_ROOT): Promise<void> {
+  for (const artifact of [distCli(root), distRuntime(root)]) {
+    if (!(await pathExists(artifact))) {
+      throw new Error(
+        `${artifact} is missing. The vitest global setup (tests/global-setup.ts) builds dist/ ` +
+          'before any worker starts; run the tests through vitest with the repo config, or run `npm run build`.',
+      );
+    }
+  }
 }
 
 // Build-input files outside `source/` that change the generated `dist/`.
@@ -42,10 +57,22 @@ export function ensureBuilt(): Promise<void> {
 // will spawn a stale `dist/cli.js` with the old toolchain settings.
 const BUILD_CONFIG_FILES = ['tsup.config.ts', 'tsconfig.json', 'package.json'];
 
-async function doBuild(): Promise<void> {
-  const distMtime = await latestMtime([DIST_CLI, DIST_RUNTIME]);
-  const configPaths = BUILD_CONFIG_FILES.map((f) => path.join(REPO_ROOT, f));
-  const srcMtime = await latestMtime([...(await walkSources()), ...configPaths]);
+/** One build attempt; `capture` pipes the output instead of streaming it. */
+export type BuildRunner = (capture: boolean) => BuildResult;
+
+/**
+ * Builds `dist/` if any build input is newer than it, or if `dist/cli.js` is
+ * missing, else returns instantly. Called only from the global setup, in the
+ * main process, so exactly one build runs at a time.
+ */
+export async function buildIfStale(
+  root: string = REPO_ROOT,
+  run: BuildRunner = (capture) => runBuild(root, capture),
+): Promise<void> {
+  const cli = distCli(root);
+  const distMtime = await latestMtime([cli, distRuntime(root)]);
+  const configPaths = BUILD_CONFIG_FILES.map((f) => path.join(root, f));
+  const srcMtime = await latestMtime([...(await walkSources(root)), ...configPaths]);
 
   // Cache hit requires EVERY required artifact to exist on disk — not
   // just that something in dist/ is newer than source. Using
@@ -53,10 +80,7 @@ async function doBuild(): Promise<void> {
   // can still produce a fresh-enough timestamp if a sibling
   // (dist/runtime/index.js) happens to be recent. Verify DIST_CLI
   // explicitly before skipping the build.
-  const cliExists = await fs
-    .access(DIST_CLI)
-    .then(() => true)
-    .catch(() => false);
+  const cliExists = await pathExists(cli);
   if (cliExists && distMtime !== null && srcMtime !== null && distMtime >= srcMtime) {
     return; // cache hit
   }
@@ -64,15 +88,14 @@ async function doBuild(): Promise<void> {
   // First attempt streams to the terminal so a local `npm test` still shows
   // live build progress. The retry captures instead, so a real failure can
   // report why rather than just an exit code.
-  let result = runBuild(false);
+  let result = run(false);
 
   if (!buildSucceeded(result)) {
     // Retry once. `tsup` here is deterministic and idempotent, so a retry
     // cannot mask a genuine breakage — a broken build fails twice. What it
-    // absorbs is contention: this runs inside `beforeAll`, so one CPU-starved
-    // build failure skips every test in the file (#144), and the skip count is
-    // the only symptom. `npm run build` succeeds standalone every time.
-    result = runBuild(true);
+    // absorbs is contention: a CPU-starved build failure here fails the whole
+    // run (#144). `npm run build` succeeds standalone every time.
+    result = run(true);
   }
 
   if (!buildSucceeded(result)) {
@@ -80,7 +103,7 @@ async function doBuild(): Promise<void> {
   }
 
   // Sanity: dist/cli.js must exist now.
-  await fs.access(DIST_CLI);
+  await fs.access(cli);
 }
 
 /**
@@ -101,9 +124,9 @@ const BUILD_TIMEOUT_MS = 180_000;
  */
 type BuildResult = SpawnSyncReturns<string>;
 
-function runBuild(capture: boolean): BuildResult {
+function runBuild(root: string, capture: boolean): BuildResult {
   return spawnSync('npx', ['tsup'], {
-    cwd: REPO_ROOT,
+    cwd: root,
     stdio: capture ? 'pipe' : 'inherit',
     // On Windows, `npx` is a cmd shim — spawn must use `shell: true` to
     // invoke it. On POSIX, shell adds no overhead worth avoiding here.
@@ -142,9 +165,9 @@ function describeBuildFailure(result: BuildResult): string {
   return `tsup build failed with exit code ${result.status} (retried once)${tail(result.stderr)}`;
 }
 
-async function walkSources(): Promise<string[]> {
+async function walkSources(root: string): Promise<string[]> {
   const out: string[] = [];
-  const stack: string[] = [path.join(REPO_ROOT, 'source')];
+  const stack: string[] = [path.join(root, 'source')];
   while (stack.length > 0) {
     const dir = stack.pop()!;
     const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -155,6 +178,13 @@ async function walkSources(): Promise<string[]> {
     }
   }
   return out;
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  return fs
+    .access(p)
+    .then(() => true)
+    .catch(() => false);
 }
 
 async function latestMtime(paths: string[]): Promise<number | null> {

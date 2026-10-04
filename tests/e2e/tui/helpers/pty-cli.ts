@@ -17,8 +17,8 @@
  * constants below mirror `tests/component/helpers.ts` (ENTER, ESC, etc.).
  *
  * The CLI is invoked as `node dist/cli.js <args>`, identical to Layer 3.
- * `ensureBuilt()` is called at module scope so the first PTY spawn in a
- * suite waits for the build (memoized — the existing build-once guard).
+ * `dist/` is built once per run by the vitest global setup; `spawnCliPty`
+ * calls `ensureBuilt()` to check it exists before the first spawn.
  *
  * Windows: not supported in this layer. node-pty's ConPTY backend has
  * different semantics than POSIX pty (TerminateProcess vs SIGINT,
@@ -227,10 +227,9 @@ export async function spawnCliPty(
     );
   }
 
-  // `ensureBuilt` is memoized after the first call so the build is
-  // amortized across the suite. Skip it when the caller is using a
-  // node-args override — those harness tests don't touch dist/cli.js
-  // and shouldn't pay the build cost on a fresh tree.
+  // `ensureBuilt` checks that the global setup built dist/. Skip it when
+  // the caller is using a node-args override — those harness tests don't
+  // touch dist/cli.js.
   if (!opts.nodeArgs) await ensureBuilt();
 
   const cols = opts.cols ?? 80;
