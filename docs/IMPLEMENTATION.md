@@ -1814,6 +1814,58 @@ spawnProbe: ToolProbe;   // makeProbe() with process.env and 5 s
 
 ---
 
+### 4.27 Vendored kits: `scripts/vendor/` (repo tooling)
+
+ShardMind vendors upstream packages as TypeScript source under `source/<name>-kit/` (`ui-kit` from `@inkjs/ui`, `cli-kit` from Pastel). `scripts/vendor/` tracks each against its upstream and brings a new upstream version in without losing ShardMind's changes (#280). It is repo tooling, run with `tsx` and never shipped: it may import `source/core/differ.ts` (the merge engine) and `source/core/fs-utils.ts`, and nothing in `source/` imports it.
+
+**The record, `source/<kit>/VENDOR.json`** (schemaVersion 1):
+
+```typescript
+interface VendorRecord {
+  schemaVersion: 1;
+  kit: string;                      // 'ui-kit'
+  package: string;                  // '@inkjs/ui'
+  version: string;                  // exact upstream version vendored
+  repository: string;               // https URL of the upstream git repository
+  tag: string;                      // the tag `commit` came from
+  tagPattern?: string;              // default 'v{version}': how a version names its tag
+  commit: string;                   // 40-hex commit of `tag`
+  tarball: { url: string; integrity: string };   // npm's dist, to check the version is what we think
+  sourceRoot: string;               // folder in the repository the vendored files come from
+  license: string;
+  copyright: string;
+  modifiedBy: string;
+  files: Record<string, {           // kit path (POSIX, sorted) → upstream file
+    upstream: string;               // path under `sourceRoot` at `commit`
+    modified: boolean;              // our bytes, header aside, differ from upstream's
+    change?: string;                // one line, required when `modified`
+  }>;
+}
+```
+
+Files ShardMind wrote itself (its own helpers, `index.ts`, `LICENSE*`, `PROVENANCE.md`, `VENDOR.json`) are not in `files`. Every vendored file starts with a header generated from the record, byte for byte (`headerFor(record, path)`):
+
+```
+/*
+ * From <package>@<version> (<repository> at <commit>), <upstream>.
+ * Copyright (c) <copyright>. <license>: see <kit>/LICENSE.
+ * Modified by <modifiedBy>: <change>          ← only when modified
+ */
+                                               ← one blank line, then upstream's bytes
+```
+
+`stripHeader(text, record, path)` removes exactly that header and refuses a file whose header differs, so a hand-edited header is never merged as content.
+
+**`npm run vendor:check`** (`check.ts`): for every `source/*-kit/VENDOR.json`, compare `version` with npm's `dist-tags.latest` and list the kits behind. It also recomputes each file's `modified` (our bytes without the header, against upstream at `commit`) and reports a record that disagrees. It always exits 0. `--summary <file>` writes the report as Markdown; the weekly workflow `.github/workflows/vendor-check.yml` appends it to the job summary.
+
+**`npm run vendor:update <kit> <version> [--commit]`** (`update.ts`): base = upstream at the recorded `commit`; new = upstream at the new version's tag (`tagPattern`) commit. For each file in `files`:
+1. Ours (without its header) equal to base: take new. A clean update.
+2. Otherwise `threeWayMerge(base, ours, new)` (§4.9). With no conflict, the merge is written. With conflicts, the merge is written with its markers relabelled `<<<<<<< shardmind` / `>>>>>>> <package>@<version>`, and the file is listed.
+3. An `upstream` path the new version no longer has is listed as a conflict and left as it is. Files the new version adds are listed, never added.
+4. Each file written gets the new version's header.
+
+The record advances (`version`, `tag`, `commit`, `tarball`, each `modified`) only when no file conflicted; otherwise the command exits 1 with the list. `--commit` makes the two commits the original vendoring had: the new upstream as-is (with headers and the advanced record), then ShardMind's changes re-applied. Upstream access goes through an `UpstreamSource` (npm metadata, tag → commit, repository at a commit), so tests use fixture upstreams on disk and never the network.
+
 ## 5. Runtime Module: `shardmind/runtime`
 
 ### 5.1 `resolveVaultRoot()`
