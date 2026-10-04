@@ -498,7 +498,7 @@ On Windows, `SIGTERM` is emulated as `TerminateProcess`, which skips the hook's 
 
 `shardmind validate` (in the shard's directory, or `shardmind validate <path>`) runs the checks an install would: it parses `shard.yaml` and `shard-schema.yaml`, checks the engine-version requirement and the values, resolves every module, and renders every template, then lists every problem it found with its error code, not just the first. It exits 1 when there is an error, so it fits a pre-push hook or CI. It never runs your hooks.
 
-It renders with your schema's defaults. A required value with no default gets a placeholder shaped by its type, and an error in a template that used one says so; pass real values with `--values <file>` when a template does arithmetic or date work on such a value. `shardmind validate github:<user>/<shard>#<branch>` checks what a user would download. `--json` gives the findings as one document.
+It renders with your schema's defaults; pass `--values <file>` to check the templates against other values, such as the ones a user would type. `shardmind validate github:<user>/<shard>#<branch>` checks what a user would download. `--json` gives the findings as one document.
 
 ### Iterate on a branch
 
