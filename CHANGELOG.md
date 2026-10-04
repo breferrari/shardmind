@@ -12,6 +12,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **On Windows, a file a virus scanner or search indexer still holds no longer breaks a cleanup.** Clearing the shard cache, a rollback, a backup's removal and the update-check caches now retry `ENOTEMPTY`, `EBUSY` and `EPERM` a few times before failing. A cache clear could otherwise abort an install or update that would have succeeded, and a backup removal could leave a stray `.shardmind-backup-*` behind.
 
+### Fixed (personalize boundary check on an unreadable folder — refs #175)
+
+- **The `personalize` write-boundary check no longer reads an unreadable folder as empty.** A folder that is busy or permission-denied (on Windows, a virus scanner holding a fresh folder) is read once more. If it still fails, the check warns `HOOK_BOUNDARY_INCOMPLETE` and names it, instead of reporting that the hook created nothing. A folder that vanished still counts as empty.
+
 ### Added (adopt a vault cloned from an older release — #179)
 
 - **`shardmind adopt --from-version <v>` adopts a vault cloned from release `<v>` at the shard's current paths.** Adopt applies the shard's rename migrations since `<v>`:
