@@ -13,6 +13,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **`--json` writes one clean document in a terminal too.** `update`, `adopt` and `shardmind --json` used to wrap the document in invisible cursor codes when stdout was a terminal. A terminal now gets byte for byte what a pipe gets. Errors still go to stderr.
 - **A crash in a `--json` run still answers on stdout.** A bug that escapes every command used to leave stdout empty under `--json`, with the report only on stderr. It now also writes one failure document with the stack.
 
+### Added (resolve an update conflict in your editor — #50)
+
+- **You can resolve an update conflict in your own editor.** With `$VISUAL` or `$EDITOR` set, the conflict prompt offers **Open in editor**. It opens the merged file, with `<<<<<<<` / `=======` / `>>>>>>>` markers, so you can keep the shard's change in one place and yours in another. What you save is written when the update writes, and rolled back with the rest if the update fails. It is then tracked as your modified copy.
+  - An editor that fails, exits with an error or saves nothing new returns you to the prompt.
+  - If you save with markers still in the file, the prompt says so and asks: edit again, use it as is, or keep yours.
+  - With neither variable set, the option isn't shown. The disabled "(Open in editor · v0.2)" placeholder is gone.
+
 ### Fixed (two adopts never share a snapshot folder — #248)
 
 - **Each adopt now keeps its snapshot of your files in its own folder.** Adopt named the folder to the second and reused one that was already there. A retry within the same second, after an adopt that failed and kept its snapshot, wrote over the first copies, and its own rollback could then delete them. It now names the folder the way update does, to the millisecond and never reusing one.
