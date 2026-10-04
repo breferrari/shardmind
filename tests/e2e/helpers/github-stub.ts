@@ -284,7 +284,18 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
     setTarballDelay: (ms) => {
       tarballDelayMs = Math.max(0, ms);
     },
-    servingState: (slug) => JSON.stringify(shards.get(slug.toLowerCase()) ?? null),
+    // A tarball path alone would not notice a rebuild at the same path, so
+    // each file the spec points at carries its size and mtime.
+    servingState: (slug) =>
+      JSON.stringify(shards.get(slug.toLowerCase()) ?? null, (_key, value: unknown) => {
+        if (typeof value !== 'string' || !value.endsWith('.tar.gz')) return value;
+        try {
+          const stat = fs.statSync(value);
+          return `${value}|${stat.size}|${stat.mtimeMs}`;
+        } catch {
+          return value;
+        }
+      }),
     waitForTarballRequest: () =>
       new Promise<void>((resolve, reject) => tarballWaiters.push({ resolve, reject })),
     close: () =>

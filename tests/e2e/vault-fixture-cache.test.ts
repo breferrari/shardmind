@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { ensureBuilt } from './helpers/build-once.js';
 import { buildTarballFixtures, cleanupTarballFixtures, type TarballFixtures } from './helpers/tarball.js';
 import { createGitHubStub, type GitHubStub } from './helpers/github-stub.js';
@@ -204,6 +205,55 @@ describe('createInstalledVault fixture cache', () => {
     } finally {
       await other.close();
     }
+  }, 90_000);
+
+  it('installs again when a tarball is rebuilt at the same path', async () => {
+    const { run, calls } = countingInstall();
+    await make(VALUES, run);
+    const tarball = fixtures.byVersion['0.1.0'];
+    const later = new Date(Date.now() + 60_000);
+    await fs.utimes(tarball, later, later);
+    await make(VALUES, run);
+    expect(calls()).toBe(2);
+  }, 90_000);
+
+  it("keeps a custom runner's side effects out of the default runner's vaults", async () => {
+    const marking: InstallRunner = async (args, opts) => {
+      const result = await spawnCli(args, opts);
+      await fs.writeFile(path.join(opts.cwd, 'marker.txt'), 'x', 'utf-8');
+      return result;
+    };
+    await make(VALUES, marking);
+    const { run } = countingInstall();
+    const plain = await make(VALUES, run);
+    expect(await plain.exists('marker.txt')).toBe(false);
+  }, 90_000);
+
+  it('shares one install between concurrent calls with the same inputs', async () => {
+    const { run, calls } = countingInstall();
+    const [a, b] = await Promise.all([make(VALUES, run), make(VALUES, run)]);
+    expect(calls()).toBe(1);
+    expect(a.root).not.toBe(b.root);
+    expect(await b.exists('.shardmind/state.json')).toBe(true);
+    expect(installedTemplateCount()).toBe(1);
+  }, 90_000);
+
+  it.each([
+    ['its real path', async (cwd: string) => fs.realpath(cwd)],
+    ['a file: URL', async (cwd: string) => pathToFileURL(cwd).href],
+    ['a different letter case on Windows', async (cwd: string) => (process.platform === 'win32' ? cwd.toUpperCase() : cwd)],
+  ])('never caches a vault that mentions its path as %s', async (_name, spell) => {
+    let calls = 0;
+    const run: InstallRunner = async (args, opts) => {
+      calls += 1;
+      const result = await spawnCli(args, opts);
+      await fs.writeFile(path.join(opts.cwd, 'where.txt'), await spell(opts.cwd), 'utf-8');
+      return result;
+    };
+    const values = { ...VALUES, user_name: `Spelled-${calls}-${Math.random()}` };
+    await make(values, run);
+    await make(values, run);
+    expect(calls).toBe(2);
   }, 90_000);
 
   it('removes its templates in cleanupAllVaults', async () => {
