@@ -63,7 +63,7 @@ const BUILD_CONFIG_FILES = ['tsup.config.ts', 'tsconfig.json', 'package.json'];
 export type BuildRunner = (capture: boolean) => BuildResult;
 
 /**
- * Builds `dist/` if any build input is newer than it, or if `dist/cli.js` is
+ * Builds `dist/` if any build input is newer than it, or if a `dist/` artifact is
  * missing, else returns instantly. Called only from the global setup, in the
  * main process, so exactly one build runs at a time.
  */
@@ -80,10 +80,10 @@ export async function buildIfStale(
   // just that something in dist/ is newer than source. Using
   // latestMtime's max means one missing required file (e.g. dist/cli.js)
   // can still produce a fresh-enough timestamp if a sibling
-  // (dist/runtime/index.js) happens to be recent. Verify DIST_CLI
-  // explicitly before skipping the build.
-  const cliExists = await pathExists(cli);
-  if (cliExists && distMtime !== null && srcMtime !== null && distMtime >= srcMtime) {
+  // happens to be recent. Verify both artifacts exist before skipping the
+  // build, so ensureBuilt() in the workers always finds them.
+  const allExist = (await pathExists(cli)) && (await pathExists(runtime));
+  if (allExist && distMtime !== null && srcMtime !== null && distMtime >= srcMtime) {
     return; // cache hit
   }
 

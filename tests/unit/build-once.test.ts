@@ -98,6 +98,16 @@ describe('buildIfStale (global setup)', () => {
     expect(await exists('dist/cli.js')).toBe(true);
   });
 
+  it('builds when dist/runtime/index.js is missing even if dist/cli.js is fresh', async () => {
+    await write('dist/cli.js', NEW);
+    const { run, calls } = fakeRunner([0]);
+
+    await buildIfStale(root, run);
+
+    expect(calls()).toBe(1);
+    expect(await exists('dist/runtime/index.js')).toBe(true);
+  });
+
   it('builds when a build-config file is newer than dist/', async () => {
     await write('dist/cli.js', OLD);
     await write('dist/runtime/index.js', OLD);
