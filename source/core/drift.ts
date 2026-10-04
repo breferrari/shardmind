@@ -17,6 +17,7 @@ import path from 'node:path';
 import type { ShardState, DriftReport, DriftEntry, FileState } from '../runtime/types.js';
 import { sha256, mapConcurrent } from './fs-utils.js';
 import { isEnoent } from '../runtime/errno.js';
+import { detectVolatile } from './modules.js';
 import { SHARDMIND_DIR, VALUES_FILE, GIT_DIR, OBSIDIAN_DIR, CACHED_TEMPLATES } from '../runtime/vault-paths.js';
 
 type Bucket = 'managed' | 'modified' | 'volatile' | 'missing';
@@ -143,27 +144,14 @@ function classifyByHash(relPath: string, file: FileState, content: Buffer): Clas
   };
 }
 
-const VOLATILE_MARKER = '{# shardmind: volatile #}';
-
 /**
- * Whether the cached template `templateKey` starts with the volatile marker,
- * read as the walk reads a template (first 256 bytes, leading whitespace
- * skipped). A template not in the cache is not volatile.
+ * Whether the cached template `templateKey` is volatile. Only a rendered
+ * (`.njk`) template can be, as in the walk. A template not in the cache is
+ * not volatile.
  */
 async function isVolatileTemplate(vaultRoot: string, templateKey: string): Promise<boolean> {
-  let handle;
-  try {
-    handle = await fsp.open(path.join(vaultRoot, CACHED_TEMPLATES, templateKey), 'r');
-  } catch {
-    return false;
-  }
-  try {
-    const buf = Buffer.alloc(256);
-    const { bytesRead } = await handle.read(buf, 0, 256, 0);
-    return buf.toString('utf-8', 0, bytesRead).trimStart().startsWith(VOLATILE_MARKER);
-  } finally {
-    await handle.close();
-  }
+  if (!templateKey.endsWith('.njk')) return false;
+  return detectVolatile(path.join(vaultRoot, CACHED_TEMPLATES, templateKey)).catch(() => false);
 }
 
 function volatileEntry(relPath: string, file: FileState): DriftEntry {

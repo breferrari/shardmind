@@ -689,6 +689,21 @@ describe('update applies rename migrations (#178)', () => {
       expect(await exists(HOME)).toBe(false);
     });
 
+    it("keeps a volatile file the release drops, as the user's, on this update and the next", async () => {
+      const v1 = await shardAt('0.1.0', { edits: { [HOME_SRC]: mark } });
+      await install(v1);
+      await write(HOME, 'My own home page.\n');
+      const v2 = await shardAt('0.2.0', { from: v1, edits: { [HOME_SRC]: null } });
+      const { plan } = await update(v2);
+      expect(plan.actions.find((a) => a.path === HOME)?.kind).toBe('keep_as_user');
+      expect(await read(HOME)).toBe('My own home page.\n');
+      expect((await files())[HOME]).toBeUndefined();
+      // Untracked now, so the next update, whose cache no longer holds the
+      // template, leaves it alone too.
+      await update(await shardAt('0.3.0', { from: v2 }));
+      expect(await read(HOME)).toBe('My own home page.\n');
+    });
+
     it('skips a file whose template turns volatile in the new release', async () => {
       await install();
       await write(HOME, 'My own home page.\n');

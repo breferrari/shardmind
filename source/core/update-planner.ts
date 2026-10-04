@@ -294,8 +294,8 @@ export function mergeModuleSelections(
 /**
  * Files that were previously managed but are no longer produced by the
  * new shard, AND that the user has edited (ownership = 'modified' in
- * drift). Managed-ownership removals are auto-handled; volatile removals
- * are untouched. Only this subset needs a prompt.
+ * drift). Managed-ownership removals are auto-handled; a volatile one is
+ * kept as the user's without a prompt (#210). Only this subset needs one.
  */
 export function removedFilesNeedingDecision(
   drift: DriftReport,
@@ -484,6 +484,14 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   const missingEntries = drift.missing.filter((e) => !turnsVolatile(e));
 
   for (const entry of volatileEntries) {
+    // A volatile file the new shard no longer ships is kept as the user's
+    // and untracked: its template leaves the cache with this update, so a
+    // later run could no longer tell it is volatile (#210).
+    if (!newByPath.has(entry.path)) {
+      actions.push({ kind: 'keep_as_user', path: entry.path });
+      counts.keptAsUser++;
+      continue;
+    }
     actions.push({ kind: 'skip_volatile', path: entry.path });
     counts.volatile++;
   }
