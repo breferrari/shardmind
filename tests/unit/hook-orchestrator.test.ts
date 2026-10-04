@@ -1,7 +1,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import fsp from 'node:fs/promises';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { runHooks, bootstrapShouldRerun, type HookRunPlan, type HookRunResult, type HookRunUi } from '../../source/core/hook-orchestrator.js';
 import { writeState } from '../../source/core/state.js';
 import { sha256 } from '../../source/core/fs-utils.js';
@@ -218,6 +218,38 @@ describe('runHooks — write-boundary detection', () => {
     // the post-hook walk missed it, not that the hook never wrote it (#175).
     await expect(fsp.access(path.join(vault, '.cache', 'stray.json')), 'personalize did not create .cache/stray.json').resolves.toBeUndefined();
     expect(v, 'post-hook walk missed .cache/stray.json').toEqual({ kind: 'unmanaged-create', paths: ['.cache/stray.json'] });
+  }, 30_000);
+
+  it('reports the check as incomplete when the post-hook walk cannot read a folder (#175)', async () => {
+    await hook('personalize.ts', `
+      import { writeFile, mkdir } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx) {
+        await mkdir(join(ctx.vaultRoot, '.cache'), { recursive: true });
+        await writeFile(join(ctx.vaultRoot, '.cache', 'stray.json'), '{}');
+      }
+    `);
+    // The engine's walk (this process) keeps failing EBUSY on `.cache`, as a
+    // scanner holding the fresh folder would; the hook subprocess is unaffected.
+    const realReaddir = fsp.readdir.bind(fsp);
+    const cacheDir = path.resolve(vault, '.cache');
+    const fake = async (p: string, opts: { withFileTypes: true }) => {
+      if (path.resolve(p) === cacheDir) throw Object.assign(new Error('EBUSY: injected'), { code: 'EBUSY' });
+      return realReaddir(p, opts);
+    };
+    vi.spyOn(fsp, 'readdir').mockImplementation(fake as typeof fsp.readdir);
+    try {
+      const result = await runHooks(
+        installPlan({
+          manifest: manifest({ personalize: '.shardmind/hooks/personalize.ts' }),
+          values: { user_name: 'Alice' },
+        }),
+        NOOP_UI,
+      );
+      expect(violationOf(result, 'personalize')).toEqual({ kind: 'incomplete', paths: ['.cache'] });
+    } finally {
+      vi.restoreAllMocks();
+    }
   }, 30_000);
 
   it('flags bootstrap DELETING a managed file (A1 — destructive write)', async () => {
