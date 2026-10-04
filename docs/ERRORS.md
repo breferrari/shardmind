@@ -556,7 +556,13 @@ These are **not** thrown `ShardMindError`s — they don't appear in the `ErrorCo
 
 **Typical cause:** A virus scanner or search indexer holding a freshly written folder on Windows, or a folder without read permission.
 
-**Remedy:** None needed for the install, which succeeded. If it recurs, check the named folders' permissions, or exclude the vault from real-time scanning while you develop the shard.
+**Remedy:** None needed for the install, which succeeded. If it recurs, check the named folders' permissions, or exclude the vault from real-time scanning while you develop the shard. A folder that is unreadable for good can be listed in `.shardmind/boundary-ignore` (#190): the walk then skips it, and does not see what `personalize` creates there.
+
+### `HOOK_BOUNDARY_IGNORE_INVALID`
+
+**Meaning:** `.shardmind/boundary-ignore`, the vault owner's list of folders the `personalize` boundary walk skips, was not applied. It could not be read, it could not be parsed (for example a `!` negation, not supported yet), or it would switch the whole check off: it matches every name at the vault root (`*`, `**`), or it excludes every folder the vault root holds (`*/`, `/*/`, a list naming each one). The check ran without it.
+
+**Remedy:** Fix the file: list the folders you mean by name (`.cache/`, `scratch/`), one per line. The check cannot be switched off as a whole.
 
 ### `HOOK_POST_INSTALL_DEPRECATED`
 
@@ -575,7 +581,7 @@ If you're a shard author and hit a code that feels authoring-side, the specifica
 - `COMPUTED_DEFAULT_FAILED`, `COMPUTED_DEFAULT_INVALID`
 - `RENDER_FAILED`, `RENDER_FRONTMATTER_ERROR`, `RENDER_ITERATOR_ERROR`
 - `DOWNLOAD_MISSING_MANIFEST`, `DOWNLOAD_MISSING_SCHEMA`
-- `HOOK_SLOT_CONFLICT` (thrown), plus the non-fatal hook warnings `HOOK_BOOTSTRAP_MANAGED_WRITE`, `HOOK_PERSONALIZE_UNMANAGED_CREATE`, `HOOK_BOUNDARY_INCOMPLETE`, `HOOK_POST_INSTALL_DEPRECATED`
+- `HOOK_SLOT_CONFLICT` (thrown), plus the non-fatal hook warnings `HOOK_BOOTSTRAP_MANAGED_WRITE`, `HOOK_PERSONALIZE_UNMANAGED_CREATE`, `HOOK_BOUNDARY_INCOMPLETE`, `HOOK_BOUNDARY_IGNORE_INVALID`, `HOOK_POST_INSTALL_DEPRECATED`
 
 If you're an end user, the most common ones you'll see are:
 - `SHARD_NOT_FOUND`, `VERSION_NOT_FOUND`, `REGISTRY_NETWORK`

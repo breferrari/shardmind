@@ -8,6 +8,12 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (exclude a folder from the write-boundary check — #190)
+
+- **A vault can list folders the `personalize` write-boundary check skips**, in `.shardmind/boundary-ignore`, one gitignore-style pattern per line. Use it for a folder that is unreadable for good, which otherwise warns `HOOK_BOUNDARY_INCOMPLETE` on every install.
+  - What the hook creates in a listed folder goes unchecked: that is the trade.
+  - A file that cannot be read or parsed, or that would switch the check off (`*`, `**`, `*/`, or a list of every folder), is not applied, and warns `HOOK_BOUNDARY_IGNORE_INVALID`.
+
 ### Added (`shardmind --json` — #139)
 
 - **`shardmind --json` writes the status report as one JSON document**, in the same envelope as `update` and `adopt`. It says whether the directory is a managed vault (`installed`), the installed version against the latest (`update`), and every modified, missing and orphaned file, uncapped. With `--verbose`, each modified file adds `linesAdded`/`linesRemoved`, and the `frontmatter` and `environment` sections fill in. Outside a vault the answer is `installed: false` with exit 0. A failure such as a corrupt `state.json` is `ok: false` with exit 1, while the human view still exits 0. See `docs/ARCHITECTURE.md §10.3a`.

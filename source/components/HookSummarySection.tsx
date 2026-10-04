@@ -92,6 +92,11 @@ function renderOutcome(
           The post-install hook is deprecated. Split it into bootstrap + personalize before the next minor release — see AUTHORING.md §6.
         </StatusMessage>
       )}
+      {summary.ignoreProblem && (
+        <StatusMessage variant="warning">
+          {`Did not apply .shardmind/boundary-ignore: ${summary.ignoreProblem}. The check ran without it.`}
+        </StatusMessage>
+      )}
       {summary.violation && (
         <StatusMessage variant="warning">{violationMessage(stage, summary.violation)}</StatusMessage>
       )}
@@ -153,7 +158,7 @@ function violationMessage(
       return `${HOOK_NAME[stage]} created unmanaged file(s): ${paths}. Personalize may only edit managed files — move artifact creation to the bootstrap hook.${unreadable}`;
     }
     case 'incomplete':
-      return `${HOOK_NAME[stage]} boundary check incomplete: could not read ${folderList(violation.paths)}, so unmanaged files it created there may be missed.`;
+      return `${HOOK_NAME[stage]} boundary check incomplete: could not read ${folderList(violation.paths)}, so unmanaged files it created there may be missed. To skip a folder for good, list it in .shardmind/boundary-ignore; what the hook creates there will then go unchecked.`;
     default:
       return assertNever(violation.kind);
   }

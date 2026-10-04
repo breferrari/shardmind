@@ -99,6 +99,7 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 | `.shardmind/shard-schema.yaml` | Cached values schema. | Same lifecycle as the manifest. |
 | `.shardmind/templates/` | Cached pre-render templates for three-way merge on update. | Written during install/update. Safe to delete at the cost of update fidelity. |
 | `.shardmind/update-check.json` | 24-hour cache of "latest upstream version". | Written by `update` (opportunistically warms the cache) and by `shardmind` (status) when checking for new versions. Safe to delete; ShardMind rebuilds on next check. |
+| `.shardmind/boundary-ignore` | Optional. Folders the `personalize` write-boundary check skips, one gitignore-style pattern per line (#190). Hook writes in a listed folder go undetected. | You. ShardMind only reads it. |
 | `shard-values.yaml` | User-owned values file. The install wizard writes it once; subsequent edits are yours. | You. |
 | `<vault files>` | Rendered template output — `CLAUDE.md`, `brain/`, `work/`, etc. | You and ShardMind, with drift tracked by `state.files`. |
 

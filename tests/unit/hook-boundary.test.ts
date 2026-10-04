@@ -7,6 +7,8 @@ import {
   snapshotUnmanaged,
   detectManagedWrites,
   detectUnmanagedCreates,
+  loadBoundaryIgnore,
+  excludesEveryFolder,
 } from '../../source/core/hook-boundary.js';
 import { parseShardmindignore } from '../../source/core/shardmindignore.js';
 import { makeShardState, makeFileState } from '../helpers/shard-state.js';
@@ -269,5 +271,98 @@ describe('snapshotUnmanaged', () => {
       failReaddir('', ['EPERM', 'EPERM']);
       expect(await snapshotUnmanaged(dir, EMPTY_IGNORE)).toEqual(snap([], ['.']));
     });
+  });
+});
+
+describe('loadBoundaryIgnore (#190)', () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'shardmind-190-'));
+    await fsp.mkdir(path.join(dir, '.shardmind'));
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+  const own = (body: string) => fsp.writeFile(path.join(dir, '.shardmind', 'boundary-ignore'), body);
+
+  it('excludes nothing when the file is missing', async () => {
+    expect(await loadBoundaryIgnore(dir)).toEqual({ filter: null });
+  });
+
+  it('excludes the folders the file lists, matched as .shardmindignore is', async () => {
+    await own('# held by a scanner\n.cache/\nscratch\n');
+    const { filter, problem } = await loadBoundaryIgnore(dir);
+    expect(problem).toBeUndefined();
+    expect(filter!.ignores('.cache', true)).toBe(true);
+    expect(filter!.ignores('scratch', true)).toBe(true);
+    expect(filter!.ignores('brain', true)).toBe(false);
+  });
+
+  it.each([['*\n'], ['**\n'], ['/*\n'], ['*\n!keep\n']])('refuses %j, which would switch the check off or cannot be parsed', async (body) => {
+    await own(body);
+    const { filter, problem } = await loadBoundaryIgnore(dir);
+    expect(filter).toBeNull();
+    expect(problem).toBeTruthy();
+  });
+
+  it.each([['shardmind-*\n'], ['.*\n'], ['*.bin\n']])('applies %j, which excludes some names, not all', async (body) => {
+    await own(body);
+    const { filter, problem } = await loadBoundaryIgnore(dir);
+    expect(problem).toBeUndefined();
+    expect(filter).not.toBeNull();
+  });
+
+  describe('excludesEveryFolder', () => {
+    beforeEach(async () => {
+      await fsp.mkdir(path.join(dir, 'brain'));
+      await fsp.mkdir(path.join(dir, 'work'));
+      await fsp.writeFile(path.join(dir, 'Home.md'), 'x');
+    });
+    const every = (patterns: string) => excludesEveryFolder(dir, EMPTY_IGNORE, parseShardmindignore(patterns));
+
+    it.each([['*/'], ['/*/'], ['brain/' + String.fromCharCode(10) + 'work/'], ['**/*/']])('is true for %j, which leaves no folder walked', async (patterns) => {
+      expect(await every(patterns)).toBe(true);
+    });
+
+    it('is false while one folder is still walked, or the root holds no folder', async () => {
+      expect(await every('brain/')).toBe(false);
+      await fsp.rm(path.join(dir, 'brain'), { recursive: true });
+      await fsp.rm(path.join(dir, 'work'), { recursive: true });
+      expect(await every('*/')).toBe(false);
+    });
+
+    it('does not count a folder Tier 1 or .shardmindignore already skips', async () => {
+      // .shardmind/ (Tier 1) and an ignored folder are never walked anyway.
+      const base = parseShardmindignore('work/');
+      expect(await excludesEveryFolder(dir, base, parseShardmindignore('brain/'))).toBe(true);
+    });
+  });
+
+  it('reports a file it cannot read, rather than treating it as empty', async () => {
+    await fsp.mkdir(path.join(dir, '.shardmind', 'boundary-ignore'));
+    const { filter, problem } = await loadBoundaryIgnore(dir);
+    expect(filter).toBeNull();
+    expect(problem).toMatch(/could not be read/);
+  });
+
+  it('never reads an excluded folder, so it cannot make the walk incomplete', async () => {
+    await fsp.mkdir(path.join(dir, '.cache'));
+    await fsp.writeFile(path.join(dir, '.cache', 'held.bin'), 'x');
+    await fsp.writeFile(path.join(dir, 'Home.md'), 'x');
+    await own('.cache/\n');
+    const { filter } = await loadBoundaryIgnore(dir);
+    const realReaddir = fsp.readdir.bind(fsp);
+    let cacheReads = 0;
+    const fake = async (p: string, opts: { withFileTypes: true }) => {
+      if (path.basename(p) === '.cache') {
+        cacheReads += 1;
+        throw Object.assign(new Error('EBUSY: injected'), { code: 'EBUSY' });
+      }
+      return realReaddir(p, opts);
+    };
+    vi.spyOn(fsp, 'readdir').mockImplementation(fake as typeof fsp.readdir);
+    expect(await snapshotUnmanaged(dir, filter!)).toEqual(snap(['Home.md']));
+    expect(cacheReads).toBe(0);
   });
 });

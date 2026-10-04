@@ -28,9 +28,10 @@ import fsp from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import type { HookSlot, ShardState } from '../runtime/types.js';
-import type { IgnoreFilter } from './shardmindignore.js';
+import { parseShardmindignore, type IgnoreFilter } from './shardmindignore.js';
+import { BOUNDARY_IGNORE_FILE } from '../runtime/vault-paths.js';
 import { isTier1Excluded } from './tier1.js';
-import { errnoCode } from '../runtime/errno.js';
+import { errnoCode, isEnoent } from '../runtime/errno.js';
 
 /**
  * `incomplete`: the personalize walk could not read some folders and found no
@@ -194,4 +195,71 @@ export function detectUnmanagedCreates(
   }
   if (unreadable.length > 0) return { slot: 'personalize', kind: 'incomplete', paths: unreadable };
   return null;
+}
+
+/**
+ * Two names no vault owner means to exclude, sharing no prefix or leading dot
+ * a real pattern would use (`shardmind-*`, `.*`): a list that matches both
+ * matches every name at the vault root.
+ */
+const PROBE_FILE = 'zq7x9-probe.md';
+const PROBE_FOLDER = 'zq7x9-probe';
+
+/**
+ * The vault owner's exclusions for the personalize boundary walk (#190), read
+ * from `.shardmind/boundary-ignore` with the `.shardmindignore` matcher. A
+ * missing file excludes nothing (`filter: null`). A file that cannot be read
+ * or parsed, or that matches every name at the vault root (which would switch
+ * the check off), is not applied: `filter` is null and `problem` says why,
+ * for the `HOOK_BOUNDARY_IGNORE_INVALID` warning.
+ */
+export async function loadBoundaryIgnore(
+  vaultRoot: string,
+): Promise<{ filter: IgnoreFilter | null; problem?: string }> {
+  let source: string;
+  try {
+    source = await fsp.readFile(path.join(vaultRoot, BOUNDARY_IGNORE_FILE), 'utf-8');
+  } catch (err) {
+    if (isEnoent(err)) return { filter: null };
+    return { filter: null, problem: `it could not be read (${errnoCode(err) ?? String(err)})` };
+  }
+  let filter: IgnoreFilter;
+  try {
+    filter = parseShardmindignore(source);
+  } catch (err) {
+    return { filter: null, problem: `it could not be parsed (${err instanceof Error ? err.message : String(err)})` };
+  }
+  if (filter.ignores(PROBE_FILE, false) && filter.ignores(PROBE_FOLDER, true)) {
+    return { filter: null, problem: 'it matches every name at the vault root, which would switch the check off' };
+  }
+  return { filter };
+}
+
+/**
+ * Whether `own` would leave the walk no folder at the vault root: the root
+ * holds at least one folder the walk would otherwise read, and `own` excludes
+ * every one (`*/`, `/*/`, a list naming each). Judged on the vault as it is,
+ * so every spelling of a switch-off is caught (#190).
+ */
+export async function excludesEveryFolder(
+  vaultRoot: string,
+  base: IgnoreFilter,
+  own: IgnoreFilter,
+): Promise<boolean> {
+  let entries;
+  try {
+    entries = await fsp.readdir(vaultRoot, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  const folders = entries
+    .filter((e) => e.isDirectory() && !e.isSymbolicLink())
+    .map((e) => e.name)
+    .filter((name) => !isTier1Excluded(name) && !base.ignores(name, true));
+  return folders.length > 0 && folders.every((name) => own.ignores(name, true));
+}
+
+/** A filter that ignores what either one ignores. */
+export function eitherIgnores(a: IgnoreFilter, b: IgnoreFilter): IgnoreFilter {
+  return { ignores: (rel, isDir) => a.ignores(rel, isDir) || b.ignores(rel, isDir) };
 }

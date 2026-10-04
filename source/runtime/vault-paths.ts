@@ -21,6 +21,8 @@ export const CACHED_TEMPLATES = path.join(SHARDMIND_DIR, 'templates');
  * byte-equivalence ("modulo `.shardmind/` metadata"). See `hook-orchestrator.ts`.
  */
 export const HOOK_LOGS_DIR = path.join(SHARDMIND_DIR, 'logs');
+/** The vault owner's list of folders the personalize boundary walk skips (#190). Never shipped, never written by the engine. */
+export const BOUNDARY_IGNORE_FILE = path.join(SHARDMIND_DIR, 'boundary-ignore');
 
 /**
  * Vault-relative path of one slot's full hook log, e.g.
