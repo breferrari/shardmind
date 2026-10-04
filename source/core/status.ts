@@ -179,7 +179,9 @@ export async function buildStatusReport(
               state.modules,
             )
           : Promise.resolve(null),
-        schema ? lintFrontmatter(vaultRoot, drift, schema, cap(MAX_FRONTMATTER_ISSUES)) : Promise.resolve(null),
+        schema
+          ? lintFrontmatter(vaultRoot, drift, schema, cap(MAX_FRONTMATTER_ISSUES))
+          : Promise.resolve(null),
         probeEnvironment(),
       ])
     : [null, null, null];
@@ -281,15 +283,15 @@ async function safeDetectDrift(
 // Summary builders.
 // ---------------------------------------------------------------------------
 
-function summarizeDrift(drift: DriftReport, cap: number): StatusDriftSummary {
+function summarizeDrift(drift: DriftReport, limit: number): StatusDriftSummary {
   const modifiedPaths = drift.modified.map(e => e.path);
   const orphanedPaths = drift.orphaned;
   const missingPaths = drift.missing.map(e => e.path);
 
   const truncated =
-    modifiedPaths.length > cap ||
-    orphanedPaths.length > cap ||
-    missingPaths.length > cap;
+    modifiedPaths.length > limit ||
+    orphanedPaths.length > limit ||
+    missingPaths.length > limit;
 
   return {
     managed: drift.managed.length,
@@ -297,10 +299,10 @@ function summarizeDrift(drift: DriftReport, cap: number): StatusDriftSummary {
     volatile: drift.volatile.length,
     missing: drift.missing.length,
     orphaned: drift.orphaned.length,
-    modifiedPaths: modifiedPaths.slice(0, cap),
+    modifiedPaths: modifiedPaths.slice(0, limit),
     modifiedChanges: null,
-    orphanedPaths: orphanedPaths.slice(0, cap),
-    missingPaths: missingPaths.slice(0, cap),
+    orphanedPaths: orphanedPaths.slice(0, limit),
+    missingPaths: missingPaths.slice(0, limit),
     truncated,
   };
 }
@@ -340,7 +342,7 @@ async function loadRawValues(
 function buildValuesSummary(
   rawValues: Record<string, unknown> | null,
   schema: ShardSchema,
-  cap: number,
+  limit: number,
 ): StatusValuesSummary {
   if (rawValues === null) {
     return {
@@ -375,7 +377,7 @@ function buildValuesSummary(
   return {
     valid: false,
     total: totalValuesCount(schema),
-    invalidKeys: allInvalid.slice(0, cap),
+    invalidKeys: allInvalid.slice(0, limit),
     invalidCount: allInvalid.length,
     fileMissing: false,
   };
@@ -457,7 +459,7 @@ async function lintFrontmatter(
   vaultRoot: string,
   drift: DriftReport,
   schema: ShardSchema,
-  cap: number,
+  limit: number,
 ): Promise<StatusFrontmatterSummary> {
   const candidates = [...drift.managed, ...drift.modified].filter(e =>
     e.path.toLowerCase().endsWith('.md'),
@@ -502,11 +504,11 @@ async function lintFrontmatter(
   }
 
   const issueCount = issues.length;
-  const truncated = issueCount > cap;
+  const truncated = issueCount > limit;
   return {
     valid,
     total,
-    issues: issues.slice(0, cap),
+    issues: issues.slice(0, limit),
     issueCount,
     truncated,
   };
