@@ -13,17 +13,10 @@ import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FAKE_TTY_IMPORT as FAKE_TTY } from '../helpers/fake-tty.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PROBE = path.join(REPO_ROOT, 'tests/fixtures/colour/probe.ts');
-const FAKE_TTY =
-  'data:text/javascript,' +
-  encodeURIComponent(
-    "import tty from 'node:tty';" +
-      'const isatty = tty.isatty;' +
-      'tty.isatty = (fd) => fd === 1 || isatty(fd);' +
-      'process.stdout.isTTY = true;',
-  );
 
 // Only what a child needs to start; nothing that steers colour (CI vendors,
 // TERM, COLORTERM, FORCE_COLOR, NO_COLOR) leaks in from the runner.
@@ -59,16 +52,13 @@ const SCENARIOS: Array<[string, Record<string, string>, boolean]> = [
 ];
 
 describe('hook output follows our colour decision', () => {
-  const seen: boolean[] = [];
-
   it.each(SCENARIOS)('agrees in %s', (_name, env, tty) => {
     const { ours, hook } = probe(env, tty);
-    seen.push(ours);
     expect(hook).toBe(ours);
   });
 
-  it('covers both coloured and plain runs, so agreement is not vacuous', () => {
-    expect(seen).toContain(true);
-    expect(seen).toContain(false);
+  it('sees both a coloured and a plain run, so agreement is not vacuous', () => {
+    expect(probe({ FORCE_COLOR: '1' }, false).ours).toBe(true);
+    expect(probe({}, false).ours).toBe(false);
   });
 });

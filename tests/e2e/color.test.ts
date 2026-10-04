@@ -14,15 +14,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DIST_CLI, ensureBuilt } from './helpers/build-once.js';
+import { FAKE_TTY_IMPORT as FAKE_TTY } from '../helpers/fake-tty.js';
 
-const FAKE_TTY =
-  'data:text/javascript,' +
-  encodeURIComponent(
-    "import tty from 'node:tty';" +
-      'const isatty = tty.isatty;' +
-      'tty.isatty = (fd) => fd === 1 || isatty(fd);' +
-      'process.stdout.isTTY = true;',
-  );
 // Any SGR sequence: colour, dim, bold, reset. Ink's cursor codes end in other letters.
 const SGR = /\x1b\[[0-9;]*m/;
 const ESC = '\x1b';
@@ -86,7 +79,7 @@ describe('colour environment', () => {
 
   // Pins the --json contract, which holds without #37 too: the document is
   // JSON.stringify written outside Ink, so no colour variable can reach it.
-  it.each([{ FORCE_COLOR: '3' }, { NO_COLOR: '1' }, {}])(
+  it.each<Record<string, string>>([{ FORCE_COLOR: '3' }, { NO_COLOR: '1' }, {}])(
     'writes --json without ANSI for a consumer, under %o',
     (colorEnv) => {
       const out = run(['update', '--json'], colorEnv, { tty: false });

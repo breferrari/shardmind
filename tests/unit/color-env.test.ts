@@ -62,7 +62,7 @@ describe('load order in source/cli.ts', () => {
         (s): s is ts.ImportDeclaration | ts.ExportDeclaration =>
           (ts.isImportDeclaration(s) || ts.isExportDeclaration(s)) && s.moduleSpecifier !== undefined,
       )
-      .filter((s) => !(ts.isImportDeclaration(s) && s.importClause?.isTypeOnly))
+      .filter((s) => !(ts.isImportDeclaration(s) && s.importClause?.phaseModifier === ts.SyntaxKind.TypeKeyword))
       .map((s) => (s.moduleSpecifier as ts.StringLiteral).text);
 
   it('imports statically only modules that cannot load chalk', () => {
@@ -75,22 +75,23 @@ describe('load order in source/cli.ts', () => {
     expect(staticImports(rel).filter((spec) => !spec.startsWith('node:'))).toEqual([]);
   });
 
-  it('applies NO_COLOR before its first dynamic import', () => {
-    const file = parse('cli.ts');
-    let applyAt = -1;
-    let firstImportAt = -1;
-    const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node)) {
-        if (node.expression.kind === ts.SyntaxKind.ImportKeyword && firstImportAt === -1) firstImportAt = node.getStart();
-        if (ts.isIdentifier(node.expression) && node.expression.text === 'applyNoColor' && applyAt === -1) {
-          applyAt = node.getStart();
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(file);
-    expect(applyAt).toBeGreaterThan(-1);
-    expect(firstImportAt).toBeGreaterThan(applyAt);
+  it('calls applyNoColor as a top-level statement before any statement that imports', () => {
+    // Top level, unconditional, and ahead of every statement holding an
+    // import() anywhere inside it (a helper that imports counts too).
+    const statements = parse('cli.ts').statements;
+    const hasDynamicImport = (node: ts.Node): boolean =>
+      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
+      (ts.forEachChild(node, hasDynamicImport) ?? false);
+    const applyIndex = statements.findIndex(
+      (s) =>
+        ts.isExpressionStatement(s) &&
+        ts.isCallExpression(s.expression) &&
+        ts.isIdentifier(s.expression.expression) &&
+        s.expression.expression.text === 'applyNoColor',
+    );
+    const firstImportIndex = statements.findIndex(hasDynamicImport);
+    expect(applyIndex).toBeGreaterThan(-1);
+    expect(firstImportIndex).toBeGreaterThan(applyIndex);
   });
 });
 

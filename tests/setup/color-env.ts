@@ -6,9 +6,13 @@
  * match plain text. With both variables cleared, a worker resolves colour as
  * CI does: stdout is not a TTY, so chalk stays at level 0. Children spawned
  * in a real terminal (Layer 2 PTY) inherit the cleaned env and get the TTY
- * default, as in CI. NO_COLOR has no effect on chalk 5 today; it is cleared so
- * a caller's value cannot change frames once the engine honours it (#37).
+ * default, as in CI. NO_COLOR is cleared because the CLI honours it (#37):
+ * E2E children inherit a worker's env, and a caller's NO_COLOR would strip
+ * colour from their frames. TF_BUILD with AGENT_NAME (Azure Pipelines) makes
+ * chalk colour even a pipe, so those go too.
  */
 
 delete process.env.FORCE_COLOR;
 delete process.env.NO_COLOR;
+delete process.env.TF_BUILD;
+delete process.env.AGENT_NAME;
