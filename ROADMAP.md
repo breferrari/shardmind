@@ -109,8 +109,8 @@ The implementation docs describe the modules as they are now.
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | IMPLEMENTATION.md §4.11a / §4.11b for install-planner + install-executor | [#64](https://github.com/breferrari/shardmind/issues/64) |
-| ⬜ | v0.1 docs rewrite: ARCHITECTURE §3 + AUTHORING §2 + IMPLEMENTATION §4.* / §9 per v6 layout | [#85](https://github.com/breferrari/shardmind/issues/85) |
+| ✅ | IMPLEMENTATION.md §4.11a / §4.11b for install-planner + install-executor | [#64](https://github.com/breferrari/shardmind/issues/64) |
+| ✅ | v0.1 docs rewrite: ARCHITECTURE §3 + AUTHORING §2 + IMPLEMENTATION §4.* / §9 per v6 layout | [#85](https://github.com/breferrari/shardmind/issues/85) |
 
 ## Phase 7 — authoring and CLI ergonomics
 
@@ -402,7 +402,7 @@ v0.1.x ships when:
 - [ ] Hook lifecycle (#102) shipped with [#121](https://github.com/breferrari/shardmind/issues/121) (version-compatibility check) and obsidian-mind hook migration in the same release window.
 - [x] Flagship-UX closed: [#100](https://github.com/breferrari/shardmind/issues/100), [#101](https://github.com/breferrari/shardmind/issues/101), [#104](https://github.com/breferrari/shardmind/issues/104), [#105](https://github.com/breferrari/shardmind/issues/105), [#120](https://github.com/breferrari/shardmind/issues/120).
 - [ ] Research-wiki shard ([#15](https://github.com/breferrari/shardmind/issues/15)) shipped with E2E tests + registry-mode end-to-end proof.
-- [ ] v6 docs polish ([#85](https://github.com/breferrari/shardmind/issues/85)) closed.
+- [x] v6 docs polish ([#85](https://github.com/breferrari/shardmind/issues/85)) closed (superseded: SHARD-LAYOUT.md stays the contract; the stale text was rewritten with #64).
 - [ ] Smoke gate green against both shards (obsidian-mind + research-wiki).
 
 When all boxes check, cut the v0.1.x stabilization line and start v0.2.
@@ -421,7 +421,7 @@ Not blockers for engine use, but needed before the registry-mode flow (`shardmin
 
 - [ ] **Research-wiki shard + E2E tests** ([#15](https://github.com/breferrari/shardmind/issues/15)) — including the fresh-machine smoke (`npm install -g shardmind` → `shardmind install breferrari/obsidian-mind` and `shardmind install <research-wiki>`). Single tracker; covers the second-shard build, registry-mode end-to-end proof, and registry shape validation.
 - [ ] Create `shardmind/registry` repo with index.json (2 shards). Schema discussion lives in #29 (closed) and is finalized as part of this work; no separate ticket.
-- [ ] v6 docs polish: fold remaining SHARD-LAYOUT.md content into ARCHITECTURE §3 + IMPLEMENTATION §4.5/§4.5a/§4.5b; rewrite IMPLEMENTATION §9 (Build Plan) to match the actual #70 task series ([#85](https://github.com/breferrari/shardmind/issues/85)) — partial rewrites already landed with #73
+- [x] v6 docs polish: fold remaining SHARD-LAYOUT.md content into ARCHITECTURE §3 + IMPLEMENTATION §4.5/§4.5a/§4.5b; rewrite IMPLEMENTATION §9 (Build Plan) to match the actual #70 task series ([#85](https://github.com/breferrari/shardmind/issues/85)) — partial rewrites already landed with #73. Superseded 2026-10-04: SHARD-LAYOUT.md stays as the contract preflight checks against, and the stale v6 text was rewritten with #64
 
 ---
 
@@ -468,7 +468,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [x] `--yes` policy for preexisting add-collisions ([#61](https://github.com/breferrari/shardmind/issues/61))
 - [x] Byte-identical preexisting add-collision adopts silently ([#62](https://github.com/breferrari/shardmind/issues/62))
 - [x] Binary files bypass three-way merge entirely ([#63](https://github.com/breferrari/shardmind/issues/63))
-- [ ] `docs/IMPLEMENTATION.md` §4.11a / §4.11b for install-planner + install-executor ([#64](https://github.com/breferrari/shardmind/issues/64))
+- [x] `docs/IMPLEMENTATION.md` §4.11a / §4.11b for install-planner + install-executor ([#64](https://github.com/breferrari/shardmind/issues/64))
 - [ ] Enforce tarball size cap in `downloadShard` ([#32](https://github.com/breferrari/shardmind/issues/32))
 - [x] `--force` flag on install for scripted collision overwrite without backup ([#55](https://github.com/breferrari/shardmind/issues/55))
 - [ ] E2E: bridge SIGINT delivery reliably on GH Actions Windows runner ([#57](https://github.com/breferrari/shardmind/issues/57))

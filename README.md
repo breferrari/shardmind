@@ -224,20 +224,18 @@ A shard is a packaged vault template. It includes folder structures, markdown te
 
 ```
 my-shard/
-  shard.yaml              # Package identity (name, version, deps)
-  shard-schema.yaml       # Values + modules + signals + frontmatter + migrations
-  templates/              # Nunjucks templates (.njk)
-    CLAUDE.md.njk         # Claude Code operating manual
-    AGENTS.md.njk         # Codex operating manual (optional)
-    GEMINI.md.njk         # Gemini CLI operating manual (optional)
-    brain/
-    work/
-    perf/
-  commands/               # Slash commands (conditionally installed by module)
-  agents/                 # Subagents (conditionally installed by module)
-  scripts/                # TypeScript hook scripts (Claude Code lifecycle)
-  skills/                 # Agent skills (Agent Skills spec — multi-agent compatible)
+  .shardmind/             # Engine sidecar (not copied; install writes its own)
+    shard.yaml            # Package identity (name, version, deps)
+    shard-schema.yaml     # Values + modules + signals + frontmatter + migrations
+  CLAUDE.md               # Content lives at its native vault path, copied verbatim
+  Home.md
+  brain/
+  .claude/
+    commands/             # Slash commands (gated by module)
+    settings.json.njk     # .njk = rendered with values, installs as settings.json
 ```
+
+The shard repo is itself a working vault, and `shardmind install --defaults` gives the same files as a clone (`.njk` files rendered). See [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md) for the full contract.
 
 Shard authors choose which agents to support. A shard can ship `CLAUDE.md` only, or all three, or any combination. The vault's markdown notes, frontmatter, and folder structure work with any AI — the operational layer (hooks, commands, agent configs) is where specificity lives.
 

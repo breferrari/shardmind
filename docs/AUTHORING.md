@@ -15,7 +15,7 @@ A shard ships:
 
 Users run `shardmind install <namespace>/<shard>`. The engine downloads the tarball, walks the shard root applying Tier 1 exclusions + `.shardmindignore` + symlink rejection, prompts for values, lets the user opt out of removable modules, renders + copies + caches, writes `state.json`, and runs your hook. Users never edit your shard directly — they edit their vault, and the next `shardmind update` merges upstream changes into their customizations via three-way merge.
 
-A user who already cloned your repo (typically before shardmind support existed) can run `shardmind adopt <namespace>/<shard>` instead. Adopt walks the existing vault, classifies each shard-output path against what the install would have produced, and — for any file that differs — lets the user resolve the whole set at once (keep all mine / use all theirs / best-effort auto-merge / decide per file, or the `--mode` flag) before recording each file's `ownership` (`modified` for kept/merged, `managed` for use-shard). Files matching exactly are auto-managed; files only the shard ships are installed fresh. After adopt, `shardmind update` works normally — the cache made at adopt time becomes the merge base. See `docs/SHARD-LAYOUT.md §Adopt semantics` for the full contract.
+A user who already cloned your repo (typically before shardmind support existed) can run `shardmind adopt <namespace>/<shard>` instead. Adopt walks the existing vault, classifies each shard-output path against what the install would have produced, and — for any file that differs — lets the user resolve the whole set at once (keep all mine / use all theirs / best-effort auto-merge / decide per file, or the `--mode` flag) before recording each file's `ownership` (`modified` for kept/merged, `managed` for use-shard). Files matching exactly are auto-managed; files only the shard ships are installed fresh. After adopt, `shardmind update` works normally — the cache made at adopt time becomes the merge base. See [`SHARD-LAYOUT.md §Adopt semantics`](SHARD-LAYOUT.md#adopt-semantics--shardmind-adopt-shard) for the full contract. If your shard renamed files since the release the user cloned, they pass `--from-version <v>` (see §3).
 
 ## 2. File layout
 
@@ -53,13 +53,15 @@ your-shard/                    ← also opens cleanly as an Obsidian vault
 
 Minimum: `.shardmind/shard.yaml` + `.shardmind/shard-schema.yaml`. Everything else is optional.
 
-**Three testable properties** (binding contract):
+**What you uphold as an author** (binding; full text in [`SHARD-LAYOUT.md §Installation invariants`](SHARD-LAYOUT.md#installation-invariants)):
 
-1. The shard repo at HEAD opens cleanly as a vault in Obsidian with no preparation.
-2. `shardmind install --defaults <shard>` produces a vault byte-equivalent to `git clone <shard>` (modulo Tier 1 exclusions + `.shardmind/` engine metadata + vault-root `shard-values.yaml`).
-3. Deleting `.shardmind/` on either side leaves a working vault.
+- The shard repo at HEAD opens cleanly as a vault in Obsidian with no preparation, and deleting `.shardmind/` on either side leaves a working vault.
+- Invariant 1: `install --defaults` is clone-equivalent (static files byte-identical, each `.njk` present at its stripped path). CI-tested via `tests/e2e/helpers/invariant1.ts`.
+- Invariant 2: a defaults install touches no managed file; the engine skips `personalize` (§6).
+- Invariant 3: `post-update` writes only the managed files in `ctx.newFiles`.
+- Invariant 4: `bootstrap` re-runs on update only when `hooks.bootstrap.fingerprint` changes.
 
-See [`docs/SHARD-LAYOUT.md`](../docs/SHARD-LAYOUT.md) for the full v6 layout contract.
+File disposition: Tier 1 paths (`.git/`, `.github/`, `.shardmind/`, Obsidian's `workspace.json` / `workspace-mobile.json` / `graph.json`) never install; everything else does unless `.shardmindignore` excludes it; symlinks are rejected. See [`SHARD-LAYOUT.md`](SHARD-LAYOUT.md) for the full v6 layout contract.
 
 ## 3. `shard.yaml` — the manifest
 
@@ -449,9 +451,9 @@ Hooks **cannot**:
 
 ### Post-hook re-hash
 
-After the hook phase exits — success OR failure — the engine re-hashes every managed file in `state.json` and writes the updated state. **This means a hook that legitimately edits a managed file (a `personalize` or `post-update` write) does not produce spurious "drift" on the next `shardmind` status run.**
+The engine hashes every tracked file before the first slot runs. After the hook phase exits — success OR failure — it re-hashes them, records the new bytes of each file a hook changed as that file's `rendered_hash` (only if the file was engine-owned when the phase began; a file the user had already edited is never re-baselined), and writes the updated state. **This means a hook that legitimately edits a managed file (a `personalize` or `post-update` write) does not produce spurious "drift" on the next `shardmind` status run.**
 
-A consequence to know: `state.json` reflects whatever bytes are on disk *after* the hook exits. If a hook crashes mid-write, the partial bytes get hashed and adopted as the new managed hash — drift detection won't flag them as drift, because state-matches-disk by construction. If you need atomicity (the file is either fully-written or untouched), use `fs.rename` from a temp file inside your hook; don't rely on the engine to detect partial writes.
+A consequence to know: for engine-owned files, `state.json` reflects whatever bytes are on disk *after* the hook exits. If a hook crashes mid-write, the partial bytes get hashed and adopted as the new managed hash — drift detection won't flag them as drift, because state-matches-disk by construction. If you need atomicity (the file is either fully-written or untouched), use `fs.rename` from a temp file inside your hook; don't rely on the engine to detect partial writes.
 
 The re-hash is also where the engine detects a `bootstrap` that wrote a managed file (a boundary violation): the file's hash changed but `bootstrap` had no business touching it. That surfaces as a `HOOK_BOOTSTRAP_MANAGED_WRITE` warning — the edit stays on disk, but you've put it in the wrong slot.
 
@@ -492,7 +494,7 @@ On Windows, `SIGTERM` is emulated as `TerminateProcess`, which skips the hook's 
 
 ## 7. Testing your shard locally
 
-The fastest dev loop avoids cutting a tag for every change. Install from a branch or commit SHA via the `#<ref>` syntax, iterate, push, and re-install.
+The fastest dev loop avoids cutting a tag for every change. Install once from a branch or commit SHA via the `#<ref>` syntax, then push and run `shardmind update` to pull each new commit.
 
 1. Push your work-in-progress to a branch on your GitHub account (default branch is fine; a feature branch is fine).
 2. In an empty directory: `shardmind install github:<user>/<shard>#<branch> --dry-run`. Fix anything broken.

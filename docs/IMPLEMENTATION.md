@@ -205,13 +205,22 @@ resolve(
   options?: { includePrerelease?: boolean },
 ): Promise<ResolvedShard>
 // shardRef examples:
-//   "breferrari/obsidian-mind"           → latest stable from registry
-//   "breferrari/obsidian-mind@3.5.0"     → specific version
-//   "github:breferrari/obsidian-mind"    → direct GitHub, latest stable
-//   "github:breferrari/obsidian-mind@3.5.0" → direct GitHub, exact tag
+//   "breferrari/obsidian-mind"           → registry index's `latest`
+//   "breferrari/obsidian-mind@3.5.0"     → specific version (must be in the index's `versions`)
+//   "github:breferrari/obsidian-mind"    → direct GitHub, newest release (stable unless includePrerelease)
+//   "github:breferrari/obsidian-mind@3.5.0" → direct GitHub, exact tag (`@v3.5.0` is the same: one leading `v` is stripped)
 //   "github:breferrari/obsidian-mind#main"  → direct GitHub, branch HEAD (#76)
-//   "github:breferrari/obsidian-mind#abc1234" → direct GitHub, commit SHA
+//   "github:breferrari/obsidian-mind#abc1234" → direct GitHub, commit SHA (prefix or full)
+
+fetchLatestVersion(
+  source: string,                            // state.source, must start with "github:"
+  options?: { signal?: AbortSignal; includePrerelease?: boolean },
+): Promise<string>                           // semver with the leading `v` stripped
 ```
+
+`shardRef` is trimmed and matched against `/^(github:)?([a-z0-9][a-z0-9-]*)\/([a-z0-9][a-z0-9-]*)(?:@([^#\s]+)|#([^@\s]+))?$/`: owner and repo are lowercase letters, digits and hyphens, and `@<version>` and `#<ref>` are mutually exclusive. A non-matching ref → `REGISTRY_INVALID_REF`.
+
+`fetchLatestVersion` is the read-only "latest tag" lookup behind the update-check cache (§4.15): the `/releases` listing of step 6, without the tarball HEAD check. A source without the `github:` prefix, or without `owner/repo`, → `REGISTRY_INVALID_REF`.
 
 **Outputs**:
 ```typescript
@@ -229,17 +238,17 @@ interface ResolvedShard {
 ```
 
 **Algorithm**:
-1. Parse `shardRef` into namespace, name, and optional version OR ref. The regex makes `@<version>` and `#<ref>` mutually exclusive.
+1. Parse `shardRef` into namespace, name, and optional version OR ref. The regex makes `@<version>` and `#<ref>` mutually exclusive. One leading `v` is stripped from the version, so `@v1.2.3` and `@1.2.3` build the same tarball URL.
 2. If `#<ref>` is set:
    a. Direct mode only — `#<ref>` without `github:` prefix is rejected as `REGISTRY_INVALID_REF` (the registry index has no per-branch metadata).
    b. Resolve the ref to a 40-char hex SHA via `GET /repos/:o/:r/commits/{encodeURIComponent(ref)}`. 404 → `REF_NOT_FOUND`. 422 (ambiguous SHA prefix) → `REF_NOT_FOUND` with a "lengthen the prefix" hint.
    c. Construct tarball URL `${GITHUB_API_BASE}/repos/{owner}/{repo}/tarball/<sha>` (no `v` prefix).
    d. HEAD-verify (`verifyTarball` in `'ref'` mode). 404 here is rare but real (force-push between calls); throws `REF_NOT_FOUND` with a "force-push" hint.
    e. Return `ResolvedShard` with `ref: { name, commit }` populated; `version` is the short SHA (7 chars) for display.
-3. Else if `shardRef` starts with `github:` → direct mode, skip registry.
-4. Else → fetch registry index from `${REGISTRY_INDEX_URL}` (defaults to `https://raw.githubusercontent.com/shardmind/registry/main/index.json`; see env-var overrides below).
-5. Look up `namespace/name` in registry.
-6. If version not specified → resolve via `GET /repos/:o/:r/releases?per_page=100`, filtered:
+3. Else if `shardRef` starts with `github:` → direct mode, skip registry. `source = github:{owner}/{repo}`; go to step 6.
+4. Else → fetch registry index from `${REGISTRY_INDEX_URL}` (defaults to `https://raw.githubusercontent.com/shardmind/registry/main/index.json`; see env-var overrides below). The index shape (`{ shards: { "<ns>/<name>": { repo, latest, versions[] } } }`) is provisional until the registry repo exists (#29).
+5. Look up `namespace/name` in the index. Missing → `SHARD_NOT_FOUND`. `@version` not in the entry's `versions` → `VERSION_NOT_FOUND` (message lists the available versions). An entry `repo` that is not `owner/name` → `REGISTRY_NETWORK`. No `@version` → the entry's `latest`; `source = github:{entry.repo}`. `includePrerelease` has no effect in registry mode. Go to step 7.
+6. Direct mode without `@version` → resolve via `GET /repos/:o/:r/releases?per_page=100`, filtered:
    a. `includePrerelease=false` (default) — first entry where `prerelease === false`.
    b. `includePrerelease=true` — first entry of any kind.
    c. Empty filtered list → `NO_RELEASES_PUBLISHED`. Hint differentiates "repo has zero releases" from "repo has only prereleases" (the latter points at `--include-prerelease`).
@@ -247,13 +256,13 @@ interface ResolvedShard {
 7. Construct tarball URL: `${GITHUB_API_BASE}/repos/{owner}/{repo}/tarball/v{version}`.
 8. HEAD-verify (`verifyTarball` in `'tag'` mode). 404 → `VERSION_NOT_FOUND`. 200 / 302 (codeload redirect) → pass.
 
-**Env-var overrides** (read once at module load, overridable for testing,
+**Env-var overrides** (read at each call, not cached at module load; overridable for testing,
 enterprise GitHub Enterprise deployments, and future self-hosted registry
 scenarios — see ARCHITECTURE §19.7):
 
 | Variable | Default | Effect |
 |----------|---------|--------|
-| `SHARDMIND_GITHUB_API_BASE` | `https://api.github.com` | Routes `releases/latest` + tarball calls through the provided base. Surrounding whitespace and trailing slashes are stripped. |
+| `SHARDMIND_GITHUB_API_BASE` | `https://api.github.com` | Routes the `/releases`, `/commits/<ref>` and tarball calls through the provided base. Surrounding whitespace and trailing slashes are stripped. |
 | `SHARDMIND_REGISTRY_INDEX_URL` | `https://raw.githubusercontent.com/shardmind/registry/main/index.json` | Points the namespaced `owner/repo` index lookup at an alternate registry. Surrounding whitespace is stripped. |
 
 Both are invisible to production users — the defaults reproduce the
@@ -261,14 +270,15 @@ current behavior exactly. The E2E suite uses `SHARDMIND_GITHUB_API_BASE`
 to point at a local stub server (see `tests/e2e/helpers/github-stub.ts`).
 
 **Error cases**:
-- Shard not found in registry → `"Shard 'foo/bar' not found. Check spelling or use github:owner/repo for direct install."`
-- Version not found (registry) → `"Version 3.5.0 not found for breferrari/obsidian-mind. Available: 3.4.0, 3.3.0"`
+- Malformed `shardRef`, or `#<ref>` without `github:` → `REGISTRY_INVALID_REF`.
+- Shard not found in registry → `SHARD_NOT_FOUND`: `"Shard 'foo/bar' not found"`, hint "Check spelling or use github:owner/repo for direct install."
+- Version not found (registry) → `VERSION_NOT_FOUND`: `"Version 3.5.0 not found for breferrari/obsidian-mind. Available: 3.4.0, 3.3.0"`
 - Version not found (tag verify) → `VERSION_NOT_FOUND`: tarball HEAD returned 404; usually a deleted tag or transient state.
 - No releases published → `NO_RELEASES_PUBLISHED`: `/releases` returned an empty array, or every entry was filtered out by the prerelease policy. Hint mentions `--include-prerelease` when prereleases exist.
 - Ref not found → `REF_NOT_FOUND`: `/commits/<ref>` returned 404, or 422 (ambiguous SHA prefix).
 - Repository not found → `SHARD_NOT_FOUND`: `/releases` returned 404 (the repo itself doesn't exist or is private to an unauthenticated client).
-- Network failure → `REGISTRY_NETWORK`.
-- Rate limited → `REGISTRY_RATE_LIMITED`. Set `GITHUB_TOKEN` for the higher authenticated rate.
+- Network failure, unexpected HTTP status, or malformed response body → `REGISTRY_NETWORK`.
+- Rate limited (403 with `x-ratelimit-remaining: 0`) → `REGISTRY_RATE_LIMITED`. Set `GITHUB_TOKEN` for the higher authenticated rate.
 
 **Environment**: Reads `GITHUB_TOKEN` env var for authenticated requests (5000 req/hr vs 60 unauthenticated).
 
@@ -306,10 +316,10 @@ interface TempShard {
 **Algorithm**:
 1. Create temp directory: `os.tmpdir() + '/shardmind-' + crypto.randomUUID()`.
 2. Fetch tarball URL with `fetch()`, following redirects (GitHub returns 302).
-3. Set headers: `Accept: application/vnd.github+json`, `Authorization: Bearer ${GITHUB_TOKEN}` for github.com/codeload.github.com hosts when the env var is set.
+3. Set headers: `Accept: application/vnd.github+json`, plus `Authorization: Bearer ${GITHUB_TOKEN}` when the env var is set and the host is `api.github.com` or `codeload.github.com` (the token is never sent to any other host, including a `SHARDMIND_GITHUB_API_BASE` stub).
 4. Pipe response body through a hash-tap transform (sha256) and into `tar.x({ strip: 1, C: tempDir })`.
    - `strip: 1` removes the GitHub archive's top-level directory (`owner-repo-sha/`).
-   - `tar.x` normalizes Windows path separators to forward slashes, so the engine never sees `\` in a relPath.
+   - node-tar's own behaviour, not ours: `tar.x` normalizes Windows path separators to forward slashes, so the engine never sees `\` in a relPath.
 5. Verify `<tempDir>/.shardmind/shard.yaml` exists. If not → throw `DOWNLOAD_MISSING_MANIFEST`.
 6. Verify `<tempDir>/.shardmind/shard-schema.yaml` exists. If not → throw `DOWNLOAD_MISSING_SCHEMA`.
 7. Return `TempShard` with `cleanup` function and `tarball_sha256` from the hash tap.
@@ -321,7 +331,7 @@ interface TempShard {
 - Tarball corrupted → `DOWNLOAD_INVALID_TARBALL`.
 - Missing `.shardmind/shard.yaml` → `DOWNLOAD_MISSING_MANIFEST`.
 - Missing `.shardmind/shard-schema.yaml` → `DOWNLOAD_MISSING_SCHEMA`.
-- Disk full → propagate OS error.
+- Disk full, or any other error from the fetch-hash-extract pipeline or from `tar` → `DOWNLOAD_INVALID_TARBALL` (with the underlying message). Only a failure of the initial temp-dir `mkdir` propagates as the raw OS error.
 
 **Dependencies**: `tar` (node-tar), `node:crypto`, `node:stream`.
 
@@ -439,7 +449,7 @@ buildValuesValidator(schema: ShardSchema): z.ZodObject<any>
 
 ### 4.5 `modules.ts`
 
-**Purpose**: Walk the shard root and classify every file into render / copy / skip based on module inclusion. Under the v6 layout (closed in [#73](https://github.com/breferrari/shardmind/issues/73)) the shard repo *is* the installed vault — no `templates/` wrapper, no separate `commands/` / `agents/` / `codex/` trees.
+**Purpose**: Walk the shard root and classify every file into render / copy / skip based on module inclusion. Under the v6 layout ([#73](https://github.com/breferrari/shardmind/issues/73), contract in [`SHARD-LAYOUT.md`](SHARD-LAYOUT.md)) the shard repo *is* the installed vault: every file sits at the path it installs to, and one walk of the shard root covers all of it.
 
 **Inputs**:
 ```typescript
@@ -487,17 +497,16 @@ interface WalkedFile {
    e. If `ignoreFilter.ignores(relPath, isDir)` → skip.
    f. Directory → recurse. File → push `{ relPath, absPath }`.
 3. For each walked file, classify:
-   a. **Module assignment** (priority order, returns first hit):
-      i. Path-prefix match against `mod.paths` (e.g. `brain/Index.md` → module `brain` with `paths: ['brain/']`).
-      ii. Exact match against `bases/<id>.base.njk` for `mod.bases`.
-      iii. Per-name match: when the file's parent-dir component (case-insensitive) is `commands` or `agents`, match basename-no-ext against `mod.commands` / `mod.agents` lists. Scopes the heuristic so a vault note named after a command isn't gated by it.
-      iv. Else `null` (always-included; e.g. agent operating manuals at the vault root).
+   a. **Module assignment** (returns first hit):
+      i. For each module in declaration order: a `mod.paths` match, then an exact `bases/<id>.base.njk` match for `mod.bases`. A `paths` entry matches the identical path, or a prefix ending at a path-segment boundary (an entry ending in `/`, or followed by `/` in `relPath`), so `work/Index.md` does not claim `work/Index.md.backup`. Example: `brain/Index.md` → module `brain` with `paths: ['brain/']`.
+      ii. Only when no module claimed the file by i — per-name match: when the file's parent-dir component (case-insensitive) is `commands` or `agents`, match the basename with its last extension removed against `mod.commands` / `mod.agents` lists. Scopes the heuristic so a vault note named after a command isn't gated by it. Only the last extension is stripped, so the source file `reflect.md.njk` yields `reflect.md`, which matches no entry: a `.md.njk` command is not gated today (#208).
+      iii. Else `null` (always-included; e.g. agent operating manuals at the vault root).
    b. **Excluded?** If `moduleId !== null && selections[moduleId] === 'excluded'` → push to `skip` and continue.
    c. **Render or copy?** `relPath.endsWith('.njk')` → render entry; else copy entry.
    d. **Render-only metadata**: read first 256 bytes for `{# shardmind: volatile #}` (volatile flag), and extract iterator key from `_each` parent dir name.
    e. **Output path**: `relPath` for copies; `relPath` minus `.njk` for renders.
 
-**Output path mapping under v6**: source path is preserved (no `templates/` to strip; no special-case rename for `settings.json.njk` since the source is already `.claude/settings.json.njk`).
+**Output path mapping**: the source path is preserved; the only change is the stripped `.njk` suffix on rendered files. There is no per-file rename table (`.claude/settings.json.njk` → `.claude/settings.json` by the suffix rule alone).
 
 ```
 .shardmind/shard.yaml                ← engine reads via download.ts (§4.2); excluded from install set by Tier 1
@@ -852,6 +861,156 @@ interface MigrationResult {
 - Rename target already has a value → warning, both keys preserved.
 
 **Dependencies**: `semver`.
+
+---
+
+### 4.11a `install-planner.ts`
+
+**Purpose**: The read-only half of install. Answers "what would the install do?": collects values (literal and computed defaults), picks default module selections, enumerates the files the install would write, and finds what is already in the way. It reads the downloaded shard's temp dir and `stat`s / reads vault paths; it never writes. Disk mutation lives in §4.11b.
+
+**Inputs / Outputs**:
+```typescript
+interface Collision {
+  outputPath: string;              // vault-relative
+  absolutePath: string;            // path.join(vaultRoot, outputPath)
+  size: number;
+  mtime: Date;
+  kind: 'file' | 'directory';
+}
+
+interface PlannedOutput {
+  outputPath: string;
+  source: 'render' | 'copy';
+}
+
+resolveComputedDefaults(schema: ShardSchema, collected: Record<string, unknown>): Record<string, unknown>;
+mergePrefill(schema: ShardSchema, prefill: Record<string, unknown>): Record<string, unknown>;
+missingValueKeys(schema: ShardSchema, snapshot: Record<string, unknown>): string[];
+defaultModuleSelections(schema: ShardSchema): ModuleSelections;
+
+planOutputs(schema: ShardSchema, tempDir: string, selections: ModuleSelections): Promise<{
+  outputs: PlannedOutput[];
+  moduleFileCounts: Record<string, number>;
+  alwaysIncludedFileCount: number;
+}>;
+
+detectCollisions(vaultRoot: string, plannedOutputs: string[]): Promise<Collision[]>;
+splitByOwnContent(collisions: Collision[], previous: ShardState | null)
+  : Promise<{ own: Collision[]; untouched: Collision[] }>;
+
+hashValues(values: Record<string, unknown>): string;   // sha256 hex
+```
+
+**Algorithm**:
+1. **`mergePrefill`**: for each key in `schema.values`, take `prefill[key]` when it is not `undefined`; otherwise take `def.default` when it is a literal (not a `{{ … }}` computed default). Keys outside the schema are dropped.
+2. **`missingValueKeys`**: every schema key whose `snapshot[key]` is `undefined` and whose default is not computed. The wizard passes the **raw** `--values` prefill, not the `mergePrefill` result: under v6 every value has a `default`, so a merged map is always complete and the value step would be skipped. The non-interactive path (`--yes` / headless `--values`) passes the merged map, and `use-install-machine` throws a non-empty result there as `VALUES_MISSING`.
+3. **`resolveComputedDefaults`**: copy `collected`; for each schema key still `undefined` whose default is computed, render the expression with a fresh `nunjucks.Environment(null, { autoescape: false })` against the values resolved so far (schema order, so a computed default can read earlier computed ones), trim, and coerce by `type`: `string` / `select` as-is; `boolean` only `"true"` / `"false"`; `number` via `Number()`, must be finite; `list` / `multiselect` via `JSON.parse`, must be an array.
+4. **`defaultModuleSelections`**: every module in `schema.modules` → `'included'`.
+5. **`planOutputs`**: `resolveModules(schema, selections, tempDir)` (§4.5), then one `PlannedOutput` per `render` entry (`source: 'render'`) followed by one per `copy` entry. Each output counts toward `moduleFileCounts[entry.module]` (seeded with 0 for every module) or, when `module === null`, toward `alwaysIncludedFileCount`. An `_each` template counts as one output here; its fan-out is known only after rendering (§4.11b step 2.4).
+6. **`detectCollisions`**: `fsp.stat` each `path.join(vaultRoot, outputPath)` in order. A file or a directory is a collision (a directory at a planned file path would fail the write with `EISDIR`, so it is reported with `kind: 'directory'`). `ENOENT` → no collision. `stat` follows links; link safety is checked separately by `assertSafeVaultPaths` (§4.20).
+7. **`splitByOwnContent`** (#55): with `mapConcurrent(16)`, a collision is `untouched` when `previous.files[outputPath]` exists, it is a file, and `sha256(bytes) === recorded.rendered_hash`. Everything else, including any read failure and every collision when `previous` is `null`, is `own`. Untouched files are replaced without a prompt, a backup or a mention in the summary.
+8. **`hashValues`**: `sha256(JSON.stringify(stableJson(values)))`. `stableJson` sorts object keys recursively (arrays keep their order) and tracks only the ancestors currently being descended: a true cycle becomes `null`, while a shared but non-cyclic reference (a YAML alias used in two places) is expanded at each position, so aliased and anchor-free YAML with the same content hash identically. The result is `state.values_hash`.
+
+**How `use-install-machine` sequences them**: values (`mergePrefill` → `missingValueKeys` → wizard or `VALUES_MISSING` → `resolveComputedDefaults` → `buildValuesValidator`, §4.4) → `planOutputs` → `assertSafeVaultPaths` on the planned outputs (refused before any prompt, so a dry run and a real run agree) → `detectCollisions` → `splitByOwnContent` → collision prompt for `own` only (`CollisionReview`; `--force` → overwrite; non-interactive → backup). Before the moves, `splitByOwnContent` runs again on `untouched`, since a file edited while the prompt was open is the user's now.
+
+**Error cases**:
+- `COMPUTED_DEFAULT_FAILED`: the Nunjucks expression threw (hint carries the Nunjucks message).
+- `COMPUTED_DEFAULT_INVALID`: the rendered string does not coerce to the value's `type`.
+- `COLLISION_CHECK_FAILED`: `stat` failed with anything other than `ENOENT` (`EACCES`, `EPERM`, …).
+- From `planOutputs` → `resolveModules`: `WALK_SYMLINK_REJECTED`, `WALK_INVALID_ENTRY`, `SHARDMINDIGNORE_NEGATION_UNSUPPORTED`, `SHARDMINDIGNORE_READ_FAILED` (§4.5, §4.5b).
+- `splitByOwnContent` never throws for an unreadable file; it classifies it as `own`.
+
+**Dependencies**: `nunjucks`, `core/schema` (`isComputedDefault`), `core/modules` (`resolveModules`), `core/fs-utils` (`sha256`, `mapConcurrent`), `runtime/errno` (`isEnoent`), `runtime/types` (`ShardMindError`, `assertNever`). `hashValues` is also imported by the install, update and adopt executors.
+
+**Tests**: `tests/unit/install-planner.test.ts` (`resolveComputedDefaults`, `splitByOwnContent`, `detectCollisions`, `mergePrefill`, `missingValueKeys`, `hashValues`, `defaultModuleSelections`); `tests/integration/install.test.ts` (`planOutputs` module and always-included counts, collision detection against `examples/minimal-shard`); `tests/component/flows/install-flow.test.tsx` (Layer 1 wizard and collision flow).
+
+---
+
+### 4.11b `install-executor.ts`
+
+**Purpose**: The disk-mutating half of install. Moves colliding paths aside transactionally, renders and copies the planned files into the vault, writes `.shardmind/` (cache, manifest, state) and `shard-values.yaml`, and undoes a partial install. Counterpart to §4.11a.
+
+**Inputs / Outputs**:
+```typescript
+interface BackupRecord {
+  originalPath: string;            // absolute
+  backupPath: string;              // absolute
+}
+
+interface InstallRunnerOptions {
+  vaultRoot: string;
+  manifest: ShardManifest;
+  schema: ShardSchema;
+  tempDir: string;
+  resolved: ResolvedShard;
+  tarballSha256: string;
+  values: Record<string, unknown>;
+  selections: ModuleSelections;
+  onProgress?: (event: ProgressEvent) => void;
+  onFileWritten?: (outputPath: string) => void;   // after each successful write; feeds the SIGINT rollback list
+  dryRun?: boolean;
+}
+
+interface InstallResult {
+  writtenPaths: string[];          // vault-relative, incl. shard-values.yaml; not the .shardmind/ files
+  state: ShardState;
+  fileCount: number;               // render + copy entries (an _each template counts once)
+}
+
+type ProgressEvent =
+  | { kind: 'start'; total: number }
+  | { kind: 'file'; index: number; total: number; label: string; outputPath: string }
+  | { kind: 'done'; total: number };
+
+backupCollisions(
+  collisions: Collision[],
+  timestamp?: Date,                               // default new Date()
+  onMoved?: (record: BackupRecord) => void,       // after each rename
+  shouldStop?: () => boolean,                     // checked before each rename
+): Promise<BackupRecord[]>;
+restoreBackups(records: BackupRecord[]): Promise<{
+  restored: BackupRecord[];
+  failed: Array<BackupRecord & { reason: string }>;
+}>;
+carryOverBackups(oldStateDir: string, vaultRoot: string): Promise<void>;
+discardSetAside(setAside: BackupRecord[], oldState: BackupRecord | undefined, vaultRoot: string): Promise<void>;
+runInstall(opts: InstallRunnerOptions): Promise<InstallResult>;
+rollbackInstall(vaultRoot: string, writtenPaths: string[], backups?: BackupRecord[]): Promise<void>;
+```
+
+**Algorithm**:
+1. **`backupCollisions`**: `stamp` = the timestamp's ISO string with `:` → `-` and the fractional seconds dropped. For each collision: stop if `shouldStop()` returns true; otherwise rename the path (file or directory) to `<absolutePath>.shardmind-backup-<stamp>`, or `<…>.1` … `<…>.999` when that name exists, then call `onMoved`. If a rename fails, walk the earlier renames back newest-first and throw `BACKUP_FAILED`. The command layer uses it for both kinds of move: kept backups (the user's `own` content under the Backup policy) and set-aside paths (overwritten content, untouched files, and a reinstall's old `.shardmind/` and `shard-values.yaml`), which are restored on failure and deleted on success.
+2. **`runInstall`**:
+   1. `resolveModules(schema, selections, tempDir)`.
+   2. `assertSafeVaultPaths(vaultRoot, <every render + copy outputPath>)` (§4.20), before the first write and in dry run too. The engine's own paths (`shard-values.yaml`, `.shardmind/` state, cache, backups, logs) are always checked as writes.
+   3. Emit `start`; `createRenderer(tempDir)`; `buildRenderContext(manifest, values, selections, undefined, vaultRoot)`. The context's `install_date` becomes `installed_at` and `updated_at`.
+   4. For each `render` entry: emit `file`; `renderFile` (§4.6). A non-`ShardMindError` throw is wrapped as `RENDER_FAILED`. An `_each` entry yields several files whose names exist only now, so `assertSafeVaultPaths` runs again on them. Each file is written with `writeVaultFile` (`mkdir -p` the parent, then `writeFile(content, 'utf-8')`), appended to `writtenPaths`, reported via `onFileWritten`, and recorded as `{ template: toPosix(tempDir, sourcePath), rendered_hash: file.hash, ownership: 'managed', iterator_key? }`.
+   5. For each `copy` entry: emit `file`; read the source as a `Buffer`; `sha256` it; write with `writeVaultFileBuffer` (as `writeVaultFile`, but the bytes go through untouched with no encoding, so binaries survive); record `{ template, rendered_hash, ownership: 'managed' }`.
+   6. Emit `done`. Build `ShardState`: `schema_version: STATE_SCHEMA_VERSION`, `shard: <namespace>/<name>`, `source`, `version: manifest.version`, `tarball_sha256`, `installed_at` / `updated_at`, `values_hash: hashValues(values)`, `modules: selections`, `files`, and `ref` / `resolvedSha` from `resolved.ref` (undefined on tag installs, so `JSON.stringify` leaves them out).
+   7. Unless dry run, in this order: `initShardDir` (creates `.shardmind/templates/`); `cacheTemplates(vaultRoot, tempDir)` (§4.7: the walked shard source, without module gating, as the next update's merge base); `cacheManifest(vaultRoot, manifest, schema, tempDir)` (verbatim copies of the source `shard.yaml` / `shard-schema.yaml`, re-serialized only if the copy fails); `writeState`; then `writeValuesFile`, which serializes `values` as YAML and writes with `flag: 'wx'`, so an existing `shard-values.yaml` is never overwritten. `shard-values.yaml` is appended to `writtenPaths`.
+   8. Dry run: every step above runs except the vault writes and the `.shardmind/` / values writes. The returned `state` is what a real run would record, and `writtenPaths` is empty.
+3. **Hook hand-off** (in `use-install-machine`, not this module): once `runInstall` returns, state.json is on disk and the install is committed. The machine clears its SIGINT rollback guard, calls `discardSetAside`, then `runHooks({ command: 'install', state: runResult.state, … })` (§4.16a), which owns slot selection, write-boundary checks, the post-hook re-hash and the fingerprint. A hook failure is reported in the summary and never rolls the install back.
+4. **`discardSetAside`** (after success, best effort, never throws): for the old `.shardmind/` record, `carryOverBackups` first moves its `backups/` entries into the new `.shardmind/backups/` (a taken name gets `-<n>`), since an update's or adopt's snapshot can be the only copy of a file; if that throws, the old `.shardmind/` stays where it was set aside. Every other set-aside path is removed.
+
+**Rollback semantics**:
+- **`backupCollisions` is transactional**: when a rename throws, every earlier rename in the call is moved back, so the vault is as it was before the call. A rename-back that fails leaves the content at its backup path, and the `BACKUP_FAILED` hint names that path so the user can move it back. Exception: `uniqueBackupPath` runs outside that `try`, so when it runs out of names (`BACKUP_FAILED`, no free name up to `.999`) the earlier renames in the call are not walked back (defect, #209). An interrupted loop (`shouldStop`) returns the moves made so far; `onMoved` has already registered each one for the SIGINT handler.
+- **`rollbackInstall(vaultRoot, writtenPaths, backups)`** is best effort and swallows every error (the primary failure is already being reported): unlink each written path deepest-first; `rmdir` each parent directory of a written path deepest-first (only empty ones go); remove `.shardmind/` entirely; then `restoreBackups(backups)` last, so backups land on paths the removals freed. `restoreBackups` removes whatever is at the original path and renames the backup back, per entry; failures are collected and returned, not thrown.
+- **Point of no return**: the command layer rolls back only when `runInstall` throws (and not in dry run). Once `runInstall` returns, the install stands; a later failure is reported, not rolled back, because the old install is already gone. (State.json alone is not the line: `writeValuesFile` runs after `writeState` and can still throw `VALUES_FILE_COLLISION`, which rolls back.) A SIGINT during the install calls `rollbackInstall` with the live `onFileWritten` / `onMoved` lists.
+- **Current behaviour on a throw from `runInstall`** (defect, #207): the command layer calls `rollbackInstall` with an empty written list, because `use-install-machine` assigns `written` only after `runInstall` returns. Backups and set-aside paths are restored and `.shardmind/` is removed, but files already written stay in the vault.
+
+**Error cases**:
+- `VAULT_PATH_UNSAFE`: a planned output, an `_each` output, or one of the engine's own paths is a symlink, sits under a symlinked folder, is a hard-linked file, or exists only under a different case (§4.20).
+- `BACKUP_FAILED`: a rename failed (the hint says whether earlier moves were restored or names the orphaned backup paths), or no free `.shardmind-backup-<stamp>[.n]` name up to `.999` (earlier renames are then not walked back, #209).
+- `RENDER_FAILED`: a non-`ShardMindError` thrown by `renderFile`. A `ShardMindError` from the renderer (`RENDER_TEMPLATE_ERROR`, `RENDER_FRONTMATTER_ERROR`, `RENDER_ITERATOR_ERROR`, §4.6) passes through unchanged.
+- `VALUES_FILE_COLLISION`: `shard-values.yaml` appeared at the target (`EEXIST` from the `wx` write). The last defense behind `ExistingInstallGate`; any other write error propagates as-is.
+- `STATE_CACHE_MISSING_MANIFEST`: `cacheTemplates` found no `.shardmind/shard.yaml` in the shard source (§4.7).
+- `WALK_SYMLINK_REJECTED`, `WALK_INVALID_ENTRY`, `SHARDMINDIGNORE_*`: from `resolveModules` / `cacheTemplates` (§4.5).
+- `STATE_UNSUPPORTED_VERSION`: from `writeState` if the state's `schema_version` is not the one this engine writes (§4.7).
+- Other filesystem errors from `mkdir` / `writeFile` / `readFile` propagate unwrapped.
+
+**Dependencies**: `yaml` (`stringify`), `core/modules` (`resolveModules`), `core/renderer` (`createRenderer`, `renderFile`, `buildRenderContext`), `core/state` (`initShardDir`, `cacheTemplates`, `cacheManifest`, `writeState`, `STATE_SCHEMA_VERSION`), `core/fs-utils` (`sha256`, `toPosix`, `pathExists`, `removePath`), `core/install-planner` (`hashValues`, `Collision`), `core/vault-path-guard` (`assertSafeVaultPaths`), `runtime/errno`, `runtime/vault-paths` (`SHARDMIND_DIR`, `VALUES_FILE`).
+
+**Tests**: `tests/unit/install-planner.test.ts` (`backupCollisions` incl. the transactional walk-back, `restoreBackups`, `carryOverBackups`, `discardSetAside`); `tests/integration/install.test.ts` (full pipeline against `examples/minimal-shard`: module exclusion, ref vs tag state, per-file hashes, dry run, `VALUES_FILE_COLLISION`, rollback, post-install hook); `tests/integration/vault-path-guard.test.ts` (`VAULT_PATH_UNSAFE` refusals, #163); `tests/component/flows/install-flow.test.tsx` (Layer 1); `tests/e2e/cli.test.ts` (CLI install incl. Invariant 1 byte-equivalence).
 
 ---
 
@@ -1603,6 +1762,8 @@ If install fails mid-render (e.g., template error on file 23 of 47):
 3. Show error with the specific template that failed
 4. Exit cleanly — vault is in pre-install state
 
+That is the intent. Today the error path (a throw from `runInstall`) restores backups and removes `.shardmind/` but leaves the files already written, because it rolls back with an empty written list (defect, #207; see §4.11b). A SIGINT rollback does delete them.
+
 ---
 
 ## 8. Decision Log
@@ -1619,7 +1780,7 @@ Decisions made during architecture that should be preserved:
 | D6 | Modules over value toggles | File existence is a structural decision, not a template variable. Empty folders are harmless but feel wrong. | `enable_X` booleans (over-engineering, 15-question wizard, poisoned the update engine) |
 | D7 | 4 values, 1 group | Convention over configuration. Obsidian handles unused features gracefully. | 15+ values with depends_on chains (wizard fatigue, complexity) |
 | D8 | TypeScript hooks over Python/shell | Unify the stack. One runtime. Hooks can import `shardmind/runtime`. | Keep Python (extra dependency, two languages, can't share code) |
-| D9 | CLAUDE.md as a single `.njk` template (v6) | v6 contract drops the partials/assembly system in favor of a single shard-root `CLAUDE.md.njk`, gated per-module via `{% if 'mod' in included_modules %}` blocks (or file-path gating for whole-section inclusion). Reverses the v0.1 design (Per-module partials assembled via `{% include %}`); v6 simplification keeps the shard contract flat — no wrapper directories, no assembly-side magic — at the cost of slightly larger conditional blocks in the template. | v0.1 partials/assembly (rejected in v6 — implicit ordering, more files, harder to read end-to-end) |
+| D9 | CLAUDE.md ships whole (v6) | v6 contract drops the partials/assembly system: `CLAUDE.md` (and `AGENTS.md`, `GEMINI.md`) is a plain file at the shard root, copied verbatim, and module deselection is file-path gating, not section pruning (SHARD-LAYOUT §Values, schema, and modules). A shard may still ship `CLAUDE.md.njk` and branch on `included_modules`, at the cost of byte-equality with a clone. Reverses the v0.1 design (per-module partials assembled via `{% include %}`); keeps the shard contract flat — no wrapper directories, no assembly-side magic. | v0.1 partials/assembly (rejected in v6 — implicit ordering, more files, harder to read end-to-end) |
 | D10 | `/vault-upgrade` stays in Claude Code | Semantic content classification is an AI operation. ShardMind is a package manager. | ShardMind handles migration (scope creep, AI dependency in CLI) |
 | D11 | Status as root command, not menu | CLI users know what they want. Status answers "is my vault healthy" immediately. | Interactive menu (over-designed for 3 actions) |
 | D12 | Cached templates for 3-way merge base | Without cached templates, can't compute proper base for modified files. | Re-download old version during update (network dependency, slow) |
@@ -1629,215 +1790,9 @@ Decisions made during architecture that should be preserved:
 
 ## 9. Build Plan
 
-> **Superseded by [#70](https://github.com/breferrari/shardmind/issues/70) (2026-04-24).** This build plan predates the v6 shard-layout design. The six-day cadence is still a useful frame, but the **specific sub-tasks** in each day below assume the old `templates/`-walk contract, the `partials` field, and the Cookiecutter-style source/target split — all removed in the v6 contract. For the current work plan, engine change scope, invariants, and acceptance criteria, read:
+> **Historical.** The original six-day build plan predated the v6 shard-layout contract and has been removed: its sub-tasks assumed a source walk and file mapping the engine no longer has. v0.1 was built against the task list in [#70](https://github.com/breferrari/shardmind/issues/70) (closed) and the contract in [`docs/SHARD-LAYOUT.md`](SHARD-LAYOUT.md).
 >
-> - [`docs/SHARD-LAYOUT.md`](SHARD-LAYOUT.md) — the v6 contract + three binding invariants (the spec).
-> - [#70](https://github.com/breferrari/shardmind/issues/70) — the task list mapped onto the six days (the plan).
->
-> The day headings below stay; the bullet lists within each day do not reflect reality and should be cross-checked against SHARD-LAYOUT.md + #70 before being actioned. This section will be rewritten when the engine changes land.
-
-### Day 1: Foundation
-
-```
-Morning:
-  npx create-pastel-app shardmind
-  Configure tsup for dual entry (cli + runtime)
-  Set up vitest
-
-  Implement + test:
-    source/core/manifest.ts      (parse shard.yaml → zod → ShardManifest)
-    source/core/schema.ts        (parse shard-schema.yaml → zod → ShardSchema + buildValuesValidator)
-    source/runtime/types.ts      (all shared types)
-
-Afternoon:
-  Implement + test:
-    source/core/download.ts      (fetch tarball → extract to temp → TempShard)
-    source/core/modules.ts       (walk template dir → classify by module → ModuleResolution)
-    source/core/renderer.ts      (Nunjucks env → frontmatter-aware → RenderedFile)
-
-  Tests:
-    tests/unit/manifest.test.ts  (valid, invalid, missing fields)
-    tests/unit/schema.test.ts    (parse, validator generation, computed defaults)
-    tests/unit/renderer.test.ts  (plain, frontmatter, volatile hint, _each)
-    tests/unit/modules.test.ts   (include/exclude, path mapping, copy vs render)
-    tests/fixtures/render/       (5 rendering scenarios)
-    tests/fixtures/schema/       (5 schema scenarios)
-
-  Verify: shardmind --version works
-```
-
-### Day 2: Install Command
-
-```
-Morning:
-  Implement:
-    source/core/state.ts         (read/write state.json, init .shardmind/, cache)
-    source/runtime/index.ts      (loadValues, loadState, resolveVaultRoot, etc.)
-    source/core/registry.ts      (resolve shard ref → tarball URL)
-
-  Tests:
-    tests/unit/state.test.ts
-    tests/unit/runtime.test.ts
-    tests/unit/registry.test.ts  (mock fetch)
-
-Afternoon:
-  Implement:
-    source/components/Header.tsx
-    source/components/InstallWizard.tsx
-    source/components/ModuleReview.tsx
-    source/commands/install.tsx
-
-  Integration test:
-    tests/integration/install.test.ts
-      → create temp dir
-      → run install pipeline against real obsidian-mind shard
-      → verify: files created, state.json correct, values file written
-      → verify: excluded modules have no files
-      → verify: volatile files marked correctly
-      → cleanup
-
-  Verify: shardmind install breferrari/obsidian-mind works end to end
-```
-
-### Day 3: Merge Engine (TDD)
-
-```
-Morning:
-  Write ALL 17 fixture directories:
-    tests/fixtures/merge/01-managed-no-change/
-      scenario.yaml, old-template.md.njk, old-values.yaml,
-      new-template.md.njk, new-values.yaml, actual-file.md,
-      expected-output.md (or expected-action)
-    ... through 17-volatile-template-changed/
-
-  Write test runner:
-    tests/unit/drift.test.ts (auto-discovers fixtures, runs all scenarios)
-
-  Run tests → all 17 fail
-
-Afternoon:
-  Implement:
-    source/core/drift.ts        (detectDrift → DriftReport)
-    source/core/differ.ts       (computeMergeAction + threeWayMerge via node-diff3)
-
-  Iterate until all 17 scenarios pass.
-
-  Add edge case fixtures:
-    frontmatter-merge, empty-file, binary-identical, encoding
-
-  Verify: all merge scenarios pass
-```
-
-### Day 4: Update Command + Status
-
-```
-Morning:
-  Implement:
-    source/core/migrator.ts      (apply migrations to values)
-    source/components/DiffView.tsx
-    source/commands/update.tsx
-
-  Tests:
-    tests/unit/migrator.test.ts
-    tests/fixtures/migration/    (rename, add, remove, type change)
-    tests/integration/update.test.ts
-      → install a shard
-      → modify some files manually
-      → "update" with a modified shard version
-      → verify: managed files overwritten, modified files diffed, volatile skipped
-
-Afternoon:
-  Implement:
-    source/components/StatusView.tsx
-    source/components/VerboseView.tsx
-    source/commands/index.tsx
-
-  E2E test:
-    tests/e2e/cli.test.ts (ships in PR #54)
-      → 30 scenarios spawned against dist/cli.js via child_process
-      → Bootstrap (2): --version, --help
-      → Status    (7): empty vault, fresh install, --verbose sections,
-                       update-available arrow, modified-file +N/−M,
-                       STATE_CORRUPT rendering, offline degradation
-      → Install   (12): happy + slashes + dry-run + open-hint + @version
-                        + VERSION_NOT_FOUND + SHARD_NOT_FOUND +
-                        REGISTRY_INVALID_REF + VALUES_MISSING + collision
-                        backup + dry-run-over-collision + SIGINT rollback
-                        (every OS, on the held tarball request; see §19.7)
-      → Update    (7): UPDATE_NO_INSTALL typed error, up-to-date,
-                       real bump + file add, auto-merge on non-conflict,
-                       UPDATE_SOURCE_MISMATCH on corrupted state.source,
-                       --dry-run no-op, SIGINT rollback
-                       (same GH Actions Windows skip as install)
-      → Property  (2): install structural determinism (files/modules/
-                       values_hash), dry-run safety across arbitrary
-                       valid values
-
-  Hermetic via tests/e2e/helpers/github-stub.ts (local HTTP emulator
-  pointed at by SHARDMIND_GITHUB_API_BASE). No public network hits.
-  See docs/ARCHITECTURE.md §19.7 for the E2E methodology.
-
-  Verify: all 3 commands work, TUI renders correctly, exit codes
-  correctly signal success/failure for scripting.
-```
-
-### Day 5: obsidian-mind v6
-
-```
-In the obsidian-mind repo:
-
-Morning:
-  Add shard.yaml
-  Add shard-schema.yaml (4 values, 8 modules, frontmatter rules)
-  Convert all templates/ to .njk
-  Break CLAUDE.md into partials:
-    templates/claude/_core.md.njk      (extract ~200 lines of domain-agnostic content)
-    templates/claude/_perf.md.njk      (perf note types, properties, commands)
-    templates/claude/_incidents.md.njk
-    templates/claude/_1on1s.md.njk
-    templates/claude/_org.md.njk
-  Create templates/CLAUDE.md.njk (assembler)
-
-Afternoon:
-  Rewrite hooks in TypeScript:
-    .claude/scripts/session_start.ts   (from session-start.sh)
-    .claude/scripts/classify.ts        (from classify-message.py)
-    .claude/scripts/validate_note.ts   (from validate-write.py)
-    .claude/scripts/backup_transcript.ts (from pre-compact.sh)
-    .claude/scripts/session_end.ts     (new, from Stop hook logic)
-
-  Add {# shardmind: volatile #} to:
-    templates/brain/Memories.md.njk
-    templates/work/Index.md.njk
-    templates/org/People & Context.md.njk
-
-  Add templates/settings.json.njk
-
-  Test: shardmind install breferrari/obsidian-mind from the ShardMind CLI
-  Verify: vault is identical to current git clone experience
-```
-
-### Day 6: Ship
-
-```
-Morning:
-  Create research-wiki shard:
-    shard.yaml, shard-schema.yaml (3 values, 4 modules)
-    templates/ (CLAUDE.md with _research.md.njk partial)
-    commands/ (ingest, compile, lint, query)
-    agents/ (wiki-compiler, cross-linker, contradiction-detector)
-
-  Test: shardmind install breferrari/research-wiki
-
-Afternoon:
-  npm publish shardmind
-  README.md for ShardMind repo
-  shardmind.dev landing page (or at minimum a GitHub Pages README)
-  Create shardmind/registry repo with index.json (2 shards)
-  Announce
-
-  Final test: fresh machine, npm install -g shardmind, shardmind install breferrari/obsidian-mind
-```
+> Current and future work lives in [`ROADMAP.md`](../ROADMAP.md): one phase per GitHub milestone, each row linking its issue. Closed milestones ([Phase 1](https://github.com/breferrari/shardmind/milestone/1), [Phase 2](https://github.com/breferrari/shardmind/milestone/2)) record what shipped after v0.1. The module specs in §4 describe the engine as built.
 
 ---
 

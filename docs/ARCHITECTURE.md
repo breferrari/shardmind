@@ -33,8 +33,8 @@ Adapted from Terraform (desired/actual/state) and chezmoi (source/target/destina
 
 ```mermaid
 graph LR
-    D["🔴 DESIRED STATE\ntemplates/ + values\n\nShard author owns.\nReplaced on update.\nUser never touches."]
-    T["🟡 TARGET STATE\nrender templates, values\n\nComputed in memory.\nNever persisted.\nExists only during\ninstall/update."]
+    D["🔴 DESIRED STATE\nshard source + values\n\nShard author owns.\nReplaced on update.\nUser never touches."]
+    T["🟡 TARGET STATE\nrender .njk, copy the rest\n\nComputed in memory.\nNever persisted.\nExists only during\ninstall/update."]
     A["🟢 ACTUAL STATE\nfiles on disk\n\nUser owns.\nEdits freely.\nThat's the whole\npoint of Obsidian."]
 
     D -->|render| T -->|write| A
@@ -48,9 +48,9 @@ Every file in the vault has one of three ownership states:
 
 | State | Meaning | Determined by | On update |
 |-------|---------|---------------|-----------|
-| **managed** | Rendered from template. User hasn't edited. | `hash(file on disk) == hash(last rendered)` | Silent re-render |
-| **modified** | Rendered from template. User HAS edited. | `hash(file on disk) != hash(last rendered)` | Three-way diff in TUI |
-| **user** | Created by user or LLM, not from template. | Not in state.json | Never touched |
+| **managed** | Installed from the shard (rendered or copied). User hasn't edited. | `hash(file on disk) == hash(last rendered)` | Silent re-render |
+| **modified** | Installed from the shard. User HAS edited. | `hash(file on disk) != hash(last rendered)` | Three-way diff in TUI |
+| **user** | Created by user or LLM, not from the shard. | Not in state.json | Never touched |
 
 This is how Terraform detects infrastructure drift — compare state hash against actual. The difference: Terraform overwrites drift. ShardMind respects it.
 
@@ -62,7 +62,7 @@ Two distinct mechanisms control a vault's shape:
 
 **Modules** control what files and folders *exist*. The `perf/` directory, the `work/incidents/` folder, the `/review-brief` command, and the `brag-spotter` agent are all parts of the `perf` module. Modules are included or excluded during install. Empty Obsidian folders cost nothing — but a researcher looking at `perf/competencies/` feels the vault isn't for them. Modules give users ownership over the vault's shape.
 
-Values are stored in `shard-values.yaml` (user owns). Module selections are stored in `.shardmind/state.json` (ShardMind owns). Templates are rendered with values. Modules gate which templates are rendered at all.
+Values are stored in `shard-values.yaml` (user owns). Module selections are stored in `.shardmind/state.json` (ShardMind owns). `.njk` files are rendered with values. Modules gate which shard files are installed at all.
 
 ### 2.5 Locality
 
@@ -104,9 +104,9 @@ my-shard/                             ← git repo root; also opens cleanly as a
 │
 ├── .shardmindignore                  ← repo root; gitignore-spec globs (negation deferred to v0.2)
 │
-├── <vault content at native paths>   ← brain/, work/, Home.md, perf/, bases/.base.njk, etc.
+├── <vault content at native paths>   ← brain/, work/, Home.md, perf/, bases/, etc.
 │
-├── CLAUDE.md, AGENTS.md, GEMINI.md   ← agent operating manuals; included per agent selection
+├── CLAUDE.md, AGENTS.md, GEMINI.md   ← agent operating manuals; verbatim; included per agent selection
 │
 ├── .claude/, .codex/, .gemini/       ← agent operational layers (dotfolders; .njk render allowed)
 ├── .mcp.json, .obsidian/             ← config + Obsidian vault-shape config
@@ -115,7 +115,7 @@ my-shard/                             ← git repo root; also opens cleanly as a
 ├── ARCHITECTURE.md, .gitignore       ← installed if present
 │
 └── <repo-only artifacts>             ← .github/, CONTRIBUTING.md, README.<lang>.md, demo media
-                                        (excluded via .shardmindignore — see §10.6)
+                                        (excluded via .shardmindignore — see Tier 3 below)
 ```
 
 The walker is rooted at the shard repo and applies three filters in order: Tier 1 engine exclusions, root-level `.shardmindignore` globs, and symlink rejection. Files survive into the install set verbatim.
@@ -131,7 +131,8 @@ my-vault/
 │   ├── state.json                    ← ownership hashes + module/agent selections + version + resolved ref
 │   ├── shard.yaml                    ← cached manifest
 │   ├── shard-schema.yaml             ← cached values schema
-│   └── templates/                    ← cached source files; merge base for three-way merge on update
+│   ├── templates/                    ← cached source files; merge base for three-way merge on update
+│   └── logs/                         ← full output of a crashed or long hook (<slot>.log); on demand
 │
 ├── shard-values.yaml                 ← user's wizard answers; vault-root, NOT under .shardmind/
 │                                       ("delete .shardmind/ and shard-values.yaml — the vault
@@ -140,7 +141,7 @@ my-vault/
 ├── <same vault content as source, with:>
 │   ├── .njk files rendered with user values (suffix stripped)
 │   ├── optional modules/agents included per wizard (default: all)
-│   └── hook may have personalized managed files (bound by Invariants 2 + 3, see §10.6)
+│   └── hook may have personalized managed files (bound by Invariants 2 + 3, see SHARD-LAYOUT.md)
 │
 ├── .shardmindignore                  ← installed verbatim (Tier 2); inert post-install
 ├── README.md, LICENSE, CHANGELOG.md
@@ -148,7 +149,7 @@ my-vault/
 └── (no .github/, no CONTRIBUTING.md, no translations, no demo media — Tier 1 + ignore filtered)
 ```
 
-Installed-side path constants are authoritative in [`source/runtime/vault-paths.ts`](../source/runtime/vault-paths.ts): `STATE_FILE`, `CACHED_MANIFEST`, `CACHED_SCHEMA`, `CACHED_TEMPLATES` all live under `.shardmind/`; `VALUES_FILE` lives at vault root.
+Installed-side path constants are authoritative in [`source/runtime/vault-paths.ts`](../source/runtime/vault-paths.ts): `STATE_FILE`, `CACHED_MANIFEST`, `CACHED_SCHEMA`, `CACHED_TEMPLATES`, `HOOK_LOGS_DIR` all live under `.shardmind/`; `VALUES_FILE` lives at vault root.
 
 ### Tier 1 — engine-enforced exclusions (always excluded source-side)
 
@@ -162,7 +163,11 @@ Not author-configurable. Defined in [`source/core/tier1.ts`](../source/core/tier
 
 Other Obsidian user-state files (`starred.json`, `bookmarks.json`, `backlink.json`, `page-preview.json`) are author-controlled via `.shardmindignore`.
 
-### Tier 2 — author-controlled via `.shardmindignore`
+### Tier 2 — default-included
+
+Everything else at the shard root installs: vault content, agent manuals and dotfolders, `.obsidian/` config, `README.md` / `LICENSE` / `CHANGELOG.md`, and `.shardmindignore` itself. The full list is in [`SHARD-LAYOUT.md §File disposition`](SHARD-LAYOUT.md#file-disposition).
+
+### Tier 3 — author-controlled via `.shardmindignore`
 
 Glob-only in v0.1 (negation deferred to [#87](https://github.com/breferrari/shardmind/issues/87)). Typical obsidian-mind-shaped exclusions:
 
@@ -387,7 +392,7 @@ signals:
     core: true
 ```
 
-Each module's CLAUDE.md partial documents its own signals. The `_core.md.njk` partial documents universal signals. `classify.ts` reads the schema at runtime via `shardmind/runtime` — fully data-driven.
+The shard's agent manual (`CLAUDE.md`, shipped whole) documents the signals in prose. `classify.ts` reads the schema at runtime via `shardmind/runtime` — fully data-driven.
 
 > [!note] Gap found by validating against the Vigil Mind Reshape
 > The reshape changed classify.py from 7 to 9 signals. Without signals in the schema, every domain (researcher, freelancer, student) would need to hand-edit the classifier. With signals in the schema, `/dump` routes correctly for every domain out of the box.
@@ -483,18 +488,9 @@ graph TD
     style G fill:#1a1a2e,stroke:#0f9d58,color:#fff
 ```
 
-### 7.3 CLAUDE.md as a Single Template
+### 7.3 CLAUDE.md Ships Whole
 
-Under the v6 contract, `CLAUDE.md` (and `AGENTS.md`, `GEMINI.md`) ships as a single Nunjucks template at the shard root — `CLAUDE.md.njk` — rendered like any other `.njk` file. There is no partials/assembly system; per-module conditional content is expressed via `{% if %}` blocks gated on `included_modules`, e.g.:
-
-```nunjucks
-{% if 'perf' in included_modules %}
-## Performance reviews
-…
-{% endif %}
-```
-
-Module deselection means file-path gating (the file is not installed), not section pruning of an assembled CLAUDE.md. See [`docs/SHARD-LAYOUT.md`](SHARD-LAYOUT.md) "no wrapper directories, no partials/assembly system" for the contract rationale.
+Under the v6 contract, `CLAUDE.md` (and `AGENTS.md`, `GEMINI.md`) is a plain file at the shard root, copied verbatim on install. There is no partials/assembly system and no section pruning: deselecting a module removes that module's files, and the agent manual stays whole. A shard that wants per-module prose can still ship `CLAUDE.md.njk` and branch on `included_modules` (part of the render context), at the cost of the manual no longer being byte-identical to a clone. See [`SHARD-LAYOUT.md §Values, schema, and modules`](SHARD-LAYOUT.md#values-schema-and-modules--spec-rules).
 
 ### 7.4 Dynamic File Generation
 
@@ -502,7 +498,7 @@ Templates prefixed with `_each` iterate over list values. For each item in the c
 
 ### 7.5 Module-Gated Rendering
 
-The renderer checks module inclusion before rendering any template. If a template's path falls within an excluded module's paths, it's skipped entirely. No conditional blocks needed in the templates themselves — the file simply doesn't exist.
+Module gating happens in the walk (`source/core/modules.ts::resolveModules`), before anything is rendered or copied. A file under an excluded module's paths, or a command, agent or base named by an excluded module, is skipped entirely. No conditional blocks needed in the files themselves — the file simply doesn't exist.
 
 ---
 
@@ -531,12 +527,12 @@ The bridge between desired and actual state.
   },
   "files": {
     "CLAUDE.md": {
-      "template": "templates/CLAUDE.md.njk",
+      "template": "CLAUDE.md",
       "rendered_hash": "sha256:abc...",
       "ownership": "managed"
     },
     "brain/North Star.md": {
-      "template": "templates/brain/North Star.md.njk",
+      "template": "brain/North Star.md",
       "rendered_hash": "sha256:def...",
       "ownership": "managed"
     }
@@ -548,11 +544,11 @@ Key fields:
 - `schema_version` — the shape of this file, not the shard's version. See §8.2.
 - `source` — where to fetch updates from. Read by `shardmind update`. User never re-specifies.
 - `modules` — which modules are included/excluded. Persists across updates. User can change during update.
-- `files` — per-file hash tracking for drift detection.
+- `files` — per-file hash tracking for drift detection. Each entry's `template` is the source path relative to the shard root, which is also its path under `.shardmind/templates/`: the same as the vault path for a copied file, and with the `.njk` suffix kept for a rendered one (`.claude/settings.json.njk`).
 
 ### 8.1 Cached Templates
 
-`.shardmind/templates/` stores the templates that produced the current rendered files. This is the **base** in three-way merge during update.
+`.shardmind/templates/` stores a copy of the shard source at the installed version: every file that passes the Tier 1 + `.shardmindignore` + symlink filter, rendered and copied files alike, with no module gating (so a module turned on at update time has a base). It is the **base** in three-way merge during update (`source/core/state.ts::cacheTemplates`).
 
 ### 8.2 Schema migrations
 
@@ -675,7 +671,7 @@ export default async function(ctx: BootstrapContext): Promise<void>;
 | `.shardmind/shard-schema.yaml` | **Yes** | Offline reference |
 | `.shardmind/templates/` | **No** | Derivable, re-downloaded on update |
 
-The shard's `.gitignore.njk` template includes:
+The shard's `.gitignore` (a plain file, so Invariant 1 holds) includes:
 
 ```
 # ShardMind cache (re-downloaded on update)
@@ -1125,12 +1121,12 @@ my-vault/
 │   ├── state.json                     # File hashes + ownership + modules + source
 │   ├── shard.yaml                     # Cached manifest
 │   ├── shard-schema.yaml              # Cached schema
-│   └── templates/                     # Cached templates (base for 3-way merge)
+│   └── templates/                     # Cached shard source (base for 3-way merge)
 │
 ├── shard-values.yaml                  # USER OWNS. Never overwritten. 4 values.
 │
-├── CLAUDE.md                          # Rendered from CLAUDE.md.njk (managed)
-├── Home.md                            # Rendered (managed)
+├── CLAUDE.md                          # Copied verbatim (managed)
+├── Home.md                            # Copied, or rendered from Home.md.njk (managed)
 │
 ├── brain/                             # Core (always included)
 │   ├── North Star.md
@@ -1156,7 +1152,7 @@ my-vault/
 ├── reference/                         # Core (always included)
 ├── thinking/                          # Core (always included)
 ├── templates/                         # Obsidian note templates (managed)
-├── bases/                             # Rendered conditionally by module
+├── bases/                             # Gated by module
 │
 └── .claude/
     ├── commands/                      # Only commands for included modules
@@ -1222,7 +1218,7 @@ In the ownership model, SOUL is a **modified** file from the moment the user fil
 ```yaml
 guided_files:
   - path: brain/SOUL.md
-    template: templates/brain/SOUL.md.njk
+    template: brain/SOUL.md
     label: "🧠 SOUL — teach Claude who you are"
     optional: true
     prompts:
@@ -1737,7 +1733,7 @@ staying hermetic. No test reaches the public internet.
 | 2 | `commands/install.tsx`: 4-value wizard + module review multiselect. State file. First E2E install of obsidian-mind. |
 | 3 | Write all 16 merge fixtures. Implement drift.ts + differ.ts (TDD). node-diff3 integration. All scenarios passing. |
 | 4 | `commands/update.tsx` wired to drift engine + DiffView. `commands/index.tsx` status display + verbose mode. |
-| 5 | obsidian-mind v6: shard.yaml, shard-schema.yaml, .njk templates, CLAUDE.md.njk, TypeScript hooks. |
+| 5 | obsidian-mind v6: `.shardmind/` sidecar (shard.yaml, shard-schema.yaml, TypeScript hooks), dotfolder `.njk` configs, `shardmind adopt`. |
 | 6 | Research-wiki shard. E2E tests. README. npm publish. Announce. |
 
 ---
@@ -1751,7 +1747,7 @@ staying hermetic. No test reaches the public internet.
 | **Shard composition** | One shard per vault in v0.1. `state.json` is at `schema_version: 2` (#102); composition bumps it to 3 with `shards[]`, through a `state-migrator.ts` rule (§8.2). | Affects state.json design, module conflict resolution, partial rendering. |
 | **Structural variants** | Different purposes need different folder structures. For v0.1: different purposes = different shards. | `modules.structure` with purpose-driven variants. Reshape doc is the design spec. |
 | **SOUL guided creation** | Ship as empty template in v0.1. | `guided_files` in schema, third install phase. |
-| **`shardmind init`** | For shard authors. You are the first shard author. Build by hand. | Scaffolds `shard.yaml`, `shard-schema.yaml`, `templates/` from prompts. |
+| **`shardmind init`** | For shard authors. You are the first shard author. Build by hand. | Scaffolds `.shardmind/shard.yaml`, `.shardmind/shard-schema.yaml` and `.shardmindignore` into an existing vault from prompts. |
 
 ---
 
