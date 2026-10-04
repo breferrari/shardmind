@@ -56,7 +56,7 @@ The suite fails only on real defects, on all three operating systems.
 |---|---|---|
 | ✅ | Flaky test: merge-adversarial 10K-lines tokenize times out under parallel pressure | [#114](https://github.com/breferrari/shardmind/issues/114) |
 | ✅ | Flake: hook-runner pre-throw stdout dropped under parallel CPU pressure | [#106](https://github.com/breferrari/shardmind/issues/106) |
-| ✅ | E2E: bridge SIGINT delivery reliably on GH Actions Windows runner | [#57](https://github.com/breferrari/shardmind/issues/57) |
+| ⬜ | E2E: bridge SIGINT delivery reliably on GH Actions Windows runner | [#57](https://github.com/breferrari/shardmind/issues/57) |
 
 ## Shelf
 
@@ -388,7 +388,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] `docs/IMPLEMENTATION.md` §4.11a / §4.11b for install-planner + install-executor ([#64](https://github.com/breferrari/shardmind/issues/64))
 - [ ] Enforce tarball size cap in `downloadShard` ([#32](https://github.com/breferrari/shardmind/issues/32))
 - [x] `--force` flag on install for scripted collision overwrite without backup ([#55](https://github.com/breferrari/shardmind/issues/55))
-- [x] E2E: bridge SIGINT delivery reliably on GH Actions Windows runner ([#57](https://github.com/breferrari/shardmind/issues/57))
+- [ ] E2E: bridge SIGINT delivery reliably on GH Actions Windows runner ([#57](https://github.com/breferrari/shardmind/issues/57))
 - [ ] Hook-runner pre-throw stdout dropped under parallel CPU pressure (test-only flake; `process.exit()` race vs piped buffer) ([#106](https://github.com/breferrari/shardmind/issues/106))
 - [ ] Split `release.yml` into two pipelines — GitHub Release (reversible) before npm publish (irreversible) ([#108](https://github.com/breferrari/shardmind/issues/108))
 - [ ] Flaky test: `merge-adversarial 10K-lines tokenize` times out under parallel pressure ([#114](https://github.com/breferrari/shardmind/issues/114)) — retroactive `/take-next` §4 three-condition review documented [in the issue](https://github.com/breferrari/shardmind/issues/114#issuecomment-4323200506); deciding factor is whether the fix is a timeout bump (close as fix-in-PR) or algorithmic (keep deferred). Investigate scope before next `tests/unit/` touch.

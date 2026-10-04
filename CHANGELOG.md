@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (Ctrl+C during a download — #57)
+
+- **Ctrl+C while a shard is downloading no longer leaves its temp folder behind.** Install, update and adopt registered the cleanup of their `shardmind-<id>` temp folder only once the download finished, so an interrupt during it left the folder in the system temp directory.
+
 ### Fixed (hook output on failure — #106)
 
 - **A hook that fails no longer loses the output it printed first.** On Linux and macOS, a hook that wrote more than 64 KiB, or wrote under load, and then threw or called `process.exit` could have the end of its output cut off in the summary and in `.shardmind/logs/<slot>.log`. The hook runner now writes its output synchronously, so an exit should no longer drop it.
