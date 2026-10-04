@@ -1,7 +1,7 @@
 /**
  * The command-line tools a shard declares in `external_tools`, checked
  * against their version ranges before install, adopt and update write
- * anything (#138). Spec: docs/IMPLEMENTATION.md §4.25; contract:
+ * anything (#138). Spec: docs/IMPLEMENTATION.md §4.26; contract:
  * docs/SHARD-LAYOUT.md §External tools.
  *
  * Pure apart from the probe, which callers pass in (tests never spawn). A

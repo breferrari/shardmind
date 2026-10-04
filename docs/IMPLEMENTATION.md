@@ -392,7 +392,7 @@ const ShardManifestSchema = z.object({
     timeout_ms: z.number().int().min(1_000).max(600_000).optional(),
   }).default({}),
   // Command-line tools the shard needs (#138), checked by external-tools.ts
-  // (§4.25). command: ^[a-z0-9][a-z0-9._-]*$; each arg: ^[A-Za-z0-9._=-]+$;
+  // (§4.26). command: ^[a-z0-9][a-z0-9._-]*$; each arg: ^[A-Za-z0-9._=-]+$;
   // package: an npm package name; version: a non-empty semver range.
   external_tools: z.record(ToolNameSchema, z.object({
     package: NpmPackageSchema,
