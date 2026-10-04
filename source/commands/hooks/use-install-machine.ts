@@ -198,13 +198,18 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   // partial writes and restore backups before exiting. `cleanup` drops
   // the shard tempdir regardless of phase — without it, cancelling at
   // the wizard or collision screens leaks the extracted shard on disk.
+  // One rollback for both failure paths, a Ctrl+C and an error before the
+  // install commits: every path written so far, then everything moved aside.
+  const rollbackPartialInstall = () =>
+    rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current);
+
   useSigintRollback({
     isActive: () => {
       // Read once, on Ctrl+C: stop moving files before the rollback starts.
       interruptedRef.current = true;
       return !dryRun && installingRef.current;
     },
-    rollback: () => rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current),
+    rollback: () => rollbackPartialInstall(),
     cleanup: async () => {
       // Abort any in-flight post-install hook subprocess. Intentionally
       // runs on every Ctrl+C, regardless of `isActive` — during the
@@ -413,7 +418,6 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         backups,
       });
 
-      let written: string[] = [];
       // Once state.json is written the install stands: a later failure is
       // reported, never rolled back, or it would take the new install with it
       // after the old one is gone.
@@ -458,7 +462,6 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
             }
           },
         });
-        written = runResult.writtenPaths;
 
         // State.json is now on disk — we're past the point-of-no-return.
         // Clear the rollback guard BEFORE firing the hook so a SIGINT
@@ -523,7 +526,12 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       } catch (err) {
         const rollBack = !dryRun && !committed;
         if (rollBack) {
-          await rollbackInstall(vaultRoot, written, [...backups, ...setAside]).catch(() => {});
+          // Clear the guard first, so a Ctrl+C now cannot start a second
+          // rollback racing this one on the same backups. Rolls back every
+          // path `runInstall` reported through `onFileWritten` (#207): its
+          // own return value never arrives when it throws.
+          installingRef.current = false;
+          await rollbackPartialInstall().catch(() => {});
         }
         installingRef.current = false;
         finish({

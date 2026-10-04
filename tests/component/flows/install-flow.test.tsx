@@ -823,6 +823,31 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await vault.cleanup();
     }
   }, 60_000);
+  // ───── A fresh install whose render fails mid-write leaves nothing behind (#207) ─────
+
+  it('fresh install that fails after its files are written → only the user\'s own file is left (#207)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vaultRoot = await makeVaultDir('s207-fresh-rollback');
+    try {
+      // A stray values file with no state.json: the install is fresh, every
+      // file and state.json get written, and only the final exclusive
+      // values write fails (VALUES_FILE_COLLISION). Deterministic, unlike a
+      // failing template, whose place in the walk depends on readdir order.
+      const stray = 'user_name: "left over"\n';
+      await fs.writeFile(path.join(vaultRoot, 'shard-values.yaml'), stray, 'utf-8');
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot, options: { defaults: true } });
+      await waitFor(() => r.frames.join('\n'), (f) => /VALUES_FILE_COLLISION/.test(f), 30_000);
+      await tick(200);
+      expect(r.frames.join('\n')).toMatch(/Rolled back partial install/);
+      expect(await fs.readdir(vaultRoot)).toEqual(['shard-values.yaml']);
+      expect(await fs.readFile(path.join(vaultRoot, 'shard-values.yaml'), 'utf-8')).toBe(stray);
+    } finally {
+      await cleanupVault(vaultRoot);
+    }
+  }, 60_000);
+
   // ───── Scenario 18: gate → Reinstall with --yes backs up only the user's own content (#55) ─────
 
   it("18. gate → Reinstall with --yes → only the edited file is backed up, the old install's untouched files are not (#55)", async () => {

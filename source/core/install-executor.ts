@@ -232,7 +232,10 @@ export async function restoreBackups(
 
 /**
  * Execute the install pipeline: render + copy + write + cache + state.
- * Returns writtenPaths so the caller can roll back on later failure.
+ * Returns writtenPaths, but a caller that rolls back on failure must collect
+ * paths through `onFileWritten`: when this throws, the return value never
+ * arrives (#207). Each path is reported just before its write, so a write
+ * that fails partway is rolled back too.
  */
 export async function runInstall(opts: InstallRunnerOptions): Promise<InstallResult> {
   const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, onFileWritten, dryRun } = opts;
@@ -274,9 +277,9 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     if (entry.iterator) await assertSafeVaultPaths(vaultRoot, files.map((f) => f.outputPath));
     for (const file of files) {
       if (!dryRun) {
-        await writeVaultFile(vaultRoot, file.outputPath, file.content);
         writtenPaths.push(file.outputPath);
         onFileWritten?.(file.outputPath);
+        await writeVaultFile(vaultRoot, file.outputPath, file.content);
       }
       fileStates[file.outputPath] = {
         template: toPosix(tempDir, entry.sourcePath),
@@ -300,9 +303,9 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     const buffer = await fsp.readFile(entry.sourcePath);
     const hash = sha256(buffer);
     if (!dryRun) {
-      await writeVaultFileBuffer(vaultRoot, entry.outputPath, buffer);
       writtenPaths.push(entry.outputPath);
       onFileWritten?.(entry.outputPath);
+      await writeVaultFileBuffer(vaultRoot, entry.outputPath, buffer);
     }
     fileStates[entry.outputPath] = {
       template: toPosix(tempDir, entry.sourcePath),
