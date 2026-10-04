@@ -331,14 +331,18 @@ export type StatusResult =
 export function statusResult(report: StatusReport | null): StatusResult {
   if (report === null) return { installed: false };
   const { state, drift } = report;
-  // `modifiedChanges` is index-aligned with `modifiedPaths` when present.
-  const modified = drift.modifiedPaths.map((p, i): StatusModifiedFile => {
-    const change = drift.modifiedChanges?.[i];
-    if (!change) return { path: p };
-    return 'skipped' in change
-      ? { path: p, diffSkipped: change.reason }
-      : { path: p, linesAdded: change.linesAdded, linesRemoved: change.linesRemoved };
-  });
+  // `modifiedChanges` is index-aligned with `modifiedPaths` when present, so
+  // pair them before sorting. Drift lists modified and missing files in
+  // state.json key order; the document promises path order (§10.3a).
+  const modified = drift.modifiedPaths
+    .map((p, i): StatusModifiedFile => {
+      const change = drift.modifiedChanges?.[i];
+      if (!change) return { path: p };
+      return 'skipped' in change
+        ? { path: p, diffSkipped: change.reason }
+        : { path: p, linesAdded: change.linesAdded, linesRemoved: change.linesRemoved };
+    })
+    .sort((a, b) => byPath(a.path, b.path));
   return {
     installed: true,
     shard: state.shard,
@@ -358,8 +362,8 @@ export function statusResult(report: StatusReport | null): StatusResult {
         orphaned: drift.orphaned,
       },
       modified,
-      missing: drift.missingPaths,
-      orphaned: drift.orphanedPaths,
+      missing: [...drift.missingPaths].sort(byPath),
+      orphaned: [...drift.orphanedPaths].sort(byPath),
     },
     modules: report.modules,
     values: {
@@ -378,4 +382,9 @@ export function statusResult(report: StatusReport | null): StatusResult {
     environment: report.environment,
     warnings: report.warnings,
   };
+}
+
+/** Code-unit order, the same comparison the adopt and update plans sort by. */
+function byPath(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }

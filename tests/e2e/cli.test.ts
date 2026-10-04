@@ -338,6 +338,18 @@ describe('shardmind (status)', () => {
       expect(doc.result!.environment).not.toBeNull();
     });
 
+    it('reports a missing values file as values.fileMissing, still ok', async () => {
+      vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'status-json-novalues' });
+      await fs.rm(path.join(vault.root, 'shard-values.yaml'), { force: true });
+      const result = await spawnCli(['--json'], { cwd: vault.root, env: envWithStub() });
+      expect(result.exitCode).toBe(0);
+      const doc = JSON.parse(result.stdout) as StatusDoc & {
+        result: { values: { valid: boolean; fileMissing: boolean } };
+      };
+      expect(doc.ok).toBe(true);
+      expect(doc.result.values).toMatchObject({ valid: false, fileMissing: true });
+    });
+
     it('stays ok with update.kind unknown when the registry is unreachable', async () => {
       vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'status-json-offline' });
       const result = await spawnCli(['--json'], {

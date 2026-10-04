@@ -353,6 +353,29 @@ describe('statusResult (#139)', () => {
     ]);
   });
 
+  it('sorts modified and missing by path, keeping each line count with its file', () => {
+    const base = report();
+    const out = statusResult(
+      report({
+        drift: {
+          ...base.drift,
+          // Drift lists these in state.json key order, not sorted.
+          modifiedPaths: ['z.md', 'a.md'],
+          modifiedChanges: [
+            { path: 'z.md', linesAdded: 9, linesRemoved: 0 },
+            { path: 'a.md', linesAdded: 1, linesRemoved: 2 },
+          ],
+          missingPaths: ['y.md', 'b.md'],
+        },
+      }),
+    );
+    expect(out.installed && out.files.modified).toEqual([
+      { path: 'a.md', linesAdded: 1, linesRemoved: 2 },
+      { path: 'z.md', linesAdded: 9, linesRemoved: 0 },
+    ]);
+    expect(out.installed && out.files.missing).toEqual(['b.md', 'y.md']);
+  });
+
   it('carries ref and resolvedSha for a #<ref> install', () => {
     const base = report();
     const out = statusResult(

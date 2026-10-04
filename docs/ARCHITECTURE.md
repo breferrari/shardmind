@@ -805,7 +805,7 @@ Full diagnostic output. Replaces the old `doctor` command concept.
   - `warnings`: the findings the human view shows, each with `severity`, `message` and, when present, `hint`.
 - **Failure** (for example, a corrupt `state.json`): `ok: false`, `error` (`code`, `message`, `hint`), **exit 1**. The human status view is ambient and exits 0 on an error it can show; a document saying `ok: false` exits non-zero so `$?` and the body agree.
 
-Lists are uncapped. The terminal views sample at 20 entries, and the document never does. Paths are sorted as the drift report lists them.
+Lists are uncapped and sorted by path. The terminal views sample at 20 entries, and the document never does.
 
 ### 10.4 `shardmind install <shard>` — Install Flow
 
