@@ -144,9 +144,20 @@ describe('acquireVaultLock (#253)', () => {
     await holder({ pid: 999999, hostname: os.hostname(), command: 'adopt', startedAt: '2026-01-01T00:00:00.000Z' });
     // Another run is mid-takeover.
     await fsp.writeFile(path.join(vault, LOCK_TAKEOVER_FILE), JSON.stringify({ pid: 4242, hostname: os.hostname(), command: 'install', startedAt: '2026-10-04T12:00:00.000Z' }));
-    expect(() => acquireVaultLock(vault, 'update', { isAlive: () => false })).toThrow(expect.objectContaining({ code: 'VAULT_LOCKED' }));
+    expect(() => acquireVaultLock(vault, 'update', { isAlive: (pid) => pid === 4242 })).toThrow(
+      expect.objectContaining({ code: 'VAULT_LOCKED', message: expect.stringContaining('kept changing') }),
+    );
     // The stale lock is left to the run that holds the guard.
     expect(JSON.parse(await fsp.readFile(lockPath(), 'utf-8')).pid).toBe(999999);
+  });
+
+  it('clears a takeover guard left by a run that died mid-takeover, then takes the stale lock over', async () => {
+    await holder({ pid: 999999, hostname: os.hostname(), command: 'adopt', startedAt: '2026-01-01T00:00:00.000Z' });
+    await fsp.writeFile(path.join(vault, LOCK_TAKEOVER_FILE), JSON.stringify({ pid: 999998, hostname: os.hostname(), command: 'install', startedAt: '2026-01-01T00:00:00.000Z' }));
+    const lock = acquireVaultLock(vault, 'update', { isAlive: () => false });
+    expect(lock.tookOver).toMatchObject({ pid: 999999 });
+    expect(fs.existsSync(path.join(vault, LOCK_TAKEOVER_FILE))).toBe(false);
+    lock.release();
   });
 
   it('leaves no takeover guard behind after a takeover', async () => {

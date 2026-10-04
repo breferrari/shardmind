@@ -21,6 +21,18 @@ export interface VaultLockInfo {
   startedAt: string;
 }
 
+/**
+ * True when a live run of another process holds the vault. Status, which
+ * takes no lock, skips its cache write meanwhile, so a run's rollback never
+ * finds a file it did not write in `.shardmind/`.
+ */
+export function isHeldByAnotherRun(vaultRoot: string, isAlive: (pid: number) => boolean = processIsAlive): boolean {
+  const found = inspect(path.join(vaultRoot, LOCK_FILE));
+  if (found.kind === 'none') return false;
+  if (found.kind !== 'holder') return true;
+  return found.holder.pid !== process.pid && (!sameHost(found.holder.hostname, os.hostname()) || isAlive(found.holder.pid));
+}
+
 export interface VaultLock {
   /** Remove the lock if this run still holds it. Idempotent. */
   release(): void;
@@ -54,27 +66,45 @@ export function acquireVaultLock(
   const isAlive = deps.isAlive ?? processIsAlive;
   const startedAt = deps.processStartedAt ?? Date.now() - process.uptime() * 1000;
 
+  const isStale = (holder: VaultLockInfo): boolean =>
+    sameHost(holder.hostname, mine.hostname) &&
+    (holder.pid === mine.pid ? Date.parse(holder.startedAt) < startedAt : !isAlive(holder.pid));
+
   let tookOver: VaultLockInfo | undefined;
-  // A holder can release between our create and our look: then create again.
+  // A holder can release, or another run take a stale lock over, between our
+  // create and our look: then create again, a few times.
+  const ATTEMPTS = 5;
   for (let attempt = 0; ; attempt++) {
-    if (tryCreate(file, mine)) break;
+    const created = tryCreate(file, mine);
+    if (created === 'created') break;
+    if (attempt >= ATTEMPTS) {
+      if (created instanceof Error) throw created;
+      const last = inspect(file);
+      if (last.kind === 'holder' && !isStale(last.holder)) throw lockedError(last.holder, mine.hostname);
+      throw new ShardMindError(
+        `The vault lock ${LOCK_FILE} kept changing while this run tried to take it`,
+        'VAULT_LOCKED',
+        'Another shardmind run is starting or finishing on this vault. Run again in a moment.',
+      );
+    }
+    if (created instanceof Error) continue; // EPERM: on Windows, a delete still pending.
     const found = inspect(file);
-    if (found.kind === 'none' && attempt < 3) continue;
+    if (found.kind === 'none') continue;
     if (found.kind !== 'holder') throw lockedError(undefined, mine.hostname);
-    const { holder } = found;
-    const stale =
-      sameHost(holder.hostname, mine.hostname) &&
-      (holder.pid === mine.pid ? Date.parse(holder.startedAt) < startedAt : !isAlive(holder.pid));
-    if (!stale || attempt >= 3) throw lockedError(holder, mine.hostname);
-    removeStale(vaultRoot, holder, mine);
-    tookOver = holder;
+    if (!isStale(found.holder)) throw lockedError(found.holder, mine.hostname);
+    if (removeStale(vaultRoot, found.holder, mine, isStale)) tookOver = found.holder;
   }
 
   const release = (): void => {
     held.delete(release);
     const current = inspect(file);
     if (current.kind === 'holder' && current.holder.pid === mine.pid && current.holder.startedAt === mine.startedAt) {
-      fs.rmSync(file, { force: true });
+      try {
+        fs.rmSync(file, { force: true });
+      } catch {
+        // Held open for a moment (Windows antivirus, a sync client): the run
+        // is over all the same, and the next run finds our PID gone.
+      }
     }
   };
   held.add(release);
@@ -97,18 +127,37 @@ export function acquireVaultLock(
  * Delete a lock judged stale, under the takeover file so that two runs
  * judging the same stale lock never both act: only the run holding
  * `.shardmind.lock.takeover` may delete, and it deletes only if the lock
- * still names the holder it judged. A live lock is never moved.
+ * still names the holder it judged. A live lock is never moved. A guard
+ * left by a run that died mid-takeover is judged like a lock. True when the
+ * stale lock was deleted here.
  */
-function removeStale(vaultRoot: string, judged: VaultLockInfo, mine: VaultLockInfo): void {
+function removeStale(
+  vaultRoot: string,
+  judged: VaultLockInfo,
+  mine: VaultLockInfo,
+  isStale: (holder: VaultLockInfo) => boolean,
+): boolean {
   const guard = path.join(vaultRoot, LOCK_TAKEOVER_FILE);
-  if (!tryCreate(guard, mine)) throw lockedError(judged, mine.hostname);
+  if (tryCreate(guard, mine) !== 'created') {
+    const other = inspect(guard);
+    if (other.kind === 'holder' && isStale(other.holder)) fs.rmSync(guard, { force: true });
+    // Another run is taking it over, or just did: look again.
+    return false;
+  }
   try {
-    const now = inspect(path.join(vaultRoot, LOCK_FILE));
+    const lock = path.join(vaultRoot, LOCK_FILE);
+    const now = inspect(lock);
     if (now.kind === 'holder' && now.holder.pid === judged.pid && now.holder.startedAt === judged.startedAt) {
-      fs.rmSync(path.join(vaultRoot, LOCK_FILE), { force: true });
+      fs.rmSync(lock, { force: true });
+      return true;
     }
+    return false;
   } finally {
-    fs.rmSync(guard, { force: true });
+    try {
+      fs.rmSync(guard, { force: true });
+    } catch {
+      // Left behind, it carries our PID and is judged stale like a lock.
+    }
   }
 }
 
@@ -140,14 +189,19 @@ function inspect(file: string): Inspection {
   return { kind: 'unreadable' };
 }
 
-/** `wx`: create only if absent. False when the name is taken (a file, or a folder); other errors throw. */
-function tryCreate(file: string, info: VaultLockInfo): boolean {
+/**
+ * `wx`: create only if absent. 'taken' when the name exists (a file, or a
+ * folder). EPERM is returned, not thrown, so the caller can retry: on
+ * Windows it is a delete still pending. Other errors throw.
+ */
+function tryCreate(file: string, info: VaultLockInfo): 'created' | 'taken' | Error {
   let fd: number;
   try {
     fd = fs.openSync(file, 'wx');
   } catch (err) {
     const code = errnoCode(err);
-    if (code === 'EEXIST' || code === 'EISDIR') return false;
+    if (code === 'EEXIST' || code === 'EISDIR') return 'taken';
+    if (code === 'EPERM') return err as Error;
     throw err;
   }
   try {
@@ -158,7 +212,7 @@ function tryCreate(file: string, info: VaultLockInfo): boolean {
     throw err;
   }
   fs.closeSync(fd);
-  return true;
+  return 'created';
 }
 
 /** Hostnames compared without case or a trailing `.local`, which macOS adds and drops as the network changes. */

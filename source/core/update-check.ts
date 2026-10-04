@@ -43,6 +43,7 @@ import { SHARDMIND_DIR } from '../runtime/vault-paths.js';
 import { errnoCode } from '../runtime/errno.js';
 import { fetchLatestVersion } from './registry.js';
 import { removePath } from './fs-utils.js';
+import { isHeldByAnotherRun } from './vault-lock.js';
 
 /**
  * Cache entry shape. `schema_version` is tracked so a future incompatible
@@ -172,10 +173,10 @@ export async function writeCache(vaultRoot: string, entry: UpdateCheck): Promise
   const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
 
   try {
-    // Never create `.shardmind/`: status takes no lock (#253), and a reinstall
-    // holding it may have moved the folder aside; recreating it would break
-    // that run's rollback. No folder, no cache write.
-    if (!(await pathExistsDir(dir))) return;
+    // Status takes no lock (#253). Never create `.shardmind/` (a reinstall
+    // holding the lock may have moved it aside), and write nothing while
+    // another run holds the vault (its rollback removes only what it wrote).
+    if (!(await pathExistsDir(dir)) || isHeldByAnotherRun(vaultRoot)) return;
     await fsp.writeFile(tmpPath, JSON.stringify(entry, null, 2) + '\n', 'utf-8');
     // Windows antivirus scanners briefly hold write-locks on new files;
     // a first-try rename can fail with EPERM/EBUSY. One 50 ms retry turns
