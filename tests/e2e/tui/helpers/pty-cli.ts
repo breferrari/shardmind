@@ -190,8 +190,8 @@ export interface PtyHandle {
   /** Send SIGINT (POSIX signal); the kernel delivers it through the PTY. */
   sigint: () => void;
   /**
-   * Resolve when the child exits. Result includes exit code + signal
-   * name. Times out via `SpawnCliPtyOptions.timeoutMs`; on timeout the
+   * Resolve when the child exits and its output is fully on `screen`.
+   * Result includes exit code + signal name. Times out via `SpawnCliPtyOptions.timeoutMs`; on timeout the
    * child is force-killed (SIGKILL) so test workers don't hang.
    */
   waitForExit: () => Promise<{ exitCode: number | null; signal: string | null; timedOut: boolean }>;
@@ -292,11 +292,11 @@ export async function spawnCliPty(
   // Buffer every byte the child emits into the headless terminal.
   // `feed` returns a Promise (xterm-headless processes writes on the
   // next tick); we deliberately don't await — successive `pty.onData`
-  // chunks settle in order via xterm's internal queue, and
-  // `waitForScreen`'s 50 ms poll cadence is the synchronization seam
-  // that matters. `void` makes the fire-and-forget intent explicit
-  // and quiets the no-floating-promises lint that ts strict + vitest
-  // surface for unhandled returns.
+  // chunks settle in order via xterm's internal queue, and the
+  // synchronization seams are `waitForScreen`'s 50 ms poll cadence and
+  // `waitForExit`'s `screen.settled()`. `void` makes the
+  // fire-and-forget intent explicit and quiets the no-floating-promises
+  // lint that ts strict + vitest surface for unhandled returns.
   pty.onData((chunk) => {
     void screen.feed(chunk);
   });
@@ -360,6 +360,9 @@ export async function spawnCliPty(
       }
       await tick(poll);
     }
+    // Dump what the child actually sent, not a half-parsed grid.
+    await screen.settled();
+    last = screen.serialize();
     throw new Error(
       `waitForScreen timed out after ${limit}ms waiting for ${description}.\nLast screen:\n${last}`,
     );
@@ -372,11 +375,20 @@ export async function spawnCliPty(
     pty.kill('SIGINT');
   };
 
-  const waitForExit = async (): Promise<{
-    exitCode: number | null;
-    signal: string | null;
-    timedOut: boolean;
-  }> => {
+  type ExitResult = { exitCode: number | null; signal: string | null; timedOut: boolean };
+
+  const waitForExit = async (): Promise<ExitResult> => {
+    const result = await waitForExitEvent();
+    // node-pty emits `exit` only after the PTY socket closes, so every
+    // `onData` chunk has been fed by now — but xterm parses them in
+    // 12 ms slices across timer ticks. Wait for the parse, not a
+    // delay, so a fast-exiting child's last output is on screen when
+    // this resolves (#177).
+    await screen.settled();
+    return result;
+  };
+
+  const waitForExitEvent = async (): Promise<ExitResult> => {
     let timeoutHandle: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<'timeout'>((resolve) => {
       timeoutHandle = setTimeout(() => resolve('timeout'), timeoutMs);

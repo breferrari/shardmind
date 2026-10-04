@@ -19,6 +19,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { constants as osConstants } from 'node:os';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
 import { unpackInto } from '../helpers/tarball-utils.js';
 import { createVirtualScreen } from './helpers/virtual-screen.js';
@@ -127,6 +128,29 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — virtual screen', () => {
     // is `feed` doesn't throw — anything stronger over-specifies the
     // helper's lifecycle.
   });
+
+  it('settled() resolves once a chunk fed without await is on screen', async () => {
+    // xterm-headless parses writes in 12 ms slices spread over timer
+    // ticks, so a large chunk is not reflected right after `feed`
+    // returns. `settled()` is the seam `waitForExit` uses to read a
+    // fast-exiting child's last output (#177).
+    const screen = createVirtualScreen({ cols: 80, rows: 24 });
+    try {
+      void screen.feed(`${'x'.repeat(70)}\r\n`.repeat(15_000) + 'SETTLE-MARKER');
+      await screen.settled();
+      expect(screen.contains('SETTLE-MARKER')).toBe(true);
+    } finally {
+      screen.dispose();
+    }
+  });
+
+  it('settled() resolves when nothing is pending, and releases on dispose()', async () => {
+    const screen = createVirtualScreen({ cols: 10, rows: 2 });
+    await expect(screen.settled()).resolves.toBeUndefined();
+    void screen.feed('pending');
+    screen.dispose();
+    await expect(screen.settled()).resolves.toBeUndefined();
+  });
 });
 
 describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
@@ -142,6 +166,28 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
       const exit = await handle.waitForExit();
       expect(exit.exitCode).toBe(0);
       expect(handle.screen.matches(/\d+\.\d+\.\d+/)).toBe(true);
+    } finally {
+      await handle.dispose();
+    }
+  }, 30_000);
+
+  it("waitForExit returns only after a fast-exiting child's last output is on screen", async () => {
+    // The flake (#177): node-pty emits `exit` only after the PTY socket
+    // closes, but the last `data` chunk, the close and the exit can all
+    // land in one event-loop poll phase. xterm parses that chunk on a
+    // later timer tick, so `waitForExit` resolved with the output still
+    // unparsed. Force that shape: block this thread until the child has
+    // written and exited, so every event is ready when the loop wakes.
+    const handle = await spawnCliPty([], {
+      cwd: os.tmpdir(),
+      nodeArgs: ['-e', 'process.stdout.write("DRAIN-MARKER")'],
+    });
+    try {
+      blockUntilExited(handle.pid, 15_000);
+      const exit = await handle.waitForExit();
+      expect(exit.timedOut).toBe(false);
+      expect(exit.exitCode).toBe(0);
+      expect(handle.screen.contains('DRAIN-MARKER')).toBe(true);
     } finally {
       await handle.dispose();
     }
@@ -457,3 +503,32 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
     }
   }, 30_000);
 });
+
+/**
+ * Synchronously wait until `pid` is a zombie or gone, without yielding
+ * to the event loop. `ps` works on both Linux and macOS; it exits
+ * non-zero once the pid no longer exists. A short extra spin gives
+ * node-pty's waitpid thread time to queue its exit callback.
+ */
+function blockUntilExited(pid: number, limitMs: number): void {
+  const deadline = Date.now() + limitMs;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  while (Date.now() < deadline) {
+    let stat: string;
+    try {
+      stat = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+        encoding: 'utf8',
+      }).trim();
+    } catch {
+      break;
+    }
+    if (stat === '' || stat.startsWith('Z')) break;
+    // Sleep without yielding to the event loop, so `ps` isn't forked
+    // back to back.
+    Atomics.wait(pause, 0, 0, 10);
+  }
+  const settleUntil = Date.now() + 100;
+  while (Date.now() < settleUntil) {
+    // Spin: the point is to keep the event loop from running.
+  }
+}
