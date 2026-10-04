@@ -232,6 +232,12 @@ shardmind/
 │   │   └── types.ts                   # All shared types + ShardMindError + assertNever
 │   └── types/
 │       └── index.ts                   # Re-exports from runtime
+├── scripts/
+│   └── vendor/                        # Repo tooling, never shipped (IMPLEMENTATION §4.27, #280)
+│       ├── record.ts                  # VENDOR.json schema, headerFor / stripHeader
+│       ├── upstream.ts                # UpstreamSource: npm + GitHub (fixtures in tests)
+│       ├── check.ts                   # npm run vendor:check: kits behind npm, always exit 0
+│       └── update.ts                  # npm run vendor:update <kit> <version>: per-file merge via core/differ.ts
 ├── tests/
 │   ├── unit/                          # Pure function tests
 │   ├── component/                     # Ink components via ink-testing-library
@@ -287,7 +293,9 @@ npm run dev           # tsup watch mode
 npm test              # vitest run (all tests)
 npm run test:watch    # vitest watch
 npm run test:merge    # just the merge engine fixtures
-npm run typecheck     # tsc --noEmit
+npm run typecheck     # tsc --noEmit (source/, then scripts/ via tsconfig.scripts.json)
+npm run vendor:check  # vendored kits behind their upstream (exit 0)
+npm run vendor:update -- <kit> <version>  # merge a new upstream into a kit
 ```
 
 - If deps are missing or a command fails with "module not found", run `npm ci` first, then retry.
