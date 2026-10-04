@@ -114,14 +114,25 @@ function checkFailed(err: unknown, at: string): ShardMindError {
  * root itself is not checked. Folders are listed for the case check only
  * on a case-folding filesystem, and a folder that cannot be listed skips
  * it. A path that cannot be inspected throws `COLLISION_CHECK_FAILED`.
- * Listings and `lstat` results are cached.
+ * Listings and `lstat` results are cached. `caseRenames` are the case-only
+ * renames the run applies (old path, new path; #169): on either path of a
+ * pair, the other's name is not a `case-mismatch`, since it is the same file
+ * under the name the run moves it from or to.
  */
 export async function findUnsafeVaultPaths(
   vaultRoot: string,
   writes: readonly string[],
   deletes: readonly string[] = [],
+  caseRenames: ReadonlyArray<readonly [string, string]> = [],
 ): Promise<UnsafeVaultPath[]> {
   const folds = await foldsCaseAt(vaultRoot);
+  // Path (as given) → the last-component names its rename pair spells.
+  const pairNames = new Map<string, Set<string>>();
+  for (const [from, to] of caseRenames) {
+    const names = new Set([from, to].map((rel) => path.posix.basename(rel).normalize('NFC')));
+    pairNames.set(from, names);
+    pairNames.set(to, names);
+  }
   // null: no such folder. undefined: not listable, so the case check is skipped.
   const list = cached<Set<string> | null | undefined>(
     (dir) => fsp.readdir(dir).then((names) => new Set(names.map((n) => n.normalize('NFC')))),
@@ -152,7 +163,8 @@ export async function findUnsafeVaultPaths(
         // It resolves, but not under this name: the filesystem folded case
         // (a normalization-only difference is the same name, and passes).
         const lower = name.normalize('NFC').toLowerCase();
-        if ([...names].some((n) => n.toLowerCase() === lower)) return 'case-mismatch';
+        const onDisk = [...names].find((n) => n.toLowerCase() === lower);
+        if (onDisk !== undefined && !(last && pairNames.get(rel)?.has(onDisk))) return 'case-mismatch';
       }
       if (last && isDelete) return null;
       if (st.isSymbolicLink()) return last ? 'symlink' : 'symlinked-folder';
@@ -174,13 +186,15 @@ export async function findUnsafeVaultPaths(
  * Throw `VAULT_PATH_UNSAFE` naming each unsafe path, or resolve. The
  * engine's own files and folders (`shard-values.yaml`, `.shardmind/`'s
  * state, cache, backups and logs) are always checked as writes.
+ * `caseRenames` as in `findUnsafeVaultPaths`.
  */
 export async function assertSafeVaultPaths(
   vaultRoot: string,
   writes: readonly string[],
   deletes: readonly string[] = [],
+  caseRenames: ReadonlyArray<readonly [string, string]> = [],
 ): Promise<void> {
-  const unsafe = await findUnsafeVaultPaths(vaultRoot, [...writes, ...ENGINE_WRITE_PATHS], deletes);
+  const unsafe = await findUnsafeVaultPaths(vaultRoot, [...writes, ...ENGINE_WRITE_PATHS], deletes, caseRenames);
   if (unsafe.length === 0) return;
   const listed = unsafe.slice(0, MAX_LISTED_PATHS).map((u) => `${u.path} (${u.reason})`).join(', ');
   const more = unsafe.length > MAX_LISTED_PATHS ? `, and ${unsafe.length - MAX_LISTED_PATHS} more` : '';
