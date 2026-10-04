@@ -11,6 +11,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 ### Fixed (NO_COLOR — #37)
 
 - **`NO_COLOR` now turns colour off in a terminal.** Any non-empty value works, per [no-color.org](https://no-color.org); an empty one does not. `FORCE_COLOR` still turns colour on, even when piped, and wins when both are set. `--help` output, and `--json` output read through a pipe, carry no colour codes. A hook's own colour codes are dropped from its displayed output when colour is off.
+- **A negative `FORCE_COLOR` no longer crashes the CLI on Linux and macOS.** It is treated as `0`.
 
 ### Added (exclude a folder from the write-boundary check — #190)
 
