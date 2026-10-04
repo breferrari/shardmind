@@ -24,6 +24,7 @@ function summary(overrides: Partial<Summary> = {}): Summary {
     },
     conflictsResolved: 1,
     conflictsAcceptedNew: 0,
+    conflictsEdited: 0,
     conflictsKeptMine: 1,
     conflictsSkipped: 0,
     autoMergeStats: { linesUnchanged: 150, linesAutoMerged: 12 },

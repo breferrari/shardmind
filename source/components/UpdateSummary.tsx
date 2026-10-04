@@ -108,6 +108,7 @@ export default function UpdateSummary({
             {'  '}
             {summary.conflictsAcceptedNew} accepted new · {summary.conflictsKeptMine} kept mine ·{' '}
             {summary.conflictsSkipped} skipped
+            {summary.conflictsEdited > 0 ? ` · ${summary.conflictsEdited} edited in your editor` : ''}
           </Text>
         </Box>
       )}

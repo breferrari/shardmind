@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import path from 'node:path';
-import { useApp } from 'ink';
+import { useApp, useStdin } from 'ink';
 import { loadValuesYaml } from '../../core/values-io.js';
 import { toPosix } from '../../core/fs-utils.js';
 import type {
@@ -64,6 +64,7 @@ import { buildRenderContext } from '../../core/renderer.js';
 import { rollbackDetail } from '../../core/rollback-report.js';
 import { VALUES_FILE } from '../../runtime/vault-paths.js';
 import type { DiffAction } from '../../components/DiffView.js';
+import { editInEditor, hasConflictMarkers, resolveEditorCommand, withTerminalReleased } from '../../core/editor.js';
 
 export interface UseUpdateMachineInput {
   vaultRoot: string;
@@ -131,6 +132,8 @@ export type Phase =
       selections: ModuleSelections;
       currentIndex: number;
       resolutions: Record<string, ConflictResolution>;
+      /** The current file's editor round (#50): attempts, why the last came back, an edit that kept markers. */
+      edit?: ConflictEditState;
     }
   | {
       kind: 'writing';
@@ -164,6 +167,8 @@ export interface UseUpdateMachineOutput {
   onNewModulesComplete: (choices: Record<string, 'included' | 'excluded'>) => void;
   onRemovedFilesComplete: (decisions: Record<string, 'delete' | 'keep'>) => void;
   onConflictChoice: (action: DiffAction) => void;
+  /** An editor is set ($VISUAL or $EDITOR), so the conflict prompt offers Open in editor (#50). */
+  canEdit: boolean;
   onCancel: (reason?: string) => void;
 }
 
@@ -705,21 +710,58 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     [runPlanAndResolve],
   );
 
+  const { setRawMode, isRawModeSupported } = useStdin();
+  // $VISUAL, then $EDITOR; with neither, the prompt offers no editor (#50).
+  const [editorCommand] = useState(() => resolveEditorCommand(process.env));
+
   const onConflictChoice = useCallback(
     (action: DiffAction) => {
       const current = phaseRef.current;
       if (current.kind !== 'resolving-conflicts') return;
       const pc = current.plan.pendingConflicts[current.currentIndex];
       if (!pc) return;
-      const nextResolutions = { ...current.resolutions, [pc.path]: action };
-      const nextIndex = current.currentIndex + 1;
-      if (nextIndex < current.plan.pendingConflicts.length) {
-        setPhase({ ...current, currentIndex: nextIndex, resolutions: nextResolutions });
+      const edit = current.edit ?? { attempt: 0 };
+
+      const resolve = (resolution: ConflictResolution): void => {
+        const nextResolutions = { ...current.resolutions, [pc.path]: resolution };
+        const nextIndex = current.currentIndex + 1;
+        if (nextIndex < current.plan.pendingConflicts.length) {
+          setPhase({ ...current, currentIndex: nextIndex, resolutions: nextResolutions, edit: undefined });
+          return;
+        }
+        void executeWrite(current.ctx, current.plan, current.values, current.selections, nextResolutions);
+      };
+
+      if (action === 'use_edit') {
+        // The one way conflict markers reach the vault: chosen, by name (#50).
+        if (edit.pendingContent !== undefined) resolve({ kind: 'edited', content: edit.pendingContent });
         return;
       }
-      void executeWrite(current.ctx, current.plan, current.values, current.selections, nextResolutions);
+      if (action === 'open_editor' || action === 'edit_again') {
+        if (!editorCommand) return;
+        const start = action === 'edit_again' && edit.pendingContent !== undefined ? edit.pendingContent : pc.result.content;
+        // The editor owns the terminal meanwhile; raw mode comes back on every path.
+        const outcome = withTerminalReleased(isRawModeSupported ? setRawMode : undefined, () =>
+          editInEditor(start, path.basename(pc.path), { command: editorCommand, dir: current.ctx.newTempDir }),
+        );
+        if (outcome.kind === 'saved' && !hasConflictMarkers(outcome.content)) {
+          resolve({ kind: 'edited', content: outcome.content });
+          return;
+        }
+        // Back to this file's prompt: a cancel is never an accept, and markers
+        // left in the edit wait for an explicit choice.
+        setPhase({
+          ...current,
+          edit:
+            outcome.kind === 'saved'
+              ? { attempt: edit.attempt + 1, pendingContent: outcome.content }
+              : { ...edit, attempt: edit.attempt + 1, note: `${outcome.detail} Nothing was changed; choose again.` },
+        });
+        return;
+      }
+      resolve(action);
     },
-    [executeWrite],
+    [executeWrite, editorCommand, isRawModeSupported, setRawMode],
   );
 
   const onCancel = useCallback(
@@ -729,6 +771,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 
   return {
     phase,
+    canEdit: editorCommand !== undefined,
     onNewValuesComplete,
     onNewModulesComplete,
     onRemovedFilesComplete,
@@ -966,4 +1009,14 @@ function labelForAction(kind: string): string {
     case 'restore_missing': return '↺';
     default: return '·';
   }
+}
+
+/** One file's editor round in the conflict prompt (#50). */
+interface ConflictEditState {
+  /** Edits started on this file: each return is a new prompt round. */
+  attempt: number;
+  /** Why the last edit came back without a resolution. */
+  note?: string;
+  /** Saved text that still has conflict markers, waiting for edit again / use as is / keep mine. */
+  pendingContent?: string;
 }

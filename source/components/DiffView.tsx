@@ -3,15 +3,17 @@ import { Box, Text } from 'ink';
 import { Select } from './ui.js';
 import { useOncePerKey } from './use-once-per-key.js';
 import type { ConflictRegion, MergeResult } from '../runtime/types.js';
-import type { ConflictResolution } from '../core/update-planner.js';
+import type { ConflictChoice } from '../core/update-planner.js';
 
 /**
- * Conflict-resolution choices returned to the state machine: the update
- * planner's conflict resolutions, one set for both.
+ * Choices returned to the state machine: the update planner's conflict
+ * choices, plus the editor's (#50). `open_editor` opens the conflict in the
+ * user's editor; after an edit that kept conflict markers, `edit_again` and
+ * `use_edit` (markers included) are offered with Keep mine.
  * `keep_and_track` is offered only for an add-collision, without
  * --adopt-preexisting (#165).
  */
-export type DiffAction = ConflictResolution;
+export type DiffAction = ConflictChoice | 'open_editor' | 'edit_again' | 'use_edit';
 
 /** Matches differ.ts's canonical splitter: tolerate CR, accept LF. */
 const LINE_SPLIT = /\r?\n/;
@@ -20,28 +22,38 @@ const LINE_SPLIT = /\r?\n/;
 const CONTEXT_LINES = 3;
 
 /**
- * `Select` accepts arbitrary string values; we use the type-guarded
- * lookup below to filter the disabled "Open in editor" placeholder so
- * no out-of-band value reaches `onChoice`.
+ * `Select` accepts arbitrary string values; only these reach `onChoice`.
+ * A Record over the union: an action that is not listed here fails the
+ * typecheck instead of being dropped by onChange (#103, #109).
  */
 const DIFF_ACTIONS = new Set<DiffAction>(
-  // A Record over the union: a new resolution that is not listed here fails
-  // the typecheck instead of being dropped by onChange (#103, #109).
-  Object.keys({ accept_new: true, keep_mine: true, keep_and_track: true, skip: true } satisfies Record<DiffAction, true>) as DiffAction[],
+  Object.keys({
+    accept_new: true,
+    keep_mine: true,
+    keep_and_track: true,
+    skip: true,
+    open_editor: true,
+    edit_again: true,
+    use_edit: true,
+  } satisfies Record<DiffAction, true>) as DiffAction[],
 );
 
-const SELECT_OPTIONS: Array<{ label: string; value: DiffAction | 'open_editor_disabled' }> = [
+interface Option {
+  label: string;
+  value: DiffAction;
+}
+
+const SELECT_OPTIONS: Option[] = [
   { label: 'Accept new (use shard version)', value: 'accept_new' },
   { label: 'Keep mine (preserve your edits)', value: 'keep_mine' },
   { label: 'Skip this file', value: 'skip' },
-  { label: '(Open in editor · v0.2)', value: 'open_editor_disabled' },
 ];
 
 /**
  * An add-collision's file is the user's own, not an edited shard file
  * (#60): there are no edits to preserve, and Accept new replaces it.
  */
-const PREEXISTING_LABELS: Partial<Record<(typeof SELECT_OPTIONS)[number]['value'], string>> = {
+const PREEXISTING_LABELS: Partial<Record<DiffAction, string>> = {
   accept_new: 'Accept new (replace your file)',
   keep_mine: 'Keep mine (keep your file)',
 };
@@ -55,12 +67,22 @@ const PREEXISTING_OPTIONS = SELECT_OPTIONS.map((o) => ({
  * tracks it as the user's modified copy for this file alone (#165). With the
  * flag, Keep mine already tracks, so the plain list is shown.
  */
-const PREEXISTING_TRACKABLE_OPTIONS = PREEXISTING_OPTIONS.flatMap((o) =>
+const PREEXISTING_TRACKABLE_OPTIONS = PREEXISTING_OPTIONS.flatMap((o): Option[] =>
   // After Skip, so the options a user already knows keep their positions.
   o.value === 'skip'
-    ? [o, { label: 'Keep mine and track it (merge future updates into your file)', value: 'keep_and_track' as const }]
+    ? [o, { label: 'Keep mine and track it (merge future updates into your file)', value: 'keep_and_track' }]
     : [o],
 );
+
+/** Last, so the other options keep their positions (#50). */
+const OPEN_EDITOR_OPTION: Option = { label: 'Open in editor (resolve it yourself)', value: 'open_editor' };
+
+/** After an edit that kept conflict markers: they reach the vault only by `use_edit` (#50). */
+const MARKER_OPTIONS: Option[] = [
+  { label: 'Edit again', value: 'edit_again' },
+  { label: 'Use my edit as is (conflict markers included)', value: 'use_edit' },
+  { label: 'Keep mine', value: 'keep_mine' },
+];
 
 interface DiffViewProps {
   path: string;
@@ -71,6 +93,14 @@ interface DiffViewProps {
   preexisting?: boolean;
   /** The run's `--adopt-preexisting` (#61): Keep mine / Skip track a preexisting file. */
   adoptPreexisting?: boolean;
+  /** An editor is set ($VISUAL or $EDITOR): offer Open in editor on a text conflict (#50). */
+  canEdit?: boolean;
+  /** Why the last edit came back without resolving the conflict (cancelled, unchanged). */
+  editNote?: string | undefined;
+  /** The last edit was saved with conflict markers left: offer edit again / use as is / keep mine. */
+  editHasMarkers?: boolean;
+  /** Edit attempts on this file: a new prompt round, so its choice is not deduped away. */
+  attempt?: number;
   onChoice: (action: DiffAction) => void;
 }
 
@@ -81,6 +111,10 @@ export default function DiffView({
   result,
   preexisting = false,
   adoptPreexisting = false,
+  canEdit = false,
+  editNote,
+  editHasMarkers = false,
+  attempt = 0,
   onChoice,
 }: DiffViewProps) {
   const mergedLines = useMemo(() => result.content.split(LINE_SPLIT), [result.content]);
@@ -89,8 +123,15 @@ export default function DiffView({
   // A boolean `useRef(false)` would leak across files and freeze every
   // conflict prompt after the first. See Pattern B in
   // `docs/COMPONENTS.md` for the broader convention.
-  const tryFire = useOncePerKey(filePath);
-  const options = !preexisting ? SELECT_OPTIONS : adoptPreexisting ? PREEXISTING_OPTIONS : PREEXISTING_TRACKABLE_OPTIONS;
+  // An edit that comes back to this file is a new round of the same prompt.
+  const roundKey = `${filePath}#${attempt}`;
+  const tryFire = useOncePerKey(roundKey);
+  const choices = !preexisting ? SELECT_OPTIONS : adoptPreexisting ? PREEXISTING_OPTIONS : PREEXISTING_TRACKABLE_OPTIONS;
+  const options = editHasMarkers
+    ? MARKER_OPTIONS
+    : canEdit && !result.binary
+      ? [...choices, OPEN_EDITOR_OPTION]
+      : choices;
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -109,6 +150,12 @@ export default function DiffView({
               : 'The new version adds this path. Keep mine or Skip keeps your file untracked, so the next update asks again; Keep mine and track it tracks it (--adopt-preexisting tracks every one).'}
           </Text>
         )}
+        {editHasMarkers && (
+          <Text color="yellow">
+            {'Your edit still has conflict markers (lines starting <<<<<<<, =======, >>>>>>>). Edit again, use it as is with the markers, or keep yours.'}
+          </Text>
+        )}
+        {editNote && <Text color="yellow">{editNote}</Text>}
       </Box>
 
       {result.binary ? (
@@ -140,7 +187,7 @@ export default function DiffView({
       )}
 
       <Select
-        key={filePath}
+        key={roundKey}
         options={options}
         onChange={(choice) => {
           if (!DIFF_ACTIONS.has(choice as DiffAction)) return;
