@@ -1,5 +1,5 @@
 /**
- * `applyNoColor` (#37): NO_COLOR turns colour off unless FORCE_COLOR is set.
+ * `source/core/color-env.ts` (#37): NO_COLOR turns colour off unless FORCE_COLOR is set.
  * See docs/IMPLEMENTATION.md §4.21.
  */
 
@@ -7,7 +7,8 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyNoColor, colorEnabled, stripSgr } from '../../source/core/color-env.js';
+import ts from 'typescript';
+import { applyNoColor, stripSgr } from '../../source/core/color-env.js';
 
 function applied(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const copy = { ...env };
@@ -51,12 +52,20 @@ describe('load order in source/cli.ts', () => {
   // that reaches Ink (and so chalk) runs before applyNoColor, whatever the
   // line order, so cli.ts and what it imports statically must not reach it.
   const sourceDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../source');
-  const staticImports = (rel: string): string[] =>
-    [...fs.readFileSync(path.join(sourceDir, rel), 'utf-8').matchAll(/^import\s[^;]*?from\s+'([^']+)';?$|^import\s+'([^']+)';?$/gm)].map(
-      (m) => m[1] ?? m[2] ?? '',
-    );
+  const parse = (rel: string): ts.SourceFile =>
+    ts.createSourceFile(rel, fs.readFileSync(path.join(sourceDir, rel), 'utf-8'), ts.ScriptTarget.Latest, true);
 
-  it('imports only modules that cannot load chalk, and Pastel dynamically', () => {
+  /** Every module a file loads statically: `import … from`, `import '…'`, `export … from`. */
+  const staticImports = (rel: string): string[] =>
+    parse(rel)
+      .statements.filter(
+        (s): s is ts.ImportDeclaration | ts.ExportDeclaration =>
+          (ts.isImportDeclaration(s) || ts.isExportDeclaration(s)) && s.moduleSpecifier !== undefined,
+      )
+      .filter((s) => !(ts.isImportDeclaration(s) && s.importClause?.isTypeOnly))
+      .map((s) => (s.moduleSpecifier as ts.StringLiteral).text);
+
+  it('imports statically only modules that cannot load chalk', () => {
     expect(staticImports('cli.ts').sort()).toEqual(
       ['./core/cancellation.js', './core/color-env.js', 'node:module'].sort(),
     );
@@ -65,26 +74,23 @@ describe('load order in source/cli.ts', () => {
   it.each(['core/cancellation.ts', 'core/color-env.ts'])('%s imports nothing beyond node built-ins', (rel) => {
     expect(staticImports(rel).filter((spec) => !spec.startsWith('node:'))).toEqual([]);
   });
-});
 
-describe('colorEnabled', () => {
-  it.each([
-    [{ FORCE_COLOR: '0' }, true, false],
-    [{ FORCE_COLOR: 'false' }, true, false],
-    [{ FORCE_COLOR: '1' }, false, true],
-    [{ FORCE_COLOR: '' }, false, true],
-    [{ FORCE_COLOR: '3' }, false, true],
-    [{}, true, true],
-    [{}, false, false],
-    [{ TERM: 'dumb' }, true, false],
-  ] as const)('env %o, TTY %s → %s', (env, isTTY, expected) => {
-    expect(colorEnabled({ ...env }, isTTY)).toBe(expected);
-  });
-
-  it('is off in a terminal once applyNoColor has seen NO_COLOR', () => {
-    const env: NodeJS.ProcessEnv = { NO_COLOR: '1' };
-    applyNoColor(env);
-    expect(colorEnabled(env, true)).toBe(false);
+  it('applies NO_COLOR before its first dynamic import', () => {
+    const file = parse('cli.ts');
+    let applyAt = -1;
+    let firstImportAt = -1;
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        if (node.expression.kind === ts.SyntaxKind.ImportKeyword && firstImportAt === -1) firstImportAt = node.getStart();
+        if (ts.isIdentifier(node.expression) && node.expression.text === 'applyNoColor' && applyAt === -1) {
+          applyAt = node.getStart();
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    expect(applyAt).toBeGreaterThan(-1);
+    expect(firstImportAt).toBeGreaterThan(applyAt);
   });
 });
 

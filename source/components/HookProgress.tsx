@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink';
-import { hookOutputForDisplay } from '../core/color-env.js';
+import { hookOutputForDisplay } from './hook-output.js';
 import { Spinner } from './ui.js';
 import type { HookStage } from '../core/hook.js';
 
@@ -40,10 +40,15 @@ export default function HookProgress({ stage, output, shardLabel, index, total }
   const heading = `Running ${STAGE_LABEL[stage]} hook${progress} for ${shardLabel}…`;
 
   // Split on either LF or CRLF so Windows-authored hooks tail cleanly.
-  // `filter(Boolean)` drops the trailing empty string the final newline
-  // leaves behind so the tail doesn't waste a line.
-  const lines = hookOutputForDisplay(output).split(/\r?\n/).filter((l) => l.length > 0);
-  const tail = lines.slice(-TAIL_LINES);
+  // Empty lines (the trailing one the final newline leaves, or one that was
+  // only colour codes) are skipped so the tail doesn't waste a line. Only the
+  // lines the tail shows are stripped: the buffer re-renders on every chunk.
+  const lines = output.split(/\r?\n/);
+  const tail: string[] = [];
+  for (let i = lines.length - 1; i >= 0 && tail.length < TAIL_LINES; i--) {
+    const line = hookOutputForDisplay(lines[i]!);
+    if (line.length > 0) tail.unshift(line);
+  }
 
   return (
     <Box flexDirection="column" gap={1}>

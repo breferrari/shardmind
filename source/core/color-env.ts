@@ -15,17 +15,6 @@ export function applyNoColor(env: NodeJS.ProcessEnv): void {
   env['FORCE_COLOR'] = '0';
 }
 
-/**
- * Whether output is coloured, by the rule chalk applies (after
- * `applyNoColor`): a set FORCE_COLOR decides, `'0'` and `'false'` meaning
- * off; otherwise colour is on in a terminal whose TERM is not `dumb`.
- */
-export function colorEnabled(env: NodeJS.ProcessEnv, isTTY: boolean): boolean {
-  const force = env['FORCE_COLOR'];
-  if (force !== undefined) return force !== '0' && force !== 'false';
-  return isTTY && env['TERM'] !== 'dumb';
-}
-
 // SGR only: CSI (7-bit `ESC [` or 8-bit U+009B), numeric parameters separated
 // by `;` or `:` (truecolor's colon form), final `m`. Every other control
 // sequence is left for #204.
@@ -34,12 +23,4 @@ const SGR = /(?:\x1b\[|\u009b)[0-9;:]*m/g;
 /** Removes colour and style sequences (SGR), leaving all other bytes as they are. */
 export function stripSgr(text: string): string {
   return text.replace(SGR, '');
-}
-
-/**
- * Hook output as our components render it: a hook is shard code, and its own
- * colour codes are dropped when the user's output is not coloured.
- */
-export function hookOutputForDisplay(text: string): string {
-  return colorEnabled(process.env, process.stdout.isTTY === true) ? text : stripSgr(text);
 }

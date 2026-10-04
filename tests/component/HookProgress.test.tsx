@@ -11,6 +11,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
 import React from 'react';
+import chalk from 'chalk';
 import HookProgress from '../../source/components/HookProgress.js';
 
 afterEach(() => {
@@ -118,14 +119,14 @@ describe('HookProgress', () => {
   });
 
   describe('hook output colour (#37)', () => {
-    const saved = process.env['FORCE_COLOR'];
+    // chalk's level is the colour decision hook output follows.
+    const saved = chalk.level;
     afterEach(() => {
-      if (saved === undefined) delete process.env['FORCE_COLOR'];
-      else process.env['FORCE_COLOR'] = saved;
+      chalk.level = saved;
     });
 
     it("strips the hook's own colour codes when colour is off", () => {
-      process.env['FORCE_COLOR'] = '0';
+      chalk.level = 0;
       const frame = render(
         <HookProgress stage="post-install" output={'\x1b[32mcloned\x1b[0m\n'} shardLabel="acme/demo" />,
       ).lastFrame() ?? '';
@@ -134,7 +135,7 @@ describe('HookProgress', () => {
     });
 
     it("keeps the hook's colour codes when colour is on", () => {
-      process.env['FORCE_COLOR'] = '1';
+      chalk.level = 1;
       const frame = render(
         <HookProgress stage="post-install" output={'\x1b[32mcloned\x1b[0m\n'} shardLabel="acme/demo" />,
       ).lastFrame() ?? '';
