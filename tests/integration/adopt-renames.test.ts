@@ -214,14 +214,26 @@ describe('adopt --from-version applies rename migrations (#179)', () => {
 
   it('refuses before any write when a file arrives at the new path after classifying', async () => {
     await cloneOfV1();
-    const before = await read(COPY);
+    await write(COPY, 'My edit.\n');
     const arrive = () => write('AGENTS.md', 'Arrived meanwhile.\n');
-    await expect(adopt(await shardV2(), '0.1.0', undefined, { beforeRun: arrive })).rejects.toMatchObject({
+    // Use the shard's writes the new path: only the check before any write
+    // keeps it off the file that arrived.
+    await expect(adopt(await shardV2(), '0.1.0', () => 'use_shard', { beforeRun: arrive })).rejects.toMatchObject({
       code: 'ADOPT_WRITE_FAILED',
     });
     expect(await read('AGENTS.md')).toBe('Arrived meanwhile.\n');
-    expect(await read(COPY)).toBe(before);
+    expect(await read(COPY)).toBe('My edit.\n');
     expect(await exists('.shardmind/state.json')).toBe(false);
+  });
+
+  it('refuses before any write when the old file is hard-linked after classifying (#163)', async () => {
+    await cloneOfV1();
+    const link = () => fsp.link(path.join(vault, COPY), path.join(root, 'elsewhere.md'));
+    await expect(adopt(await shardV2(), '0.1.0', undefined, { beforeRun: link })).rejects.toMatchObject({
+      code: 'VAULT_PATH_UNSAFE',
+    });
+    expect(await exists(COPY)).toBe(true);
+    expect(await exists('AGENTS.md')).toBe(false);
   });
 
   it('refuses to move a hard-linked file from the old path (#163)', async () => {
