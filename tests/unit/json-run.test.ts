@@ -18,6 +18,9 @@ describe('isJsonRun', () => {
     [['adopt', 'github:acme/demo', '--dry-run', '--json']],
     [['--json', 'update', '--dry-run']],
     [['validate', '--json']],
+    // Root options (#147) are all boolean flags, so the subcommand after one is still found.
+    [['--verbose', 'update', '--dry-run', '--json']],
+    [['--no-update-check', 'adopt', 'github:acme/demo', '--json']],
   ])('is a JSON run: %j', (argv) => {
     expect(isJsonRun(argv)).toBe(true);
   });
@@ -68,5 +71,19 @@ describe('markNonInteractive', () => {
     const stream = {} as { isTTY?: boolean };
     markNonInteractive(stream);
     expect(stream.isTTY).toBeFalsy();
+  });
+});
+
+describe('root options before the subcommand', () => {
+  // isJsonRun and jsonCommandOf take the first non-option argument as the
+  // subcommand. That holds while every root option is a boolean flag: an
+  // option that took a value (`--profile work update --json`) would make the
+  // value look like the subcommand.
+  it('are all boolean flags', async () => {
+    const { options } = await import('../../source/commands/index.js');
+    for (const [name, schema] of Object.entries(options.shape)) {
+      expect(schema.safeParse(true).success, name).toBe(true);
+      expect(schema.safeParse('update').success, name).toBe(false);
+    }
   });
 });

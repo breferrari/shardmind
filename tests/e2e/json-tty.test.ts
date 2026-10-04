@@ -62,6 +62,8 @@ describe('--json in a terminal', () => {
     ['status', ['--json']],
     // Would go on to act without --dry-run: refused the same way in both.
     ['update without --dry-run', ['update', '--json']],
+    // A root option before the subcommand (#147) still reaches the gate.
+    ['update after a root option', ['--verbose', 'update', '--dry-run', '--json']],
   ])('%s writes in a terminal exactly what it writes piped, exit code and stderr included', (_name, args) => {
     const terminal = run(args, true);
     const piped = run(args, false);
