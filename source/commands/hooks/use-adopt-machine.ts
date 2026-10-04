@@ -276,7 +276,10 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         if (disposed) return;
         if (yes) {
           await runNonInteractive(ctx);
-        } else if (!isRawModeSupported) {
+        } else if (!isRawModeSupported || json) {
+          // `--json` never prompts: the command renders nothing under it, so
+          // a wizard would wait unseen. It takes the no-terminal path, as a
+          // piped run does (#198).
           // `--values` prefills the wizard rather than replacing it, which is
           // right with a terminal and impossible without one. Every answer is
           // already on disk, so skip the wizard instead of failing on it.

@@ -3,11 +3,11 @@
  *
  * A mounted Ink app in a TTY writes synchronized-output and cursor codes
  * around its frame even when it renders nothing, so a `--json` document came
- * out wrapped in them, and Ink offers prompts when `stdin.isTTY`, which
- * under --json renders nothing and waits forever. `source/cli.ts` marks
- * stdout and stdin non-interactive for a `--json` run before anything loads
- * Ink, so the run behaves exactly as it does piped. Imports nothing, so
- * `cli.ts` can load it statically.
+ * out wrapped in them. Ink decides from `stdout.isTTY` and Pastel passes no
+ * render options, so `source/cli.ts` marks stdout non-interactive for a
+ * `--json` run before anything loads Ink, and the run writes exactly what it
+ * writes piped. stdin is left alone (the machines refuse prompts under
+ * `--json` themselves). Imports nothing, so `cli.ts` can load it statically.
  */
 
 // Commands whose `--json` runs through the Ink app. `validate --json` never
@@ -29,9 +29,9 @@ export function isJsonRun(argv: readonly string[]): boolean {
 }
 
 /**
- * Makes `stream` report that it is not a terminal. Called on stdout (Ink then
- * writes no cursor codes) and stdin (Ink then offers no prompt, so a command
- * that needs answers refuses as it does piped). stderr is never touched.
+ * Makes `stream` (process.stdout) report that it is not a terminal, so Ink
+ * renders non-interactively. Only Ink's interactive decision and the
+ * self-update banner (already off under --json) read `stdout.isTTY`.
  */
 export function markNonInteractive(stream: { isTTY?: boolean }): void {
   Object.defineProperty(stream, 'isTTY', { value: false, configurable: true, writable: true });

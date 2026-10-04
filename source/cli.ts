@@ -9,12 +9,11 @@ import { isJsonRun, markNonInteractive } from './core/json-run.js';
 // dynamically below, never statically above this line.
 applyNoColor(process.env);
 
-// A --json run behaves in a terminal exactly as piped (#198; see
-// core/json-run.ts), so this too runs before anything loads Ink.
-if (isJsonRun(process.argv.slice(2))) {
-  markNonInteractive(process.stdout);
-  markNonInteractive(process.stdin);
-}
+// A --json run writes in a terminal exactly what it writes piped (#198; see
+// core/json-run.ts), so this too runs before anything loads Ink. stdin is
+// left alone: the stdin SIGINT bridge reads a non-TTY stdin directly, which
+// on a real terminal would stop a backgrounded run (SIGTTIN).
+if (isJsonRun(process.argv.slice(2))) markNonInteractive(process.stdout);
 
 // A throw that escapes every command (a command module that fails to load, a
 // rejection nobody awaited) is printed as plain text, since Ink may not be

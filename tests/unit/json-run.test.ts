@@ -1,6 +1,6 @@
 /**
  * `source/core/json-run.ts` (#198): which runs are `--json` runs of update,
- * adopt or status, and making stdout and stdin non-interactive for them.
+ * adopt or status, and making stdout non-interactive for them.
  * See docs/IMPLEMENTATION.md §4.23.
  */
 
@@ -41,11 +41,13 @@ describe('every command with --json goes through the gate', () => {
   // --json in a terminal would get Ink's cursor codes and live prompts again.
   // `validate --json` never mounts Ink (#34), so it is exempt.
   const commandsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../source/commands');
-  const withJson = fs
-    .readdirSync(commandsDir)
+  // Any `json:` key declared through zod (`zod.` or `z.`), quoted or not, in
+  // any command file at any depth; index.tsx is the status command.
+  const declaresJson = /['"]?\bjson['"]?\s*:\s*z(?:od)?\b/;
+  const withJson = (fs.readdirSync(commandsDir, { recursive: true }) as string[])
     .filter((file) => file.endsWith('.tsx'))
-    .filter((file) => /^\s*json:\s*zod/m.test(fs.readFileSync(path.join(commandsDir, file), 'utf-8')))
-    .map((file) => file.replace(/\.tsx$/, ''))
+    .filter((file) => declaresJson.test(fs.readFileSync(path.join(commandsDir, file), 'utf-8')))
+    .map((file) => file.replace(/\.tsx$/, '').split(path.sep).join('/'))
     .filter((name) => name !== 'validate');
 
   it('finds the --json commands', () => {

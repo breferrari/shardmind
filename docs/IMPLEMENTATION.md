@@ -1643,10 +1643,16 @@ A mounted Ink app in a TTY did two things under `--json` that a pipe never sees:
 - it wrote synchronized-output and cursor codes around its frame even when the command rendered nothing (`\x1b[?2026h\x1b[?25l` before the document, `\x1b[?25h` after);
 - it offered prompts, because stdin was a TTY, which `--json` renders as nothing. `adopt --dry-run --json` without `--yes` or `--values` waited in an invisible wizard where the piped run refused with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`. This predates #198.
 
-Ink decides the first from `stdout.isTTY` (`interactive` defaults to `!isInCi && stdout.isTTY`) and the second from `stdin.isTTY` (`isRawModeSupported`), and Pastel passes no render options. So for a run `isJsonRun` accepts, `cli.ts` marks stdout and stdin non-interactive right after `applyNoColor`, before Pastel or any component loads. stderr is never touched.
+Ink decides the first from `stdout.isTTY` (`interactive` defaults to `!isInCi && stdout.isTTY`), and Pastel passes no render options. So for a run `isJsonRun` accepts, `cli.ts` marks stdout non-interactive right after `applyNoColor`, before Pastel or any component loads.
 
-1. `isJsonRun`: `--json` appears before any `--`, there is no `-h` or `--help`, and the first non-option argument is `update`, `adopt` or absent (the status command). `--json=true` is not a form Commander accepts for a boolean flag. `validate --json` runs headless without Ink (#34), and install has no `--json`. A unit test ties the accepted commands to every `source/commands/*.tsx` that declares a `json` option.
-2. `markNonInteractive` defines `isTTY` as `false` on the stream. With stdin marked before `installStdinCancellation` runs, the SIGINT bridge reads stdin as it does a pipe. Ctrl+C in a terminal still raises SIGINT through the tty.
+1. `isJsonRun`: `--json` appears before any `--`, there is no `-h` or `--help`, and the first non-option argument is `update`, `adopt` or absent (the status command). `--json=true` is not a form Commander accepts for a boolean flag. `validate --json` runs headless without Ink (#34), and install has no `--json`. A unit test ties the accepted commands to every command file under `source/commands/` that declares a `json` option.
+2. `markNonInteractive` defines `isTTY` as `false` on stdout. The only readers of `stdout.isTTY` are Ink's interactive decision (and its synchronized-output check) and the self-update banner, which is already off under `--json`.
+
+The second is decided where the prompt is decided, not by faking stdin. Ink derives `isRawModeSupported` from `stdin.isTTY`, but marking stdin non-interactive would send the stdin SIGINT bridge (`core/cancellation.ts`) down its pipe path on a real terminal. A backgrounded run would then get SIGTTIN and stop, and type-ahead would be swallowed. Instead, a machine with a `--json` mode treats `json` like a missing terminal at its prompt decision:
+- adopt: `!isRawModeSupported || json` refuses with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`, or uses `--values`, exactly as piped;
+- update: #230.
+
+stdin and stderr are never touched.
 
 ---
 
