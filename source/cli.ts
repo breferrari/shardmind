@@ -15,10 +15,17 @@ applyNoColor(process.env);
 const { formatErrorPlain, installCrashHandlers } = await import('./core/bug-report.js');
 const { resolveEngineVersion } = await import('./commands/hooks/cli-version.js');
 const crash = {
-  version: resolveEngineVersion(),
+  // Read when needed (cached after the first read), not on every launch.
+  get version() {
+    return resolveEngineVersion();
+  },
   write: (text: string) => void process.stderr.write(text),
   // Exit once stderr drains: a pipe write can still be queued (Windows, macOS).
-  exit: (code: number) => void process.stderr.write('', () => process.exit(code)),
+  // The code is set first, so an exit elsewhere in the meantime still fails.
+  exit: (code: number) => {
+    process.exitCode = code;
+    process.stderr.write('', () => process.exit(code));
+  },
 };
 installCrashHandlers(process, crash);
 

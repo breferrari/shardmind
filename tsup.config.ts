@@ -18,6 +18,7 @@ export default defineConfig([
       'commands/update': 'source/commands/update.tsx',
       'commands/adopt': 'source/commands/adopt.tsx',
       'commands/validate': 'source/commands/validate.tsx',
+      'commands/_app': 'source/commands/_app.tsx',
     },
     format: ['esm'],
     dts: true,
