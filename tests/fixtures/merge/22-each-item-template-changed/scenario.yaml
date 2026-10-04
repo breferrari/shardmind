@@ -1,0 +1,15 @@
+name: "_each file edited by the user, template changed"
+description: >
+  An `_each` template's heading changes from `# {{ item }}` to `## {{ item }}`.
+  The user added a line to their copy, people/Alice.md. The merge base and the
+  new render must both see the file's own item ("Alice"); rendered without it,
+  both sides lose the name, line 1 conflicts with the user's file, and
+  "Accept new" writes the heading with no name (#233).
+
+ownership_before: modified
+user_edited: true
+template_changed: true
+values_changed: false
+conflict_expected: false
+each_item: "Alice"
+expected_action: auto_merge
