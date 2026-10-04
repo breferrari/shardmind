@@ -20,6 +20,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **The `personalize` write-boundary check no longer reads an unreadable folder as empty.** A folder that is busy or permission-denied (on Windows, a virus scanner holding a fresh folder) is read once more. If it still fails, the check warns `HOOK_BOUNDARY_INCOMPLETE` and names it, instead of reporting that the hook created nothing. A folder that vanished still counts as empty.
 
+### Fixed (a release that only changes a file name's case — #169)
+
+- **`shardmind update` applies a shard release that only changes a file name's case** (`Foo.md` → `foo.md`), with no `migrations` entry. The file moves to its new name with the user's edits, on every filesystem.
+  - On macOS and Windows the update used to refuse (`VAULT_PATH_UNSAFE`, `case-mismatch`). It now renames the file in place.
+  - A user who already renamed the file to the new case is covered.
+  - A pairing that is not clear-cut (two names folding to one), or a change of a folder's case (#195), is handled as before.
+
 ### Added (adopt a vault cloned from an older release — #179)
 
 - **`shardmind adopt --from-version <v>` adopts a vault cloned from release `<v>` at the shard's current paths.** Adopt applies the shard's rename migrations since `<v>`:
