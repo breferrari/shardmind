@@ -27,30 +27,72 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 
-/** The artifacts the tests spawn or import, under a repo root. */
-function distPaths(root: string): { cli: string; runtime: string } {
-  return {
-    cli: path.join(root, 'dist', 'cli.js'),
-    runtime: path.join(root, 'dist', 'runtime', 'index.js'),
-  };
+/**
+ * Every file the spawned CLI loads, relative to the repo root: the entry, the
+ * Pastel command files it routes to, the runtime hook scripts import, and the
+ * hook-runner it spawns. One per entry in tsup.config.ts.
+ */
+export const DIST_ARTIFACTS: readonly string[] = [
+  'dist/cli.js',
+  'dist/commands/index.js',
+  'dist/commands/install.js',
+  'dist/commands/update.js',
+  'dist/commands/adopt.js',
+  'dist/runtime/index.js',
+  'dist/internal/hook-runner.js',
+];
+
+export const DIST_CLI = path.join(REPO_ROOT, 'dist', 'cli.js');
+
+/** Absolute paths of the artifacts in `DIST_ARTIFACTS` that are not on disk. */
+async function missingArtifacts(root: string): Promise<string[]> {
+  const missing: string[] = [];
+  for (const rel of DIST_ARTIFACTS) {
+    const full = path.join(root, rel);
+    if (!(await pathExists(full))) missing.push(full);
+  }
+  return missing;
 }
 
-export const DIST_CLI = distPaths(REPO_ROOT).cli;
+/** Key under which the global setup hands its build failure to the workers. */
+export const BUILD_ERROR_KEY = 'distBuildError';
+
+declare module 'vitest' {
+  export interface ProvidedContext {
+    distBuildError: string | null;
+  }
+}
+
+const checked = new Set<string>();
 
 /**
- * Worker-side check: resolves when `dist/` holds the artifacts the tests
- * spawn, rejects otherwise. Never builds — see the file header.
+ * Worker-side check: resolves when `dist/` holds every artifact the CLI loads,
+ * rejects otherwise. Never builds — see the file header. `buildError` is the
+ * global setup's failure, read from vitest's provided context by default.
+ * A success is memoized per root: workers never write `dist/`, so it holds.
  */
-export async function ensureBuilt(root: string = REPO_ROOT): Promise<void> {
-  const { cli, runtime } = distPaths(root);
-  for (const artifact of [cli, runtime]) {
-    if (!(await pathExists(artifact))) {
-      throw new Error(
-        `${artifact} is missing. The vitest global setup (tests/global-setup.ts) builds dist/ ` +
-          'before any worker starts; run the tests through vitest with the repo config, or run `npm run build`.',
-      );
-    }
+export async function ensureBuilt(
+  root: string = REPO_ROOT,
+  buildError?: string | null,
+): Promise<void> {
+  if (buildError === undefined) {
+    const { inject } = await import('vitest');
+    buildError = inject(BUILD_ERROR_KEY) ?? null;
   }
+  if (buildError !== null) {
+    throw new Error(`The vitest global setup (tests/global-setup.ts) could not build dist/:
+${buildError}`);
+  }
+  if (checked.has(root)) return;
+
+  const [missing] = await missingArtifacts(root);
+  if (missing !== undefined) {
+    throw new Error(
+      `${missing} is missing. The vitest global setup (tests/global-setup.ts) builds dist/ ` +
+        'before any worker starts; run the tests through vitest with the repo config, or run `npm run build`.',
+    );
+  }
+  checked.add(root);
 }
 
 // Build-input files outside `source/` that change the generated `dist/`.
@@ -71,18 +113,15 @@ export async function buildIfStale(
   root: string = REPO_ROOT,
   run: BuildRunner = (capture) => runBuild(root, capture),
 ): Promise<void> {
-  const { cli, runtime } = distPaths(root);
-  const distMtime = await latestMtime([cli, runtime]);
+  const distMtime = await earliestMtime(DIST_ARTIFACTS.map((rel) => path.join(root, rel)));
   const configPaths = BUILD_CONFIG_FILES.map((f) => path.join(root, f));
   const srcMtime = await latestMtime([...(await walkSources(root)), ...configPaths]);
 
-  // Cache hit requires EVERY required artifact to exist on disk — not
-  // just that something in dist/ is newer than source. Using
-  // latestMtime's max means one missing required file (e.g. dist/cli.js)
-  // can still produce a fresh-enough timestamp if a sibling
-  // happens to be recent. Verify both artifacts exist before skipping the
-  // build, so ensureBuilt() in the workers always finds them.
-  const allExist = (await pathExists(cli)) && (await pathExists(runtime));
+  // Cache hit requires every artifact to exist and the OLDEST of them to be
+  // newer than every input. An interrupted build can leave a fresh cli.js
+  // beside a stale or missing command file, so neither the newest artifact
+  // nor cli.js alone can stand for the whole of dist/.
+  const allExist = (await missingArtifacts(root)).length === 0;
   if (allExist && distMtime !== null && srcMtime !== null && distMtime >= srcMtime) {
     return; // cache hit
   }
@@ -104,8 +143,30 @@ export async function buildIfStale(
     throw new Error(describeBuildFailure(result));
   }
 
-  // Sanity: dist/cli.js must exist now.
-  await fs.access(cli);
+  // Sanity: a zero exit must have produced every artifact the workers check
+  // for, so a gap fails here, in the setup, rather than in every worker.
+  const missing = await missingArtifacts(root);
+  if (missing.length > 0) {
+    throw new Error(`tsup exited 0 but did not write: ${missing.join(', ')}`);
+  }
+}
+
+/**
+ * The global setup's entry: builds if stale and returns the failure message
+ * instead of throwing. A throw from the setup would abort the whole run, unit
+ * tests included; returned, it reaches only the tests that spawn the CLI,
+ * through `ensureBuilt()`.
+ */
+export async function buildForRun(
+  root: string = REPO_ROOT,
+  run?: BuildRunner,
+): Promise<string | null> {
+  try {
+    await buildIfStale(root, run);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 /**
@@ -180,6 +241,19 @@ async function walkSources(root: string): Promise<string[]> {
     }
   }
   return out;
+}
+
+async function earliestMtime(paths: string[]): Promise<number | null> {
+  let earliest: number | null = null;
+  for (const p of paths) {
+    try {
+      const ms = (await fs.stat(p)).mtimeMs;
+      if (earliest === null || ms < earliest) earliest = ms;
+    } catch {
+      return null; // a missing artifact is never fresh
+    }
+  }
+  return earliest;
 }
 
 async function latestMtime(paths: string[]): Promise<number | null> {

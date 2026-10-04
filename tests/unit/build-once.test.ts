@@ -13,7 +13,14 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { SpawnSyncReturns } from 'node:child_process';
-import { buildIfStale, ensureBuilt, type BuildRunner } from '../e2e/helpers/build-once.js';
+import {
+  DIST_ARTIFACTS,
+  buildForRun,
+  buildIfStale,
+  ensureBuilt,
+  type BuildRunner,
+} from '../e2e/helpers/build-once.js';
+import { createSetup, type SetupProject } from '../global-setup.js';
 import { pathExists } from '../../source/core/fs-utils.js';
 import config from '../../vitest.config.js';
 
@@ -29,6 +36,11 @@ async function write(rel: string, mtime: Date): Promise<void> {
   await fs.utimes(full, mtime, mtime);
 }
 
+/** Writes every artifact the CLI loads, except `skip`. */
+async function writeDist(mtime: Date, skip: string[] = []): Promise<void> {
+  for (const rel of DIST_ARTIFACTS) if (!skip.includes(rel)) await write(rel, mtime);
+}
+
 function exists(rel: string): Promise<boolean> {
   return pathExists(path.join(root, rel));
 }
@@ -37,15 +49,22 @@ function result(status: number | null, stderr = ''): SpawnSyncReturns<string> {
   return { pid: 0, output: [], stdout: '', stderr, status, signal: null };
 }
 
-/** A runner that counts its calls and, on success, writes `dist/` the way tsup would. */
-function fakeRunner(statuses: number[]): { run: BuildRunner; calls: () => number } {
+/**
+ * A runner that counts its calls and, on success, writes `dist/` the way tsup
+ * would, minus any artifact in `omit`.
+ */
+function fakeRunner(
+  statuses: number[],
+  omit: string[] = [],
+): { run: BuildRunner; calls: () => number } {
   let calls = 0;
   const run: BuildRunner = () => {
     const status = statuses[calls] ?? 0;
     calls += 1;
     if (status !== 0) return result(status, 'boom: tsup failed');
     // spawnSync is synchronous, so the fake writes synchronously too.
-    for (const rel of ['dist/cli.js', 'dist/runtime/index.js']) {
+    for (const rel of DIST_ARTIFACTS) {
+      if (omit.includes(rel)) continue;
       const full = path.join(root, rel);
       fsSync.mkdirSync(path.dirname(full), { recursive: true });
       fsSync.writeFileSync(full, 'built');
@@ -66,10 +85,25 @@ afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
+describe('DIST_ARTIFACTS', () => {
+  it('lists every file the spawned CLI loads', () => {
+    expect(DIST_ARTIFACTS).toEqual(
+      expect.arrayContaining([
+        'dist/cli.js',
+        'dist/runtime/index.js',
+        'dist/commands/index.js',
+        'dist/commands/install.js',
+        'dist/commands/update.js',
+        'dist/commands/adopt.js',
+        'dist/internal/hook-runner.js',
+      ]),
+    );
+  });
+});
+
 describe('buildIfStale (global setup)', () => {
   it('builds once when a source file is newer than dist/', async () => {
-    await write('dist/cli.js', OLD);
-    await write('dist/runtime/index.js', OLD);
+    await writeDist(OLD);
     await write('source/core/state.ts', NEW);
     const { run, calls } = fakeRunner([0]);
 
@@ -79,8 +113,7 @@ describe('buildIfStale (global setup)', () => {
   });
 
   it('does not build when dist/ is newer than every input', async () => {
-    await write('dist/cli.js', NEW);
-    await write('dist/runtime/index.js', NEW);
+    await writeDist(NEW);
     const { run, calls } = fakeRunner([0]);
 
     await buildIfStale(root, run);
@@ -88,29 +121,34 @@ describe('buildIfStale (global setup)', () => {
     expect(calls()).toBe(0);
   });
 
-  it('builds when dist/cli.js is missing even if dist/runtime is fresh', async () => {
-    await write('dist/runtime/index.js', NEW);
+  it.each(['dist/cli.js', 'dist/runtime/index.js', 'dist/commands/install.js'])(
+    'builds when %s is missing even if the rest of dist/ is fresh',
+    async (missing) => {
+      await writeDist(NEW, [missing]);
+      const { run, calls } = fakeRunner([0]);
+
+      await buildIfStale(root, run);
+
+      expect(calls()).toBe(1);
+      expect(await exists(missing)).toBe(true);
+    },
+  );
+
+  it('builds when one artifact is older than the sources, even if another is newer', async () => {
+    // The oldest artifact decides: an interrupted build can leave a fresh
+    // cli.js beside a stale command file.
+    await writeDist(NEW);
+    await write('dist/commands/install.js', OLD);
+    await write('source/core/state.ts', new Date('2026-03-01T00:00:00Z'));
     const { run, calls } = fakeRunner([0]);
 
     await buildIfStale(root, run);
 
     expect(calls()).toBe(1);
-    expect(await exists('dist/cli.js')).toBe(true);
-  });
-
-  it('builds when dist/runtime/index.js is missing even if dist/cli.js is fresh', async () => {
-    await write('dist/cli.js', NEW);
-    const { run, calls } = fakeRunner([0]);
-
-    await buildIfStale(root, run);
-
-    expect(calls()).toBe(1);
-    expect(await exists('dist/runtime/index.js')).toBe(true);
   });
 
   it('builds when a build-config file is newer than dist/', async () => {
-    await write('dist/cli.js', OLD);
-    await write('dist/runtime/index.js', OLD);
+    await writeDist(OLD);
     await write('tsup.config.ts', NEW);
     const { run, calls } = fakeRunner([0]);
 
@@ -133,16 +171,35 @@ describe('buildIfStale (global setup)', () => {
     await expect(buildIfStale(root, run)).rejects.toThrow(/exit code 1 \(retried once\)[\s\S]*boom/);
     expect(calls()).toBe(2);
   });
+
+  it('throws, naming the file, when a successful build leaves an artifact missing', async () => {
+    const { run } = fakeRunner([0], ['dist/runtime/index.js']);
+
+    await expect(buildIfStale(root, run)).rejects.toThrow(/dist[\\/]runtime[\\/]index\.js/);
+  });
+});
+
+describe('buildForRun', () => {
+  it('returns null when the build succeeds', async () => {
+    const { run } = fakeRunner([0]);
+
+    expect(await buildForRun(root, run)).toBeNull();
+  });
+
+  it('returns the failure instead of throwing, so unit-only runs still start', async () => {
+    const { run } = fakeRunner([1, 1]);
+
+    expect(await buildForRun(root, run)).toMatch(/exit code 1 \(retried once\)[\s\S]*boom/);
+  });
 });
 
 describe('ensureBuilt (workers)', () => {
   it('never writes dist/ when it is stale', async () => {
-    await write('dist/cli.js', OLD);
-    await write('dist/runtime/index.js', OLD);
+    await writeDist(OLD);
     await write('source/core/state.ts', NEW);
     const before = (await fs.stat(path.join(root, 'dist/cli.js'))).mtimeMs;
 
-    await ensureBuilt(root);
+    await ensureBuilt(root, null);
 
     // Still the stale file: a worker leaves dist/ to the global setup.
     expect((await fs.stat(path.join(root, 'dist/cli.js'))).mtimeMs).toBe(before);
@@ -150,21 +207,77 @@ describe('ensureBuilt (workers)', () => {
   });
 
   it('rejects, naming the global setup, when dist/cli.js is missing', async () => {
-    await write('dist/runtime/index.js', NEW);
+    await writeDist(NEW, ['dist/cli.js']);
 
-    await expect(ensureBuilt(root)).rejects.toThrow(/global setup/);
+    await expect(ensureBuilt(root, null)).rejects.toThrow(/global setup/);
     expect(await exists('dist/cli.js')).toBe(false);
   });
 
-  it('rejects when dist/runtime/index.js is missing', async () => {
-    await write('dist/cli.js', NEW);
+  it('rejects when a command file is missing', async () => {
+    await writeDist(NEW, ['dist/commands/update.js']);
 
-    await expect(ensureBuilt(root)).rejects.toThrow(/dist[\\/]runtime[\\/]index\.js/);
+    await expect(ensureBuilt(root, null)).rejects.toThrow(/dist[\\/]commands[\\/]update\.js/);
+  });
+
+  it("rejects with the global setup's build failure when it has one", async () => {
+    await writeDist(NEW);
+
+    await expect(ensureBuilt(root, 'tsup build failed with exit code 2')).rejects.toThrow(
+      /could not build dist\/[\s\S]*exit code 2/,
+    );
   });
 });
 
-describe('vitest config', () => {
-  it('builds dist/ in a global setup, before any worker starts', () => {
+describe('global setup', () => {
+  function fakeProject(): SetupProject & {
+    provided: Map<string, unknown>;
+    rerun: () => Promise<void>;
+  } {
+    const provided = new Map<string, unknown>();
+    let onRerun: Parameters<SetupProject['onTestsRerun']>[0] | undefined;
+    return {
+      provided,
+      provide: (key, value) => {
+        provided.set(key, value);
+      },
+      onTestsRerun: (cb) => {
+        onRerun = cb;
+      },
+      rerun: async () => {
+        await onRerun?.([]);
+      },
+    };
+  }
+
+  it('provides null to the workers when the build succeeds', async () => {
+    const project = fakeProject();
+
+    await createSetup(async () => null)(project);
+
+    expect(project.provided.get('distBuildError')).toBeNull();
+  });
+
+  it('provides the failure instead of throwing when the build fails', async () => {
+    const project = fakeProject();
+
+    await createSetup(async () => 'boom')(project);
+
+    expect(project.provided.get('distBuildError')).toBe('boom');
+  });
+
+  it('rebuilds before a watch-mode rerun and provides the new result', async () => {
+    const project = fakeProject();
+    const results = [null, 'type error after an edit'];
+    let builds = 0;
+
+    await createSetup(async () => results[builds++] ?? null)(project);
+    await project.rerun();
+
+    expect(builds).toBe(2);
+    expect(project.provided.get('distBuildError')).toBe('type error after an edit');
+  });
+
+  it('is registered in vitest.config.ts, so it runs before any worker starts', () => {
     expect(config.test?.globalSetup).toContain('tests/global-setup.ts');
   });
 });
