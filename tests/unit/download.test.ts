@@ -1,4 +1,5 @@
 import path from 'node:path';
+import os from 'node:os';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -76,18 +77,45 @@ describe('downloadShard', () => {
     await expect(fs.access(tempDir)).rejects.toThrow();
   });
 
-  it('hands over a cleanup before the fetch starts, so an interrupt mid-download can remove the dir (#57)', async () => {
+  it('hands over a cleanup that stops a download in flight and removes its dir (#57)', async () => {
     let handedOver: (() => Promise<void>) | undefined;
-    globalThis.fetch = vi.fn().mockImplementation(async () => {
-      // The download is in flight: the cleanup must already exist.
-      expect(handedOver).toBeTypeOf('function');
-      return createMockResponse(FIXTURE_TARBALL);
+    let fetchStarted!: () => void;
+    const started = new Promise<void>((r) => (fetchStarted = r));
+    // A body that sends nothing until aborted: the download is in flight.
+    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      fetchStarted();
+      const body = new ReadableStream({
+        start(controller) {
+          init?.signal?.addEventListener('abort', () => controller.error(new Error('aborted')));
+        },
+      });
+      return new Response(body, { status: 200 });
     });
-    const result = await downloadShard('https://example.com/tarball', (cleanup) => {
+    const download = downloadShard('https://example.com/tarball', (cleanup) => {
       handedOver = cleanup;
-    });
+    }).catch((e: unknown) => e);
+    await started;
+    expect(handedOver).toBeTypeOf('function');
+    const dirs = (await fs.readdir(os.tmpdir())).filter((n) => n.startsWith('shardmind-'));
     await handedOver!();
-    await expect(fs.access(result.tempDir)).rejects.toThrow();
+    expect(await download).toBeInstanceOf(Error);
+    const after = (await fs.readdir(os.tmpdir())).filter((n) => n.startsWith('shardmind-'));
+    // The dir this download made is gone (others may belong to parallel tests).
+    expect(after.filter((n) => !dirs.includes(n))).toEqual([]);
+    expect(dirs.length - after.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('removes its temp dir when the callback throws', async () => {
+    globalThis.fetch = vi.fn();
+    const before = (await fs.readdir(os.tmpdir())).filter((n) => n.startsWith('shardmind-'));
+    const err = await downloadShard('https://example.com/tarball', () => {
+      throw new Error('callback failed');
+    }).catch((e: unknown) => e);
+    expect((err as Error).message).toBe('callback failed');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    const after = (await fs.readdir(os.tmpdir())).filter((n) => n.startsWith('shardmind-'));
+    // No dir of its own left behind (others may belong to parallel tests).
+    expect(after.filter((n) => !before.includes(n))).toEqual([]);
   });
 
   it('throws DOWNLOAD_HTTP_ERROR on non-200 response', async () => {

@@ -775,27 +775,28 @@ describe('shardmind install', () => {
       //
       // Timing: Ink in non-TTY mode renders only the final frame, so we
       // can't pattern-match `[N/M]` to detect the installing phase. Instead
-      // the stub's tarball GET is held for 4 s and SIGINT fires at 1.5 s:
-      // after the CLI has started and registered `useSigintRollback`
-      // (startup takes about 0.5-1 s on CI runners), during the download,
-      // before any write. Firing earlier lands before the handler exists
-      // and only tests the bridge's exit-130 fallback (#57). This exercises
-      // the handler + the shard-tempdir cleanup that
-      // `useSigintRollback({ cleanup: … })` promises on every signal, and
+      // the stub holds the tarball GET and SIGINT fires when that request
+      // arrives: by then the CLI has mounted `useSigintRollback` and made
+      // its download temp dir, and no write has started. A fixed delay
+      // fired before the handler existed on fast starts and only tested the
+      // bridge's exit-130 fallback (#57). This exercises the handler + the
+      // shard-tempdir cleanup that `useSigintRollback({ cleanup: … })`
+      // promises on every signal, and
       // keeps the "no partial state in the vault" invariant the test is
       // really about: SIGINT at any phase leaves the vault exactly as the
       // user found it.
-      stub.setTarballDelay(4000);
+      stub.setTarballDelay(10_000);
+      let tmp: Awaited<ReturnType<typeof childTmpDir>> | undefined;
       try {
         vault = await createEmptyVault('install-sigint');
         const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
-        const tmp = await childTmpDir();
+        tmp = await childTmpDir();
         const result = await spawnCli(
           ['install', SHARD_REF, '--yes', '--values', valuesPath],
           {
             cwd: vault.root,
             env: { ...envWithStub(), ...tmp.env },
-            signalAt: { signal: 'SIGINT', afterMs: 1500 },
+            signalAt: { signal: 'SIGINT', when: stub.waitForTarballRequest() },
             timeoutMs: 20_000,
           },
         );
@@ -810,11 +811,11 @@ describe('shardmind install', () => {
         expect(await vault.exists('.shardmind/state.json')).toBe(false);
         expect(await vault.exists('Home.md')).toBe(false);
         // The handler ran, not the bridge's fallback: its cleanup removed
-        // the shard download dir.
+        // the shard download dir, which existed when the signal fired.
         expect(await tmp.leftovers()).toEqual([]);
-        await fs.rm(tmp.dir, { recursive: true, force: true });
       } finally {
         stub.setTarballDelay(0);
+        if (tmp) await fs.rm(tmp.dir, { recursive: true, force: true });
       }
     },
     25_000,
@@ -1281,18 +1282,19 @@ describe('shardmind update', () => {
   it(
     'exits cleanly and leaves state.json byte-identical on SIGINT mid-update',
     async () => {
-      // Same timing as install-sigint (see that test's comment): SIGINT at
-      // 1.5 s, inside a 4 s tarball hold, after the handler is registered.
+      // Same timing as install-sigint (see that test's comment): SIGINT
+      // when the held tarball request arrives, after the handler is up.
       vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-sigint' });
       stub.setLatest(SHARD_SLUG, '0.2.0');
-      stub.setTarballDelay(4000);
+      stub.setTarballDelay(10_000);
+      let tmp: Awaited<ReturnType<typeof childTmpDir>> | undefined;
       try {
         const beforeState = await vault.readFile('.shardmind/state.json');
-        const tmp = await childTmpDir();
+        tmp = await childTmpDir();
         const result = await spawnCli(['update', '--yes'], {
           cwd: vault.root,
           env: { ...envWithStub(), ...tmp.env },
-          signalAt: { signal: 'SIGINT', afterMs: 1500 },
+          signalAt: { signal: 'SIGINT', when: stub.waitForTarballRequest() },
           timeoutMs: 20_000,
         });
         const viaCode = result.exitCode === 130;
@@ -1304,9 +1306,9 @@ describe('shardmind update', () => {
         const afterState = await vault.readFile('.shardmind/state.json');
         expect(afterState).toBe(beforeState);
         expect(await tmp.leftovers()).toEqual([]);
-        await fs.rm(tmp.dir, { recursive: true, force: true });
       } finally {
         stub.setTarballDelay(0);
+        if (tmp) await fs.rm(tmp.dir, { recursive: true, force: true });
       }
     },
     25_000,
@@ -1713,6 +1715,33 @@ describe('shardmind adopt', () => {
     // Dry run: nothing on disk.
     expect(await vault.exists('.shardmind/state.json')).toBe(false);
   });
+
+  it('exits cleanly on SIGINT mid-download and leaves the vault and temp dir as they were (#57)', async () => {
+    vault = await createEmptyVault('adopt-sigint');
+    await vault.writeFile('Home.md', '# My own home\n');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    stub.setTarballDelay(10_000);
+    const tmp = await childTmpDir();
+    try {
+      const result = await spawnCli(['adopt', SHARD_REF, '--yes', '--values', valuesPath], {
+        cwd: vault.root,
+        env: { ...envWithStub(), ...tmp.env },
+        signalAt: { signal: 'SIGINT', when: stub.waitForTarballRequest() },
+        timeoutMs: 20_000,
+      });
+      expect(
+        result.exitCode === 130 || result.signal === 'SIGINT',
+        `exitCode=${result.exitCode} signal=${result.signal} stdout=${result.stdout}`,
+      ).toBe(true);
+      expect(await vault.exists('.shardmind/state.json')).toBe(false);
+      expect(await vault.readFile('Home.md')).toBe('# My own home\n');
+      // The handler's cleanup removed the download dir.
+      expect(await tmp.leftovers()).toEqual([]);
+    } finally {
+      stub.setTarballDelay(0);
+      await fs.rm(tmp.dir, { recursive: true, force: true });
+    }
+  }, 25_000);
 
   it('rejects --json without --dry-run rather than silently doing nothing', async () => {
     // Before the guard this produced one byte on stdout and exit 0 while

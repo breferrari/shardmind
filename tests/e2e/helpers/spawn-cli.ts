@@ -55,6 +55,12 @@ export interface SignalAt {
   afterMs?: number;
   /** Optional grace period after the match before signalling (ms). */
   delayMs?: number;
+  /**
+   * Fire the signal when this promise resolves, e.g. the stub's
+   * `waitForTarballRequest()`: an event that proves the CLI reached a
+   * phase, rather than a guess at how long startup takes (#57).
+   */
+  when?: Promise<unknown>;
 }
 
 export interface SpawnCliOptions {
@@ -210,6 +216,10 @@ function wireSignalAt(child: ChildProcess, spec: SignalAt): void {
 
   if (spec.afterMs !== undefined) {
     timers.push(setTimeout(fire, spec.afterMs));
+  }
+
+  if (spec.when) {
+    void spec.when.then(fire, () => {});
   }
 
   if (spec.afterPattern) {
