@@ -1417,6 +1417,7 @@ And in `source/components/hook-output.ts`, the display wrapper (it reads chalk's
 export function hookOutputForDisplay(text: string): string;
 ```
 
+0. If `FORCE_COLOR` parses (`parseInt`) to a negative integer, set it to `'0'`. chalk turns such a value into a negative level and throws at import on Linux and macOS ("The `level` option should be an integer from 0 to 3"), which took the whole CLI down, Ink included.
 1. If `FORCE_COLOR` is set, even to an empty string, return. The explicit opt-in wins, and chalk reads it as before.
 2. If `NO_COLOR` is set to a non-empty value, set `env.FORCE_COLOR = '0'`, which chalk reads as level 0. An empty `NO_COLOR` does nothing (no-color.org).
 
