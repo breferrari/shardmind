@@ -1,6 +1,6 @@
 /**
  * One shardmind run per vault (#253): the three writing commands' hold on
- * `<vault>/.shardmind.lock`. See docs/IMPLEMENTATION.md §4.24.
+ * `<vault>/.shardmind.lock`. See docs/IMPLEMENTATION.md §4.25.
  *
  * `take()` at the start of the run effect (it throws `VAULT_LOCKED`, which
  * the machine renders as its error), `release()` in `finish`. Not on

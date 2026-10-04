@@ -1,5 +1,5 @@
 /**
- * One shardmind run per vault (#253). See docs/IMPLEMENTATION.md §4.24 and
+ * One shardmind run per vault (#253). See docs/IMPLEMENTATION.md §4.25 and
  * ARCHITECTURE §10.5c.
  *
  * `install`, `update` and `adopt` hold `<vault>/.shardmind.lock` for the
