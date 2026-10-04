@@ -989,6 +989,17 @@ Values come from `--values <file>` over each value's default (computed defaults 
 
 The human view lists each finding with its code and a link into `docs/ERRORS.md`. `--json` writes one document in the shared envelope (`command: "validate"`): `result.findings` (each `severity`, `code`, `message`, `hint`, `path` when the finding is about a file), `errors`, `warnings`. `--json` does not mount Ink, so the document carries no terminal control codes even in a terminal (see #198). Exit 1 when any error was found, 0 otherwise; a target that cannot be read or fetched is `ok: false`, exit 1.
 
+### 10.5c One Run per Vault
+
+Two shardmind runs on one vault at once would each read the same `state.json`, write the same files and keep the last state written. One run's rollback could undo the other's writes, and two installs could pick the same backup name. Parallel agents on one machine make this a real case. So `install`, `update` and `adopt` take a lock on the vault for the whole run (#253). A second run is refused with `VAULT_LOCKED`, which names the run that holds it.
+
+- **The file** is `<vault>/.shardmind.lock`, at the vault root rather than in `.shardmind/`: a reinstall moves `.shardmind/` aside mid-run and a failed fresh install's rollback deletes it, so a lock inside it would move or vanish while held. The path is engine-owned: the vault path guard checks it like the engine's other files (§4.20), no shard can ship a file of that name (Tier 1), and neither drift nor the hook boundary reports it.
+- **Who takes it:** `install`, `update` and `adopt`, from before they read `state.json` until they finish. A run waiting at a prompt holds it, since its plan would be stale if another run wrote meanwhile. `--dry-run` writes nothing and takes no lock.
+- **Who does not:** `status` (`shardmind`, `--verbose`, `--json`) and `validate`. They only read, and a long update should not block a look at the vault. A status taken during a run can show that run's partial state; it is a snapshot.
+- **Stale locks:** the file records the PID, host, command and start time. A lock from this host whose PID is no longer running (a crash, a kill) is taken over with a one-line note. A takeover happens under a second file, `.shardmind.lock.takeover`, so two runs never take the same stale lock over at once. A lock that can't be read (empty, cut off) is never taken over: the error says it is safe to delete when no shardmind runs. A lock from another host (a synced vault) is never taken over, since its process can't be checked from here.
+- **Status during a run** never creates `.shardmind/` for its update-check cache, since a reinstall holding the lock may have moved that folder aside.
+- **Release:** on every exit, success, error, cancel, the Ctrl+C rollback and the crash handlers (#225). A process `exit` handler is the backstop. A run releases only a lock it still holds.
+
 ### 10.6 Install Location
 
 Always the current directory. Same as `git init`. The convention: `cd` into your vault folder and run the command.

@@ -38,6 +38,7 @@ import { resolve as resolveRef } from '../../core/registry.js';
 import { downloadShard, DownloadCancelledError } from '../../core/download.js';
 import { parseManifest, assertEngineCompatible } from '../../core/manifest.js';
 import { resolveEngineVersion } from './cli-version.js';
+import { useVaultLock } from './use-vault-lock.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
 import { loadValuesYaml } from '../../core/values-io.js';
 import {
@@ -186,6 +187,9 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
   const runRef = useRef<RunInFlight | null>(null);
   const hookAbortRef = useRef<AbortController | null>(null);
 
+  // One run per vault (#253); --dry-run writes nothing and takes no lock.
+  const { take: takeLock, release: releaseLock } = useVaultLock(vaultRoot, 'adopt', !dryRun);
+
   const finish = useCallback(
     (next: Phase) => {
       setPhase(next);
@@ -195,10 +199,12 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         next.kind === 'error'
       ) {
         if (next.kind === 'error') process.exitCode = 1;
+        // The run is over: the next one may start (#253).
+        releaseLock();
         setTimeout(() => exit(), 100);
       }
     },
-    [exit],
+    [exit, releaseLock],
   );
 
   // Mid-write SIGINT: walk the executor's snapshot back. Tempdir cleanup
@@ -240,6 +246,9 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         // Pre-flight guard runs FIRST, before any network call. Saves
         // the user a multi-second wait on a downloads-and-then-rejects
         // path that's deterministically wrong from byte zero.
+        // Before the vault is read: a plan made from a vault another run is
+        // changing would be stale (#253).
+        takeLock();
         await assertAdoptable(vaultRoot);
 
         setPhase({ kind: 'loading', message: `Resolving ${shardRef}…` });

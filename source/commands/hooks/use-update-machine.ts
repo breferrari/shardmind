@@ -38,6 +38,7 @@ import { primeLatestVersion } from '../../core/update-check.js';
 import { downloadShard, DownloadCancelledError } from '../../core/download.js';
 import { parseManifest, assertEngineCompatible } from '../../core/manifest.js';
 import { resolveEngineVersion } from './cli-version.js';
+import { useVaultLock } from './use-vault-lock.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
 import { readState } from '../../core/state.js';
 import { detectDrift } from '../../core/drift.js';
@@ -197,6 +198,9 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
   // time we reach the hook, `runUpdate` has already written state.json.
   const hookAbortRef = useRef<AbortController | null>(null);
 
+  // One run per vault (#253); --dry-run writes nothing and takes no lock.
+  const { take: takeLock, release: releaseLock } = useVaultLock(vaultRoot, 'update', !dryRun);
+
   const finish = useCallback(
     (next: Phase) => {
       setPhase(next);
@@ -210,10 +214,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         // cancelled + up-to-date + summary are all "successful outcomes"
         // from the engine's perspective and keep the default exit 0.
         if (next.kind === 'error') process.exitCode = 1;
+        // The run is over: the next one may start (#253).
+        releaseLock();
         setTimeout(() => exit(), 100);
       }
     },
-    [exit],
+    [exit, releaseLock],
   );
 
   // If we're mid-write, walk the executor's snapshot back before exiting.
@@ -255,6 +261,9 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           );
         }
 
+        // Before state is read: a plan made from a state another run is
+        // changing would be stale (#253).
+        takeLock();
         setPhase({ kind: 'loading', message: 'Reading install state…' });
         const state = await readState(vaultRoot);
         if (!state) throwNoInstall();

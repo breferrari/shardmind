@@ -671,6 +671,33 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     }
   }, 45_000);
 
+  // ───── Another run holds the vault (#253) ─────
+
+  it('install is refused while another shardmind run holds the vault, before it reads or writes (#253)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await makeVaultDir('s-vault-locked');
+    try {
+      // The test runner's parent: another process, and alive, so its lock is held.
+      await fs.writeFile(
+        path.join(vault, '.shardmind.lock'),
+        JSON.stringify({ pid: process.ppid, hostname: (await import('node:os')).hostname(), command: 'update', startedAt: '2026-10-04T12:00:00.000Z' }),
+      );
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: vault });
+      const all = await waitFor(
+        () => r.frames.join(' ').replace(/\s+/g, ' '),
+        (f) => /VAULT_LOCKED/.test(f),
+        30_000,
+      );
+      expect(all).toContain(`update (PID ${process.ppid}`);
+      expect(all).not.toMatch(/questions to answer/);
+      expect(await fs.readdir(vault)).toEqual(['.shardmind.lock']);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 45_000);
+
   // ───── A user file at an `_each`-expanded path is backed up, not overwritten (#214) ─────
 
   it('install backs up a user file at a path an _each template expands to (#214)', async () => {

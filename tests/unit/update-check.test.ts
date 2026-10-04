@@ -72,6 +72,22 @@ describe('update-check', () => {
     await fsp.rm(vault, { recursive: true, force: true });
   });
 
+  it('writes no cache while another live run holds the vault: its rollback removes only what it wrote (#253)', async () => {
+    await fsp.writeFile(
+      path.join(vault, '.shardmind.lock'),
+      // The test runner's parent: another process, and alive.
+      JSON.stringify({ pid: process.ppid, hostname: os.hostname(), command: 'install', startedAt: '2026-10-04T12:00:00.000Z' }),
+    );
+    await writeCache(vault, { schema_version: 1, checked_at: new Date().toISOString(), source: SOURCE, latest_version: '3.5.0' });
+    await expect(fsp.access(path.join(vault, SHARDMIND_DIR, CACHE_FILENAME))).rejects.toThrow();
+  });
+
+  it('never recreates .shardmind/: a reinstall holding the vault may have moved it aside (#253)', async () => {
+    await fsp.rm(path.join(vault, SHARDMIND_DIR), { recursive: true, force: true });
+    await writeCache(vault, { schema_version: 1, checked_at: new Date().toISOString(), source: SOURCE, latest_version: '3.5.0' });
+    await expect(fsp.access(path.join(vault, SHARDMIND_DIR))).rejects.toThrow();
+  });
+
   describe('cache freshness', () => {
     it('returns cached value within TTL without hitting the network', async () => {
       globalThis.fetch = vi.fn(() => {

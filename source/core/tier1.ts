@@ -26,6 +26,9 @@ export const TIER1 = Object.freeze({
     '.obsidian/workspace.json',
     '.obsidian/workspace-mobile.json',
     '.obsidian/graph.json',
+    // The engine's run lock at the vault root, and its takeover guard (#253).
+    '.shardmind.lock',
+    '.shardmind.lock.takeover',
   ] as const,
 });
 

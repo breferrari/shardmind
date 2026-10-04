@@ -26,6 +26,13 @@ describe('Tier 1 exclusion set', () => {
       expect(isTier1Excluded(file)).toBe(true);
     });
 
+    it('excludes the run lock at the root, so no shard can ship one (#253)', () => {
+      expect(isTier1Excluded('.shardmind.lock')).toBe(true);
+      expect(isTier1Excluded('.SHARDMIND.LOCK')).toBe(true);
+      expect(isTier1Excluded('.shardmind.lock.takeover')).toBe(true);
+      expect(isTier1Excluded('notes/.shardmind.lock')).toBe(false);
+    });
+
     it('does not exclude other .obsidian/ files', () => {
       expect(isTier1Excluded('.obsidian/app.json')).toBe(false);
       expect(isTier1Excluded('.obsidian/core-plugins.json')).toBe(false);

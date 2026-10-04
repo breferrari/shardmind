@@ -260,6 +260,7 @@ Not author-configurable. Would break things or are meaningless off-GitHub:
 - `.git/` — VCS database
 - `.github/` — GitHub CI, issue templates, `FUNDING.yml` (defensive: prevents accidental Actions activation if user git-pushes their vault)
 - `.obsidian/workspace.json`, `.obsidian/workspace-mobile.json`, `.obsidian/graph.json` — Obsidian ephemeral user-specific state
+- `.shardmind.lock`, `.shardmind.lock.takeover` — the engine's run lock at the vault root and its takeover guard (#253); a shard that ships one would collide with it
 - **Symbolic links anywhere in the shard source** — engine rejects with a clear error during the install walk. Security baseline: an untrusted shard could symlink outside the install target.
 
 Other Obsidian user-state files (`starred.json`, `bookmarks.json`, `backlink.json`, `page-preview.json`) are author-controlled via `.shardmindignore`. obsidian-mind v5.1 commits none of these, so no practical issue.

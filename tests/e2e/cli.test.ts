@@ -909,6 +909,8 @@ describe('shardmind install', () => {
           viaCode || viaSignal,
           `exitCode=${result.exitCode} signal=${result.signal} stdout=${result.stdout}`,
         ).toBe(true);
+        // The Ctrl+C rollback releases the vault lock (#253).
+        expect(await vault.exists('.shardmind.lock')).toBe(false);
         // A cancel is not a crash: no bug report framing (#225).
         expect(result.stdout + result.stderr).not.toMatch(/This is a bug in shardmind/);
         // Vault invariant: no tracked files, no state.json, no backups left
@@ -1410,6 +1412,8 @@ describe('shardmind update', () => {
           viaCode || viaSignal,
           `exitCode=${result.exitCode} signal=${result.signal} stdout=${result.stdout}`,
         ).toBe(true);
+        // The Ctrl+C rollback releases the vault lock (#253).
+        expect(await vault.exists('.shardmind.lock')).toBe(false);
         // A cancel is not a crash: no bug report framing (#225).
         expect(result.stdout + result.stderr).not.toMatch(/This is a bug in shardmind/);
         const afterState = await vault.readFile('.shardmind/state.json');
@@ -1844,6 +1848,8 @@ describe('shardmind adopt', () => {
         result.exitCode === 130 || result.signal === 'SIGINT',
         `exitCode=${result.exitCode} signal=${result.signal} stdout=${result.stdout}`,
       ).toBe(true);
+      // The Ctrl+C rollback releases the vault lock (#253).
+      expect(await vault.exists('.shardmind.lock')).toBe(false);
       // A cancel is not a crash: no bug report framing (#225).
       expect(result.stdout + result.stderr).not.toMatch(/This is a bug in shardmind/);
       expect(await vault.exists('.shardmind/state.json')).toBe(false);

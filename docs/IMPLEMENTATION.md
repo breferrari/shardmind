@@ -822,7 +822,6 @@ interface ConflictRegion {
 
 **Conflict markers** (same format as git):
 ```
-<<<<<<< yours
 User's version of conflicting lines
 =======
 Shard update version of conflicting lines
@@ -1664,9 +1663,7 @@ The same gate keeps the document's single trailing newline (#231). At unmount, I
 
 ---
 
----
-
-### 4.23 `editor.ts`
+### 4.24 `editor.ts`
 
 Open a conflict in the user's editor (#50). Pure of Ink. The caller runs `editInEditor` inside `withSigintHeld` and `withTerminalReleased`.
 
@@ -1707,6 +1704,46 @@ type EditOutcome = { kind: 'saved'; content: string } | { kind: 'cancelled'; det
 A `saved` result without markers resolves the conflict as `{ kind: 'edited', content }`. The vault is never written here: the update executor's write pass writes the edited text under its snapshot and rollback (§4.12), and records it `modified` at the shard's hash. On an add-collision (`preexisting`), an edit is an explicit choice to manage the file, so it is tracked the same way.
 
 Known limit: keys typed in the terminal while a window editor is open are read by the next prompt once raw mode returns.
+
+### 4.25 `vault-lock.ts`
+
+One run per vault (#253, ARCHITECTURE §10.5c). Synchronous, so the process `exit` handler can release.
+
+```typescript
+interface VaultLockInfo { pid: number; hostname: string; command: string; startedAt: string }
+interface VaultLock { release(): void; tookOver?: VaultLockInfo }
+acquireVaultLock(vaultRoot: string, command: 'install' | 'update' | 'adopt', deps?: { pid?; hostname?; isAlive?; now?; processStartedAt? }): VaultLock
+```
+
+1. **Create.** `openSync(<vault>/.shardmind.lock, 'wx')` writes `VaultLockInfo` as JSON.
+   - `EEXIST` or `EISDIR` (a folder by that name) means the name is taken.
+   - `EPERM` is retried: on Windows it can be a delete still pending. After the retries it is thrown as itself, which is also what a folder the user cannot write to gives.
+   - Any other error is thrown as itself.
+   - A failed write removes the file it created.
+2. **On a taken name,** it reads it.
+   - **None** (the holder released between our create and our read): create again. There are five attempts in all. When they run out, it reports the holder if it is live, or else that the lock kept changing.
+   - **Unreadable:** not a regular file, or not JSON with an integer `pid > 0`, a `hostname`, a `command` and a `startedAt`. This includes an empty or cut-off file, which may be a run still writing it. It throws `VAULT_LOCKED`, and the file is left alone. No time rule applies: a vault on a network share can have a skewed clock.
+3. **Stale or not.** A holder is stale when it is on the same host and either:
+   - its PID is not running (`process.kill(pid, 0)`, where `EPERM` means alive); or
+   - its PID is our own and its `startedAt` predates this process. That is a reused PID's leftover, such as a container whose runs are all PID 1. Our own PID started after this process is another live run with the same PID, and is not stale.
+
+   Hosts compare without case or a trailing `.local`, which macOS adds and drops as the network changes. Anything not stale throws `VAULT_LOCKED`.
+4. **Takeover** runs under `.shardmind.lock.takeover`, created with `wx`.
+   - If the guard is taken, it is judged like a lock: a guard left by a run that died mid-takeover is removed. Either way the run looks at the lock again, since another run may be taking it over.
+   - Holding the guard, it deletes the lock only if it still names the holder it judged, then removes the guard and creates again. A live lock is never moved or renamed.
+   - The result carries `tookOver` only when the stale lock was deleted by this run.
+5. **The error.** The message names the command, PID, start time and, for another host, the hostname. The hint says to wait or, when no shardmind process is running, that `.shardmind.lock` (and `.shardmind.lock.takeover`, if present) in the vault folder is safe to delete.
+6. **`release()`** removes the file only if it still holds this run's PID and start time; it is idempotent. A delete that fails (a file held open for a moment on Windows) is swallowed: the run is over, and the next run finds its PID gone. Every lock a process holds is released by one `process.on('exit')` handler, installed once, so a test that unmounts without finishing does not pile up listeners.
+
+The status command takes no lock. Its update-check cache write never creates `.shardmind/`: a reinstall holding the lock may have moved that folder aside. It also writes nothing while another live run holds the vault (`isHeldByAnotherRun`), since a run's rollback removes only what it wrote.
+
+**Known limits.**
+- Staleness is judged by PID on the same host, so runs must share a PID namespace. Two containers that share a hostname and a bind-mounted vault, but not a PID namespace, are not supported.
+- An empty or cut-off lock (a run killed between create and write) is never taken over automatically. An empty one is refused with "An empty .shardmind.lock was left by a crashed run; delete it if no shardmind is running"; a cut-off one with the unreadable-lock message, whose hint names both files as safe to delete.
+
+`commands/hooks/use-vault-lock.ts` wraps it for the three machines:
+- `take()` at the start of the run effect (not under `--dry-run`). A stale takeover's note goes through Ink's `useStderr`.
+- `release()` in `finish`. Not on unmount: a Ctrl+C unmounts the tree while its rollback still restores files, and the `exit` handler releases once the rollback has exited 130.
 
 ## 5. Runtime Module: `shardmind/runtime`
 
@@ -1821,7 +1858,7 @@ A `preexisting` conflict (#60) is not an edit of a shard file, so its header rea
 
 CRLF-tolerant — all splits use `/\r?\n/` so a Windows-saved user file does not render `\r` characters that would corrupt the terminal.
 
-**Open in editor (#50).** The update machine resolves the editor once (`resolveEditorCommand`, §4.23) and passes `canEdit`. On `open_editor` it runs `editInEditor` on the merged text with markers (`result.content`) under `withTerminalReleased`, then:
+**Open in editor (#50).** The update machine resolves the editor once (`resolveEditorCommand`, §4.24) and passes `canEdit`. On `open_editor` it runs `editInEditor` on the merged text with markers (`result.content`) under `withTerminalReleased`, then:
 - a `saved` edit without markers resolves the file as `{ kind: 'edited', content }`;
 - a `saved` edit with markers returns to this file with `editHasMarkers`, offering Edit again (`edit_again`, starting from that edit) · Use my edit as is (`use_edit`, the only way markers reach the vault) · Keep mine;
 - a `cancelled` edit returns with `editNote`.
