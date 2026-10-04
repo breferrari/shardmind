@@ -66,14 +66,23 @@ export async function mapConcurrent<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let cursor = 0;
+  // The first failure stops the hand-out, and the call rejects only once the
+  // tasks already running have settled: a caller that rolls back on the
+  // rejection must not race writes still under way (#274).
+  let failure: { error: unknown } | null = null;
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (true) {
+    while (failure === null) {
       const i = cursor++;
       if (i >= items.length) return;
-      results[i] = await fn(items[i]!);
+      try {
+        results[i] = await fn(items[i]!);
+      } catch (error) {
+        failure ??= { error };
+      }
     }
   });
   await Promise.all(workers);
+  if (failure !== null) throw (failure as { error: unknown }).error;
   return results;
 }
 
