@@ -203,6 +203,7 @@ shardmind/
 │   │   ├── validate-shard.ts          # validate target (dir or ref) + headless --json runner (#34)
 │   │   ├── color-env.ts               # NO_COLOR → chalk level 0 before Ink loads; FORCE_COLOR wins (#37)
 │   │   ├── bug-report.ts              # describeError (known / environment / bug), report link, top-level crash handler (#225)
+│   │   ├── rollback-report.ts         # ROLLBACK_INCOMPLETE: what a failed rollback left behind (#247)
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   └── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
@@ -369,6 +370,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `hook-orchestrator.ts` | §4.16a | Hook lifecycle: slot selection/order, per-slot ctx, write-boundary checks, re-hash, fingerprint persist |
 | `hook-boundary.ts` | §4.16b | Pure detect-and-warn write-boundary detector (managed-write / unmanaged-create) |
 | `bug-report.ts` | §7.2a | `describeError` (known / environment / bug), the version-only report link, the plain-text top-level crash handler (#225) |
+| `rollback-report.ts` | §4.11b (Reporting the rollback) | `ROLLBACK_INCOMPLETE` for a rollback that left files behind, shared by install / update / adopt (#247) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
