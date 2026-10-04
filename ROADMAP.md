@@ -56,7 +56,7 @@ The suite fails only on real defects, on all three operating systems.
 |---|---|---|
 | ✅ | Flaky test: merge-adversarial 10K-lines tokenize times out under parallel pressure | [#114](https://github.com/breferrari/shardmind/issues/114) |
 | ✅ | Flake: hook-runner pre-throw stdout dropped under parallel CPU pressure | [#106](https://github.com/breferrari/shardmind/issues/106) |
-| ⬜ | E2E: bridge SIGINT delivery reliably on GH Actions Windows runner | [#57](https://github.com/breferrari/shardmind/issues/57) |
+| ✅ | E2E: bridge SIGINT delivery reliably on GH Actions Windows runner | [#57](https://github.com/breferrari/shardmind/issues/57) |
 
 ## Shelf
 
@@ -106,6 +106,7 @@ Every item on the deferral shelf below has a milestone here, so a milestone-filt
 | ⬜ | Let the update prompt track a kept add-collision file per file | [#165](https://github.com/breferrari/shardmind/issues/165) |
 | ⬜ | Apply a shard release that only changes a file's case | [#169](https://github.com/breferrari/shardmind/issues/169) |
 | ⬜ | Merge files with many repeated lines in less than cubic time | [#170](https://github.com/breferrari/shardmind/issues/170) |
+| ⬜ | Run the Layer 2 real-terminal tests on Windows under ConPTY | [#174](https://github.com/breferrari/shardmind/issues/174) |
 
 ## Deferral shelf
 
@@ -150,6 +151,7 @@ Items moved out of the build order, each with the phase it moved to and a dated 
 | Let the update prompt track a kept add-collision file per file ([#165](https://github.com/breferrari/shardmind/issues/165)) | #61 pass, 2026-10-03 | Shelf | `--adopt-preexisting` stops the `--yes` churn #61 reported; a per-file choice is a prompt redesign with no user report behind it. |
 | Apply a shard release that only changes a file's case ([#169](https://github.com/breferrari/shardmind/issues/169)) | #163 review, 2026-10-04 | Shelf | The #163 guard refuses it on macOS and Windows instead of losing the file; no shard has shipped a case-only rename. |
 | Merge files with many repeated lines in less than cubic time ([#170](https://github.com/breferrari/shardmind/issues/170)) | #114 pass, 2026-10-04 | Shelf | Measured near-cubic in node-diff3 on repeated lines; a faster LCS must prove it changes no merge, and no vault has hit it. |
+| Run the Layer 2 real-terminal tests on Windows under ConPTY ([#174](https://github.com/breferrari/shardmind/issues/174)) | split from #57, 2026-10-04 | Shelf | #57 covered the non-PTY SIGINT scenarios; ConPTY parity for node-pty scenarios has no Windows user report behind it. |
 | Align the RELEASE-SMOKE cancellation rows with the engine ([#155](https://github.com/breferrari/shardmind/issues/155)) | v0.1.7 release smoke, 2026-10-03 | Shelf | A defect in a gate, not a product pass. Both behaviours predate 0.1.7 and the smoke table records them as deviations; the wizard exit code is a product question to decide first. |
 
 ## Pull-forward log
@@ -277,7 +279,7 @@ Two tickets stop bad releases from shipping. Both are top priority and ship befo
 
 - **TUI end-to-end testing framework** — three layers (command-level component, real-PTY, status-quo subprocess), 28 scenarios covering wizard, multi-file diff review, module review, hooks, cancellation, validation ([#111](https://github.com/breferrari/shardmind/issues/111)). All three phases shipped; parent issue closed. Continuing-hardening tracker: [#122](https://github.com/breferrari/shardmind/issues/122).
   - [x] **Phase 1** — Layer 1 command-level flow tests (22 scenarios across install / update / adopt / status), shipped under `tests/component/flows/`. Closes the regression matrix #103 and #109 fell through and unblocks the Flagship UX stabilization tickets below.
-  - [x] **Phase 2** — Layer 2 real-PTY scenarios via `node-pty` + `@xterm/headless` (6 scenarios marked L2 in [#111](https://github.com/breferrari/shardmind/issues/111)'s matrix + 3 hook scenarios 26-28). Catches SIGINT delivery, ANSI rendering, raw-mode quirks that only surface under a real PTY. Shipped under `tests/e2e/tui/`; macOS + Linux only (Windows skipped — tracked via [#57](https://github.com/breferrari/shardmind/issues/57)).
+  - [x] **Phase 2** — Layer 2 real-PTY scenarios via `node-pty` + `@xterm/headless` (6 scenarios marked L2 in [#111](https://github.com/breferrari/shardmind/issues/111)'s matrix + 3 hook scenarios 26-28). Catches SIGINT delivery, ANSI rendering, raw-mode quirks that only surface under a real PTY. Shipped under `tests/e2e/tui/`; macOS + Linux only (Windows skipped — tracked via [#174](https://github.com/breferrari/shardmind/issues/174)).
   - [x] **Phase 3** — TUI testing framework extensibility validated under hostile contributor scenarios (double-dispose, late-PTY-data, wedged-child + signal-name mapping, fixture-shard mutate-throw cleanup at both layers) plus a contributor section in `docs/ARCHITECTURE.md §19.7` ("Adding a TUI scenario"). Closes the parent issue: every acceptance criterion satisfied across Phases 1+2+3. Future TUI scenarios are mechanical to add — see the contributor section.
 - [x] **Pre-release manual smoke gate** — [`RELEASE-SMOKE.md`](RELEASE-SMOKE.md) checklist + binding [`CLAUDE.md` §Release Process](CLAUDE.md#release-process) rule that `npm run release:*` does not run without a completed smoke table pasted into the release tag body ([#112](https://github.com/breferrari/shardmind/issues/112)). Scope shrank with #111 closing the engine matrix in CI: the gate now covers only what fixtures can't reach — the published npm tarball, the live flagship shard, real-GitHub fetch, and Ctrl+C against the live shard. Relaxes when CI installs the npm tarball + drives a recorded flagship snapshot (see [`RELEASE-SMOKE.md §When the gate may relax`](RELEASE-SMOKE.md#when-the-gate-may-relax)).
 
@@ -386,7 +388,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] `docs/IMPLEMENTATION.md` §4.11a / §4.11b for install-planner + install-executor ([#64](https://github.com/breferrari/shardmind/issues/64))
 - [ ] Enforce tarball size cap in `downloadShard` ([#32](https://github.com/breferrari/shardmind/issues/32))
 - [x] `--force` flag on install for scripted collision overwrite without backup ([#55](https://github.com/breferrari/shardmind/issues/55))
-- [ ] E2E: bridge SIGINT delivery reliably on GH Actions Windows runner ([#57](https://github.com/breferrari/shardmind/issues/57))
+- [x] E2E: bridge SIGINT delivery reliably on GH Actions Windows runner ([#57](https://github.com/breferrari/shardmind/issues/57))
 - [ ] Hook-runner pre-throw stdout dropped under parallel CPU pressure (test-only flake; `process.exit()` race vs piped buffer) ([#106](https://github.com/breferrari/shardmind/issues/106))
 - [ ] Split `release.yml` into two pipelines — GitHub Release (reversible) before npm publish (irreversible) ([#108](https://github.com/breferrari/shardmind/issues/108))
 - [ ] Flaky test: `merge-adversarial 10K-lines tokenize` times out under parallel pressure ([#114](https://github.com/breferrari/shardmind/issues/114)) — retroactive `/take-next` §4 three-condition review documented [in the issue](https://github.com/breferrari/shardmind/issues/114#issuecomment-4323200506); deciding factor is whether the fix is a timeout bump (close as fix-in-PR) or algorithmic (keep deferred). Investigate scope before next `tests/unit/` touch.

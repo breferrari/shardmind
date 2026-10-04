@@ -1566,7 +1566,7 @@ staying hermetic. No test reaches the public internet.
   `stdin.isRaw === true`), and incremental ANSI rendering during the
   `running-hook` phase. macOS + Linux only — Windows skipped because
   ConPTY semantics diverge enough that those scenarios are their own
-  track (**#57**). Helpers: `tests/e2e/tui/helpers/pty-cli.ts` (typed
+  track (**#174**). Helpers: `tests/e2e/tui/helpers/pty-cli.ts` (typed
   PTY wrapper with `write` / `waitForScreen` / `sigint` / `kill`),
   `virtual-screen.ts` (xterm-headless feeder + serializer),
   `build-fixture-shard.ts` (custom-shard tarball builder for hook
@@ -1631,16 +1631,15 @@ staying hermetic. No test reaches the public internet.
   The **test harness** delivers ETX on Windows and a real signal on POSIX;
   `signalAt: { afterMs }` times the interrupt against a slowed-down stub
   tarball (`stub.setTarballDelay(ms)`) since non-TTY Ink renders only the
-  final frame and pattern-based timing isn't reliable. This works on
-  Windows dev boxes but not on GitHub Actions Windows Server 2022 runners
-  — the runner image has a pipe-buffering quirk where the parent's
-  single-byte write doesn't reach the child before the test's outer
-  timeout fires. Until we find a test-harness mechanism that bridges
-  reliably, the two SIGINT E2E scenarios carry an
-  `it.skipIf(process.platform === 'win32')` on that cell; follow-up
-  tracked as **#57**. The production bridge is not gated — real Windows
-  users get the same cancellation behavior as POSIX, and local Windows
-  dev boxes exercise the path end-to-end.
+  final frame and pattern-based timing isn't reliable. The interrupt
+  fires at 1.5 s inside a 4 s tarball hold: after the CLI has started and
+  registered its SIGINT handler (about 0.5-1 s on CI runners), before any
+  write. Both SIGINT E2E scenarios run on every CI cell, Windows included.
+  They were skipped on GitHub Actions Windows runners until #57: traced
+  there, the ETX byte reached the child within milliseconds of startup,
+  before any handler existed, and only the bridge's exit-130 fallback ran.
+  The production bridge is not gated: real Windows users get the same
+  cancellation behavior as POSIX.
 - **Exit code contract**: install and update set `process.exitCode = 1`
   on error-phase transitions so scripting / CI can detect failures. The
   status command (`commands/index.tsx`) intentionally keeps exit 0 even

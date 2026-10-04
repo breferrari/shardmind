@@ -6,7 +6,7 @@
  * iteration shape in-process; Layer 2 pins it under the actual TTY
  * surface, the way real users hit it.
  *
- * Skipped on Windows: PTY semantics + cancellation bridge mismatch (#57).
+ * Skipped on Windows: PTY semantics + cancellation bridge mismatch (#174).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

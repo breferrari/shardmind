@@ -13,7 +13,7 @@
  *
  * Each test owns its own vault tempdir and runs against a shared
  * github-stub serving the standard minimal-shard fixtures. Skipped on
- * Windows: ConPTY divergence + cancellation bridge mismatch (#57).
+ * Windows: ConPTY divergence + cancellation bridge mismatch (#174).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

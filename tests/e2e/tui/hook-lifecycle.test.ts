@@ -15,7 +15,7 @@
  * via `--yes --values <file>` so the only event we drive is whatever
  * the scenario actually exercises in the hook phase.
  *
- * Skipped on Windows: PTY semantics + cancellation bridge mismatch (#57).
+ * Skipped on Windows: PTY semantics + cancellation bridge mismatch (#174).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
