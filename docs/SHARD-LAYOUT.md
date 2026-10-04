@@ -406,6 +406,7 @@ Criterion: **obsidian-mind v6 does not need these to install, configure, or upgr
 **Declined** (dated; reopen if the reason stops holding):
 
 - A shared `VaultFS` with built-in rollback for install and update (#33), declined 2026-10-04. The two rollbacks are different models: install restores collision backups and removes created paths; update restores a snapshot of touched paths and replays a case-rename journal and a created-folders record. One LIFO undo would express neither without becoming a second copy of both.
+- A `SHARDMIND_DEBUG` log of every phase, fetch and write (#36), declined 2026-10-04. No debugging pain has been reported; an install's failure stays on screen with its code and hint, `--json` and the hook logs already record runs, and a log of every fetch and write adds a redaction surface. The real gap, an unexpected error shown without its stack, is #225.
 
 ## Transition
 
