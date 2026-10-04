@@ -7,6 +7,10 @@
  * loads Ink: `source/cli.ts` calls it first and imports Pastel afterwards.
  */
 export function applyNoColor(env: NodeJS.ProcessEnv): void {
+  // chalk turns a negative FORCE_COLOR into a negative level and throws at
+  // import on Linux and macOS, so treat it as off.
+  const force = env['FORCE_COLOR'];
+  if (force !== undefined && Number.parseInt(force, 10) < 0) env['FORCE_COLOR'] = '0';
   // FORCE_COLOR is the explicit opt-in, so it wins whenever it is set, even
   // to an empty string, which chalk reads as level 1.
   if (env['FORCE_COLOR'] !== undefined) return;

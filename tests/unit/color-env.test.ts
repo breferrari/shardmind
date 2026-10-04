@@ -37,6 +37,15 @@ describe('applyNoColor', () => {
     expect(applied({ NO_COLOR: '1', FORCE_COLOR: '' })).toEqual({ NO_COLOR: '1', FORCE_COLOR: '' });
   });
 
+  it.each(['-1', '-3', ' -2'])('turns a negative FORCE_COLOR (%j), which chalk would throw on, into 0', (value) => {
+    expect(applied({ FORCE_COLOR: value })).toEqual({ FORCE_COLOR: '0' });
+    expect(applied({ FORCE_COLOR: value, NO_COLOR: '' })).toEqual({ FORCE_COLOR: '0', NO_COLOR: '' });
+  });
+
+  it.each(['0', '1', '3', '4', '', 'true', 'false', 'foo'])('leaves FORCE_COLOR=%j as chalk reads it', (value) => {
+    expect(applied({ FORCE_COLOR: value })).toEqual({ FORCE_COLOR: value });
+  });
+
   it('leaves every other variable alone', () => {
     expect(applied({ NO_COLOR: 'yes', TERM: 'xterm', PATH: '/bin' })).toEqual({
       NO_COLOR: 'yes',

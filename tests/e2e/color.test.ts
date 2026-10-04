@@ -33,6 +33,14 @@ afterAll(async () => {
 
 /** Runs the CLI with only the colour variables given, plus a colour-capable TERM. */
 function run(args: string[], colorEnv: Record<string, string>, opts: { tty: boolean }): string {
+  return runFull(args, colorEnv, opts).stdout;
+}
+
+function runFull(
+  args: string[],
+  colorEnv: Record<string, string>,
+  opts: { tty: boolean },
+): { stdout: string; stderr: string; status: number | null } {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) {
     if (key.startsWith('SHARDMIND_') || key === 'NO_COLOR' || key === 'FORCE_COLOR') delete env[key];
@@ -46,7 +54,7 @@ function run(args: string[], colorEnv: Record<string, string>, opts: { tty: bool
     timeout: 25_000,
   });
   if (result.error) throw result.error;
-  return result.stdout;
+  return { stdout: result.stdout, stderr: result.stderr, status: result.status };
 }
 
 describe('colour environment', () => {
@@ -68,6 +76,15 @@ describe('colour environment', () => {
 
   it('keeps colour when piped under FORCE_COLOR', () => {
     expect(run([], { FORCE_COLOR: '1' }, { tty: false })).toMatch(SGR);
+  });
+
+  // chalk throws at import on a negative level, which crashed the whole CLI
+  // on Linux and macOS (Windows takes another branch first).
+  it.each([{ tty: false }, { tty: true }])('runs under a negative FORCE_COLOR, %o', (opts) => {
+    const { stdout, stderr, status } = runFull([], { FORCE_COLOR: '-1' }, opts);
+    expect(stderr).not.toContain('level');
+    expect(status, stderr).toBe(0);
+    expect(stdout).not.toMatch(SGR);
   });
 
   // Pins a contract that holds without #37 too: Commander's help is never styled.
