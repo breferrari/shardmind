@@ -71,17 +71,18 @@ describe('json envelope', () => {
   it('carries code and hint through from a ShardMindError', () => {
     const env = jsonFailure('adopt', new ShardMindError('boom', 'ADOPT_WRITE_FAILED', 'try this'));
     expect(env.ok).toBe(false);
-    expect(env.error).toEqual({ code: 'ADOPT_WRITE_FAILED', message: 'boom', hint: 'try this' });
+    expect(env.error).toEqual({ code: 'ADOPT_WRITE_FAILED', message: 'boom', hint: 'try this', stack: null });
     expect(env.result).toBeUndefined();
   });
 
   it('degrades a plain Error to a null code rather than inventing one', () => {
-    const env = jsonFailure('update', new Error('kaboom'));
-    expect(env.error).toEqual({ code: null, message: 'kaboom', hint: null });
+    const err = new Error('kaboom');
+    const env = jsonFailure('update', err);
+    expect(env.error).toEqual({ code: null, message: 'kaboom', hint: null, stack: err.stack });
   });
 
   it('survives a non-Error throw', () => {
-    expect(jsonFailure('update', 'a string').error?.message).toBe('a string');
+    expect(jsonFailure('update', 'a string').error).toEqual({ code: null, message: 'a string', hint: null, stack: null });
   });
 
   it('emits exactly one document and one trailing newline', () => {

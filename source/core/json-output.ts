@@ -40,6 +40,8 @@ export interface JsonErrorPayload {
   readonly message: string;
   /** Remediation text; null when the error carried none. */
   readonly hint: string | null;
+  /** The stack of an unexpected error (not a `ShardMindError`, #225); null otherwise. */
+  readonly stack: string | null;
 }
 
 export interface JsonEnvelope {
@@ -72,12 +74,13 @@ function toJsonError(error: unknown): JsonErrorPayload {
       code: error.code,
       message: error.message,
       hint: error.hint ?? null,
+      stack: null,
     };
   }
   if (error instanceof Error) {
-    return { code: null, message: error.message, hint: null };
+    return { code: null, message: error.message, hint: null, stack: error.stack ?? null };
   }
-  return { code: null, message: String(error), hint: null };
+  return { code: null, message: String(error), hint: null, stack: null };
 }
 
 /**
