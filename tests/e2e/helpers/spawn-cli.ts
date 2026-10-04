@@ -22,7 +22,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { DIST_CLI } from './build-once.js';
+import { DIST_CLI, ensureBuilt } from './build-once.js';
 
 export interface CliResult {
   stdout: string;
@@ -106,6 +106,9 @@ export async function spawnCli(args: string[], opts: SpawnCliOptions): Promise<C
     { CI: '1', TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '0' },
     opts.env ?? {},
   );
+
+  // Fails with a message naming the global setup, not a bare ENOENT from node.
+  await ensureBuilt();
 
   const startedAt = Date.now();
   const child = spawn('node', [DIST_CLI, ...args], {
