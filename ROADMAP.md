@@ -111,7 +111,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ✅ | Tell the user when an adopt rollback could not restore their files | [#247](https://github.com/breferrari/shardmind/issues/247) |
 | ✅ | Give each adopt snapshot its own folder, as update does | [#248](https://github.com/breferrari/shardmind/issues/248) |
 | ✅ | Stop an adopt's writes before its Ctrl+C rollback runs | [#249](https://github.com/breferrari/shardmind/issues/249) |
-| ⬜ | Exit quietly when stdout closes early | [#252](https://github.com/breferrari/shardmind/issues/252) |
+| ✅ | Exit quietly when stdout closes early | [#252](https://github.com/breferrari/shardmind/issues/252) |
 | ⬜ | Remove the folders a failed adopt created, with one tracker for all three commands | [#258](https://github.com/breferrari/shardmind/issues/258) |
 
 ## Phase 6 — docs match the code

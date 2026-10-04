@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (stdout closed early — #252)
+
+- **Piping shardmind into `head` no longer reports a bug.** When the reader closed stdout before shardmind finished writing (`shardmind --json | head -1`), shardmind said "This is a bug in shardmind" and exited 1. It now finishes the run (an update finishes or rolls back as usual) and exits quietly with 141, as a shell reports for any tool cut off by `head`. A run that fails on its own keeps its exit code.
+
 ### Fixed (Ctrl+C stops the writes before it rolls back — #249)
 
 - **Ctrl+C during an install, update or adopt now stops the run before it rolls back.** The rollback used to start while the run went on writing. It could put your file back only for the run to overwrite it again, or leave a `state.json` for a run reported as cancelled. Pressing Ctrl+C while a failed run was already rolling back started a second rollback on the same backups. Now the run stops before its next write, and its own rollback runs once.
