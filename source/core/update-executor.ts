@@ -133,6 +133,8 @@ export interface UpdateSummary {
    * run sets `adoptPreexisting` (#61).
    */
   keptUntracked: string[];
+  /** Files a rename migration moved, old path → new path (#178). */
+  renamedFiles: Array<{ from: string; to: string }>;
 }
 
 /**
@@ -212,6 +214,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       addedFiles: [],
       replacedFiles: [],
       keptUntracked: [],
+      renamedFiles: [],
     };
 
     // Two-pass: writes first, deletes second. Writes use mkdir -p so they
@@ -232,6 +235,17 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
         onFileTouched,
         index: ++index,
         total: progressTotal,
+      });
+    }
+    for (const action of plan.actions) {
+      if (action.renamedFrom === undefined) continue;
+      await completeRename(action, action.renamedFrom, {
+        vaultRoot,
+        conflictResolutions,
+        nextFiles,
+        summary,
+        addedPaths,
+        dryRun,
       });
     }
     for (const action of plan.actions) {
@@ -593,6 +607,48 @@ export async function createBackupDir(vaultRoot: string, now: Date): Promise<str
   );
 }
 
+/**
+ * Finish a rename migration's move once the write pass is done (#178). An
+ * action that wrote its new path leaves the old file to delete; one that
+ * wrote nothing (no change, a volatile file, a conflict kept as mine or
+ * skipped) moves the old file across. The state entry moves with it, and
+ * the new path counts as added so a rollback removes it.
+ */
+async function completeRename(
+  action: UpdateAction,
+  from: string,
+  ctx: {
+    vaultRoot: string;
+    conflictResolutions: Record<string, ConflictResolution>;
+    nextFiles: Record<string, FileState>;
+    summary: UpdateSummary;
+    addedPaths: string[];
+    dryRun: boolean;
+  },
+): Promise<void> {
+  const to = action.path;
+  const wroteNewPath =
+    action.kind === 'overwrite' ||
+    action.kind === 'auto_merge' ||
+    action.kind === 'restore_missing' ||
+    (action.kind === 'conflict' && (ctx.conflictResolutions[to] ?? 'keep_mine') === 'accept_new');
+  if (!ctx.dryRun) {
+    const fromAbs = path.join(ctx.vaultRoot, from);
+    const toAbs = path.join(ctx.vaultRoot, to);
+    if (wroteNewPath) {
+      await fsp.rm(fromAbs, { force: true });
+    } else {
+      await fsp.mkdir(path.dirname(toAbs), { recursive: true });
+      await fsp.rename(fromAbs, toAbs);
+    }
+    ctx.addedPaths.push(to);
+  }
+  const previous = ctx.nextFiles[from];
+  if (ctx.nextFiles[to] === undefined && previous !== undefined) ctx.nextFiles[to] = previous;
+  delete ctx.nextFiles[from];
+  ctx.summary.renamedFiles.push({ from, to });
+}
+
 async function snapshotForRollback(
   vaultRoot: string,
   plan: UpdatePlan,
@@ -620,6 +676,8 @@ async function snapshotForRollback(
       case 'keep_as_user':
         break;
     }
+    // A rename deletes or moves its old path (#178).
+    if (action.renamedFrom !== undefined) toSnapshot.add(action.renamedFrom);
   }
 
   const filesBackupDir = path.join(backupDir, 'files');
