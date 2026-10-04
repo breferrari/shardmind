@@ -29,9 +29,9 @@ An update never replaces a file the user changed, and every install gets its own
 | ✅ | List the paths an update replaced in its summary | [#153](https://github.com/breferrari/shardmind/issues/153) |
 | ✅ | qmd_index not personalized on install — every vault collides on the same QMD store | [#137](https://github.com/breferrari/shardmind/issues/137) |
 | ✅ | Root-command options silently shadow same-named subcommand options (`adopt --verbose` does nothing) | [#147](https://github.com/breferrari/shardmind/issues/147) |
-| ⬜ | v0.2: Rename migrations in shard.yaml + shardmind adopt --from-version (split into #178, #179) | [#88](https://github.com/breferrari/shardmind/issues/88) |
+| ✅ | v0.2: Rename migrations in shard.yaml + shardmind adopt --from-version (split into #178, #179) | [#88](https://github.com/breferrari/shardmind/issues/88) |
 | ✅ | Apply shard.yaml rename migrations on update | [#178](https://github.com/breferrari/shardmind/issues/178) |
-| ⬜ | Add adopt --from-version to apply rename migrations | [#179](https://github.com/breferrari/shardmind/issues/179) |
+| ✅ | Add adopt --from-version to apply rename migrations | [#179](https://github.com/breferrari/shardmind/issues/179) |
 
 ## Phase 2 — collisions and binary files
 
@@ -333,7 +333,7 @@ When all boxes check, cut the v0.1.x stabilization line and start v0.2.
 
 Items where shardmind work blocks (or is blocked by) work in other repos. Track here so a planner reading either side has visibility.
 
-- [#88](https://github.com/breferrari/shardmind/issues/88) (rename migrations + `adopt --from-version`) blocks `breferrari/obsidian-mind#71` (v6.x rename track). Until #88 ships, obsidian-mind cannot rename managed-file paths without breaking installed users.
+- [#88](https://github.com/breferrari/shardmind/issues/88) (rename migrations + `adopt --from-version`) blocks `breferrari/obsidian-mind#71` (v6.x rename track). Until #88 ships, obsidian-mind cannot rename managed-file paths without breaking installed users. Shipped with #178 (update) and #179 (adopt).
 - [#102](https://github.com/breferrari/shardmind/issues/102) (hook lifecycle split) requires obsidian-mind to migrate its hook from `post-install` to the new lifecycle, tracked at [`breferrari/obsidian-mind#75`](https://github.com/breferrari/obsidian-mind/issues/75). Both must ship in the same release window.
 - [#121](https://github.com/breferrari/shardmind/issues/121) (engine version-compatibility check) precedes any shard that declares `shardmind_version` requirements. obsidian-mind should add the field as soon as #121 ships.
 
@@ -369,7 +369,7 @@ Tracked in [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-s
 
 - [ ] `rendered_files` opt-in (Nunjucks at vault-visible paths) ([#86](https://github.com/breferrari/shardmind/issues/86))
 - [ ] `.shardmindignore` negation (`!pattern`) ([#87](https://github.com/breferrari/shardmind/issues/87))
-- [ ] Rename migrations + `shardmind adopt --from-version` — **must ship before any obsidian-mind release that introduces path renames** ([#88](https://github.com/breferrari/shardmind/issues/88))
+- [x] Rename migrations + `shardmind adopt --from-version` — **must ship before any obsidian-mind release that introduces path renames** ([#88](https://github.com/breferrari/shardmind/issues/88))
 
 #### Engine polish (from v0.1 review)
 
