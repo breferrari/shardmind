@@ -1938,3 +1938,64 @@ describe('shardmind adopt', () => {
     expect(state.files['CLAUDE.md']?.ownership).toBe('modified');
   });
 });
+
+// ---------------------------------------------------------------------------
+// state.json written by an older shardmind (#40) — the current binary
+// forward-migrates it (source/core/state-migrator.ts) and acts on it.
+// ---------------------------------------------------------------------------
+
+describe('shardmind — state.json written by an older shardmind (#40)', () => {
+  let vault: Vault;
+  afterEach(async () => {
+    defaultLatest();
+    await vault?.cleanup();
+  });
+
+  /** Rewrite state.json into the pre-#102 shape: schema 1, no fingerprint. */
+  async function downgradeStateToV1(v: Vault): Promise<void> {
+    const state = JSON.parse(await v.readFile('.shardmind/state.json')) as Record<string, unknown>;
+    state['schema_version'] = 1;
+    delete state['bootstrap_fingerprint'];
+    await v.writeFile('.shardmind/state.json', JSON.stringify(state, null, 2) + '\n');
+  }
+
+  it('status --verbose reads a v1 state.json and reports a user edit as modified', async () => {
+    vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'state-v1-status' });
+    await downgradeStateToV1(vault);
+    const home = await vault.readFile('Home.md');
+    await vault.writeFile('Home.md', home + '\n\nI edited this myself.\n');
+
+    const result = await spawnCli(['--verbose'], { cwd: vault.root, env: envWithStub() });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/STATE_UNSUPPORTED_VERSION/);
+    // The drift line proves status compared against the migrated state's
+    // recorded hashes, not that it merely failed to throw.
+    expect(result.stdout).toMatch(/Home\.md/);
+    expect(result.stdout).toMatch(/\+\d+\/[−-]\d+|\(whitespace-only\)/);
+  });
+
+  it('update migrates a v1 state.json, merges a user edit, and writes it back at the current schema version', async () => {
+    vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'state-v1-update' });
+    await downgradeStateToV1(vault);
+    const home = await vault.readFile('Home.md');
+    await vault.writeFile('Home.md', 'My personal note at the top.\n' + home);
+    stub.setLatest(SHARD_SLUG, '0.2.0');
+
+    const result = await spawnCli(['update', '--yes'], { cwd: vault.root, env: envWithStub() });
+    expect(result.exitCode).toBe(0);
+
+    const merged = await vault.readFile('Home.md');
+    expect(merged).toContain('My personal note at the top.');
+    expect(merged).toContain('<!-- v0.2.0 addition -->');
+    expect(await vault.exists('brain/Changelog.md')).toBe(true);
+
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as {
+      schema_version: number;
+      version: string;
+      files: Record<string, { ownership: string }>;
+    };
+    expect(state.schema_version).toBe(2);
+    expect(state.version).toBe('0.2.0');
+    expect(state.files['Home.md']?.ownership).toBe('modified');
+  });
+});
