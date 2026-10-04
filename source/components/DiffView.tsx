@@ -3,10 +3,15 @@ import { Box, Text } from 'ink';
 import { Select } from './ui.js';
 import { useOncePerKey } from './use-once-per-key.js';
 import type { ConflictRegion, MergeResult } from '../runtime/types.js';
+import type { ConflictResolution } from '../core/update-planner.js';
 
 /** Conflict-resolution choices returned to the state machine. */
-/** `keep_and_track` is offered only for an add-collision, without --adopt-preexisting (#165). */
-export type DiffAction = 'accept_new' | 'keep_mine' | 'keep_and_track' | 'skip';
+/**
+ * The update planner's conflict resolutions, one set for both.
+ * `keep_and_track` is offered only for an add-collision, without
+ * --adopt-preexisting (#165).
+ */
+export type DiffAction = ConflictResolution;
 
 /** Matches differ.ts's canonical splitter: tolerate CR, accept LF. */
 const LINE_SPLIT = /\r?\n/;
@@ -46,11 +51,11 @@ const PREEXISTING_OPTIONS = SELECT_OPTIONS.map((o) => ({
  * tracks it as the user's modified copy for this file alone (#165). With the
  * flag, Keep mine already tracks, so the plain list is shown.
  */
-const PREEXISTING_TRACKABLE_OPTIONS: Array<{ label: string; value: DiffAction | 'open_editor_disabled' }> = [
-  ...PREEXISTING_OPTIONS.slice(0, 2),
-  { label: 'Keep mine and track it (merge future updates into your file)', value: 'keep_and_track' },
-  ...PREEXISTING_OPTIONS.slice(2),
-];
+const PREEXISTING_TRACKABLE_OPTIONS = PREEXISTING_OPTIONS.flatMap((o) =>
+  o.value === 'keep_mine'
+    ? [o, { label: 'Keep mine and track it (merge future updates into your file)', value: 'keep_and_track' as const }]
+    : [o],
+);
 
 interface DiffViewProps {
   path: string;
@@ -80,6 +85,7 @@ export default function DiffView({
   // conflict prompt after the first. See Pattern B in
   // `docs/COMPONENTS.md` for the broader convention.
   const tryFire = useOncePerKey(filePath);
+  const options = !preexisting ? SELECT_OPTIONS : adoptPreexisting ? PREEXISTING_OPTIONS : PREEXISTING_TRACKABLE_OPTIONS;
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -130,7 +136,7 @@ export default function DiffView({
 
       <Select
         key={filePath}
-        options={preexisting ? (adoptPreexisting ? PREEXISTING_OPTIONS : PREEXISTING_TRACKABLE_OPTIONS) : SELECT_OPTIONS}
+        options={options}
         onChange={(choice) => {
           if (!DIFF_ACTIONS.has(choice as DiffAction)) return;
           if (!tryFire()) return;
