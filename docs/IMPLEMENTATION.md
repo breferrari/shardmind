@@ -1408,10 +1408,17 @@ Honours `NO_COLOR` (#37). Ink colours every `<Text color>` and `dimColor` throug
 
 ```typescript
 export function applyNoColor(env: NodeJS.ProcessEnv): void;
+export function colorEnabled(env: NodeJS.ProcessEnv, isTTY: boolean): boolean;
+export function stripSgr(text: string): string;
+export function hookOutputForDisplay(text: string): string;
 ```
 
 1. If `FORCE_COLOR` is set, even to an empty string, return. The explicit opt-in wins, and chalk reads it as before.
 2. If `NO_COLOR` is set to a non-empty value, set `env.FORCE_COLOR = '0'`, which chalk reads as level 0. An empty `NO_COLOR` does nothing (no-color.org).
+
+`applyNoColor` writes `FORCE_COLOR=0` into `process.env`, so every child process, hook subprocesses included, sees `FORCE_COLOR` set although the user set only `NO_COLOR`. chalk, Node's `getColorDepth` and the common colour libraries read `'0'` as off. A tool that only tests whether `FORCE_COLOR` is present would turn colour on. That is the cost of not depending on chalk directly to set its level in-process.
+
+`colorEnabled` applies chalk's rule after `applyNoColor`: a set `FORCE_COLOR` decides, with `'0'` and `'false'` meaning off; otherwise colour is on in a TTY whose `TERM` is not `dumb`. `stripSgr` removes SGR sequences only: CSI (`ESC [` or U+009B), parameters of digits, `;` and `:` (truecolor's colon form), then final `m`. A lone ESC, an unterminated CSI and every other sequence are left as they are. Non-colour control sequences in hook output are #204. `hookOutputForDisplay` is what `HookProgress` and `HookSummarySection` render: hook output (shard code) with its own colour codes dropped when ours are off.
 
 Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` loads `pastel` and `./cli-options.js` with `await import()` after it, because a static import would load Ink, and with it chalk, before any statement runs. Hook subprocesses inherit the resulting `FORCE_COLOR=0`. `--json` output is `JSON.stringify`, written outside Ink, so a piped `--json` run carries no ANSI whatever the colour variables say. With stdout a terminal, Ink still writes cursor codes around it (#198).
 
