@@ -127,6 +127,8 @@ describe('renderFile', () => {
       expect(eachItemFor('people/_each.md', people, 'people/bob.md')).toEqual({ slug: 'bob', name: 'Bob' });
       expect(eachItemFor('people/_each.md', people, 'people/Carol.md')).toBeUndefined();
       expect(eachItemFor('people/_each.md', 'not a list', 'people/Alice.md')).toBeUndefined();
+      // Not an _each template: every item would name the same path.
+      expect(eachItemFor('people/Alice.md', people, 'people/Alice.md')).toBeUndefined();
     });
 
     it('eachOutputPaths names one path per item, as the render does (#214)', () => {

@@ -210,6 +210,32 @@ describe('buildStatusReport', () => {
     }
   });
 
+  it("counts an edited _each file's lines against a base rendered with its item (#233)", async () => {
+    await installMinimal(vault);
+    const installed = '# Alice\n\nNotes.\n';
+    await fsp.mkdir(path.join(vault, '.shardmind', 'templates', 'people'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind', 'templates', 'people', '_each.md.njk'), '# {{ item }}\n\nNotes.\n');
+    await fsp.mkdir(path.join(vault, 'people'), { recursive: true });
+    await fsp.writeFile(path.join(vault, 'people', 'Alice.md'), installed + 'Mine.\n');
+    const statePath = path.join(vault, '.shardmind', 'state.json');
+    const state = JSON.parse(await fsp.readFile(statePath, 'utf-8'));
+    state.files['people/Alice.md'] = {
+      template: 'people/_each.md.njk',
+      rendered_hash: crypto.createHash('sha256').update(installed).digest('hex'),
+      ownership: 'managed',
+      iterator_key: 'people',
+    };
+    await fsp.writeFile(statePath, JSON.stringify(state, null, 2));
+    const valuesPath = path.join(vault, 'shard-values.yaml');
+    await fsp.appendFile(valuesPath, 'people:\n  - Alice\n');
+
+    const report = await buildStatusReport(vault, { verbose: true, skipUpdateCheck: true });
+    const entry = report!.drift.modifiedChanges!.find((c) => c.path === 'people/Alice.md');
+    // One added line. Rendered without its item the base heading is "# ",
+    // and the unchanged heading would count as removed and added too.
+    expect(entry).toEqual({ path: 'people/Alice.md', linesAdded: 1, linesRemoved: 0 });
+  });
+
   it('omits modifiedChanges in quick mode to keep the fast path fast', async () => {
     await installMinimal(vault);
     const homePath = path.join(vault, 'Home.md');

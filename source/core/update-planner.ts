@@ -33,7 +33,7 @@ import { computeMergeAction } from './differ.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { isCaseOnlyRename } from './rename-migrations.js';
 import { resolveModules } from './modules.js';
-import { renderFile, createRenderer, eachItemFor } from './renderer.js';
+import { renderFile, createRenderer, itemForTemplate } from './renderer.js';
 import { isBinaryForMerge, sha256, mapConcurrent } from './fs-utils.js';
 import { CACHED_TEMPLATES } from '../runtime/vault-paths.js';
 
@@ -648,19 +648,15 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
 
       const newTemplate = await fsp.readFile(target.entry.sourcePath, 'utf-8');
       // An `_each` file renders each side with its own item (#233): the old
-      // one from the old values (found through the cached template's path),
-      // the new one from the new values.
-      const iteratorKey = target.entry.iterator;
-      const items = iteratorKey
-        ? {
-            oldItem: eachItemFor(
-              (fileState.template ?? target.entry.outputPath).replace(/\.njk$/, ''),
-              oldValues[fileState.iterator_key ?? iteratorKey],
-              entry.path,
-            ),
-            newItem: eachItemFor(target.entry.outputPath, newValues[iteratorKey], entry.path),
-          }
-        : {};
+      // one from the old values, looked up at the file's old path (a rename
+      // migration may have moved it); the new one from the new values. A file
+      // whose old template was `_each` but whose new one is static still gets
+      // its old item. If the old lookup misses, the new item stands in.
+      const newItem = target.entry.iterator
+        ? itemForTemplate(target.entry.outputPath, newValues, entry.path)
+        : undefined;
+      const oldItem = itemForTemplate(fileState.template, oldValues, diskPathOf(entry.path)) ?? newItem;
+      const items = oldItem === undefined && newItem === undefined ? {} : { oldItem, newItem };
       const mergeAction = await computeMergeAction({
         path: entry.path,
         ownership: 'modified',

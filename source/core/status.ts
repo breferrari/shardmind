@@ -55,7 +55,7 @@ import { getLatestVersion } from './update-check.js';
 import { mapConcurrent, pathExists } from './fs-utils.js';
 import { errnoCode } from '../runtime/errno.js';
 import { validateFrontmatter } from '../runtime/frontmatter.js';
-import { renderString, buildRenderContext } from './renderer.js';
+import { renderString, buildRenderContext, itemForTemplate } from './renderer.js';
 import {
   CACHED_MANIFEST,
   CACHED_SCHEMA,
@@ -594,7 +594,13 @@ async function renderAndDiffEntry(
 
   let base: string;
   try {
-    base = renderString(templateSource, renderCtx, entry.path);
+    // An `_each` file renders with its own item, as the install did (#233).
+    const item = itemForTemplate(entry.template, renderCtx.values, entry.path);
+    base = renderString(
+      templateSource,
+      item === undefined ? renderCtx : { ...renderCtx, item } as typeof renderCtx,
+      entry.path,
+    );
   } catch {
     return { path: entry.path, skipped: true, reason: 'render-failed' };
   }
