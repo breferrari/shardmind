@@ -68,6 +68,12 @@ describe('a --json document ends in a single newline, piped', () => {
     expectSingleTrailingNewline(await stdoutOf(vault, ['update', '--dry-run', '--json']));
   }, 90_000);
 
+  // Up to date: the run answers with an upToDate document (#230), then Ink's
+  // unmount newline follows it.
+  it('update --dry-run --json on an up-to-date vault', async () => {
+    expectSingleTrailingNewline(await stdoutOf(await installed(), ['update', '--dry-run', '--json']));
+  }, 90_000);
+
   it('adopt --dry-run --json --yes on an unmanaged clone', async () => {
     const vault = await installed();
     await stripShardmindMetadata(vault);
