@@ -21,27 +21,29 @@ import type { SpawnSyncReturns } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pathExists } from '../../../source/core/fs-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-export const REPO_ROOT = path.resolve(__dirname, '../../..');
-export const DIST_CLI = distCli(REPO_ROOT);
-export const DIST_RUNTIME = distRuntime(REPO_ROOT);
+const REPO_ROOT = path.resolve(__dirname, '../../..');
 
-function distCli(root: string): string {
-  return path.join(root, 'dist', 'cli.js');
+/** The artifacts the tests spawn or import, under a repo root. */
+function distPaths(root: string): { cli: string; runtime: string } {
+  return {
+    cli: path.join(root, 'dist', 'cli.js'),
+    runtime: path.join(root, 'dist', 'runtime', 'index.js'),
+  };
 }
 
-function distRuntime(root: string): string {
-  return path.join(root, 'dist', 'runtime', 'index.js');
-}
+export const DIST_CLI = distPaths(REPO_ROOT).cli;
 
 /**
  * Worker-side check: resolves when `dist/` holds the artifacts the tests
  * spawn, rejects otherwise. Never builds — see the file header.
  */
 export async function ensureBuilt(root: string = REPO_ROOT): Promise<void> {
-  for (const artifact of [distCli(root), distRuntime(root)]) {
+  const { cli, runtime } = distPaths(root);
+  for (const artifact of [cli, runtime]) {
     if (!(await pathExists(artifact))) {
       throw new Error(
         `${artifact} is missing. The vitest global setup (tests/global-setup.ts) builds dist/ ` +
@@ -69,8 +71,8 @@ export async function buildIfStale(
   root: string = REPO_ROOT,
   run: BuildRunner = (capture) => runBuild(root, capture),
 ): Promise<void> {
-  const cli = distCli(root);
-  const distMtime = await latestMtime([cli, distRuntime(root)]);
+  const { cli, runtime } = distPaths(root);
+  const distMtime = await latestMtime([cli, runtime]);
   const configPaths = BUILD_CONFIG_FILES.map((f) => path.join(root, f));
   const srcMtime = await latestMtime([...(await walkSources(root)), ...configPaths]);
 
@@ -178,13 +180,6 @@ async function walkSources(root: string): Promise<string[]> {
     }
   }
   return out;
-}
-
-async function pathExists(p: string): Promise<boolean> {
-  return fs
-    .access(p)
-    .then(() => true)
-    .catch(() => false);
 }
 
 async function latestMtime(paths: string[]): Promise<number | null> {
