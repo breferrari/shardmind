@@ -77,12 +77,15 @@ describe('colour environment', () => {
     expect(run([], { FORCE_COLOR: '1' }, { tty: false })).toMatch(SGR);
   });
 
+  // Pins a contract that holds without #37 too: Commander's help is never styled.
   it('prints --help without ANSI under NO_COLOR', () => {
     const out = run(['install', '--help'], { NO_COLOR: '1' }, { tty: true });
     expect(out).toContain('install');
     expect(out).not.toContain(ESC);
   });
 
+  // Pins the --json contract, which holds without #37 too: the document is
+  // JSON.stringify written outside Ink, so no colour variable can reach it.
   it.each([{ FORCE_COLOR: '3' }, { NO_COLOR: '1' }, {}])(
     'writes --json without ANSI for a consumer, under %o',
     (colorEnv) => {

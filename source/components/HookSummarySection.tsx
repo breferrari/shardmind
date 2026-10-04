@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import { headLines, type HookStage, type HookSummary } from '../core/hook.js';
+import { hookOutputForDisplay } from '../core/color-env.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
 import { assertNever } from '../runtime/types.js';
 
@@ -121,7 +122,7 @@ function outputBlock(
   logPath: string | undefined,
   key: string,
 ): ReactElement {
-  const { head, hidden } = headLines(text);
+  const { head, hidden } = headLines(hookOutputForDisplay(text));
   return (
     <Box key={key} flexDirection="column" marginTop={1}>
       <Text bold>{label}</Text>

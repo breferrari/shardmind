@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import { hookOutputForDisplay } from '../core/color-env.js';
 import { Spinner } from './ui.js';
 import type { HookStage } from '../core/hook.js';
 
@@ -41,7 +42,7 @@ export default function HookProgress({ stage, output, shardLabel, index, total }
   // Split on either LF or CRLF so Windows-authored hooks tail cleanly.
   // `filter(Boolean)` drops the trailing empty string the final newline
   // leaves behind so the tail doesn't waste a line.
-  const lines = output.split(/\r?\n/).filter((l) => l.length > 0);
+  const lines = hookOutputForDisplay(output).split(/\r?\n/).filter((l) => l.length > 0);
   const tail = lines.slice(-TAIL_LINES);
 
   return (

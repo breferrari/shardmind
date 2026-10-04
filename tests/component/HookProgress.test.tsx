@@ -116,4 +116,29 @@ describe('HookProgress', () => {
     const frame = lastFrame() ?? '';
     expect(frame).toContain('only line');
   });
+
+  describe('hook output colour (#37)', () => {
+    const saved = process.env['FORCE_COLOR'];
+    afterEach(() => {
+      if (saved === undefined) delete process.env['FORCE_COLOR'];
+      else process.env['FORCE_COLOR'] = saved;
+    });
+
+    it("strips the hook's own colour codes when colour is off", () => {
+      process.env['FORCE_COLOR'] = '0';
+      const frame = render(
+        <HookProgress stage="post-install" output={'\x1b[32mcloned\x1b[0m\n'} shardLabel="acme/demo" />,
+      ).lastFrame() ?? '';
+      expect(frame).toContain('cloned');
+      expect(frame).not.toContain('\x1b[32m');
+    });
+
+    it("keeps the hook's colour codes when colour is on", () => {
+      process.env['FORCE_COLOR'] = '1';
+      const frame = render(
+        <HookProgress stage="post-install" output={'\x1b[32mcloned\x1b[0m\n'} shardLabel="acme/demo" />,
+      ).lastFrame() ?? '';
+      expect(frame).toContain('\x1b[32mcloned');
+    });
+  });
 });

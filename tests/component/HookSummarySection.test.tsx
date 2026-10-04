@@ -208,4 +208,28 @@ describe('HookSummarySection', () => {
     const frame = out([{ slot: 'bootstrap', summary: { stdout: 'ok', stderr: '' } }]).lastFrame() ?? '';
     expect(frame).toContain('Bootstrap hook completed.');
   });
+
+  describe('hook output colour (#37)', () => {
+    const saved = process.env['FORCE_COLOR'];
+    afterEach(() => {
+      if (saved === undefined) delete process.env['FORCE_COLOR'];
+      else process.env['FORCE_COLOR'] = saved;
+    });
+    const coloured = { stdout: '\x1b[32mclone ok\x1b[0m', stderr: '\x1b[33mwarn\x1b[0m', exitCode: 0 };
+
+    it("strips the hook's own colour codes from stdout and stderr when colour is off", () => {
+      process.env['FORCE_COLOR'] = '0';
+      const frame = out([{ slot: 'bootstrap', summary: coloured }]).lastFrame() ?? '';
+      expect(frame).toContain('clone ok');
+      expect(frame).toContain('warn');
+      expect(frame).not.toMatch(/\x1b\[3[23]m/);
+    });
+
+    it("keeps the hook's colour codes when colour is on", () => {
+      process.env['FORCE_COLOR'] = '1';
+      const frame = out([{ slot: 'bootstrap', summary: coloured }]).lastFrame() ?? '';
+      expect(frame).toContain('\x1b[32mclone ok');
+    });
+  });
 });
+
