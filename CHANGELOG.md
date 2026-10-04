@@ -11,7 +11,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 ### Changed (`_each` files from a string list — #227)
 
 - **An `_each` template now names each file after its list item when the list holds strings or numbers.** A `list` value entered in the wizard is a list of strings, and every item used to be written to the same `<folder>/unknown.md`, so only the last one survived. Now `people: [Alice, Bob]` writes `people/Alice.md` and `people/Bob.md`. Object items are still named by `slug`, else `name`.
-- **An existing vault keeps its old `unknown.md` until you decide.** It holds whichever item was written last, so it has no single new name and is not renamed. On your next update it is no longer produced: if you never edited it, update removes it, and if you did, update asks whether to keep it. Either way the per-item files are added.
+- **An existing vault keeps its old `unknown.md` until you decide.** It holds whichever item was written last, so it has no single new name and is not renamed. When an update next installs a new release of the shard (an update with nothing new to install changes nothing), `unknown.md` is no longer produced: if you never edited it, update removes it, and if you did, update asks whether to keep it. Either way the per-item files are added.
 
 ### Fixed (failed install cleanup — #207)
 

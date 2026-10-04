@@ -167,12 +167,20 @@ export function eachOutputPaths(outputPath: string, list: readonly unknown[]): s
   const dir = path.posix.dirname(outputPath);
   const base = path.posix.basename(outputPath);
   return list.map((item) => {
-    // A string or number item (what the wizard's list input produces) names
-    // its own file (#227); an object item names it by `slug`, else `name`.
-    const raw =
-      typeof item === 'string' || typeof item === 'number'
-        ? item
-        : ((item as Record<string, unknown>)['slug'] ?? (item as Record<string, unknown>)['name'] ?? 'unknown');
+    // A string, number or boolean item (the wizard's list input produces
+    // strings) names its own file (#227); an object item names it by `slug`,
+    // else `name`. Anything else has no name to give.
+    const isObject = typeof item === 'object' && item !== null;
+    if (!isObject && typeof item !== 'string' && typeof item !== 'number' && typeof item !== 'boolean') {
+      throw new ShardMindError(
+        `An _each item for ${outputPath} is ${item === null ? 'null' : typeof item}`,
+        'RENDER_ITERATOR_ERROR',
+        'Each list item must be a string, a number, a boolean, or an object with a slug or name.',
+      );
+    }
+    const raw = isObject
+      ? ((item as Record<string, unknown>)['slug'] ?? (item as Record<string, unknown>)['name'] ?? 'unknown')
+      : item;
     const slug = sanitizeSlug(String(raw));
     // Only the basename's `_each`, and a replacer function, so a `$&` or
     // `$'` in the slug is taken literally rather than as a pattern.

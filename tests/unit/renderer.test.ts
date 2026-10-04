@@ -128,11 +128,18 @@ describe('renderFile', () => {
     });
 
     it('eachOutputPaths names a string or number item after itself (#227)', () => {
-      expect(eachOutputPaths('people/_each.md', ['Alice', 'Bob/Ops.', 3])).toEqual([
+      expect(eachOutputPaths('people/_each.md', ['Alice', 'Bob/Ops.', 3, true])).toEqual([
         'people/Alice.md',
         'people/Bob-Ops.md',
         'people/3.md',
+        'people/true.md',
       ]);
+    });
+
+    it('eachOutputPaths refuses a null item with RENDER_ITERATOR_ERROR, not a crash', () => {
+      expect(() => eachOutputPaths('people/_each.md', ['Alice', null])).toThrow(
+        expect.objectContaining({ code: 'RENDER_ITERATOR_ERROR' }),
+      );
     });
 
     it('renders one file per string item, with {{ item }} the string (#227)', async () => {
