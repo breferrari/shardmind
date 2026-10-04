@@ -1086,6 +1086,17 @@ The update-check cache (`.shardmind/update-check.json`, 24h TTL) is stable-only.
 
 `source/components/ScrollableMultiSelect.tsx` (#100) is the first component built outside the `@inkjs/ui` surface. It does not count as a swap trigger: only the scroll-cue rendering is custom; the keyboard model (↑↓ / space / Enter) mirrors the library's. The component lives next to `ui.ts` rather than under `vendor/` because it is a new widget, not a vendored fix.
 
+**Decision (2026-10-04, #43): vendor `Select` and `TextInput`.** The first swap trigger fired: two bugs are patched locally. One is `TextInput` firing `onChange` on parent re-renders (vadimdemedes/ink-ui#26). The other is `Select` seeding `previousValue` from `defaultValue`, so Enter on the default never fires and the wizard freezes (#103). Upstream has had no commit since 2024-05-22, PR #27 is unreviewed, and no maintained fork exists.
+
+**`source/ui-kit/`** holds the vendored components, as a module built to be extracted into its own package later at the cost of a `git mv` and a `package.json`:
+- **Its own entry point.** `source/ui-kit/index.ts` is the only public path. ShardMind imports it only through that index (`components/ui.ts` re-exports it), never through a deep path.
+- **One-way dependencies.** It imports only `ink`, `react`, `node:` built-ins and its own files: never ShardMind's `core/`, `components/`, `runtime/` or `commands/`, and not `@inkjs/ui`. That is why it carries its own theme (`ui-kit/theme.tsx`, cut to its two components) rather than reading `@inkjs/ui`'s. `tests/ui-kit/boundary.test.ts` scans every import in the folder and fails on anything else.
+- **Its own tests.** `tests/ui-kit/` uses no ShardMind fixtures.
+- **Provenance.** The upstream MIT `LICENSE` and a provenance header (upstream `@inkjs/ui` 2.0.0, commit `14b1145`) live in the folder, so they move with it.
+- **History.** Upstream went in byte-for-byte in one commit; each fix is its own commit naming the upstream issue, so ShardMind's patches read as a diff from upstream.
+
+`Alert`, `Badge`, `ProgressBar`, `Spinner` and `StatusMessage` stay on `@inkjs/ui` (no local workaround). `MultiSelect` is no longer used (`ScrollableMultiSelect`, #100). Ink 8.0.0 (2026-10-03) is a separate decision; this change stays on Ink 7.
+
 **Revisit cadence.** Re-evaluate at v0.2 scope freeze. Do not pre-emptively migrate.
 
 ---
