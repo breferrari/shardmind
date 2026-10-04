@@ -104,6 +104,12 @@ export interface GitHubStub {
   /** Configure tarball GET latency. Takes effect on next request. */
   setTarballDelay: (ms: number) => void;
   /**
+   * What the stub serves for `slug` right now (latest, versions, releases,
+   * refs), as a string that changes whenever any of it does. Lets the
+   * installed-vault fixture cache (#218) tell a stale template from a good one.
+   */
+  servingState: (slug: string) => string;
+  /**
    * Resolves when the next tarball GET arrives. By then the CLI has mounted
    * its SIGINT handler and created its download temp dir, so a test can
    * signal at exactly that point instead of guessing startup time (#57).
@@ -278,6 +284,7 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
     setTarballDelay: (ms) => {
       tarballDelayMs = Math.max(0, ms);
     },
+    servingState: (slug) => JSON.stringify(shards.get(slug.toLowerCase()) ?? null),
     waitForTarballRequest: () =>
       new Promise<void>((resolve, reject) => tarballWaiters.push({ resolve, reject })),
     close: () =>
