@@ -19,6 +19,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { cleanup } from 'ink-testing-library';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { parse as parseYaml } from 'yaml';
 
 import {
@@ -33,8 +34,9 @@ import {
   STUB_SHA,
   DEFAULT_VALUES,
 } from './helpers.js';
-import { createInstalledVault } from '../../e2e/helpers/vault.js';
+import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
 import { resetSigintRollbackForTests } from '../../../source/commands/hooks/shared.js';
+import { symlinksWork } from '../../helpers/fs-capabilities.js';
 import { tick, waitFor, ENTER, ESC, ARROW_DOWN, SPACE, typeText } from '../helpers.js';
 
 // Custom-tarball slugs for scenarios that need a shape minimal-shard
@@ -45,7 +47,10 @@ const SLUG_COMPUTED = 'acme/computed-default';
 const SLUG_MULTISELECT = 'acme/multiselect';
 const SLUG_VERSION_MISMATCH = 'acme/future-engine';
 const SLUG_BROKEN = 'acme/broken-render';
+const SLUG_DROPPED = 'acme/dropped-files';
 const SLUG_LINT = 'acme/lint-before-wizard';
+
+const canSymlink = await symlinksWork();
 
 describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10)', () => {
   const getCtx = setupFlowSuite({
@@ -71,6 +76,10 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         latest: '0.1.0',
       },
       [SLUG_VERSION_MISMATCH]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
+      [SLUG_DROPPED]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
@@ -1003,6 +1012,99 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await vault.cleanup();
     }
   }, 60_000);
+
+  // ───── A reinstall removes the files it no longer plans, keeps the ones you edited (#228) ─────
+
+  async function reinstallWithoutTwoFiles(
+    prefix: string,
+    opts: { breakRender: boolean; before?: (vault: Vault) => Promise<void> },
+  ) {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix });
+    // The user edits CLAUDE.md; brain/North Star.md stays as installed.
+    await vault.writeFile('CLAUDE.md', 'my own CLAUDE notes\n');
+    const northStar = await vault.readFile('brain/North Star.md');
+    await opts.before?.(vault);
+    const tarPath = await buildCustomTarball({
+      version: '0.1.0',
+      prefix: `dropped-${prefix}`,
+      manifestOverrides: { hooks: {}, name: 'minimal', namespace: 'shardmind' },
+      outDir: vault.root,
+      mutate: async (work) => {
+        await fs.rm(path.join(work, 'CLAUDE.md'));
+        await fs.rm(path.join(work, 'brain', 'North Star.md.njk'));
+        if (opts.breakRender) {
+          await fs.writeFile(
+            path.join(work, 'zz-broken.md.njk'),
+            '{% if user_name == "Boom" %}{{ user_name | nosuchfilter }}{% endif %}\n',
+          );
+        }
+      },
+    });
+    stub.setRef(SLUG_DROPPED, 'v0.1.0', STUB_SHA, tarPath);
+    const r = mountInstall({ shardRef: `github:${SLUG_DROPPED}#v0.1.0`, vaultRoot: vault.root, options: { force: true } });
+    await driveMinimalWizard(r, opts.breakRender ? 'Boom' : 'Dana');
+    r.stdin.write(ENTER);
+    await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+    r.stdin.write(ENTER);
+    return { vault, r, northStar };
+  }
+
+  it('--force reinstall of a release without two files → removes the untouched one, keeps the edited one (#228)', async () => {
+    const { vault, r } = await reinstallWithoutTwoFiles('s228-stale', { breakRender: false });
+    try {
+      // The summary exits ~100 ms after rendering, which clears lastFrame; read the history.
+      const frame = await waitFor(() => r.frames.join('\n'), (f) => /Removed 1 file/.test(f), 30_000);
+      expect(frame).toMatch(/brain\/North Star\.md/);
+      expect(frame).toMatch(/Kept 1 file you edited/);
+      expect(frame).toMatch(/CLAUDE\.md/);
+      await expect(fs.access(path.join(vault.root, 'brain', 'North Star.md'))).rejects.toThrow();
+      expect(await vault.readFile('CLAUDE.md')).toBe('my own CLAUDE notes\n');
+      const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as { files: Record<string, unknown> };
+      expect(Object.keys(state.files)).not.toContain('brain/North Star.md');
+      expect(Object.keys(state.files)).not.toContain('CLAUDE.md');
+      expect(await leftoverBackups(vault.root)).toEqual([]);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 90_000);
+
+  it.skipIf(!canSymlink)('refuses to remove a stale file through a linked folder out of the vault (#228)', async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'stale-outside-'));
+    const target = path.join(outside, 'North Star.md');
+    const { vault, r } = await reinstallWithoutTwoFiles('s228-stale-link', {
+      breakRender: false,
+      before: async (v) => {
+        // brain/ now links to a folder outside the vault holding the same bytes.
+        await fs.writeFile(target, await v.readFile('brain/North Star.md'));
+        await fs.rm(path.join(v.root, 'brain'), { recursive: true });
+        await fs.symlink(outside, path.join(v.root, 'brain'), process.platform === 'win32' ? 'junction' : 'dir');
+      },
+    });
+    try {
+      await waitFor(() => r.frames.join('\n'), (f) => /VAULT_PATH_UNSAFE/.test(f), 30_000);
+      await tick(200);
+      expect((await fs.stat(target)).isFile()).toBe(true);
+    } finally {
+      await vault.cleanup();
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  it('the same reinstall failing puts the file it would have removed back (#228)', async () => {
+    const { vault, r, northStar } = await reinstallWithoutTwoFiles('s228-stale-fails', { breakRender: true });
+    try {
+      await waitFor(() => r.frames.join('\n'), (f) => /RENDER_TEMPLATE_ERROR/.test(f), 30_000);
+      await tick(200);
+      expect(await vault.readFile('brain/North Star.md')).toBe(northStar);
+      expect(await vault.readFile('CLAUDE.md')).toBe('my own CLAUDE notes\n');
+      expect(await leftoverBackups(vault.root)).toEqual([]);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 90_000);
 
   // ───── A fresh install whose render fails mid-write leaves nothing behind (#207) ─────
 

@@ -175,6 +175,52 @@ export async function splitByOwnContent(
   };
 }
 
+/**
+ * The previous install's files a reinstall no longer plans (#228): every
+ * path in `previous.files` that no planned output names exactly. A path
+ * that differs only in case is a different file on a case-sensitive
+ * filesystem, and on a case-folding one the vault path guard refuses the
+ * install before this runs. A key that would leave the vault (`..`, an
+ * absolute path) is never returned: `state.json` can be edited by hand.
+ * Empty without a previous install.
+ */
+export function staleOutputs(previous: ShardState | null, plannedOutputs: string[]): string[] {
+  if (!previous) return [];
+  const planned = new Set(plannedOutputs);
+  return Object.keys(previous.files).filter(
+    // Absolute on either platform: `state.json` travels between machines.
+    (rel) =>
+      !planned.has(rel) &&
+      !path.posix.isAbsolute(rel) &&
+      !path.win32.isAbsolute(rel) &&
+      !rel.split(/[\\/]/).includes('..'),
+  );
+}
+
+/**
+ * The stale paths still on disk, as collisions. A path that cannot be
+ * checked (a file where a folder was, a folder it may not read) is
+ * skipped: the reinstall does not write it, so it is no reason to fail.
+ */
+export async function detectStale(vaultRoot: string, stale: string[]): Promise<Collision[]> {
+  const found = await mapConcurrent(stale, 16, async (rel) => {
+    try {
+      return await detectCollisions(vaultRoot, [rel]);
+    } catch {
+      return [];
+    }
+  });
+  return found.flat();
+}
+
+/** The collisions that are still plain files on disk, as vault-relative paths. */
+export async function stillFiles(vaultRoot: string, collisions: Collision[]): Promise<string[]> {
+  const isFile = await mapConcurrent(collisions, 16, (c) =>
+    fsp.lstat(path.join(vaultRoot, c.outputPath)).then((st) => st.isFile(), () => false),
+  );
+  return collisions.filter((_, i) => isFile[i]).map((c) => c.outputPath);
+}
+
 export function mergePrefill(
   schema: ShardSchema,
   prefill: Record<string, unknown>,

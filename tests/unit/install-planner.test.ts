@@ -11,6 +11,9 @@ import {
   defaultModuleSelections,
   hashValues,
   splitByOwnContent,
+  staleOutputs,
+  detectStale,
+  stillFiles,
 } from '../../source/core/install-planner.js';
 import { sha256 } from '../../source/core/fs-utils.js';
 import { makeShardState } from '../helpers/shard-state.js';
@@ -250,6 +253,22 @@ describe('discardSetAside', () => {
     await expect(fsp.stat(oldState)).rejects.toThrow();
     await expect(fsp.stat(note)).rejects.toThrow();
     expect((await fsp.stat(path.join(vault, '.shardmind', 'backups', 'adopt-1'))).isDirectory()).toBe(true);
+  });
+
+  it('returns each set-aside copy it could not delete, so it is never reported as removed (#228)', async () => {
+    const note = path.join(vault, 'Old.md.shardmind-backup-x');
+    await fsp.writeFile(note, 'stale');
+    const realRm = fsp.rm;
+    const spy = vi.spyOn(fsp, 'rm').mockImplementation(async (p, opts) => {
+      if (p === note) throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
+      return realRm(p, opts);
+    });
+    const record = { originalPath: path.join(vault, 'Old.md'), backupPath: note };
+    try {
+      expect(await discardSetAside([record], undefined, vault)).toEqual([record]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('keeps the old state aside when its backups cannot be carried over, and never throws', async () => {
@@ -727,5 +746,70 @@ describe('carryOverUserEntries (#237)', () => {
     const sm = path.join(vault, '.shardmind');
     expect(await fsp.readFile(path.join(sm, 'boundary-ignore'), 'utf-8')).toBe('new\n');
     expect(await fsp.readFile(path.join(sm, 'boundary-ignore-1'), 'utf-8')).toBe('old\n');
+  });
+});
+
+describe('staleOutputs (#228)', () => {
+  const file = { template: null, rendered_hash: 'h', ownership: 'managed' as const };
+
+  it('lists the previous files no planned output names, and nothing without a previous install', () => {
+    const previous = makeShardState({
+      files: { 'Home.md': file, 'people/alice.md': file, 'people/bob.md': file },
+    });
+    expect(staleOutputs(previous, ['Home.md', 'people/alice.md'])).toEqual(['people/bob.md']);
+    expect(staleOutputs(null, ['Home.md'])).toEqual([]);
+  });
+
+  it('compares exactly: a case-only rename leaves the old spelling stale', () => {
+    // A different file on a case-sensitive filesystem; on a case-folding
+    // one the vault path guard refuses the install before this runs.
+    const previous = makeShardState({ files: { 'Notes/Home.md': file } });
+    expect(staleOutputs(previous, ['notes/home.md'])).toEqual(['Notes/Home.md']);
+  });
+
+  it('never returns a key that would leave the vault', () => {
+    const previous = makeShardState({
+      files: { '../outside.md': file, 'a/../../b.md': file, '/etc/x.md': file, 'C:\\x.md': file, 'ok.md': file },
+    });
+    expect(staleOutputs(previous, [])).toEqual(['ok.md']);
+  });
+});
+
+describe('detectStale and stillFiles (#228)', () => {
+  let vault: string;
+  beforeEach(async () => {
+    vault = await fsp.mkdtemp(path.join(os.tmpdir(), 'stale-'));
+  });
+  afterEach(async () => {
+    await fsp.rm(vault, { recursive: true, force: true });
+  });
+
+  it('skips a stale path it cannot check, and one that is gone', async () => {
+    await fsp.writeFile(path.join(vault, 'Archive'), 'a file where a folder was');
+    await fsp.writeFile(path.join(vault, 'kept.md'), 'x');
+    await fsp.writeFile(path.join(vault, 'locked.md'), 'x');
+    // ENOTDIR through a file is ENOENT on Windows; EACCES is the same on all.
+    const realStat = fsp.stat;
+    const spy = vi.spyOn(fsp, 'stat').mockImplementation((async (p: string, o?: unknown) => {
+      if (p === path.join(vault, 'locked.md')) throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
+      return (realStat as (p: string, o?: unknown) => Promise<unknown>)(p, o);
+    }) as typeof fsp.stat);
+    try {
+      const found = await detectStale(vault, ['Archive/x.md', 'gone.md', 'locked.md', 'kept.md']);
+      expect(found.map((c) => c.outputPath)).toEqual(['kept.md']);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('stillFiles keeps only paths that are plain files now', async () => {
+    await fsp.writeFile(path.join(vault, 'a.md'), 'x');
+    await fsp.mkdir(path.join(vault, 'b.md'));
+    const collisions = ['a.md', 'b.md', 'c.md'].map((rel) => ({
+      outputPath: rel,
+      absolutePath: path.join(vault, rel),
+      kind: 'file' as const,
+    }));
+    expect(await stillFiles(vault, collisions as never)).toEqual(['a.md']);
   });
 });

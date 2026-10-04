@@ -363,7 +363,7 @@ export interface HookContext {
   newFiles: string[];
   /**
    * Vault-relative paths of managed files removed by this run
-   * (`UpdateAction.kind === 'delete'`). Empty on install. Hooks use
+   * (`UpdateAction.kind === 'delete'`). On install, the files a reinstall removed because the shard no longer has them (#228); otherwise empty. Hooks use
    * this to maintain external state — QMD collection refs, MCP
    * registrations — that referenced now-removed paths.
    */

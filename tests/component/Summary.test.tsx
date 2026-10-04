@@ -131,4 +131,23 @@ describe('Summary', () => {
     ).toBe(true);
     expect(frame).toContain('/home/alice/vault');
   });
+
+  it('lists the files a reinstall removed and the edited ones it kept (#228)', () => {
+    const { lastFrame } = render(
+      <Summary {...baseProps} removed={['people/bob.md']} keptStale={['CLAUDE.md', 'notes.md']} />,
+    );
+    const frame = lastFrame() ?? '';
+    expect(frame).toMatch(/Removed 1 file the shard no longer has:/);
+    expect(frame).toContain('people/bob.md');
+    expect(frame).toMatch(/Kept 2 files you edited that the shard no longer has; they're yours now:/);
+    expect(frame).toContain('CLAUDE.md');
+  });
+
+  it('says "Would remove" and "Would keep" in a dry run, and nothing when both are empty (#228)', () => {
+    const dry = render(<Summary {...baseProps} dryRun removed={['a.md']} keptStale={['b.md']} />).lastFrame() ?? '';
+    expect(dry).toMatch(/Would remove 1 file/);
+    expect(dry).toMatch(/Would keep 1 file you edited/);
+    const none = render(<Summary {...baseProps} />).lastFrame() ?? '';
+    expect(none).not.toMatch(/no longer has/);
+  });
 });
