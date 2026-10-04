@@ -60,13 +60,24 @@ export const useTextInput = ({
 			return [{text: state.value}];
 		}
 
-		let index = 0;
+		// Plain text before the cursor, the character under it, plain text
+		// after: three segments, not one per character.
+		const before = state.value.slice(0, state.cursorOffset);
+		const codePoint = state.value.codePointAt(state.cursorOffset);
+		const under = codePoint === undefined ? '' : String.fromCodePoint(codePoint);
+		const after = state.value.slice(state.cursorOffset + under.length);
 		const result: TextSegment[] = state.value.length > 0 ? [] : [cursor];
 
-		for (const char of state.value) {
-			result.push(index === state.cursorOffset ? {text: char, inverse: true} : {text: char});
+		if (before) {
+			result.push({text: before});
+		}
 
-			index++;
+		if (under) {
+			result.push({text: under, inverse: true});
+		}
+
+		if (after) {
+			result.push({text: after});
 		}
 
 		if (state.suggestion) {

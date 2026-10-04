@@ -41,8 +41,8 @@ const MODE_VALUES = new Set<AdoptMode>([
  * user should review merged files. See `core/adopt-merge.ts`.
  */
 export default function AdoptModePicker({ differsCount, onSelect }: AdoptModePickerProps) {
-  // `Select` can fire onChange more than once if Ink re-focuses the instance
-  // (see CollisionReview / DiffView). One-shot decision → guard it.
+  // A second Enter before the parent unmounts this prompt fires onChange
+  // again (see CollisionReview). One-shot decision → guard it.
   const firedRef = useRef(false);
 
   return (

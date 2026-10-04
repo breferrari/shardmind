@@ -36,11 +36,6 @@ type State = {
 	visibleToIndex: number;
 
 	/**
-	 * Value of the previously selected option.
-	 */
-	previousValue: string | undefined;
-
-	/**
 	 * Value of the selected option.
 	 */
 	value: string | undefined;
@@ -157,7 +152,6 @@ const reducer: Reducer<State, Action> = (state, action) => {
 		case 'select-focused-option': {
 			return {
 				...state,
-				previousValue: state.value,
 				value: state.focusedValue,
 			};
 		}
@@ -249,7 +243,6 @@ const createDefaultState = ({
 		focusedValue: focused?.value,
 		visibleFromIndex,
 		visibleToIndex: visibleFromIndex + visibleOptionCount,
-		previousValue: defaultValue,
 		value: defaultValue,
 	};
 };
@@ -312,7 +305,6 @@ export const useSelectState = ({
 			}))
 			.slice(state.visibleFromIndex, state.visibleToIndex);
 	}, [options, state.visibleFromIndex, state.visibleToIndex]);
-
 
 	return {
 		focusedValue: state.focusedValue,

@@ -1,7 +1,6 @@
 import {useReducer, useCallback, useEffect, useRef, type Reducer, useMemo} from 'react';
 
 type State = {
-	previousValue: string;
 	value: string;
 	cursorOffset: number;
 };
@@ -48,7 +47,6 @@ const reducer: Reducer<State, Action> = (state, action) => {
 		case 'insert': {
 			return {
 				...state,
-				previousValue: state.value,
 				value:
 					state.value.slice(0, state.cursorOffset) +
 					action.text +
@@ -62,7 +60,6 @@ const reducer: Reducer<State, Action> = (state, action) => {
 
 			return {
 				...state,
-				previousValue: state.value,
 				value:
 					state.value.slice(0, newCursorOffset) +
 					state.value.slice(newCursorOffset + 1),
@@ -133,7 +130,6 @@ export const useTextInputState = ({
 	onSubmit,
 }: UseTextInputStateProps) => {
 	const [state, dispatch] = useReducer(reducer, {
-		previousValue: defaultValue,
 		value: defaultValue,
 		cursorOffset: defaultValue.length,
 	});

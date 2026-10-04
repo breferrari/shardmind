@@ -15,8 +15,8 @@ interface CollisionReviewProps {
 export default function CollisionReview({ collisions, onChoice }: CollisionReviewProps) {
   const fileCount = collisions.filter((c) => c.kind === 'file').length;
   const dirCount = collisions.length - fileCount;
-  // `Select` can fire onChange more than once if Ink re-focuses the
-  // instance. A double-fire on `overwrite` would launch two `rm -rf`
+  // A second Enter before the parent unmounts this prompt fires onChange
+  // again. A double-fire on `overwrite` would launch two `rm -rf`
   // passes and two concurrent installs — same defense as DiffView.
   const firedRef = useRef(false);
 

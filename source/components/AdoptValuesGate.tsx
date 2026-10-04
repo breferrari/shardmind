@@ -101,8 +101,8 @@ export default function AdoptValuesGate({
     if (resolveError) onError(resolveError);
   }, [resolveError, onError]);
 
-  // `Select` can fire onChange more than once if Ink re-focuses the
-  // instance (see CollisionReview / DiffView). Every branch is a one-shot
+  // A second Enter before the parent unmounts this prompt fires onChange
+  // again (see CollisionReview). Every branch is a one-shot
   // decision, so guard all of them against a double-fire that would advance
   // the adopt machine twice.
   const firedRef = useRef(false);

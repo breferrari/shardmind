@@ -61,6 +61,18 @@ describe('ui-kit TextInput', () => {
     expect(onChange.mock.calls).toEqual([['x']]);
   });
 
+  it('draws the text whole around the cursor, an astral character included', async () => {
+    const { stdin, lastFrame } = render(<TextInput />);
+    await tick();
+    stdin.write('a😀b');
+    await tick();
+    stdin.write(LEFT);
+    await tick();
+    stdin.write(LEFT);
+    await tick();
+    expect(lastFrame()).toContain('a😀b');
+  });
+
   it('shows the placeholder while empty', () => {
     const { lastFrame } = render(<TextInput placeholder="REINSTALL" />);
     expect(lastFrame()).toContain('EINSTALL');

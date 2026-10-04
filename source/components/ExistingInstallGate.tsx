@@ -17,8 +17,8 @@ type Screen = 'choose' | 'confirm-reinstall';
 export default function ExistingInstallGate({ state, onChoice }: ExistingInstallGateProps) {
   const [screen, setScreen] = useState<Screen>('choose');
   const [error, setError] = useState<string | null>(null);
-  // Same `Select` double-fire guard as CollisionReview / DiffView:
-  // without it, a second onChange firing of `update` or `cancel` would
+  // Same double-Enter guard as CollisionReview / DiffView: without it, a
+  // second Enter on `update` or `cancel` before the gate unmounts would
   // call `onChoice` twice and the machine would transition twice.
   const firedRef = useRef(false);
 
@@ -41,10 +41,9 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
             onChange={() => setError(null)}
             onSubmit={(v) => {
               if (v === 'REINSTALL') {
-                // Same firedRef guard as the Select path — TextInput
-                // can fire onSubmit more than once on Ink re-focus,
-                // and `reinstall` is destructive; a double-fire would
-                // queue two wipes.
+                // Same firedRef guard as the Select path: a second
+                // Enter fires onSubmit again, and `reinstall` is
+                // destructive; a double-fire would queue two wipes.
                 if (firedRef.current) return;
                 firedRef.current = true;
                 onChoice('reinstall');
