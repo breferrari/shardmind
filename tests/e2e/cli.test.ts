@@ -64,6 +64,21 @@ import { verifyInvariant1 } from './helpers/invariant1.js';
 const SHARD_SLUG = 'acme/demo';
 const SHARD_REF = `github:${SHARD_SLUG}`;
 
+/**
+ * A directory the CLI uses as its `os.tmpdir()`, so a SIGINT test can see
+ * whether the handler's cleanup removed the shard download dir (#57). The
+ * bridge's exit-130 fallback, which runs when no handler is registered
+ * yet, exits without that cleanup and leaves `shardmind-<uuid>` behind.
+ */
+async function childTmpDir(): Promise<{ dir: string; env: Record<string, string>; leftovers: () => Promise<string[]> }> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sm-child-tmp-'));
+  return {
+    dir,
+    env: { TMPDIR: dir, TEMP: dir, TMP: dir },
+    leftovers: async () => (await fs.readdir(dir)).filter((n) => n.startsWith('shardmind-')),
+  };
+}
+
 const DEFAULT_VALUES = {
   user_name: 'Alice',
   org_name: 'Acme Labs',
@@ -774,11 +789,12 @@ describe('shardmind install', () => {
       try {
         vault = await createEmptyVault('install-sigint');
         const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+        const tmp = await childTmpDir();
         const result = await spawnCli(
           ['install', SHARD_REF, '--yes', '--values', valuesPath],
           {
             cwd: vault.root,
-            env: envWithStub(),
+            env: { ...envWithStub(), ...tmp.env },
             signalAt: { signal: 'SIGINT', afterMs: 1500 },
             timeoutMs: 20_000,
           },
@@ -793,6 +809,10 @@ describe('shardmind install', () => {
         // behind regardless of which phase the signal interrupted.
         expect(await vault.exists('.shardmind/state.json')).toBe(false);
         expect(await vault.exists('Home.md')).toBe(false);
+        // The handler ran, not the bridge's fallback: its cleanup removed
+        // the shard download dir.
+        expect(await tmp.leftovers()).toEqual([]);
+        await fs.rm(tmp.dir, { recursive: true, force: true });
       } finally {
         stub.setTarballDelay(0);
       }
@@ -1268,9 +1288,10 @@ describe('shardmind update', () => {
       stub.setTarballDelay(4000);
       try {
         const beforeState = await vault.readFile('.shardmind/state.json');
+        const tmp = await childTmpDir();
         const result = await spawnCli(['update', '--yes'], {
           cwd: vault.root,
-          env: envWithStub(),
+          env: { ...envWithStub(), ...tmp.env },
           signalAt: { signal: 'SIGINT', afterMs: 1500 },
           timeoutMs: 20_000,
         });
@@ -1282,6 +1303,8 @@ describe('shardmind update', () => {
         ).toBe(true);
         const afterState = await vault.readFile('.shardmind/state.json');
         expect(afterState).toBe(beforeState);
+        expect(await tmp.leftovers()).toEqual([]);
+        await fs.rm(tmp.dir, { recursive: true, force: true });
       } finally {
         stub.setTarballDelay(0);
       }
