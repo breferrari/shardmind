@@ -827,7 +827,7 @@ Shard update version of conflicting lines
 >>>>>>> shard update
 ```
 
-**`diff3MergeRegions` (`core/diff3.ts`, #170).** A port of node-diff3 3.2.1's `diff3MergeRegions`, `diffIndices` and `LCS`, with one change. node-diff3's `LCS` (Hunt–McIlroy) finds each match's slot in `candidates` by a linear scan from `r`. When a match finds no slot, `r` doesn't move, so the next match rescans the same stretch. With many repeated lines that is cubic: 4,000 lines of 100 distinct took 294 ms, and 10,000 about 4.5 s.
+**`diff3MergeRegions` (`core/diff3.ts`, #170).** A port of node-diff3 3.2.1's `diff3MergeRegions`, `diffIndices` and `LCS`, with one change to the algorithm (and the sorted hunks walked by index rather than `shift()`ed, which yields them in the same order). node-diff3's `LCS` (Hunt–McIlroy) finds each match's slot in `candidates` by a linear scan from `r`. When a match finds no slot, `r` doesn't move, so the next match rescans the same stretch. With many repeated lines that is cubic: 4,000 lines of 100 distinct took 294 ms, and 10,000 about 4.5 s.
 
 Within one row, the candidates at positions ≥ `r` are the previous row's thresholds, and their `buffer2index` strictly increases. So the slot is the largest `s ≥ r` with `buffer2index < j`, taken only if the next candidate's `buffer2index > j`. A binary search finds that same `s`, so every region is identical to node-diff3's.
 

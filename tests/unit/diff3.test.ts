@@ -82,6 +82,28 @@ describe('diff3MergeRegions (#170)', () => {
     expect(regions.some((r) => r.stable && r.buffer === 'b')).toBe(true);
   });
 
+  it('matches node-diff3 at 4,000 repeat-heavy lines, the scale where the change matters', () => {
+    const o: string[] = [];
+    for (let i = 0; i < 4000; i++) o.push(`row ${i % 100}`);
+    const a = [...o];
+    a[1200] = 'user edit';
+    a.splice(3000, 0, 'row 7', 'row 8');
+    const b = [...o];
+    b[2800] = 'shard edit';
+    b.splice(500, 3);
+    same(a, o, b);
+  });
+
+  it('matches node-diff3 when every line is the same, one huge equivalence class', () => {
+    const o = Array.from({ length: 600 }, () => '');
+    const a = [...o];
+    a.splice(150, 0, 'user edit');
+    const b = [...o];
+    b[450] = 'shard edit';
+    b.splice(10, 2);
+    same(a, o, b);
+  });
+
   it('matches node-diff3 on the same repeat-heavy shape at a size the oracle handles quickly', () => {
     const o: string[] = [];
     for (let i = 0; i < 1500; i++) o.push(`row ${i % 100}`);
