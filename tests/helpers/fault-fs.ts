@@ -11,6 +11,7 @@
  */
 
 import fsp from 'node:fs/promises';
+import path from 'node:path';
 
 /** What a call does to the vault. `restore` is a copy or rename out of a run's backup. */
 export type FaultKind = 'write' | 'rename' | 'mkdir' | 'remove' | 'restore';
@@ -22,8 +23,13 @@ export interface FaultPlan {
   fail?: { kind: FaultKind; nth: number };
   /** Also throw at the `nth` restore: a rollback that cannot put a file back. */
   failRestore?: { nth: number };
-  /** Run `hook` just before the `nth` write goes on (a Ctrl+C mid-write). */
-  beforeWrite?: { nth: number; hook: () => void };
+  /**
+   * Run `hook` just before the `nth` write goes on (a Ctrl+C mid-write). A
+   * hook that returns a promise holds the write until it settles, so a real
+   * signal can land while the write is under way (#186). With `under`, only
+   * writes whose destination is inside that folder are counted.
+   */
+  beforeWrite?: { nth: number; hook: () => void | Promise<void>; under?: string };
 }
 
 const KIND: Record<string, Exclude<FaultKind, 'restore'>> = {
@@ -39,6 +45,12 @@ const KIND: Record<string, Exclude<FaultKind, 'restore'>> = {
 
 /** A run's backups: install's `*.shardmind-backup-*`, update's and adopt's snapshot. */
 const BACKUP = /\.shardmind-backup-|[\\/]\.shardmind[\\/]backups[\\/]/;
+
+/** `target` is `folder` itself or anything under it. */
+function isInside(target: string, folder: string): boolean {
+  const rel = path.relative(path.resolve(folder), path.resolve(target));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
 
 /** The error a fault throws: an fs error, as the executors would see one. */
 export function injectedError(kind: FaultKind, nth: number): NodeJS.ErrnoException {
@@ -67,6 +79,7 @@ export function injectFaults(plan: FaultPlan = {}): {
 } {
   const counts: FaultCounts = { write: 0, rename: 0, mkdir: 0, remove: 0, restore: 0 };
   let hooked = false;
+  let writesUnder = 0;
   const fired = { fail: false, restore: false, hook: false };
   let settled = false;
   const touchedAfterSettle: string[] = [];
@@ -84,10 +97,15 @@ export function injectFaults(plan: FaultPlan = {}): {
       if (hooked && (kind === 'write' || kind === 'rename')) {
         writtenAfterHook.push(String(method === 'writeFile' ? args[0] : args[1]));
       }
-      if (kind === 'write' && plan.beforeWrite?.nth === n) {
-        hooked = true;
-        fired.hook = true;
-        plan.beforeWrite.hook();
+      const before = plan.beforeWrite;
+      if (kind === 'write' && before && (before.under === undefined || isInside(String(method === 'writeFile' ? args[0] : args[1]), before.under))) {
+        const counted = before.under === undefined ? n : ++writesUnder;
+        if (counted === before.nth) {
+          // Set before the hook runs: the contract's Ctrl+C rows read them.
+          hooked = true;
+          fired.hook = true;
+          await before.hook();
+        }
       }
       if (plan.fail?.kind === kind && plan.fail.nth === n) {
         fired.fail = true;

@@ -53,6 +53,7 @@ import { buildRenderContext } from '../../source/core/renderer.js';
 import { attemptRollback, rollbackFailuresOf, withRollbackFailures } from '../../source/core/rollback-report.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
 import { injectFaults, type FaultKind, type FaultPlan } from '../helpers/fault-fs.js';
+import { treeOf } from '../helpers/vault-tree.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const MINIMAL_SHARD = path.join(ROOT, 'examples', 'minimal-shard');
@@ -68,24 +69,6 @@ const VALUES = { user_name: 'Alice', org_name: 'Acme Labs', vault_purpose: 'engi
 // ---------------------------------------------------------------------------
 // The vault tree, as the contract compares it
 // ---------------------------------------------------------------------------
-
-/** Every entry under `root` (POSIX, with case): `dir`, `link:<target>` or the file's sha256. */
-async function treeOf(root: string): Promise<Map<string, string>> {
-  const tree = new Map<string, string>();
-  const walk = async (dir: string) => {
-    for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
-      const abs = path.join(dir, entry.name);
-      const rel = path.relative(root, abs).split(path.sep).join('/');
-      if (entry.isSymbolicLink()) tree.set(rel, `link:${await fsp.readlink(abs)}`);
-      else if (entry.isDirectory()) {
-        tree.set(rel, 'dir');
-        await walk(abs);
-      } else tree.set(rel, crypto.createHash('sha256').update(await fsp.readFile(abs)).digest('hex'));
-    }
-  };
-  await walk(root);
-  return tree;
-}
 
 /** The paths whose entry differs between two trees, sorted. */
 function differences(before: Map<string, string>, after: Map<string, string>): string[] {

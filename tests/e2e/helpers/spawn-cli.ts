@@ -71,6 +71,8 @@ export interface SpawnCliOptions {
   timeoutMs?: number;
   /** Deliver a signal after a stdout regex matches. */
   signalAt?: SignalAt;
+  /** Node flags before `dist/cli.js`, e.g. a test-only `--import` preload (#186). */
+  nodeArgs?: string[];
 }
 
 // 45s accommodates the slowest CI cell (GitHub Actions windows-latest +
@@ -111,7 +113,7 @@ export async function spawnCli(args: string[], opts: SpawnCliOptions): Promise<C
   await ensureBuilt();
 
   const startedAt = Date.now();
-  const child = spawn('node', [DIST_CLI, ...args], {
+  const child = spawn('node', [...(opts.nodeArgs ?? []), DIST_CLI, ...args], {
     cwd: opts.cwd,
     env,
     // Pipe all three — write stdin explicitly when we actually need to.

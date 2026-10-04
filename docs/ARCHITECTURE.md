@@ -1750,9 +1750,15 @@ staying hermetic. No test reaches the public internet.
   removed that dir, which the bridge's exit-130 fallback would leave.
   Install, update and adopt run on every CI cell, Windows included; they
   were skipped on GitHub Actions Windows runners until #57, where a fixed
-  500 ms delay was found to fire before any handler existed. The
-  write-phase rollback branch (`installingRef`) is not reached by these
-  scenarios on any OS; #57 tracks whether to add a seam for it. The
+  500 ms delay was found to fire before any handler existed. These
+  scenarios stop before any write. The write-phase rollback is reached by
+  `tests/e2e/sigint-write-phase.test.ts` (#186) on every CI cell: a
+  test-only `node --import` preload (`tests/e2e/helpers/hold-write.ts`)
+  installs #267's fault injector inside the CLI child and holds it at a vault
+  write (`beforeWrite: { nth, under }`, the hook returning a promise). The
+  interrupt is sent once the hold has begun, the hold releases on SIGINT so
+  the write under way can finish (#249), and the run must exit 130 with the
+  vault tree as it was. No production code reads the preload's parameters. The
   production bridge is not gated: real Windows users get the same
   cancellation behavior as POSIX.
 - **Exit code contract**: install and update set `process.exitCode = 1`

@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Internal (a real Ctrl+C mid-write in E2E — #186)
+
+- **Install, update and adopt are interrupted mid-write by a real SIGINT in the E2E suite**, on every OS (the stdin-ETX bridge on Windows). A test-only preload holds the CLI at a vault write; each run must exit 130 and leave the vault as it was.
+
 ### Internal (one rollback contract for every pipeline — #267)
 
 - **Install, update and adopt now share one fault-injection contract.** 241 table rows fail a write, a rename, a mkdir or a restore, or press Ctrl+C at each step. After every row, the vault must be byte-identical to before, except what the error names. It found #264 and #269. `npm run test:coverage` reports coverage, with no thresholds yet.
