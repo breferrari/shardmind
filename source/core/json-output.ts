@@ -199,10 +199,16 @@ export interface UpdatePlanFile {
   readonly preexisting?: boolean;
   /** `conflict` only — a whole-file binary conflict, no text regions (#63). */
   readonly binary?: boolean;
+  /** The path a rename migration moves this file from (#178). */
+  readonly renamedFrom?: string;
 }
 
 function updateFile(action: UpdateAction): UpdatePlanFile {
-  const base = { path: action.path, action: action.kind };
+  const base = {
+    path: action.path,
+    action: action.kind,
+    ...(action.renamedFrom === undefined ? {} : { renamedFrom: action.renamedFrom }),
+  };
   switch (action.kind) {
     case 'noop':
       return { ...base, reason: action.reason };

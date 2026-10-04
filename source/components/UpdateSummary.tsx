@@ -90,6 +90,18 @@ export default function UpdateSummary({
         </Box>
       )}
 
+      {summary.renamedFiles.length > 0 && (
+        <Box flexDirection="column">
+          <Text dimColor>{dryRun ? 'Would move' : 'Moved'} to a new path:</Text>
+          {summary.renamedFiles.slice(0, REPLACED_VISIBLE).map(({ from, to }) => (
+            <Text key={to}>  · {from} → {to}</Text>
+          ))}
+          {summary.renamedFiles.length > REPLACED_VISIBLE && (
+            <Text dimColor>  …and {summary.renamedFiles.length - REPLACED_VISIBLE} more</Text>
+          )}
+        </Box>
+      )}
+
       {untracked > 0 && (
         <Text dimColor>
           {untracked === 1

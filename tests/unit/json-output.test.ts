@@ -195,6 +195,16 @@ describe('updatePlanResult', () => {
     expect(out.files.map((f) => f.action)).toEqual(['conflict', 'noop', 'delete', 'add']);
   });
 
+  it("names a renamed file's old path (#178)", () => {
+    const renamedPlan: UpdatePlan = {
+      ...plan,
+      actions: [{ kind: 'noop', path: 'AGENTS.md', reason: 'identical', renamedFrom: 'CLAUDE.md' }],
+    };
+    const [file] = updatePlanResult(renamedPlan, { dryRun: true }).files;
+    expect(file!.renamedFrom).toBe('CLAUDE.md');
+    expect(updatePlanResult(plan, { dryRun: true }).files.every((f) => f.renamedFrom === undefined)).toBe(true);
+  });
+
   it('gives a conflict both sides plus the preexisting flag', () => {
     const file = updatePlanResult(plan, { dryRun: true }).files.find((f) => f.path === 'a.md')!;
     expect(file.shardHash).toBe('new-a');
