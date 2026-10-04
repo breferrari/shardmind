@@ -127,6 +127,29 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — virtual screen', () => {
     // is `feed` doesn't throw — anything stronger over-specifies the
     // helper's lifecycle.
   });
+
+  it('settled() resolves once a chunk fed without await is on screen', async () => {
+    // xterm-headless parses writes in 12 ms slices spread over timer
+    // ticks, so a large chunk is not reflected right after `feed`
+    // returns. `settled()` is the seam `waitForExit` uses to read a
+    // fast-exiting child's last output (#177).
+    const screen = createVirtualScreen({ cols: 80, rows: 24 });
+    try {
+      void screen.feed(`${'x'.repeat(70)}\r\n`.repeat(15_000) + 'SETTLE-MARKER');
+      await screen.settled();
+      expect(screen.contains('SETTLE-MARKER')).toBe(true);
+    } finally {
+      screen.dispose();
+    }
+  });
+
+  it('settled() resolves with nothing fed and after dispose()', async () => {
+    const screen = createVirtualScreen({ cols: 10, rows: 2 });
+    await expect(screen.settled()).resolves.toBeUndefined();
+    void screen.feed('pending');
+    screen.dispose();
+    await expect(screen.settled()).resolves.toBeUndefined();
+  });
 });
 
 describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
@@ -457,3 +480,4 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
     }
   }, 30_000);
 });
+

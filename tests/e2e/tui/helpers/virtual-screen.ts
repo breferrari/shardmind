@@ -41,6 +41,14 @@ export interface VirtualScreen {
    */
   feed: (chunk: string | Uint8Array) => Promise<void>;
   /**
+   * Resolve once every chunk fed so far is reflected in the buffer.
+   * xterm parses writes in time-boxed slices across timer ticks, so a
+   * caller that fed without awaiting (the PTY `onData` path) cannot
+   * read the screen safely until this settles. Resolves immediately
+   * when nothing is pending or the screen is disposed.
+   */
+  settled: () => Promise<void>;
+  /**
    * Render the visible viewport as a newline-separated string with
    * trailing whitespace trimmed per row. The active buffer is what's
    * on screen right now — alt-screen flips are folded for us.
@@ -72,13 +80,22 @@ export function createVirtualScreen(opts: VirtualScreenOptions = {}): VirtualScr
   const term = new Terminal({ cols, rows, allowProposedApi: true });
 
   let disposed = false;
+  // The most recent write's completion. xterm processes writes in
+  // order, so awaiting the last one awaits them all.
+  let lastWrite: Promise<void> = Promise.resolve();
+  // Resolves the pending writes when `dispose()` drops the terminal:
+  // xterm never fires the callbacks of writes it had not processed.
+  let releaseOnDispose: () => void = () => {};
+  const disposedSignal = new Promise<void>((resolve) => {
+    releaseOnDispose = resolve;
+  });
   const feed = (chunk: string | Uint8Array): Promise<void> => {
     // No-op once disposed: late `pty.onData` chunks can arrive after
     // a test's `finally` ran `screen.dispose()`, and xterm's parser
     // throws on writes to a disposed Terminal. Resolving immediately
     // is harmless — the screen is no longer being observed by anyone.
     if (disposed) return Promise.resolve();
-    return new Promise((resolve) => {
+    const written = new Promise<void>((resolve) => {
       // xterm.write() is fire-and-forget by default; the callback
       // form fires once the data is processed and reflected in the
       // buffer. node-pty hands us strings (utf-8 encoded by default);
@@ -86,7 +103,11 @@ export function createVirtualScreen(opts: VirtualScreenOptions = {}): VirtualScr
       // to a Buffer.
       term.write(chunk, () => resolve());
     });
+    lastWrite = Promise.race([written, disposedSignal]);
+    return lastWrite;
   };
+
+  const settled = (): Promise<void> => lastWrite;
 
   const serialize = (): string => {
     const buf = term.buffer.active;
@@ -126,7 +147,8 @@ export function createVirtualScreen(opts: VirtualScreenOptions = {}): VirtualScr
     if (disposed) return;
     disposed = true;
     term.dispose();
+    releaseOnDispose();
   };
 
-  return { feed, serialize, contains, matches, dispose };
+  return { feed, settled, serialize, contains, matches, dispose };
 }
