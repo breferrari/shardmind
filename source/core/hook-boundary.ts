@@ -235,6 +235,30 @@ export async function loadBoundaryIgnore(
   return { filter };
 }
 
+/**
+ * Whether `own` would leave the walk no folder at the vault root: the root
+ * holds at least one folder the walk would otherwise read, and `own` excludes
+ * every one (`*/`, `/*/`, a list naming each). Judged on the vault as it is,
+ * so every spelling of a switch-off is caught (#190).
+ */
+export async function excludesEveryFolder(
+  vaultRoot: string,
+  base: IgnoreFilter,
+  own: IgnoreFilter,
+): Promise<boolean> {
+  let entries;
+  try {
+    entries = await fsp.readdir(vaultRoot, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  const folders = entries
+    .filter((e) => e.isDirectory() && !e.isSymbolicLink())
+    .map((e) => e.name)
+    .filter((name) => !isTier1Excluded(name) && !base.ignores(name, true));
+  return folders.length > 0 && folders.every((name) => own.ignores(name, true));
+}
+
 /** A filter that ignores what either one ignores. */
 export function eitherIgnores(a: IgnoreFilter, b: IgnoreFilter): IgnoreFilter {
   return { ignores: (rel, isDir) => a.ignores(rel, isDir) || b.ignores(rel, isDir) };

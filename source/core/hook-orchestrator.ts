@@ -43,6 +43,7 @@ import {
   detectManagedWrites,
   detectUnmanagedCreates,
   eitherIgnores,
+  excludesEveryFolder,
   loadBoundaryIgnore,
   snapshotUnmanaged,
   type HookViolation,
@@ -197,8 +198,11 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
         // The vault owner's exclusions (#190) join the vault's .shardmindignore.
         const own = await loadBoundaryIgnore(plan.vaultRoot);
         const base = await loadIgnoreSafe(plan.vaultRoot);
-        ignore = own.filter ? eitherIgnores(base, own.filter) : base;
         ignoreProblem = own.problem;
+        if (own.filter && (await excludesEveryFolder(plan.vaultRoot, base, own.filter))) {
+          ignoreProblem = 'it excludes every folder at the vault root, which would switch the check off';
+        }
+        ignore = own.filter && ignoreProblem === undefined ? eitherIgnores(base, own.filter) : base;
       }
       unmanagedBefore = await snapshotUnmanaged(plan.vaultRoot, ignore);
     }

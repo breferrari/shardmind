@@ -560,7 +560,7 @@ These are **not** thrown `ShardMindError`s — they don't appear in the `ErrorCo
 
 ### `HOOK_BOUNDARY_IGNORE_INVALID`
 
-**Meaning:** `.shardmind/boundary-ignore`, the vault owner's list of folders the `personalize` boundary walk skips, was not applied. It could not be read, it could not be parsed (for example a `!` negation, not supported yet), or it matches every name at the vault root (`*`, `**`), which would switch the whole check off. The check ran without it.
+**Meaning:** `.shardmind/boundary-ignore`, the vault owner's list of folders the `personalize` boundary walk skips, was not applied. It could not be read, it could not be parsed (for example a `!` negation, not supported yet), or it would switch the whole check off: it matches every name at the vault root (`*`, `**`), or it excludes every folder the vault root holds (`*/`, `/*/`, a list naming each one). The check ran without it.
 
 **Remedy:** Fix the file: list the folders you mean by name (`.cache/`, `scratch/`), one per line. The check cannot be switched off as a whole.
 

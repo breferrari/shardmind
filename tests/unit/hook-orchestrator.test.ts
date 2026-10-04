@@ -239,6 +239,26 @@ describe('runHooks — write-boundary detection', () => {
     expect(violationOf(result, 'personalize')).toBeUndefined();
   }, 30_000);
 
+  it('does not apply a boundary-ignore that excludes every folder, and says so (#190)', async () => {
+    await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
+    await fsp.mkdir(path.join(vault, 'brain'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind', 'boundary-ignore'), '*/' + String.fromCharCode(10));
+    await hook('personalize.ts', `
+      import { writeFile, mkdir } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx) {
+        await mkdir(join(ctx.vaultRoot, '.cache'), { recursive: true });
+        await writeFile(join(ctx.vaultRoot, '.cache', 'stray.json'), '{}');
+      }
+    `);
+    const result = await runHooks(
+      installPlan({ manifest: manifest({ personalize: '.shardmind/hooks/personalize.ts' }), values: { user_name: 'Alice' } }),
+      NOOP_UI,
+    );
+    expect(violationOf(result, 'personalize')).toEqual({ kind: 'unmanaged-create', paths: ['.cache/stray.json'] });
+    expect(result.outcomes.find((o) => o.slot === 'personalize')?.summary?.ignoreProblem).toMatch(/every folder/);
+  }, 30_000);
+
   it('does not apply a boundary-ignore that matches everything, and says so (#190)', async () => {
     await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
     await fsp.writeFile(path.join(vault, '.shardmind', 'boundary-ignore'), '**\n');

@@ -12,7 +12,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **A vault can list folders the `personalize` write-boundary check skips**, in `.shardmind/boundary-ignore`, one gitignore-style pattern per line. Use it for a folder that is unreadable for good, which otherwise warns `HOOK_BOUNDARY_INCOMPLETE` on every install.
   - What the hook creates in a listed folder goes unchecked: that is the trade.
-  - A file that cannot be read or parsed, or that matches everything (`*`, `**`), is not applied, and warns `HOOK_BOUNDARY_IGNORE_INVALID`.
+  - A file that cannot be read or parsed, or that would switch the check off (`*`, `**`, `*/`, or a list of every folder), is not applied, and warns `HOOK_BOUNDARY_IGNORE_INVALID`.
 
 ### Added (`shardmind --json` — #139)
 

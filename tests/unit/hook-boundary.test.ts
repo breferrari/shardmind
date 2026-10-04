@@ -8,6 +8,7 @@ import {
   detectManagedWrites,
   detectUnmanagedCreates,
   loadBoundaryIgnore,
+  excludesEveryFolder,
 } from '../../source/core/hook-boundary.js';
 import { parseShardmindignore } from '../../source/core/shardmindignore.js';
 import { makeShardState, makeFileState } from '../helpers/shard-state.js';
@@ -310,6 +311,32 @@ describe('loadBoundaryIgnore (#190)', () => {
     const { filter, problem } = await loadBoundaryIgnore(dir);
     expect(problem).toBeUndefined();
     expect(filter).not.toBeNull();
+  });
+
+  describe('excludesEveryFolder', () => {
+    beforeEach(async () => {
+      await fsp.mkdir(path.join(dir, 'brain'));
+      await fsp.mkdir(path.join(dir, 'work'));
+      await fsp.writeFile(path.join(dir, 'Home.md'), 'x');
+    });
+    const every = (patterns: string) => excludesEveryFolder(dir, EMPTY_IGNORE, parseShardmindignore(patterns));
+
+    it.each([['*/'], ['/*/'], ['brain/' + String.fromCharCode(10) + 'work/'], ['**/*/']])('is true for %j, which leaves no folder walked', async (patterns) => {
+      expect(await every(patterns)).toBe(true);
+    });
+
+    it('is false while one folder is still walked, or the root holds no folder', async () => {
+      expect(await every('brain/')).toBe(false);
+      await fsp.rm(path.join(dir, 'brain'), { recursive: true });
+      await fsp.rm(path.join(dir, 'work'), { recursive: true });
+      expect(await every('*/')).toBe(false);
+    });
+
+    it('does not count a folder Tier 1 or .shardmindignore already skips', async () => {
+      // .shardmind/ (Tier 1) and an ignored folder are never walked anyway.
+      const base = parseShardmindignore('work/');
+      expect(await excludesEveryFolder(dir, base, parseShardmindignore('brain/'))).toBe(true);
+    });
   });
 
   it('reports a file it cannot read, rather than treating it as empty', async () => {
