@@ -1,0 +1,91 @@
+/**
+ * The vendored-kit record, `source/<kit>/VENDOR.json`, and the provenance
+ * header every vendored file starts with (#280; schema agreed with #277).
+ * Repo tooling: never shipped, never imported from `source/`.
+ */
+
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import { z } from 'zod';
+
+const FileSchema = z
+  .object({
+    upstream: z.string().min(1),
+    modified: z.boolean(),
+    change: z.string().min(1).regex(/^[^\n]*$/, 'one line').optional(),
+  })
+  .strict()
+  .refine((f) => !f.modified || f.change !== undefined, { message: 'a modified file needs its change' });
+
+export const VendorRecordSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    kit: z.string().min(1),
+    package: z.string().min(1),
+    version: z.string().min(1),
+    repository: z.string().url(),
+    tag: z.string().min(1),
+    tagPattern: z.string().includes('{version}').optional(),
+    commit: z.string().regex(/^[0-9a-f]{40}$/, 'a full 40-character commit'),
+    tarball: z.object({ url: z.string().url(), integrity: z.string().min(1) }).strict(),
+    sourceRoot: z.string(),
+    license: z.string().min(1),
+    copyright: z.string().min(1),
+    modifiedBy: z.string().min(1),
+    files: z.record(z.string(), FileSchema),
+  })
+  .strict();
+
+export type VendorRecord = z.infer<typeof VendorRecordSchema>;
+
+export const RECORD_FILE = 'VENDOR.json';
+
+export function parseRecord(raw: unknown): VendorRecord {
+  return VendorRecordSchema.parse(raw);
+}
+
+export async function readRecord(kitDir: string): Promise<VendorRecord> {
+  return parseRecord(JSON.parse(await fsp.readFile(path.join(kitDir, RECORD_FILE), 'utf-8')));
+}
+
+/** Written in the schema's key order, `files` sorted, two-space JSON and a trailing newline. */
+export async function writeRecord(kitDir: string, record: VendorRecord): Promise<void> {
+  const ordered: Record<string, unknown> = {};
+  for (const key of Object.keys(VendorRecordSchema.shape)) {
+    const value = record[key as keyof VendorRecord];
+    if (value === undefined) continue;
+    ordered[key] =
+      key === 'files'
+        ? Object.fromEntries(Object.keys(record.files).sort().map((k) => [k, record.files[k]]))
+        : value;
+  }
+  await fsp.writeFile(path.join(kitDir, RECORD_FILE), `${JSON.stringify(ordered, null, 2)}\n`, 'utf-8');
+}
+
+/** The tag a version of the package is released under. */
+export function tagFor(record: VendorRecord, version: string): string {
+  return (record.tagPattern ?? 'v{version}').replace('{version}', version);
+}
+
+/** The provenance header of a vendored file, every byte generated from the record. */
+export function headerFor(record: VendorRecord, file: string): string {
+  const entry = record.files[file];
+  if (!entry) throw new Error(`${file} is not a vendored file of ${record.kit}`);
+  const lines = [
+    '/*',
+    ` * From ${record.package}@${record.version} (${record.repository} at ${record.commit}), ${entry.upstream}.`,
+    ` * Copyright (c) ${record.copyright}. ${record.license}: see ${record.kit}/LICENSE.`,
+  ];
+  if (entry.modified) lines.push(` * Modified by ${record.modifiedBy}: ${entry.change}`);
+  lines.push(' */', '', '');
+  return lines.join('\n');
+}
+
+/** A vendored file without its header; refuses one whose header is not exactly the generated one. */
+export function stripHeader(text: string, record: VendorRecord, file: string): string {
+  const header = headerFor(record, file);
+  if (!text.startsWith(header)) {
+    throw new Error(`${record.kit}/${file}: its header is not the one VENDOR.json generates; fix the header or the record`);
+  }
+  return text.slice(header.length);
+}

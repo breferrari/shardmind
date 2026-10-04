@@ -22,7 +22,7 @@
     "test:coverage": "vitest run --coverage",
     "test:merge": "vitest run tests/unit/drift.test.ts",
     "smoke": "bash scripts/smoke-install.sh",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json",
     "lint": "tsc --noEmit && vitest run",
     "prepublishOnly": "npm run typecheck && npm test && npm run build",
     "release:patch": "npm version patch && git push && git push --tags",
