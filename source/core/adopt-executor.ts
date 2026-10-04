@@ -43,7 +43,7 @@ import {
 } from '../runtime/vault-paths.js';
 import { mapConcurrent, pathExists } from './fs-utils.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
-import { throwIfCancelled } from './cancellation.js';
+import { throwIfCancelled } from './run-cancel.js';
 import { assertRenameTargetFree, moveToFreePath } from './rename-migrations.js';
 import { hashValues } from './install-planner.js';
 import {

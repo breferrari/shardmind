@@ -33,7 +33,7 @@ import {
 import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths, ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
-import { throwIfCancelled } from './cancellation.js';
+import { throwIfCancelled } from './run-cancel.js';
 import { reasonOf, type RollbackFailure } from './rollback-report.js';
 import {
   SHARDMIND_DIR,

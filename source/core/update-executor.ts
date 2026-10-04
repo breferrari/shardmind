@@ -25,7 +25,7 @@ import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
-import { throwIfCancelled } from './cancellation.js';
+import { throwIfCancelled } from './run-cancel.js';
 import {
   assertRenameTargetFree,
   caseJournal,
