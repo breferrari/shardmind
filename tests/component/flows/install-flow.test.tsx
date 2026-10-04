@@ -15,7 +15,7 @@
  *   - process.cwd() / vi mocks restored in the harness's afterEach.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { cleanup } from 'ink-testing-library';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -944,6 +944,38 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       expect(await fs.readdir(vaultRoot)).toEqual(['shard-values.yaml']);
       expect(await fs.readFile(path.join(vaultRoot, 'shard-values.yaml'), 'utf-8')).toBe(stray);
     } finally {
+      await cleanupVault(vaultRoot);
+    }
+  }, 60_000);
+
+  it("a failed install whose backup can't be moved back says so, not 'Rolled back' (#247)", async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vaultRoot = await makeVaultDir('s247-backup-not-restored');
+    // The user's Home.md collides and is backed up (`--defaults`); the stray
+    // values file then fails the install after its files are written.
+    await fs.writeFile(path.join(vaultRoot, 'Home.md'), 'my home\n', 'utf-8');
+    await fs.writeFile(path.join(vaultRoot, 'shard-values.yaml'), 'user_name: "left over"\n', 'utf-8');
+    const realRename = fs.rename;
+    vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(from).includes('.shardmind-backup')) {
+        throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
+      }
+      return realRename(from, to);
+    });
+    try {
+      const r = mountInstall({ shardRef: SHARD_REF, vaultRoot, options: { defaults: true } });
+      await waitFor(() => r.frames.join('\n'), (f) => /ROLLBACK_INCOMPLETE/.test(f), 30_000);
+      await tick(200);
+      const frames = r.frames.join('\n');
+      expect(frames).toMatch(/VALUES_FILE_COLLISION/);
+      expect(frames).toMatch(/Home\.md: restore failed: simulated EBUSY/);
+      expect(frames).not.toMatch(/Rolled back partial install/);
+      const backup = (await fs.readdir(vaultRoot)).find((n) => n.includes('.shardmind-backup'));
+      expect(await fs.readFile(path.join(vaultRoot, backup!), 'utf-8')).toBe('my home\n');
+    } finally {
+      vi.restoreAllMocks();
       await cleanupVault(vaultRoot);
     }
   }, 60_000);

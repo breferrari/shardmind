@@ -14,6 +14,7 @@
 
 import type React from 'react';
 import { useEffect, useRef } from 'react';
+import { formatRollbackFailures, type RollbackFailure } from '../../core/rollback-report.js';
 import {
   tailAtUtf8Boundary,
   summarizeHook,
@@ -83,7 +84,9 @@ export function appendHookOutput<P extends { kind: string }>(
  * `cleanup` runs on every Ctrl-C (active or not) — use it for things
  * like deleting the downloaded-shard tempdir that must die regardless
  * of whether writes had started. All callbacks swallow failures: the
- * process is about to exit anyway.
+ * process is about to exit anyway. What `rollback` returns it could not
+ * restore is printed to stderr before the exit (#247): a Ctrl+C rollback
+ * that left files behind never ends silently.
  *
  * The handler registers ONCE on mount and deregisters on unmount. The
  * callbacks are reached through refs so React doesn't thrash
@@ -91,7 +94,7 @@ export function appendHookOutput<P extends { kind: string }>(
  */
 export function useSigintRollback(opts: {
   isActive: () => boolean;
-  rollback: () => Promise<void>;
+  rollback: () => Promise<readonly RollbackFailure[] | void>;
   cleanup?: () => Promise<void>;
 }): void {
   // Refs hold the latest callbacks; the handler reads through them so
@@ -110,7 +113,12 @@ export function useSigintRollback(opts: {
       if (sigintRollbackStarted) return;
       sigintRollbackStarted = true;
       try {
-        if (isActiveRef.current()) await rollbackRef.current();
+        const failures = isActiveRef.current() ? await rollbackRef.current() : undefined;
+        if (failures && failures.length > 0) {
+          process.stderr.write(`
+${formatRollbackFailures(failures)}
+`);
+        }
       } catch {
         // swallow; process is about to exit
       }

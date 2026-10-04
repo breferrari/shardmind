@@ -12,7 +12,7 @@ import { render, cleanup } from 'ink-testing-library';
 import { Text } from 'ink';
 import { useSigintRollback, resetSigintRollbackForTests } from '../../source/commands/hooks/shared.js';
 
-function Probe(props: { rollback: () => Promise<void>; cleanup: () => Promise<void> }) {
+function Probe(props: { rollback: () => Promise<unknown>; cleanup: () => Promise<void> }) {
   useSigintRollback({ isActive: () => true, rollback: props.rollback, cleanup: props.cleanup });
   return <Text>probe</Text>;
 }
@@ -83,5 +83,22 @@ describe('useSigintRollback', () => {
     await new Promise((res) => setImmediate(res));
     expect(first.mock.calls.length + second.mock.calls.length).toBe(1);
     release?.();
+  });
+
+  it('prints what the rollback could not restore to stderr, then exits 130 (#247)', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const rollback = vi.fn(async () => [
+      { path: 'Home.md', reason: 'restore failed: EBUSY', backup: '/v/.shardmind/backups/adopt-1/files/Home.md' },
+    ]);
+    render(<Probe rollback={rollback} cleanup={async () => {}} />);
+    await new Promise((r) => setImmediate(r));
+    process.emit('SIGINT');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    const written = stderr.mock.calls.map((c) => String(c[0])).join('');
+    expect(written).toMatch(/Rollback incomplete \(1 path not restored\)/);
+    expect(written).toMatch(/Home\.md: restore failed: EBUSY; its backup is at \/v\/\.shardmind\/backups\/adopt-1\/files\/Home\.md/);
+    expect(exit).toHaveBeenCalledWith(130);
   });
 });
