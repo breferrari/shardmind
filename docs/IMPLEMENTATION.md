@@ -1243,7 +1243,7 @@ interface AdoptPlan {
 
 **Dependencies**: `core/modules` (resolveModules), `core/renderer` (createRenderer + renderFile + buildRenderContext), `core/fs-utils` (sha256 + mapConcurrent + toPosix), `runtime/errno`.
 
-**Renames (#179)**: with `renames` (old → new, from `renamesBetween(manifest.migrations, fromVersion, manifest.version)`), an output whose path is a rename's new path, absent from the vault, reads the user's bytes from the old path when that exists and is not itself an output, and when no other rename claims the new path. The classification (`matches` / `differs`) records `movedFrom`.
+**Renames (#179)**: with `renames` (old → new, from `renamesBetween(manifest.migrations, fromVersion, manifest.version)`), an output whose path is a rename's new path, absent from the vault, reads the user's bytes from the old path when that exists and is not itself an output, and when no other rename claims the new path. The classification (`matches` / `differs`) records `movedFrom`. A folder at the old path, or a path under a file, is no file there. The old path is checked by the vault path guard as a write (§4.20): a symlink or hard-linked file there is refused with `VAULT_PATH_UNSAFE`, since moving it would put the link at a managed path.
 
 ### 4.18 `adopt-executor.ts`
 
