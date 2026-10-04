@@ -1,12 +1,12 @@
 import path from 'node:path';
 import os from 'node:os';
 import fsp from 'node:fs/promises';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { runHooks, bootstrapShouldRerun, type HookRunPlan, type HookRunUi } from '../../source/core/hook-orchestrator.js';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { runHooks, bootstrapShouldRerun, type HookRunPlan, type HookRunResult, type HookRunUi } from '../../source/core/hook-orchestrator.js';
 import { writeState } from '../../source/core/state.js';
 import { sha256 } from '../../source/core/fs-utils.js';
 import { makeShardState, makeFileState } from '../helpers/shard-state.js';
-import type { ShardManifest, ShardSchema } from '../../source/runtime/types.js';
+import type { HookSlot, ShardManifest, ShardSchema } from '../../source/runtime/types.js';
 
 // A schema with one value whose default is 'default'. valuesAreDefaults is true
 // iff plan.values === { user_name: 'default' }.
@@ -85,6 +85,18 @@ function installPlan(over: Partial<HookRunPlan> & { manifest: ShardManifest }): 
   };
 }
 
+/**
+ * The slot's violation, after asserting that its hook ran and exited 0, so a
+ * hook that failed reports its own exit code and stderr rather than an
+ * undefined violation (#175).
+ */
+function violationOf(result: HookRunResult, slot: HookSlot) {
+  const summary = result.outcomes.find((o) => o.slot === slot)?.summary;
+  expect(summary, `${slot} produced no outcome`).toBeTruthy();
+  expect(summary?.exitCode, `${slot} hook did not exit 0. stderr:\n${summary?.stderr ?? ''}`).toBe(0);
+  return summary?.violation;
+}
+
 describe('bootstrapShouldRerun', () => {
   it('reruns only when the fingerprint string differs', () => {
     expect(bootstrapShouldRerun(undefined, undefined)).toBe(false);
@@ -160,7 +172,7 @@ describe('runHooks — install/adopt order + gating', () => {
     expect(result.stateChanged).toBe(true);
     expect(result.finalState.files['North Star.md']!.rendered_hash).toBe(sha256(body));
     // No boundary violation: personalize is allowed to edit managed files.
-    expect(result.outcomes.find((o) => o.slot === 'personalize')?.summary?.violation).toBeUndefined();
+    expect(violationOf(result, 'personalize')).toBeUndefined();
   }, 30_000);
 });
 
@@ -181,7 +193,7 @@ describe('runHooks — write-boundary detection', () => {
       }),
       NOOP_UI,
     );
-    const v = result.outcomes.find((o) => o.slot === 'bootstrap')?.summary?.violation;
+    const v = violationOf(result, 'bootstrap');
     expect(v).toEqual({ kind: 'managed-write', paths: ['Home.md'] });
   }, 30_000);
 
@@ -201,8 +213,43 @@ describe('runHooks — write-boundary detection', () => {
       }),
       NOOP_UI,
     );
-    const v = result.outcomes.find((o) => o.slot === 'personalize')?.summary?.violation;
-    expect(v).toEqual({ kind: 'unmanaged-create', paths: ['.cache/stray.json'] });
+    const v = violationOf(result, 'personalize');
+    // The hook wrote the file, so an undefined violation past this point means
+    // the post-hook walk missed it, not that the hook never wrote it (#175).
+    await expect(fsp.access(path.join(vault, '.cache', 'stray.json')), 'personalize did not create .cache/stray.json').resolves.toBeUndefined();
+    expect(v, 'post-hook walk missed .cache/stray.json').toEqual({ kind: 'unmanaged-create', paths: ['.cache/stray.json'] });
+  }, 30_000);
+
+  it('reports the check as incomplete when the post-hook walk cannot read a folder (#175)', async () => {
+    await hook('personalize.ts', `
+      import { writeFile, mkdir } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx) {
+        await mkdir(join(ctx.vaultRoot, '.cache'), { recursive: true });
+        await writeFile(join(ctx.vaultRoot, '.cache', 'stray.json'), '{}');
+      }
+    `);
+    // The engine's walk (this process) keeps failing EBUSY on `.cache`, as a
+    // scanner holding the fresh folder would; the hook subprocess is unaffected.
+    const realReaddir = fsp.readdir.bind(fsp);
+    const cacheDir = path.resolve(vault, '.cache');
+    const fake = async (p: string, opts: { withFileTypes: true }) => {
+      if (path.resolve(p) === cacheDir) throw Object.assign(new Error('EBUSY: injected'), { code: 'EBUSY' });
+      return realReaddir(p, opts);
+    };
+    vi.spyOn(fsp, 'readdir').mockImplementation(fake as typeof fsp.readdir);
+    try {
+      const result = await runHooks(
+        installPlan({
+          manifest: manifest({ personalize: '.shardmind/hooks/personalize.ts' }),
+          values: { user_name: 'Alice' },
+        }),
+        NOOP_UI,
+      );
+      expect(violationOf(result, 'personalize')).toEqual({ kind: 'incomplete', paths: ['.cache'] });
+    } finally {
+      vi.restoreAllMocks();
+    }
   }, 30_000);
 
   it('flags bootstrap DELETING a managed file (A1 — destructive write)', async () => {
@@ -223,7 +270,7 @@ describe('runHooks — write-boundary detection', () => {
     );
     // A deleted managed file lands in rehash.missing, not changed — it must
     // still surface as a managed-write boundary crossing.
-    const v = result.outcomes.find((o) => o.slot === 'bootstrap')?.summary?.violation;
+    const v = violationOf(result, 'bootstrap');
     expect(v).toEqual({ kind: 'managed-write', paths: ['Home.md'] });
   }, 30_000);
 });
@@ -612,7 +659,7 @@ describe('runHooks — user edits made before the hook phase (#150)', () => {
       }),
       NOOP_UI,
     );
-    expect(result.outcomes.find((o) => o.slot === 'bootstrap')?.summary?.violation).toBeUndefined();
+    expect(violationOf(result, 'bootstrap')).toBeUndefined();
     expect(result.finalState.files['mine.md']!.rendered_hash).toBe(sha256('engine render\n'));
   }, 30_000);
 

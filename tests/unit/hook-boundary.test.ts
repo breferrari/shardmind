@@ -1,7 +1,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import fsp from 'node:fs/promises';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fc from 'fast-check';
 import {
   snapshotUnmanaged,
@@ -12,6 +12,11 @@ import { parseShardmindignore } from '../../source/core/shardmindignore.js';
 import { makeShardState, makeFileState } from '../helpers/shard-state.js';
 
 const EMPTY_IGNORE = parseShardmindignore('');
+
+/** A walk result with the given paths and unreadable folders. */
+function snap(paths: Iterable<string>, unreadable: string[] = []) {
+  return { paths: new Set(paths), unreadable };
+}
 
 describe('detectManagedWrites', () => {
   it('returns null when no managed file changed', () => {
@@ -37,13 +42,13 @@ describe('detectUnmanagedCreates', () => {
   });
 
   it('returns null when nothing new appeared', () => {
-    const set = new Set(['Home.md', '.qmd/index']);
+    const set = snap(['Home.md', '.qmd/index']);
     expect(detectUnmanagedCreates(set, set, state)).toBeNull();
   });
 
   it('flags an unmanaged file created by personalize', () => {
-    const before = new Set(['Home.md']);
-    const after = new Set(['Home.md', '.cache/stray.json']);
+    const before = snap(['Home.md']);
+    const after = snap(['Home.md', '.cache/stray.json']);
     const v = detectUnmanagedCreates(after, before, state);
     expect(v).toEqual({
       slot: 'personalize',
@@ -55,14 +60,14 @@ describe('detectUnmanagedCreates', () => {
   it('does not flag a created path that is a managed file', () => {
     // A managed path absent from `before` but tracked in state.files is not an
     // "unmanaged create" — it belongs to the engine, not the hook.
-    const before = new Set(['Home.md']);
-    const after = new Set(['Home.md', 'brain/North Star.md']);
+    const before = snap(['Home.md']);
+    const after = snap(['Home.md', 'brain/North Star.md']);
     expect(detectUnmanagedCreates(after, before, state)).toBeNull();
   });
 
   it('does not flag paths already present before the hook', () => {
-    const before = new Set(['Home.md', '.qmd/index']);
-    const after = new Set(['Home.md', '.qmd/index']);
+    const before = snap(['Home.md', '.qmd/index']);
+    const after = snap(['Home.md', '.qmd/index']);
     expect(detectUnmanagedCreates(after, before, state)).toBeNull();
   });
 
@@ -84,7 +89,7 @@ describe('detectUnmanagedCreates', () => {
           const expected = afterArr
             .filter((p) => !before.has(p) && files[p] === undefined)
             .sort();
-          const v = detectUnmanagedCreates(after, before, st);
+          const v = detectUnmanagedCreates(snap(after), snap(before), st);
           if (expected.length === 0) {
             expect(v).toBeNull();
           } else {
@@ -94,6 +99,47 @@ describe('detectUnmanagedCreates', () => {
       ),
       { numRuns: 200 },
     );
+  });
+
+  it('reports the walk as incomplete when nothing was created but a folder was unreadable', () => {
+    const v = detectUnmanagedCreates(snap(['Home.md'], ['.cache']), snap(['Home.md']), state);
+    expect(v).toEqual({ slot: 'personalize', kind: 'incomplete', paths: ['.cache'] });
+  });
+
+  it('lists unreadable folders from both walks alongside created files', () => {
+    const before = snap(['Home.md'], ['b', 'shared']);
+    const after = snap(['Home.md', 'stray.json'], ['a', 'shared']);
+    expect(detectUnmanagedCreates(after, before, state)).toEqual({
+      slot: 'personalize',
+      kind: 'unmanaged-create',
+      paths: ['stray.json'],
+      unreadable: ['a', 'b', 'shared'],
+    });
+  });
+
+  it('does not count a path under a folder unreadable before the hook as created', () => {
+    // `.qmd/` could not be read before the hook, so its files may have been
+    // there all along: they are not attributable to personalize.
+    const before = snap(['Home.md'], ['.qmd']);
+    const after = snap(['Home.md', '.qmd/index', '.qmdx/new']);
+    expect(detectUnmanagedCreates(after, before, state)).toEqual({
+      slot: 'personalize',
+      kind: 'unmanaged-create',
+      paths: ['.qmdx/new'],
+      unreadable: ['.qmd'],
+    });
+  });
+
+  it('reports incomplete, not nothing, when a folder unreadable before the hook holds a new file after it', () => {
+    // `.qmd/` became readable after the hook and holds a file: it may be new,
+    // or may have been there all along. Neither "created" nor "nothing".
+    const v = detectUnmanagedCreates(snap(['Home.md', '.qmd/new']), snap(['Home.md'], ['.qmd']), state);
+    expect(v).toEqual({ slot: 'personalize', kind: 'incomplete', paths: ['.qmd'] });
+  });
+
+  it('counts nothing as created when the vault root was unreadable before the hook', () => {
+    const v = detectUnmanagedCreates(snap(['Home.md', 'new.md']), snap([], ['.']), state);
+    expect(v).toEqual({ slot: 'personalize', kind: 'incomplete', paths: ['.'] });
   });
 });
 
@@ -116,24 +162,24 @@ describe('snapshotUnmanaged', () => {
   it('returns vault-relative posix paths for every regular file', async () => {
     await write('Home.md');
     await write(path.join('brain', 'North Star.md'));
-    const snap = await snapshotUnmanaged(dir, EMPTY_IGNORE);
-    expect(snap).toEqual(new Set(['Home.md', 'brain/North Star.md']));
+    const walk = await snapshotUnmanaged(dir, EMPTY_IGNORE);
+    expect(walk).toEqual(snap(['Home.md', 'brain/North Star.md']));
   });
 
   it('excludes Tier 1 paths (.shardmind/, .git/)', async () => {
     await write('Home.md');
     await write(path.join('.shardmind', 'state.json'));
     await write(path.join('.git', 'HEAD'));
-    const snap = await snapshotUnmanaged(dir, EMPTY_IGNORE);
-    expect(snap).toEqual(new Set(['Home.md']));
+    const walk = await snapshotUnmanaged(dir, EMPTY_IGNORE);
+    expect(walk).toEqual(snap(['Home.md']));
   });
 
   it('excludes paths matched by .shardmindignore', async () => {
     await write('Home.md');
     await write(path.join('.qmd', 'index.bin'));
     const ignore = parseShardmindignore('.qmd/\n');
-    const snap = await snapshotUnmanaged(dir, ignore);
-    expect(snap).toEqual(new Set(['Home.md']));
+    const walk = await snapshotUnmanaged(dir, ignore);
+    expect(walk).toEqual(snap(['Home.md']));
   });
 
   it('skips symlinks rather than following or recording them', async () => {
@@ -145,8 +191,83 @@ describe('snapshotUnmanaged', () => {
       // Windows without privilege / filesystems without symlink support.
       symlinkSupported = false;
     }
-    const snap = await snapshotUnmanaged(dir, EMPTY_IGNORE);
-    expect(snap.has('real.md')).toBe(true);
-    if (symlinkSupported) expect(snap.has('link.md')).toBe(false);
+    const walk = await snapshotUnmanaged(dir, EMPTY_IGNORE);
+    expect(walk.paths.has('real.md')).toBe(true);
+    if (symlinkSupported) expect(walk.paths.has('link.md')).toBe(false);
+  });
+
+  describe('readdir failures (#175)', () => {
+    const realReaddir = fsp.readdir.bind(fsp);
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    /**
+     * Fail `readdir` of the vault-relative folder `rel` ('' = the root) with
+     * `codes`, one per call, then fall through to the real readdir. Returns
+     * the number of reads of that folder.
+     */
+    function failReaddir(rel: string, codes: string[]): { calls: number } {
+      const target = path.resolve(dir, rel);
+      const seen = { calls: 0 };
+      const fake = async (p: string, opts: { withFileTypes: true }) => {
+        if (path.resolve(p) === target) {
+          seen.calls += 1;
+          const code = codes[seen.calls - 1];
+          if (code) throw Object.assign(new Error(`${code}: injected`), { code });
+        }
+        return realReaddir(p, opts);
+      };
+      vi.spyOn(fsp, 'readdir').mockImplementation(fake as typeof fsp.readdir);
+      return seen;
+    }
+
+    it('reads a folder that vanished (ENOENT) as empty, not unreadable', async () => {
+      await write('Home.md');
+      await write(path.join('.cache', 'a.json'));
+      const seen = failReaddir('.cache', ['ENOENT']);
+      expect(await snapshotUnmanaged(dir, EMPTY_IGNORE)).toEqual(snap(['Home.md']));
+      expect(seen.calls).toBe(1);
+    });
+
+    for (const code of ['EBUSY', 'EPERM', 'EACCES']) {
+      it(`reads a folder again after a transient ${code}`, async () => {
+        await write('Home.md');
+        await write(path.join('.cache', 'a.json'));
+        const seen = failReaddir('.cache', [code]);
+        expect(await snapshotUnmanaged(dir, EMPTY_IGNORE)).toEqual(snap(['Home.md', '.cache/a.json']));
+        expect(seen.calls).toBe(2);
+      });
+
+      it(`reports a folder that fails ${code} twice as unreadable, not empty`, async () => {
+        await write('Home.md');
+        await write(path.join('.cache', 'a.json'));
+        const seen = failReaddir('.cache', [code, code]);
+        expect(await snapshotUnmanaged(dir, EMPTY_IGNORE)).toEqual(snap(['Home.md'], ['.cache']));
+        expect(seen.calls).toBe(2);
+      });
+    }
+
+    it('reads a folder a file replaced (ENOTDIR) as empty, not unreadable', async () => {
+      await write('Home.md');
+      await write(path.join('.cache', 'a.json'));
+      const seen = failReaddir('.cache', ['ENOTDIR']);
+      expect(await snapshotUnmanaged(dir, EMPTY_IGNORE)).toEqual(snap(['Home.md']));
+      expect(seen.calls).toBe(1);
+    });
+
+    it('reports any other error as unreadable without a second read', async () => {
+      await write('Home.md');
+      await write(path.join('deep', 'er', 'a.json'));
+      const seen = failReaddir(path.join('deep', 'er'), ['EIO']);
+      expect(await snapshotUnmanaged(dir, EMPTY_IGNORE)).toEqual(snap(['Home.md'], ['deep/er']));
+      expect(seen.calls).toBe(1);
+    });
+
+    it("names an unreadable vault root '.'", async () => {
+      await write('Home.md');
+      failReaddir('', ['EPERM', 'EPERM']);
+      expect(await snapshotUnmanaged(dir, EMPTY_IGNORE)).toEqual(snap([], ['.']));
+    });
   });
 });
