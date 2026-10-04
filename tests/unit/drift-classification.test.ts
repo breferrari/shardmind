@@ -90,15 +90,17 @@ describe('detectDrift', () => {
     expect(report.managed).toHaveLength(0);
   });
 
-  it('maps state ownership=user onto the volatile bucket', async () => {
+  it('puts a file whose cached template is volatile in the volatile bucket, whatever state records (#210)', async () => {
     // Content intentionally doesn't match the recorded hash — the whole point
-    // of volatile is that drift never hashes it.
+    // of volatile is that drift never hashes it. State records `managed`, as
+    // install does; the cached template carries the marker.
     await writeFile('inbox.md', '# edits the user is free to make\n');
+    await writeFile('.shardmind/templates/inbox.njk', '{# shardmind: volatile #}\n# Inbox\n');
     const state = makeShardState({ files: {
       'inbox.md': {
         template: 'inbox.njk',
         rendered_hash: 'stale-hash-on-purpose',
-        ownership: 'user',
+        ownership: 'managed',
       },
     } });
 
@@ -149,11 +151,13 @@ describe('detectDrift', () => {
     await writeFile('m.md', managedContent);
     await writeFile('x.md', modifiedContent);
     await writeFile('v.md', volatileContent);
+    await writeFile('.shardmind/templates/inbox.njk', '{# shardmind: volatile #}\n# Inbox\n');
+    await writeFile('.shardmind/templates/t.njk', '# Not volatile\n');
 
     const state = makeShardState({ files: {
       'm.md': { template: 't.njk', rendered_hash: sha256(managedContent), ownership: 'managed' },
       'x.md': { template: 't.njk', rendered_hash: sha256('original\n'), ownership: 'managed' },
-      'v.md': { template: 'inbox.njk', rendered_hash: 'stale', ownership: 'user' },
+      'v.md': { template: 'inbox.njk', rendered_hash: 'stale', ownership: 'managed' },
       'missing.md': { template: 't.njk', rendered_hash: sha256('x\n'), ownership: 'managed' },
     } });
 

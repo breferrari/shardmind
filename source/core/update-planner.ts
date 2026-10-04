@@ -469,7 +469,21 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     restored: 0,
   };
 
-  for (const entry of drift.volatile) {
+  // A file whose template is volatile in the new shard is skipped like one
+  // whose installed template was (drift's volatile bucket): a template that
+  // turns volatile in this release (#210).
+  const turnsVolatile = (e: DriftEntry): boolean => newByPath.get(e.path)?.entry.volatile === true;
+  const volatileEntries = [
+    ...drift.volatile,
+    ...drift.managed.filter(turnsVolatile),
+    ...drift.modified.filter(turnsVolatile),
+    ...drift.missing.filter(turnsVolatile),
+  ];
+  const managedEntries = drift.managed.filter((e) => !turnsVolatile(e));
+  const modifiedEntries = drift.modified.filter((e) => !turnsVolatile(e));
+  const missingEntries = drift.missing.filter((e) => !turnsVolatile(e));
+
+  for (const entry of volatileEntries) {
     actions.push({ kind: 'skip_volatile', path: entry.path });
     counts.volatile++;
   }
@@ -477,7 +491,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   // A managed entry is about to be replaced (`target`) or deleted (no
   // target). Both need the baseline proven first, below.
   const overwriteCandidates: Array<{ entry: DriftEntry; target: RenderedFileEntry | undefined }> = [];
-  for (const entry of drift.managed) {
+  for (const entry of managedEntries) {
     const target = newByPath.get(entry.path);
     if (!target) {
       overwriteCandidates.push({ entry, target });
@@ -506,7 +520,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       foreign: await recordedHashIsForeign(vaultRoot, currentState.files[c.entry.path]),
     }),
   );
-  const toMerge: DriftEntry[] = [...drift.modified];
+  const toMerge: DriftEntry[] = [...modifiedEntries];
   for (const { entry, target, foreign } of baselineChecks) {
     if (foreign) {
       // The modified path merges a file the shard still produces, and keeps
@@ -533,7 +547,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     counts.overwritten++;
   }
 
-  for (const entry of drift.missing) {
+  for (const entry of missingEntries) {
     const target = newByPath.get(entry.path);
     if (!target) {
       actions.push({ kind: 'delete', path: entry.path });

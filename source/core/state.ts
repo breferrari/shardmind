@@ -221,11 +221,9 @@ export async function cacheManifest(
   await fsp.writeFile(path.join(vaultRoot, CACHED_SCHEMA), serializedSchema, 'utf-8');
 }
 
-/** Paths a re-hash reads: every tracked entry except volatile (`user`) ones. */
+/** Paths a re-hash reads: every tracked entry. */
 function rehashablePaths(state: ShardState): string[] {
-  return Object.entries(state.files)
-    .filter(([, file]) => file.ownership !== 'user')
-    .map(([rel]) => rel);
+  return Object.keys(state.files);
 }
 
 /**
@@ -301,10 +299,6 @@ export interface RehashResult {
  * `failed`. The hook contract is non-fatal (Helm pattern), so a hook
  * that broke the world cannot break the engine; the next `shardmind`
  * status run surfaces drift on the affected paths.
- *
- * Entries with `ownership === 'user'` are skipped: drift detection
- * routes those through the volatile bucket (see `drift.ts`) and never
- * compares their stored hash.
  */
 export async function rehashManagedFiles(
   vaultRoot: string,

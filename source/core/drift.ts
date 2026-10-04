@@ -17,7 +17,7 @@ import path from 'node:path';
 import type { ShardState, DriftReport, DriftEntry, FileState } from '../runtime/types.js';
 import { sha256, mapConcurrent } from './fs-utils.js';
 import { isEnoent } from '../runtime/errno.js';
-import { SHARDMIND_DIR, VALUES_FILE, GIT_DIR, OBSIDIAN_DIR } from '../runtime/vault-paths.js';
+import { SHARDMIND_DIR, VALUES_FILE, GIT_DIR, OBSIDIAN_DIR, CACHED_TEMPLATES } from '../runtime/vault-paths.js';
 
 type Bucket = 'managed' | 'modified' | 'volatile' | 'missing';
 type Classified = { bucket: Bucket; entry: DriftEntry };
@@ -97,11 +97,11 @@ async function classifyFile(
   relPath: string,
   file: FileState,
 ): Promise<Classified> {
-  // FileState.ownership uses the literal 'user' for volatile files (what the
-  // install engine writes to state.json); DriftEntry.ownership reports it as
-  // 'volatile' because that is the reporting-layer vocabulary used by the
-  // update command. Intentional naming gap, not a bug.
-  if (file.ownership === 'user') {
+  // Volatility is a property of the template, read from the cached copy of
+  // the one the file was rendered from: install and adopt record a volatile
+  // output as `managed` (#210). The update planner also checks the new
+  // shard's template, so a template that turns volatile is skipped too.
+  if (file.template !== null && (await isVolatileTemplate(vaultRoot, file.template))) {
     return { bucket: 'volatile', entry: volatileEntry(relPath, file) };
   }
 
@@ -141,6 +141,29 @@ function classifyByHash(relPath: string, file: FileState, content: Buffer): Clas
       ownership,
     },
   };
+}
+
+const VOLATILE_MARKER = '{# shardmind: volatile #}';
+
+/**
+ * Whether the cached template `templateKey` starts with the volatile marker,
+ * read as the walk reads a template (first 256 bytes, leading whitespace
+ * skipped). A template not in the cache is not volatile.
+ */
+async function isVolatileTemplate(vaultRoot: string, templateKey: string): Promise<boolean> {
+  let handle;
+  try {
+    handle = await fsp.open(path.join(vaultRoot, CACHED_TEMPLATES, templateKey), 'r');
+  } catch {
+    return false;
+  }
+  try {
+    const buf = Buffer.alloc(256);
+    const { bytesRead } = await handle.read(buf, 0, 256, 0);
+    return buf.toString('utf-8', 0, bytesRead).trimStart().startsWith(VOLATILE_MARKER);
+  } finally {
+    await handle.close();
+  }
 }
 
 function volatileEntry(relPath: string, file: FileState): DriftEntry {
