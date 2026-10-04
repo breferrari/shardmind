@@ -1645,14 +1645,14 @@ A mounted Ink app in a TTY did two things under `--json` that a pipe never sees:
 
 Ink decides the first from `stdout.isTTY` (`interactive` defaults to `!isInCi && stdout.isTTY`), and Pastel passes no render options. So for a run `isJsonRun` accepts, `cli.ts` marks stdout non-interactive right after `applyNoColor`, before Pastel or any component loads.
 
-1. `isJsonRun`: `--json` appears before any `--`, there is no `-h` or `--help`, and the first non-option argument is `update`, `adopt` or absent (the status command). `--json=true` is not a form Commander accepts for a boolean flag. `validate --json` runs headless without Ink (#34), and install has no `--json`. A unit test ties the accepted commands to every command file under `source/commands/` that declares a `json` option.
+1. `isJsonRun`: `--json` appears before any `--`, there is no `-h` or `--help`, and the first non-option argument is `update`, `adopt`, `validate` or absent (the status command). `--json=true` is not a form Commander accepts for a boolean flag. `validate --json` runs headless without Ink (#34), so marking stdout changes nothing there; it is a JSON run for the crash answer below. Install has no `--json`. A unit test ties the accepted commands to every command file under `source/commands/` that declares a `json` option.
 2. `markNonInteractive` defines `isTTY` as `false` on stdout. The only readers of `stdout.isTTY` are Ink's interactive decision (and its synchronized-output check) and the self-update banner, which is already off under `--json`.
 
 The second is decided where the prompt is decided, not by faking stdin. Ink derives `isRawModeSupported` from `stdin.isTTY`, but marking stdin non-interactive would send the stdin SIGINT bridge (`core/cancellation.ts`) down its pipe path on a real terminal. A backgrounded run would then get SIGTTIN and stop, and type-ahead would be swallowed. Instead, a machine with a `--json` mode treats `json` like a missing terminal at its prompt decision:
 - adopt: `!isRawModeSupported || json` refuses with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`, or uses `--values`, exactly as piped;
 - update: #230.
 
-A throw that escapes every command (#225) also answers on stdout under `--json`. The top-level crash handler in `cli.ts` is given `writeJson` for a run `isJsonRun` accepts, and it writes one failure document (`ok: false`, `code: null`, the `stack`) before the plain-text report on stderr. The exit waits for both streams to drain. A `--json` caller never gets an empty stdout, and a terminal gets the same document as a pipe.
+A throw that escapes every command (#225) also answers on stdout under `--json`. The top-level crash handler in `cli.ts` is given `writeJson` for a run `isJsonRun` accepts, and it writes one failure document (`ok: false`, `code: null`, the `stack`) before the plain-text report on stderr. The exit waits for both streams to drain. `json-output.ts` is loaded after the handlers are installed, and a failure to load it, or a throw while writing, still leaves the stderr report and exit 1. A run that already wrote its document (`jsonEmitted()`) gets no second one. For `validate --json` this covers a crash outside its runner, which catches its own errors. A `--json` caller never gets an empty stdout, and a terminal gets the same document as a pipe.
 
 stdin and stderr are never touched.
 
