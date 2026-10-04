@@ -16,12 +16,18 @@ import { BUILD_ERROR_KEY, buildForRun } from './e2e/helpers/build-once.js';
 export type SetupProject = Pick<TestProject, 'provide' | 'onTestsRerun'>;
 
 export function createSetup(build: () => Promise<string | null> = () => buildForRun()) {
+  async function buildAndProvide(project: SetupProject): Promise<void> {
+    const error = await build();
+    // A run that spawns nothing never reaches ensureBuilt(), so say it here.
+    if (error !== null) console.warn(`tests/global-setup.ts could not build dist/:
+${error}`);
+    project.provide(BUILD_ERROR_KEY, error);
+  }
+
   return async function setup(project: SetupProject): Promise<void> {
-    project.provide(BUILD_ERROR_KEY, await build());
+    await buildAndProvide(project);
     // Watch mode: rebuild after an edit, still before the rerun's workers start.
-    project.onTestsRerun(async () => {
-      project.provide(BUILD_ERROR_KEY, await build());
-    });
+    project.onTestsRerun(() => buildAndProvide(project));
   };
 }
 

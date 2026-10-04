@@ -3,9 +3,11 @@
  * the Layer 1 flow tests through `createInstalledVault`).
  *
  * `dist/` is built once per vitest run, in the main process, before any worker
- * starts: `tests/global-setup.ts` calls `buildIfStale()`, and again before each
- * watch-mode rerun. Workers call `ensureBuilt()`, which only checks that the
- * artifacts exist and never writes `dist/`.
+ * starts: `tests/global-setup.ts` calls `buildForRun()`, and again before each
+ * watch-mode rerun. A build failure does not abort the run: the setup provides
+ * it to the workers, and `ensureBuilt()` throws it in the tests that spawn the
+ * CLI. Workers call `ensureBuilt()`, which only checks that the artifacts
+ * exist and never writes `dist/`.
  *
  * Workers must not build (#176). Vitest runs each test file in its own worker,
  * so a per-process memo still let every E2E file run `tsup` at once on a stale
@@ -63,13 +65,11 @@ declare module 'vitest' {
   }
 }
 
-const checked = new Set<string>();
-
 /**
  * Worker-side check: resolves when `dist/` holds every artifact the CLI loads,
  * rejects otherwise. Never builds — see the file header. `buildError` is the
- * global setup's failure, read from vitest's provided context by default.
- * A success is memoized per root: workers never write `dist/`, so it holds.
+ * global setup's failure; by default it is read from vitest's provided
+ * context, which describes the repo's own `dist/` only.
  */
 export async function ensureBuilt(
   root: string = REPO_ROOT,
@@ -77,14 +77,12 @@ export async function ensureBuilt(
 ): Promise<void> {
   if (buildError === undefined) {
     const { inject } = await import('vitest');
-    buildError = inject(BUILD_ERROR_KEY) ?? null;
+    buildError = root === REPO_ROOT ? (inject(BUILD_ERROR_KEY) ?? null) : null;
   }
   if (buildError !== null) {
     throw new Error(`The vitest global setup (tests/global-setup.ts) could not build dist/:
 ${buildError}`);
   }
-  if (checked.has(root)) return;
-
   const [missing] = await missingArtifacts(root);
   if (missing !== undefined) {
     throw new Error(
@@ -92,7 +90,6 @@ ${buildError}`);
         'before any worker starts; run the tests through vitest with the repo config, or run `npm run build`.',
     );
   }
-  checked.add(root);
 }
 
 // Build-input files outside `source/` that change the generated `dist/`.
@@ -101,13 +98,17 @@ ${buildError}`);
 // will spawn a stale `dist/cli.js` with the old toolchain settings.
 const BUILD_CONFIG_FILES = ['tsup.config.ts', 'tsconfig.json', 'package.json'];
 
+/** tsup failed, or succeeded without writing every artifact. */
+class BuildFailure extends Error {}
+
 /** One build attempt; `capture` pipes the output instead of streaming it. */
 export type BuildRunner = (capture: boolean) => BuildResult;
 
 /**
  * Builds `dist/` if any build input is newer than it, or if a `dist/` artifact is
- * missing, else returns instantly. Called only from the global setup, in the
- * main process, so exactly one build runs at a time.
+ * missing, else returns instantly. Throws `BuildFailure` when tsup fails twice.
+ * Reached only through `buildForRun()` from the global setup, in the main
+ * process, so exactly one build runs at a time.
  */
 export async function buildIfStale(
   root: string = REPO_ROOT,
@@ -117,12 +118,11 @@ export async function buildIfStale(
   const configPaths = BUILD_CONFIG_FILES.map((f) => path.join(root, f));
   const srcMtime = await latestMtime([...(await walkSources(root)), ...configPaths]);
 
-  // Cache hit requires every artifact to exist and the OLDEST of them to be
-  // newer than every input. An interrupted build can leave a fresh cli.js
-  // beside a stale or missing command file, so neither the newest artifact
-  // nor cli.js alone can stand for the whole of dist/.
-  const allExist = (await missingArtifacts(root)).length === 0;
-  if (allExist && distMtime !== null && srcMtime !== null && distMtime >= srcMtime) {
+  // Cache hit requires the OLDEST artifact to be newer than every input;
+  // earliestMtime is null when any artifact is missing. An interrupted build
+  // can leave a fresh cli.js beside a stale or missing command file, so
+  // neither the newest artifact nor cli.js alone can stand for dist/.
+  if (distMtime !== null && srcMtime !== null && distMtime >= srcMtime) {
     return; // cache hit
   }
 
@@ -140,14 +140,14 @@ export async function buildIfStale(
   }
 
   if (!buildSucceeded(result)) {
-    throw new Error(describeBuildFailure(result));
+    throw new BuildFailure(describeBuildFailure(result));
   }
 
   // Sanity: a zero exit must have produced every artifact the workers check
   // for, so a gap fails here, in the setup, rather than in every worker.
   const missing = await missingArtifacts(root);
   if (missing.length > 0) {
-    throw new Error(`tsup exited 0 but did not write: ${missing.join(', ')}`);
+    throw new BuildFailure(`tsup exited 0 but did not write: ${missing.join(', ')}`);
   }
 }
 
@@ -165,7 +165,10 @@ export async function buildForRun(
     await buildIfStale(root, run);
     return null;
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    // A build failure's message says all there is; anything else is a bug in
+    // this guard, so keep its stack.
+    if (err instanceof BuildFailure) return err.message;
+    return err instanceof Error ? (err.stack ?? err.message) : String(err);
   }
 }
 

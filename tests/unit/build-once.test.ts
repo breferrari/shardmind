@@ -7,7 +7,7 @@
  * `dist/` under any test that was spawning `dist/cli.js` at that moment.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -23,6 +23,7 @@ import {
 import { createSetup, type SetupProject } from '../global-setup.js';
 import { pathExists } from '../../source/core/fs-utils.js';
 import config from '../../vitest.config.js';
+import tsupConfig from '../../tsup.config.js';
 
 const OLD = new Date('2026-01-01T00:00:00Z');
 const NEW = new Date('2026-06-01T00:00:00Z');
@@ -86,6 +87,15 @@ afterEach(async () => {
 });
 
 describe('DIST_ARTIFACTS', () => {
+  it('names one artifact per entry in tsup.config.ts', () => {
+    // Drift guard: a command added to tsup.config.ts must be checked too.
+    const configs = Array.isArray(tsupConfig) ? tsupConfig : [tsupConfig];
+    const fromConfig = configs.flatMap((c: { entry?: unknown }) =>
+      Object.keys(c.entry as Record<string, string>).map((name) => `dist/${name}.js`),
+    );
+    expect([...DIST_ARTIFACTS].sort()).toEqual(fromConfig.sort());
+  });
+
   it('lists every file the spawned CLI loads', () => {
     expect(DIST_ARTIFACTS).toEqual(
       expect.arrayContaining([
@@ -186,6 +196,14 @@ describe('buildForRun', () => {
     expect(await buildForRun(root, run)).toBeNull();
   });
 
+  it('keeps the stack of an unexpected error', async () => {
+    const run: BuildRunner = () => {
+      throw new TypeError('setup bug');
+    };
+
+    expect(await buildForRun(root, run)).toMatch(/TypeError: setup bug\n\s+at /);
+  });
+
   it('returns the failure instead of throwing, so unit-only runs still start', async () => {
     const { run } = fakeRunner([1, 1]);
 
@@ -257,12 +275,19 @@ describe('global setup', () => {
     expect(project.provided.get('distBuildError')).toBeNull();
   });
 
-  it('provides the failure instead of throwing when the build fails', async () => {
+  it('provides the failure instead of throwing when the build fails, and warns', async () => {
     const project = fakeProject();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    await createSetup(async () => 'boom')(project);
+    try {
+      await createSetup(async () => 'boom')(project);
 
-    expect(project.provided.get('distBuildError')).toBe('boom');
+      expect(project.provided.get('distBuildError')).toBe('boom');
+      // A run that spawns nothing still says dist/ is broken.
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/could not build dist\/[\s\S]*boom/));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('rebuilds before a watch-mode rerun and provides the new result', async () => {
