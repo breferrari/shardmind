@@ -175,7 +175,9 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
   );
 
   const items: ShardOutputItem[] = [...renderedGroups.flat(), ...copyItems];
-  const movable = movableRenames(renames, new Set(items.map((i) => i.outputPath)));
+  const movable = renames?.size
+    ? movableRenames(renames, new Set(items.map((i) => i.outputPath)))
+    : new Map<string, string>();
 
   const classifications = await mapConcurrent(items, ADOPT_READ_CONCURRENCY, async (item) => {
     return classifyOne(vaultRoot, item, movable.get(item.outputPath));
@@ -212,18 +214,17 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
  * output, the old one is not, and no other rename claims the new path.
  */
 function movableRenames(
-  renames: ReadonlyMap<string, string> | undefined,
+  renames: ReadonlyMap<string, string>,
   outputs: ReadonlySet<string>,
 ): Map<string, string> {
-  const byNew = new Map<string, string[]>();
-  for (const [from, to] of renames ?? []) {
-    if (!outputs.has(to) || outputs.has(from)) continue;
-    byNew.set(to, [...(byNew.get(to) ?? []), from]);
-  }
   const movable = new Map<string, string>();
-  for (const [to, froms] of byNew) {
-    if (froms.length === 1) movable.set(to, froms[0]!);
+  const claimedTwice = new Set<string>();
+  for (const [from, to] of renames) {
+    if (!outputs.has(to) || outputs.has(from)) continue;
+    if (movable.has(to)) claimedTwice.add(to);
+    movable.set(to, from);
   }
+  for (const to of claimedTwice) movable.delete(to);
   return movable;
 }
 

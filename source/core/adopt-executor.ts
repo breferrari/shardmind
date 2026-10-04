@@ -44,7 +44,7 @@ import {
 } from '../runtime/vault-paths.js';
 import { mapConcurrent, pathExists } from './fs-utils.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
-import { isFree } from './rename-migrations.js';
+import { assertRenameTargetFree, moveToFreePath } from './rename-migrations.js';
 import { hashValues } from './install-planner.js';
 import {
   initShardDir,
@@ -239,7 +239,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
   );
   // A move's new path was free when classified; refuse before any write if
   // something arrived there during the prompts (#179).
-  for (const move of moves) await assertMoveTargetFree(vaultRoot, move);
+  for (const move of moves) await assertRenameTargetFree(vaultRoot, move.from, move.to, 'adopt');
 
   // Build the writeable-action list once so we know `total` upfront for
   // progress emission. Order: matches → shard-only → differs (the differs
@@ -264,7 +264,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
 
   try {
     if (!dryRun) {
-      await snapshotForRollback(vaultRoot, plan, resolutions, backupDir!);
+      await snapshotForRollback(vaultRoot, plan, resolutions, moves, backupDir!);
       onBackupReady?.(backupDir!);
       // A move's new path is introduced by this run, whether it is written or
       // the old file moves there: registered before any write, so a failure or
@@ -438,19 +438,6 @@ function plannedMoves(plan: AdoptPlan): PlannedMove[] {
 }
 
 /**
- * Refuse a move into a path something now occupies: a file, a folder, a
- * symlink (dangling or not), or a file where a folder on the way should be.
- */
-async function assertMoveTargetFree(vaultRoot: string, move: PlannedMove): Promise<void> {
-  if (await isFree(vaultRoot, move.to)) return;
-  throw new ShardMindError(
-    `'${move.to}' is no longer free: '${move.from}' was to move there`,
-    'ADOPT_WRITE_FAILED',
-    `Something was created at '${move.to}' after adopt classified the vault. Move or remove it, then run \`shardmind adopt\` again.`,
-  );
-}
-
-/**
  * A match or Keep mine moves the user's file from the old path to the new
  * one; Use the shard's or a merge wrote the new path, so the old file goes.
  */
@@ -460,23 +447,12 @@ async function completeMove(
   resolution: AdoptResolution | undefined,
   addedPaths: string[],
 ): Promise<void> {
-  const fromAbs = path.join(vaultRoot, move.from);
   if (!move.matched && overwritesUserFile(resolution)) {
-    await fsp.rm(fromAbs, { force: true });
+    await fsp.rm(path.join(vaultRoot, move.from), { force: true });
     return;
   }
-  try {
-    // Checked before any write; something may still arrive meanwhile. Never
-    // move over it, and keep it out of the rollback's removals.
-    await assertMoveTargetFree(vaultRoot, move);
-  } catch (err) {
-    const i = addedPaths.indexOf(move.to);
-    if (i >= 0) addedPaths.splice(i, 1);
-    throw err;
-  }
-  const toAbs = path.join(vaultRoot, move.to);
-  await fsp.mkdir(path.dirname(toAbs), { recursive: true });
-  await fsp.rename(fromAbs, toAbs);
+  // Checked before any write; something may still arrive meanwhile.
+  await moveToFreePath(vaultRoot, move.from, move.to, addedPaths, 'adopt');
 }
 
 function buildFileState(
@@ -515,6 +491,7 @@ async function snapshotForRollback(
   vaultRoot: string,
   plan: AdoptPlan,
   resolutions: AdoptResolutions,
+  moves: readonly PlannedMove[],
   backupDir: string,
 ): Promise<void> {
   const filesBackupDir = path.join(backupDir, 'files');
@@ -523,7 +500,7 @@ async function snapshotForRollback(
   const toSnapshot = [
     ...plan.differs.filter((c) => overwritesUserFile(resolutions[c.path])).map((c) => c.path),
     // A moved file leaves its old path (#179).
-    ...plannedMoves(plan).map((m) => m.from),
+    ...moves.map((m) => m.from),
   ];
 
   await mapConcurrent(toSnapshot, SNAPSHOT_CONCURRENCY, async (rel) => {

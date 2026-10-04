@@ -24,6 +24,7 @@ import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { pathExists, mapConcurrent } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
+import { assertRenameTargetFree, moveToFreePath } from './rename-migrations.js';
 import { hashValues } from './install-planner.js';
 import {
   cacheTemplates,
@@ -182,7 +183,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // A rename's new path was free when planned; refuse before any write if
   // something arrived there during the prompts (#178).
   for (const action of plan.actions) {
-    if (action.renamedFrom !== undefined) await assertRenameTargetFree(vaultRoot, action.path, action.renamedFrom);
+    if (action.renamedFrom !== undefined) await assertRenameTargetFree(vaultRoot, action.renamedFrom, action.path, 'update');
   }
 
   const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now);
@@ -630,20 +631,6 @@ export async function createBackupDir(vaultRoot: string, now: Date): Promise<str
 }
 
 /**
- * Refuse a rename into a path something now occupies: a file, a folder or a
- * symlink, dangling or not (`lstat`, not `access`), arrived after planning.
- */
-async function assertRenameTargetFree(vaultRoot: string, to: string, from: string): Promise<void> {
-  const taken = await fsp.lstat(path.join(vaultRoot, to)).then(() => true, (err: unknown) => !isEnoent(err));
-  if (!taken) return;
-  throw new ShardMindError(
-    `'${to}' is no longer free: '${from}' was to move there`,
-    'UPDATE_WRITE_FAILED',
-    `Something was created at '${to}' after the update was planned. Move or remove it, then run \`shardmind update\` again.`,
-  );
-}
-
-/**
  * Finish a rename migration's move once the write pass is done (#178). An
  * action that wrote its new path leaves the old file to delete; one that
  * wrote nothing (no change, a volatile file, a conflict kept as mine or
@@ -667,29 +654,10 @@ async function completeRename(
   // What the write pass did, not a re-derivation of it.
   const wroteNewPath = ctx.written.has(to);
   if (!ctx.dryRun) {
-    const fromAbs = path.join(ctx.vaultRoot, from);
-    const toAbs = path.join(ctx.vaultRoot, to);
-    if (wroteNewPath) {
-      await fsp.rm(fromAbs, { force: true });
-    } else {
-      // Checked at the top of the run; something may still arrive during
-      // the write pass. Never move over it, and keep it out of the
-      // rollback's removals.
-      try {
-        await assertRenameTargetFree(ctx.vaultRoot, to, from);
-      } catch (err) {
-        const i = ctx.addedPaths.indexOf(to);
-        if (i >= 0) ctx.addedPaths.splice(i, 1);
-        throw err;
-      }
-      await fsp.mkdir(path.dirname(toAbs), { recursive: true });
-      try {
-        await fsp.rename(fromAbs, toAbs);
-      } catch (err) {
-        // A volatile file the user deleted: its state moves, there is no file to.
-        if (!isEnoent(err)) throw err;
-      }
-    }
+    if (wroteNewPath) await fsp.rm(path.join(ctx.vaultRoot, from), { force: true });
+    // Checked at the top of the run; something may still arrive during the
+    // write pass. A volatile file the user deleted has no file to move.
+    else await moveToFreePath(ctx.vaultRoot, from, to, ctx.addedPaths, 'update');
   }
   // An action that wrote or re-recorded the new path set its own entry;
   // otherwise the old entry moves across, under the new template keys.

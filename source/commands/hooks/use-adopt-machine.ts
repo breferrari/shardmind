@@ -25,7 +25,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp, useStdin } from 'ink';
-import semver from 'semver';
 
 
 import type {
@@ -47,7 +46,7 @@ import {
   type AdoptClassification,
 } from '../../core/adopt-planner.js';
 import { twoWayUnionMerge } from '../../core/adopt-merge.js';
-import { renamesBetween } from '../../core/rename-migrations.js';
+import { parseFromVersion, renamesBetween } from '../../core/rename-migrations.js';
 import { sha256 } from '../../core/fs-utils.js';
 import {
   assertAdoptable,
@@ -235,13 +234,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         }
 
         // Refused before the network call: nothing downloaded can fix it.
-        if (fromVersion !== undefined && semver.valid(fromVersion) === null) {
-          throw new ShardMindError(
-            `--from-version is not a version: '${fromVersion}'`,
-            'ADOPT_FROM_VERSION_INVALID',
-            "Pass the release the vault was cloned from as MAJOR.MINOR.PATCH (e.g. --from-version 5.1.0), as in that release's shard.yaml.",
-          );
-        }
+        if (fromVersion !== undefined) parseFromVersion(fromVersion);
 
         // Pre-flight guard runs FIRST, before any network call. Saves
         // the user a multi-second wait on a downloads-and-then-rejects
