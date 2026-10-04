@@ -44,20 +44,13 @@ function detectLineEnding(source: string): '\r\n' | '\n' {
   return source.includes('\r\n') ? '\r\n' : '\n';
 }
 
-// node-diff3's LCS implementation uses a plain `{}` as a hash map keyed by
-// line content. If any line equals a string that collides with
-// Object.prototype (`constructor`, `__proto__`, `toString`, ...), the
-// internal lookup returns a function instead of an array and the library
-// crashes. We sidestep this by interning every unique line to a synthetic
-// integer token (as a decimal string: "0", "1", "2", ...). Object.prototype
-// has no integer-named members, so collisions are impossible by
-// construction. Tokens are mapped back to original lines on output —
-// callers never see the encoding, and it's robust to any user content
-// including control characters.
-//
-// Upstream: bhousel/node-diff3#86 (issue) + #87 (fix — one-line
-// Object.create(null) patch). Drop the LineInterner once node-diff3
-// ships a version with the fix. See #49.
+// Raw lines go straight to node-diff3, which keys its LCS lookup by line
+// content. That needs node-diff3 >= 3.2.1: earlier versions used a plain `{}`
+// for the lookup, so a line equal to an Object.prototype member
+// (`constructor`, `__proto__`, `toString`, ...) crashed the merge, and this
+// module interned lines to integer tokens to avoid it (bhousel/node-diff3#86,
+// fixed by #87; workaround removed in #49). The prototype-name tests in
+// three-way-merge.test.ts and merge-adversarial.test.ts guard the fix.
 
 export interface ComputeMergeActionInput {
   readonly path: string;
@@ -155,20 +148,14 @@ export function threeWayMerge(
   theirs: string,
   ours: string,
 ): ThreeWayMergeResult {
-  // Intern every unique line to an integer-named token. Load-bearing because
-  // node-diff3's LCS uses `{}` keyed by line content and collides with
-  // Object.prototype member names (see block comment above the LineInterner
-  // class). Interning to integer-named tokens sidesteps that by construction.
-  //
-  // Note: `split(/\r?\n/)` produces a trailing "" token when input ends with a
+  // Note: `split(/\r?\n/)` produces a trailing "" line when input ends with a
   // newline (e.g. "a\nb\n" → ["a", "b", ""]). That trailing "" is how the
   // newline-as-document-property is preserved through diff3 — we keep it in
   // the merge itself and correct for it in stats after the loop.
-  const interner = new LineInterner();
   const regions: IRegion<string>[] = diff3MergeRegions(
-    interner.tokenize(theirs.split(LINE_SPLIT)),
-    interner.tokenize(base.split(LINE_SPLIT)),
-    interner.tokenize(ours.split(LINE_SPLIT)),
+    theirs.split(LINE_SPLIT),
+    base.split(LINE_SPLIT),
+    ours.split(LINE_SPLIT),
   );
 
   const merged: string[] = [];
@@ -177,20 +164,20 @@ export function threeWayMerge(
 
   for (const region of regions) {
     if (region.stable) {
-      const decoded = region.bufferContent.map(t => interner.detokenize(t));
-      merged.push(...decoded);
+      const lines = region.bufferContent;
+      merged.push(...lines);
       // Stable region with buffer === 'o' means all three buffers agreed
       // (truly unchanged). buffer === 'a' or 'b' means diff3 resolved to
       // one side's version without ambiguity — count those as auto-merged.
       if (region.buffer === 'o') {
-        stats.linesUnchanged += decoded.length;
+        stats.linesUnchanged += lines.length;
       } else {
-        stats.linesAutoMerged += decoded.length;
+        stats.linesAutoMerged += lines.length;
       }
       continue;
     }
 
-    const resolution = resolveUnstableRegion(region, merged.length, interner);
+    const resolution = resolveUnstableRegion(region, merged.length);
     merged.push(...resolution.lines);
     if (resolution.conflict) conflicts.push(resolution.conflict);
     stats.linesAutoMerged += resolution.autoMergedLines;
@@ -213,33 +200,6 @@ export function threeWayMerge(
   return { content: merged.join(lineEnding), conflicts, stats };
 }
 
-class LineInterner {
-  private readonly table = new Map<string, string>();
-  private readonly byIndex: string[] = [];
-
-  tokenize(lines: readonly string[]): string[] {
-    return lines.map(line => {
-      let token = this.table.get(line);
-      if (token === undefined) {
-        token = String(this.byIndex.length);
-        this.table.set(line, token);
-        this.byIndex.push(line);
-      }
-      return token;
-    });
-  }
-
-  detokenize(token: string): string {
-    // Integer-string tokens issued by tokenize(); out-of-range would indicate
-    // a programming error, so we fail loudly rather than produce undefined.
-    const line = this.byIndex[Number(token)];
-    if (line === undefined) {
-      throw new Error(`LineInterner: unknown token ${JSON.stringify(token)}`);
-    }
-    return line;
-  }
-}
-
 interface RegionResolution {
   readonly lines: readonly string[];
   readonly conflict: ConflictRegion | null;
@@ -260,29 +220,18 @@ interface RegionResolution {
 function resolveUnstableRegion(
   region: IUnstableRegion<string>,
   mergedLengthBefore: number,
-  interner: LineInterner,
 ): RegionResolution {
-  // Operate on token arrays for equality checks (cheaper than decoding), but
-  // emit decoded lines and decoded conflict snapshots so callers never see
-  // the internal encoding.
-  const theirsTokens = region.aContent;
-  const oursTokens = region.bContent;
-  const baseTokens = region.oContent;
+  const theirs = region.aContent;
+  const ours = region.bContent;
+  const base = region.oContent;
 
-  const decode = (tokens: string[]): string[] => tokens.map(t => interner.detokenize(t));
-
-  if (arraysEqual(theirsTokens, baseTokens)) {
-    const decoded = decode(oursTokens);
-    return { lines: decoded, conflict: null, autoMergedLines: decoded.length, conflictedLines: 0 };
+  if (arraysEqual(theirs, base)) {
+    return { lines: ours, conflict: null, autoMergedLines: ours.length, conflictedLines: 0 };
   }
-  if (arraysEqual(oursTokens, baseTokens) || arraysEqual(theirsTokens, oursTokens)) {
-    const decoded = decode(theirsTokens);
-    return { lines: decoded, conflict: null, autoMergedLines: decoded.length, conflictedLines: 0 };
+  if (arraysEqual(ours, base) || arraysEqual(theirs, ours)) {
+    return { lines: theirs, conflict: null, autoMergedLines: theirs.length, conflictedLines: 0 };
   }
 
-  const theirs = decode(theirsTokens);
-  const ours = decode(oursTokens);
-  const base = decode(baseTokens);
   const lines = [CONFLICT_START, ...theirs, CONFLICT_SEPARATOR, ...ours, CONFLICT_END];
   const lineStart = mergedLengthBefore + 1;
   const lineEnd = mergedLengthBefore + lines.length;

@@ -95,13 +95,12 @@ describe('threeWayMerge — stats accounting', () => {
     expect(result.conflicts[0]!.lineEnd).toBeLessThan(result.conflicts[1]!.lineStart);
   });
 
-  // Regression guard: node-diff3's LCS implementation uses `{}` as a map and
-  // blows up when any line is a string that collides with Object.prototype
-  // members ('constructor', '__proto__', 'toString', 'hasOwnProperty', etc.).
-  // differ.ts interns every line to an integer-named token before handing it
-  // to diff3 — integer-string keys can never collide with Object.prototype.
-  // Lines like `constructor` appear routinely in markdown code blocks about
-  // JavaScript, so the fix is load-bearing.
+  // Regression guard: node-diff3 before 3.2.1 used `{}` as its LCS map and
+  // blew up when any line collided with an Object.prototype member
+  // ('constructor', '__proto__', 'toString', 'hasOwnProperty', etc.).
+  // differ.ts now passes raw lines and relies on 3.2.1's prototype-less map,
+  // so this test guards the dependency's fix (#49). Lines like `constructor`
+  // appear routinely in markdown code blocks about JavaScript.
   it('handles lines that match Object.prototype property names', () => {
     const base = '# Class\n\nnote\n';
     const theirs = '# Class\n\nnote\nuser added\n';

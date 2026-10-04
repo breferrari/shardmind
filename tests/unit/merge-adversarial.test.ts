@@ -26,11 +26,11 @@ const CTX: RenderContext = {
 };
 
 describe('merge adversarial — control characters in line content', () => {
-  // `differ.ts` uses a `LineInterner` that maps every unique line to an
-  // integer-named token before passing it to diff3, so user content can
-  // contain *any* byte — including control characters that an earlier
-  // sentinel-prefix implementation would have mangled. These tests exist
-  // as a regression guard against reintroducing a strip-based encoding.
+  // `differ.ts` passes raw lines to diff3, so user content can contain *any*
+  // byte — including control characters that an earlier sentinel-prefix
+  // implementation would have mangled. These tests exist as a regression
+  // guard against reintroducing any line encoding that strips or rewrites
+  // bytes.
 
   it('preserves U+0001 that appears inside line content', () => {
     const content = 'before\u0001after\n';
