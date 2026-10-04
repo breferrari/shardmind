@@ -3,7 +3,9 @@ import {
 	useReducer,
 	type Reducer,
 	useCallback,
+	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from 'react';
 import {type Option} from '../../types.js';
@@ -39,6 +41,12 @@ type State = {
 	 * Value of the selected option.
 	 */
 	value: string | undefined;
+
+	/**
+	 * How many times Enter selected an option. `onChange` fires when it
+	 * changes (ShardMind fix).
+	 */
+	selections: number;
 };
 
 type Action =
@@ -153,6 +161,7 @@ const reducer: Reducer<State, Action> = (state, action) => {
 			return {
 				...state,
 				value: state.focusedValue,
+				selections: state.selections + 1,
 			};
 		}
 
@@ -244,6 +253,7 @@ const createDefaultState = ({
 		visibleFromIndex,
 		visibleToIndex: visibleFromIndex + visibleOptionCount,
 		value: defaultValue,
+		selections: 0,
 	};
 };
 
@@ -282,20 +292,27 @@ export const useSelectState = ({
 		});
 	}, []);
 
-	// onChange is an event of the Enter key, not an effect of state
-	// (ShardMind fix). Upstream fired it from an effect on
-	// `previousValue !== value`, which never fired for the seeded default
-	// (ShardMind #103) and fired again on every parent re-render with a new
-	// callback or options (vadimdemedes/ink-ui#26).
+	// onChange fires once per Enter (ShardMind fix). Upstream fired it from
+	// an effect on `previousValue !== value`, which never fired for the
+	// seeded default (ShardMind #103) and fired again on every parent
+	// re-render with a new callback or options (vadimdemedes/ink-ui#26).
+	// The value comes from the reducer, not this render's closure, so keys
+	// that arrive in one burst with Enter (↓ ↓ Enter) select what they
+	// focused.
+	const onChangeRef = useRef(onChange);
+	onChangeRef.current = onChange;
+
+	useEffect(() => {
+		if (state.selections > 0 && state.value !== undefined) {
+			onChangeRef.current?.(state.value);
+		}
+	}, [state.selections]);
+
 	const selectFocusedOption = useCallback(() => {
 		dispatch({
 			type: 'select-focused-option',
 		});
-
-		if (state.focusedValue !== undefined) {
-			onChange?.(state.focusedValue);
-		}
-	}, [state.focusedValue, onChange]);
+	}, []);
 
 	const visibleOptions = useMemo(() => {
 		return options

@@ -45,6 +45,15 @@ describe('ui-kit Select', () => {
     expect(onChange).toHaveBeenCalledWith('b');
   });
 
+  it('selects the option focused by keys that arrive in the same burst as Enter', async () => {
+    const onChange = vi.fn();
+    const { stdin } = render(<Select options={OPTIONS} onChange={onChange} />);
+    await tick();
+    stdin.write(DOWN + DOWN + ENTER);
+    await tick();
+    expect(onChange.mock.calls).toEqual([['c']]);
+  });
+
   it('shows only visibleOptionCount options and scrolls', async () => {
     const { stdin, lastFrame } = render(<Select options={OPTIONS} visibleOptionCount={2} />);
     await tick();
