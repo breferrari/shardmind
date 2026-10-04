@@ -22,6 +22,18 @@ import {
  * for them to stop, so the removal does not race tar still writing into
  * the dir.
  */
+/**
+ * Thrown when a download is stopped by its own cleanup (Ctrl+C). Not a
+ * failure: the command is exiting, and a caller must not report it as a
+ * network or archive error.
+ */
+export class DownloadCancelledError extends Error {
+  constructor() {
+    super('Download cancelled');
+    this.name = 'DownloadCancelledError';
+  }
+}
+
 export async function downloadShard(
   tarballUrl: string,
   onTempDir?: (cleanup: () => Promise<void>) => void,
@@ -54,6 +66,8 @@ async function fetchAndExtract(
   signal: AbortSignal,
   dispose: () => Promise<void>,
 ): Promise<TempShard> {
+  // Disposed inside `onTempDir`, before any work: there is nothing to fetch.
+  if (signal.aborted) throw new DownloadCancelledError();
   // Fetch tarball
   const headers: Record<string, string> = {
     'Accept': 'application/vnd.github+json',
@@ -66,6 +80,7 @@ async function fetchAndExtract(
   try {
     response = await fetch(tarballUrl, { headers, signal });
   } catch (err) {
+    if (signal.aborted) throw new DownloadCancelledError();
     await safeCleanup(tempDir);
     const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(
@@ -106,6 +121,7 @@ async function fetchAndExtract(
     const extractor = tar.x({ strip: 1, C: tempDir });
     await pipeline(nodeStream, hashTap, extractor, { signal });
   } catch (err) {
+    if (signal.aborted) throw new DownloadCancelledError();
     await safeCleanup(tempDir);
     const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(

@@ -35,7 +35,7 @@ import type {
 import { ShardMindError } from '../../runtime/types.js';
 import { adoptPlanResult, emitJson, jsonSuccess } from '../../core/json-output.js';
 import { resolve as resolveRef } from '../../core/registry.js';
-import { downloadShard } from '../../core/download.js';
+import { downloadShard, DownloadCancelledError } from '../../core/download.js';
 import { parseManifest, assertEngineCompatible } from '../../core/manifest.js';
 import { resolveEngineVersion } from './cli-version.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
@@ -292,7 +292,9 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           setPhase({ kind: 'wizard', ctx });
         }
       } catch (err) {
-        if (disposed) return;
+        // A Ctrl+C mid-download stops the fetch; the command is exiting, so
+        // that is not an error to render.
+        if (disposed || err instanceof DownloadCancelledError) return;
         finish({ kind: 'error', error: err as Error });
       }
     })();
