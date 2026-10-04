@@ -875,13 +875,16 @@ describe('update applies rename migrations (#178)', () => {
       // A case-sensitive filesystem has no folder hop: each file moves on its
       // own into a new folder, and that move is what can fail here.
       if (await foldsCase()) ctx.skip();
-      await install();
+      // A copied file under brain/: unchanged bytes, so it moves by rename
+      // (a rendered note is re-rendered with a fresh date and written instead).
+      const v1 = await shardAt('0.1.0', { edits: { 'brain/static.md': () => 'static\n' } });
+      await install(v1);
       await write('brain/mine.md', 'mine\n');
       const before = await vaultTree();
-      const v2 = await folderCase('0.2.0');
+      const v2 = await shardAt('0.2.0', { from: v1, moves: { brain: 'Brain' } });
       const realRename = fsp.rename;
       vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
-        if (String(to).endsWith(path.join('Brain', 'North Star.md'))) throw new Error('rename interrupted');
+        if (String(to).endsWith(path.join('Brain', 'static.md'))) throw new Error('rename interrupted');
         return realRename(from, to);
       });
       await expect(update(v2)).rejects.toThrow();
