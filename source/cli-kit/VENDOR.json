@@ -26,7 +26,7 @@
       "upstream": "generate-options.ts"
     },
     "index.ts": {
-      "change": "no read of the package.json above the current directory (read-package-up).",
+      "change": "the program parses with positional options and passes root options given before a subcommand on to it (ShardMind #147); no read of the package.json above the current directory (read-package-up).",
       "modified": true,
       "upstream": "index.ts"
     },

@@ -1,12 +1,12 @@
 /*
  * From pastel@4.0.1 (https://github.com/vadimdemedes/pastel at fe4ce10046a55d0492a35b1ae08f54b5c64775e4), index.ts.
  * Copyright (c) Vadym Demedes. MIT: see cli-kit/LICENSE.
- * Modified by Brenno Ferrari: no read of the package.json above the current directory (read-package-up).
+ * Modified by Brenno Ferrari: the program parses with positional options and passes root options given before a subcommand on to it (ShardMind #147); no read of the package.json above the current directory (read-package-up).
  */
 
 import {fileURLToPath} from 'node:url';
 import process from 'node:process';
-import {Command} from 'commander';
+import {createProgram} from './lib/program.js';
 import generateCommand from './generate-command.js';
 import readCommands from './read-commands.js';
 import generateCommands from './generate-commands.js';
@@ -52,7 +52,7 @@ export default class Pastel {
 		);
 
 		const appComponent = (await readCustomApp(commandsDirectory)) ?? App;
-		const program = new Command();
+		const program = createProgram();
 
 		const commands = await readCommands(commandsDirectory);
 		const indexCommand = commands.get('index');
@@ -98,3 +98,4 @@ export function argument(config: CommandArgumentConfig) {
 }
 
 export * from './types.js';
+export {createProgram} from './lib/program.js';

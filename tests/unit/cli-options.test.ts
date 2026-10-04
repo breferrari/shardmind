@@ -1,18 +1,17 @@
 /**
  * #147: an option declared on the root command silently shadowed the
  * same-named option on a subcommand — `adopt --verbose` reached adopt as
- * `false`. These tests run real Pastel over a fixture command tree
- * (`tests/fixtures/cli-options/commands/`) whose components record the
- * options they receive, with Commander's positional options enabled the way
- * `source/cli.ts` enables them.
+ * `false`. These tests run the cli-kit (vendored Pastel, #277) over a
+ * fixture command tree (`tests/fixtures/cli-options/commands/`) whose
+ * components record the options they receive, with Commander's positional
+ * options as the cli-kit's program builder enables them.
  */
 
 import path from 'node:path';
 import { Console } from 'node:console';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
-import Pastel from 'pastel';
-import { enablePositionalOptions, pastelCommander } from '../../source/cli-options.js';
+import Pastel, { createProgram } from '../../source/cli-kit/index.js';
 import { waitFor } from '../component/helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -48,10 +47,6 @@ afterEach(() => {
 });
 
 describe('Commander positional options under Pastel (#147)', () => {
-  beforeAll(() => {
-    enablePositionalOptions(pastelCommander());
-  });
-
   it('adopt --verbose reaches adopt', async () => {
     const seen = await run('adopt', '--verbose');
     expect(seen.command).toBe('adopt');
@@ -75,21 +70,12 @@ describe('Commander positional options under Pastel (#147)', () => {
     expect(seen.options['verbose']).toBe(true);
   });
 
-  it('is idempotent: a second call does not wrap parse again', async () => {
-    const proto = (pastelCommander().prototype as { parse: unknown; parseAsync: unknown });
-    const [parse, parseAsync] = [proto.parse, proto.parseAsync];
-    enablePositionalOptions(pastelCommander());
-    expect(proto.parse).toBe(parse);
-    expect(proto.parseAsync).toBe(parseAsync);
-    const seen = await run('adopt', '--verbose');
-    expect(seen.options['verbose']).toBe(true);
-  });
 });
 
-// Error paths and parseAsync, on a program built from Pastel's own Commander
-// the way Pastel builds it. Pastel itself exits the process on a parse error,
+// Error paths and parseAsync, on the program the cli-kit builds
+// (createProgram). The cli-kit itself exits the process on a parse error,
 // so these use exitOverride instead of `run`.
-describe('the patched Commander, directly', () => {
+describe('the cli-kit program, directly', () => {
   interface Prog {
     exitOverride(): Prog;
     configureOutput(o: { writeErr: (s: string) => void; writeOut: (s: string) => void }): Prog;
@@ -101,10 +87,9 @@ describe('the patched Commander, directly', () => {
   }
 
   function program() {
-    const Command = pastelCommander() as unknown as new () => Prog;
     const errors: string[] = [];
     let adopt: Record<string, unknown> | undefined;
-    const root = new Command()
+    const root = (createProgram() as unknown as Prog)
       .exitOverride()
       .configureOutput({ writeErr: (s) => errors.push(s), writeOut: () => {} })
       .option('--verbose')
@@ -115,10 +100,6 @@ describe('the patched Commander, directly', () => {
     root.command('bare').exitOverride().action(() => {});
     return { root, errors, adopt: () => adopt };
   }
-
-  beforeAll(() => {
-    enablePositionalOptions(pastelCommander());
-  });
 
   it('passes a root flag written before a subcommand on to it', () => {
     const p = program();
@@ -162,23 +143,6 @@ describe('the patched Commander, directly', () => {
     const q = program();
     await q.root.parseAsync(['--verbose', 'adopt'], { from: 'user' });
     expect(q.adopt()?.['verbose']).toBe(true);
-  });
-});
-
-describe('enablePositionalOptions guard', () => {
-  it('refuses a Command class without enablePositionalOptions, so an upgrade fails loudly', () => {
-    class NotCommander {
-      parse(): void {}
-    }
-    expect(() => enablePositionalOptions(NotCommander)).toThrow(/enablePositionalOptions/);
-  });
-
-  it('also refuses one missing the other Commander APIs the patch relies on', () => {
-    class OldCommander {
-      parse(): void {}
-      enablePositionalOptions(): void {}
-    }
-    expect(() => enablePositionalOptions(OldCommander)).toThrow(/hook, getOptionValueSource, getOptionValue, setOptionValueWithSource/);
   });
 });
 
