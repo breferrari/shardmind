@@ -610,7 +610,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         const validated = validator.parse(result.values) as Record<string, unknown>;
         const validatedResult: WizardResult = { values: validated, selections: result.selections };
 
-        const { outputs } = await planOutputs(ctx.schema, ctx.tempDir, validatedResult.selections);
+        // With the values, an `_each` template is planned under the paths it
+        // expands to, so a user file at one is a collision like any other (#214).
+        const { outputs } = await planOutputs(ctx.schema, ctx.tempDir, validatedResult.selections, validated);
         // Refuse before any prompt or move, as update and adopt do, so a dry
         // run and the run agree (#163). `runInstall` checks again, including
         // the files an `_each` template expands to.

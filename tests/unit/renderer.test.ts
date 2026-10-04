@@ -9,6 +9,7 @@ import {
   renderString,
   buildRenderContext,
   slugifyVaultName,
+  eachOutputPaths,
 } from '../../source/core/renderer.js';
 import type { FileEntry, RenderContext, ShardManifest } from '../../source/runtime/types.js';
 
@@ -119,6 +120,13 @@ describe('renderFile', () => {
   });
 
   describe('_each iterator', () => {
+    it('eachOutputPaths names one path per item, as the render does (#214)', () => {
+      expect(eachOutputPaths('people/_each.md', [])).toEqual([]);
+      expect(
+        eachOutputPaths('people/_each.md', [{ slug: 'alice', name: 'Alice' }, { name: 'Bob/Ops.' }, {}]),
+      ).toEqual(['people/alice.md', 'people/Bob-Ops.md', 'people/unknown.md']);
+    });
+
     it('produces multiple RenderedFile entries', async () => {
       const os = await import('node:os');
       const tmpDir = path.join(os.tmpdir(), `renderer-test-${crypto.randomUUID()}`);
