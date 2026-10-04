@@ -13,7 +13,7 @@ import { cleanup } from 'ink-testing-library';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { createHash } from 'node:crypto';
+import { sha256 } from '../../../source/core/fs-utils.js';
 
 import {
   setupFlowSuite,
@@ -398,7 +398,7 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
 
   // A user file at a path v0.2.0 adds; --yes keeps it (#61).
   // `interactive` drives the prompt instead of --yes: it keeps mine and returns the prompt's frame (#60).
-  // `downs` picks the option: 1 is Keep mine, 2 is Keep mine and track it (#165).
+  // `downs` picks the option: 1 is Keep mine, 3 is Keep mine and track it, after Skip (#165).
   async function runAddCollision(adoptPreexisting: boolean, interactive = false, downs = 1) {
     const { stub } = getCtx();
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'addc-'));
@@ -431,7 +431,7 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         let prompt = '';
         if (interactive) {
           prompt = await waitFor(r.lastFrame, (f) => /collides with your file/.test(f), 30_000);
-          // Options: [accept_new, keep_mine, (keep_and_track without the flag), skip, (open_editor_disabled)].
+          // Options: [accept_new, keep_mine, skip, (keep_and_track without the flag), (open_editor_disabled)].
           for (let i = 0; i < downs; i++) {
             r.stdin.write(ARROW_DOWN);
             await tick(40);
@@ -482,14 +482,14 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
   }, 90_000);
 
   it('17g. the prompt offers Keep mine and track it, which tracks that file as modified (#165)', async () => {
-    const { prompt, frame, entry, content } = await runAddCollision(false, true, 2);
-    expect(prompt).toContain('Keep mine and track it');
+    const { prompt, frame, entry, content } = await runAddCollision(false, true, 3);
+    expect(prompt.replace(/\s+/g, ' ')).toContain('Keep mine and track it');
     expect(content).toBe('My own note.\n');
     expect(entry?.ownership).toBe('modified');
     // The shard's hash, never yours (#150): yours would read as pristine.
-    expect(entry?.rendered_hash).toBe(createHash('sha256').update('The shard note.\n').digest('hex'));
+    expect(entry?.rendered_hash).toBe(sha256('The shard note.\n'));
     // Tracked, so the summary does not report it kept untracked.
-    expect(frame).not.toContain('kept untracked');
+    expect(frame.replace(/\s+/g, ' ')).not.toContain('kept untracked');
   }, 90_000);
 
   // ───── Scenario 17f: a declared rename carries the user's edit to the new path (#178) ─────

@@ -126,7 +126,9 @@ export interface UpdateSummary {
    * after this update — i.e. `UpdateAction.kind === 'add'`. Excludes
    * `overwrite`, `auto_merge`, `conflict accept_new`, and
    * `restore_missing` (the file was already managed; user had deleted
-   * it on disk). Source for `HookContext.newFiles`. See
+   * it on disk). Also excludes a preexisting add-collision the user kept
+   * and tracked (`keep_and_track`, `--adopt-preexisting`): its bytes are
+   * the user's, not new shard output. Source for `HookContext.newFiles`. See
    * docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics for the
    * additive-principle invariant the hook ctx encodes.
    */

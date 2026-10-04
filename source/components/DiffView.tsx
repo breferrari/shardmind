@@ -24,7 +24,11 @@ const CONTEXT_LINES = 3;
  * lookup below to filter the disabled "Open in editor" placeholder so
  * no out-of-band value reaches `onChoice`.
  */
-const DIFF_ACTIONS = new Set<DiffAction>(['accept_new', 'keep_mine', 'keep_and_track', 'skip']);
+const DIFF_ACTIONS = new Set<DiffAction>(
+  // A Record over the union: a new resolution that is not listed here fails
+  // the typecheck instead of being dropped by onChange (#103, #109).
+  Object.keys({ accept_new: true, keep_mine: true, keep_and_track: true, skip: true } satisfies Record<DiffAction, true>) as DiffAction[],
+);
 
 const SELECT_OPTIONS: Array<{ label: string; value: DiffAction | 'open_editor_disabled' }> = [
   { label: 'Accept new (use shard version)', value: 'accept_new' },
@@ -52,7 +56,8 @@ const PREEXISTING_OPTIONS = SELECT_OPTIONS.map((o) => ({
  * flag, Keep mine already tracks, so the plain list is shown.
  */
 const PREEXISTING_TRACKABLE_OPTIONS = PREEXISTING_OPTIONS.flatMap((o) =>
-  o.value === 'keep_mine'
+  // After Skip, so the options a user already knows keep their positions.
+  o.value === 'skip'
     ? [o, { label: 'Keep mine and track it (merge future updates into your file)', value: 'keep_and_track' as const }]
     : [o],
 );

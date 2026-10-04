@@ -128,7 +128,7 @@ graph TD
     K["planUpdate<br/>Per-file UpdateAction + pendingConflicts<br/>(modified-file merges run in parallel, bounded 16)"] --> L1
 
     L1{Pending<br/>conflicts?}
-    L1 -->|Yes| L2["resolving-conflicts loop<br/>DiffView per file<br/>accept_new / keep_mine / skip"]
+    L1 -->|Yes| L2["resolving-conflicts loop<br/>DiffView per file<br/>accept_new / keep_mine / skip<br/>(+ keep_and_track, #165)"]
     L1 -->|No| M
     L2 --> M
 
@@ -1719,7 +1719,7 @@ Shows a three-way diff for a single file. Used during update for modified files 
 
 Props:
 ```typescript
-export type DiffAction = 'accept_new' | 'keep_mine' | 'skip';
+export type DiffAction = ConflictResolution; // 'accept_new' | 'keep_mine' | 'keep_and_track' | 'skip'
 
 interface DiffViewProps {
   path: string;
@@ -1732,7 +1732,7 @@ interface DiffViewProps {
 }
 ```
 
-Renders: file-path header with `(N of M)` counter, each `ConflictRegion` with ±3 context lines and color-coded `yours`/`shard update` sides, a merge-stats summary (`linesUnchanged · linesAutoMerged · N regions conflicted`), and a `Select` with three active options and one disabled placeholder: Accept new · Keep mine · Skip · (Open in editor · disabled).
+Renders: file-path header with `(N of M)` counter, each `ConflictRegion` with ±3 context lines and color-coded `yours`/`shard update` sides, a merge-stats summary (`linesUnchanged · linesAutoMerged · N regions conflicted`), and a `Select` with three active options and one disabled placeholder: Accept new · Keep mine · Skip · (Open in editor · disabled). For a `preexisting` add-collision without `--adopt-preexisting`, a fourth, Keep mine and track it (`keep_and_track`, #165), comes after Skip, so the existing options keep their positions.
 
 A `preexisting` conflict (#60) is not an edit of a shard file, so its header reads `New file from shard collides with your file <path> (N of M)` instead of `Conflict in <path>`, a line under it says what Keep mine and Skip do with the file (it stays yours and untracked, so the next update asks again; with `adoptPreexisting`, it is tracked as your modified copy), Keep mine is labelled `Keep mine (keep your file)` and Accept new `Accept new (replace your file)`, and the merge-stats line and each region's line range are left out, since no merge ran. A modified-file conflict renders as above. The planner copies `preexisting` from the `conflict` action onto `PendingConflict`.
 
