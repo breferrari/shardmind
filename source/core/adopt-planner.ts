@@ -32,6 +32,7 @@ import { ShardMindError } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { resolveModules } from './modules.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
+import { isFree } from './rename-migrations.js';
 import {
   buildRenderContext,
   createRenderer,
@@ -67,6 +68,8 @@ export type AdoptClassification =
       shardHash: string;
       iteratorKey?: string;
       volatile: boolean;
+      /** The old path the user's file sits at, under a rename migration (#179). */
+      movedFrom?: string;
     }
   | {
       kind: 'differs';
@@ -79,6 +82,8 @@ export type AdoptClassification =
       isBinary: boolean;
       iteratorKey?: string;
       volatile: boolean;
+      /** The old path the user's file sits at, under a rename migration (#179). */
+      movedFrom?: string;
     }
   | {
       kind: 'shard-only';
@@ -123,6 +128,11 @@ export interface AdoptPlannerInput {
    * runs. Production code lets it default to `new Date()`.
    */
   now?: Date;
+  /**
+   * Rename migrations from the release the vault was cloned from to the
+   * shard's version, old path → new path (`adopt --from-version`, #179).
+   */
+  renames?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -139,7 +149,7 @@ export interface AdoptPlannerInput {
  * budget).
  */
 export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptPlan> {
-  const { vaultRoot, schema, manifest, tempDir, values, selections, now } = input;
+  const { vaultRoot, schema, manifest, tempDir, values, selections, now, renames } = input;
 
   const resolution = await resolveModules(schema, selections, tempDir);
   const env = createRenderer(tempDir);
@@ -165,9 +175,10 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
   );
 
   const items: ShardOutputItem[] = [...renderedGroups.flat(), ...copyItems];
+  const movable = movableRenames(renames, new Set(items.map((i) => i.outputPath)));
 
   const classifications = await mapConcurrent(items, ADOPT_READ_CONCURRENCY, async (item) => {
-    return classifyOne(vaultRoot, item);
+    return classifyOne(vaultRoot, item, movable.get(item.outputPath));
   });
 
   const matches: AdoptClassification[] = [];
@@ -182,7 +193,11 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
 
   // Refuse before any prompt or `--json` plan (#163); the executor checks
   // again before it writes.
-  await assertSafeVaultPaths(vaultRoot, classifications.map((c) => c.path));
+  await assertSafeVaultPaths(
+    vaultRoot,
+    classifications.map((c) => c.path),
+    classifications.flatMap((c) => (c.kind !== 'shard-only' && c.movedFrom !== undefined ? [c.movedFrom] : [])),
+  );
 
   return {
     matches,
@@ -190,6 +205,41 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
     shardOnly,
     totalShardFiles: items.length,
   };
+}
+
+/**
+ * The renames adopt may follow, new path → old path: the new path is a shard
+ * output, the old one is not, and no other rename claims the new path.
+ */
+function movableRenames(
+  renames: ReadonlyMap<string, string> | undefined,
+  outputs: ReadonlySet<string>,
+): Map<string, string> {
+  const byNew = new Map<string, string[]>();
+  for (const [from, to] of renames ?? []) {
+    if (!outputs.has(to) || outputs.has(from)) continue;
+    byNew.set(to, [...(byNew.get(to) ?? []), from]);
+  }
+  const movable = new Map<string, string>();
+  for (const [to, froms] of byNew) {
+    if (froms.length === 1) movable.set(to, froms[0]!);
+  }
+  return movable;
+}
+
+/** The user's bytes at `rel`, or null when nothing is there. */
+async function readUserFile(vaultRoot: string, rel: string): Promise<Buffer | null> {
+  const userPath = path.join(vaultRoot, rel);
+  try {
+    return await fsp.readFile(userPath);
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw new ShardMindError(
+      `Could not read user vault file: ${userPath}`,
+      'COLLISION_CHECK_FAILED',
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 }
 
 interface ShardOutputItem {
@@ -235,30 +285,29 @@ async function buildItemFromCopy(
 async function classifyOne(
   vaultRoot: string,
   item: ShardOutputItem,
+  renamedFrom: string | undefined,
 ): Promise<AdoptClassification> {
-  const userPath = path.join(vaultRoot, item.outputPath);
-
-  let userBuf: Buffer | null;
-  try {
-    userBuf = await fsp.readFile(userPath);
-  } catch (err) {
-    if (isEnoent(err)) {
-      return {
-        kind: 'shard-only',
-        path: item.outputPath,
-        templateKey: item.templateKey,
-        shardContent: item.shardContent,
-        shardHash: item.shardHash,
-        ...(item.iteratorKey ? { iteratorKey: item.iteratorKey } : {}),
-        volatile: item.volatile,
-      };
-    }
-    throw new ShardMindError(
-      `Could not read user vault file: ${userPath}`,
-      'COLLISION_CHECK_FAILED',
-      err instanceof Error ? err.message : String(err),
-    );
+  let userBuf = await readUserFile(vaultRoot, item.outputPath);
+  // A file cloned from an older release sits at the rename's old path; it is
+  // compared here and moved by the executor (#179). The new path must be free
+  // of anything, a dangling link or a file where a folder goes included.
+  let movedFrom: string | undefined;
+  if (userBuf === null && renamedFrom !== undefined && (await isFree(vaultRoot, item.outputPath))) {
+    userBuf = await readUserFile(vaultRoot, renamedFrom);
+    if (userBuf !== null) movedFrom = renamedFrom;
   }
+  if (userBuf === null) {
+    return {
+      kind: 'shard-only',
+      path: item.outputPath,
+      templateKey: item.templateKey,
+      shardContent: item.shardContent,
+      shardHash: item.shardHash,
+      ...(item.iteratorKey ? { iteratorKey: item.iteratorKey } : {}),
+      volatile: item.volatile,
+    };
+  }
+  const moved = movedFrom !== undefined ? { movedFrom } : {};
 
   // Volatile templates skip the differs prompt: their rendered output is
   // expected to vary across renders (timestamps, randomized order, etc.),
@@ -274,6 +323,7 @@ async function classifyOne(
       shardHash: sha256(userBuf),
       ...(item.iteratorKey ? { iteratorKey: item.iteratorKey } : {}),
       volatile: true,
+      ...moved,
     };
   }
 
@@ -286,6 +336,7 @@ async function classifyOne(
       shardHash: item.shardHash,
       ...(item.iteratorKey ? { iteratorKey: item.iteratorKey } : {}),
       volatile: false,
+      ...moved,
     };
   }
 
@@ -300,6 +351,7 @@ async function classifyOne(
     isBinary: isBinaryForMerge(userBuf) || isBinaryForMerge(item.shardContent),
     ...(item.iteratorKey ? { iteratorKey: item.iteratorKey } : {}),
     volatile: false,
+    ...moved,
   };
 }
 

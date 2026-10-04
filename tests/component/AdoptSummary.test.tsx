@@ -25,6 +25,7 @@ function makeSummary(overrides: Partial<AdoptSummaryData> = {}): AdoptSummaryDat
     adoptedShard: [],
     adoptedMerged: [],
     installedFresh: [],
+    renamedFiles: [],
     totalManaged: 2,
     ...overrides,
   };
@@ -92,6 +93,7 @@ describe('AdoptSummary', () => {
       adoptedMine: [],
       adoptedShard: [],
       installedFresh: [],
+      renamedFiles: [],
       totalManaged: 1,
     });
     const { lastFrame } = render(<AdoptSummary {...baseProps} summary={summary} />);
@@ -108,6 +110,7 @@ describe('AdoptSummary', () => {
       adoptedMine: [],
       adoptedShard: [],
       installedFresh: [],
+      renamedFiles: [],
       totalManaged: 0,
     });
     const { lastFrame } = render(<AdoptSummary {...baseProps} summary={summary} />);

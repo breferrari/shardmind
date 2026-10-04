@@ -46,7 +46,7 @@ export function renamesBetween(
  * reports ENOENT, not ENOTDIR, for a path under a regular file, so the
  * ancestors are checked too. Any other error counts as taken.
  */
-async function isFree(vaultRoot: string, rel: string): Promise<boolean> {
+export async function isFree(vaultRoot: string, rel: string): Promise<boolean> {
   const segments = rel.split('/');
   for (let i = 1; i < segments.length; i++) {
     const ancestor = path.join(vaultRoot, ...segments.slice(0, i));
