@@ -342,6 +342,14 @@ Thrown by `source/core/install-planner.ts` and `source/core/install-executor.ts`
 
 **Remedy:** Check permissions at the path referenced in the error. Clean up stale `*.shardmind-backup-*` backup paths if you somehow have a thousand of them.
 
+### `ROLLBACK_INCOMPLETE`
+
+**Meaning:** An install, update or adopt failed, and rolling it back could not put every file back (#247). Thrown by `source/core/rollback-report.ts` for all three commands. The message starts with the original failure and its code, then lists each path the rollback could not restore or remove, with the reason and, when there is one, where that file's backup is: a `*.shardmind-backup-*` path for install, a file under `.shardmind/backups/update-*/` or `.shardmind/backups/adopt-*/files/` for update and adopt. The adopt snapshot is kept when a restore from it failed. The exit code is 1, and `--json` carries the same message.
+
+A Ctrl+C rollback that could not restore everything prints the same list to stderr and still exits 130.
+
+**Remedy:** Fix what the reason names (usually permissions, or a file held by another program), then copy each listed backup back to its path by hand before running shardmind again.
+
 ---
 
 ## Install command flags
