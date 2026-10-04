@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import semver from 'semver';
 import { ShardMindError, type ExternalTool, type ShardManifest } from '../runtime/types.js';
+import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { TOOL_ARG_PATTERN, TOOL_NAME_PATTERN } from './manifest.js';
 
 export type ProbeOutcome =
@@ -24,98 +25,73 @@ export type ProbeOutcome =
 
 export type ToolProbe = (command: string, args: readonly string[]) => Promise<ProbeOutcome>;
 
+type UnmetTool = { name: string; status: 'unmet'; reason: string; hint: string; optional: boolean };
+
 export type ToolResult =
   | { name: string; status: 'met'; version: string }
   | { name: string; status: 'skipped' }
-  | { name: string; status: 'unmet'; reason: string; hint: string; optional: boolean };
-
-export interface ExternalToolsReport {
-  /** The shard declares at least one tool. */
-  declared: boolean;
-  /** The tools were run: false on a dry run and for a shard without tools. */
-  checked: boolean;
-  results: ToolResult[];
-}
-
-/** A run that checked no tools: the summary shows nothing for it. */
-export const NO_EXTERNAL_TOOLS: ExternalToolsReport = { declared: false, checked: false, results: [] };
+  | UnmetTool;
 
 /** The install command for a version inside the declared range. */
 function installHint(tool: ExternalTool): string {
   return `npm i -g ${tool.package}@"${tool.version}"`;
 }
 
-function unmet(name: string, tool: ExternalTool, reason: string): ToolResult {
-  return { name, status: 'unmet', reason, hint: installHint(tool), optional: tool.optional };
+/** What one probe outcome means for one tool. */
+function judge(name: string, tool: ExternalTool, outcome: ProbeOutcome): ToolResult {
+  const unmet = (reason: string): ToolResult => ({ name, status: 'unmet', reason, hint: installHint(tool), optional: tool.optional });
+  if (outcome.kind === 'not-found') return unmet('not found on PATH');
+  if (outcome.kind === 'failed') return unmet(outcome.reason);
+  const version = semver.coerce(outcome.stdout, { includePrerelease: true })?.version;
+  if (version === undefined) return unmet('printed no version');
+  if (!semver.satisfies(version, tool.version, { includePrerelease: true })) return unmet(`found ${version}, needs ${tool.version}`);
+  return { name, status: 'met', version };
 }
 
+/** Every declared tool's result, in declaration order. The probes run at once. */
 export async function checkExternalTools(
   manifest: ShardManifest,
   values: Record<string, unknown>,
   probe: ToolProbe,
 ): Promise<ToolResult[]> {
-  const results: ToolResult[] = [];
-  for (const [name, tool] of Object.entries(manifest.external_tools ?? {})) {
-    // Only a value that is false skips the check: a missing or non-boolean
-    // one (lint reports it) checks the tool rather than silently passing it.
-    if (tool.when !== undefined && values[tool.when] === false) {
-      results.push({ name, status: 'skipped' });
-      continue;
-    }
-    const outcome = await probe(tool.command, tool.args);
-    if (outcome.kind === 'not-found') {
-      results.push(unmet(name, tool, 'not found on PATH'));
-      continue;
-    }
-    if (outcome.kind === 'failed') {
-      results.push(unmet(name, tool, outcome.reason));
-      continue;
-    }
-    const version = semver.coerce(outcome.stdout, { includePrerelease: true })?.version;
-    if (version === undefined) {
-      results.push(unmet(name, tool, 'printed no version'));
-    } else if (!semver.satisfies(version, tool.version, { includePrerelease: true })) {
-      results.push(unmet(name, tool, `found ${version}, needs ${tool.version}`));
-    } else {
-      results.push({ name, status: 'met', version });
-    }
-  }
-  return results;
+  return Promise.all(
+    Object.entries(manifest.external_tools ?? {}).map(async ([name, tool]): Promise<ToolResult> => {
+      // Only a value that is false skips the check: a missing or non-boolean
+      // one (lint reports it) checks the tool rather than silently passing it.
+      if (tool.when !== undefined && values[tool.when] === false) return { name, status: 'skipped' };
+      return judge(name, tool, await probe(tool.command, tool.args));
+    }),
+  );
 }
 
 /**
  * The one call install, adopt and update make, once the values are final
  * and before anything is written. Throws `EXTERNAL_TOOL_UNMET` when a
- * required tool is unmet; otherwise returns what the summary shows.
+ * required tool is unmet. Otherwise returns the summary's lines: the dry-run
+ * note, or one line per unmet optional tool with its install hint (none when
+ * every tool is met, skipped, or none is declared).
  */
 export async function checkExternalToolsForRun(opts: {
   manifest: ShardManifest;
   values: Record<string, unknown>;
   dryRun: boolean;
   probe?: ToolProbe;
-}): Promise<ExternalToolsReport> {
-  const declared = Object.keys(opts.manifest.external_tools ?? {}).length > 0;
-  if (!declared || opts.dryRun) return { declared, checked: false, results: [] };
+}): Promise<string[]> {
+  if (Object.keys(opts.manifest.external_tools ?? {}).length === 0) return [];
+  if (opts.dryRun) return ['external tools not checked (dry run)'];
 
   const results = await checkExternalTools(opts.manifest, opts.values, opts.probe ?? spawnProbe);
-  const unmetResults = results.filter((r): r is Extract<ToolResult, { status: 'unmet' }> => r.status === 'unmet');
-  if (unmetResults.some((r) => !r.optional)) {
+  const unmet = results.filter((r): r is UnmetTool => r.status === 'unmet');
+  if (unmet.some((r) => !r.optional)) {
     throw new ShardMindError(
-      `This shard needs command-line tools that are missing or out of range:\n${unmetResults
+      `This shard needs command-line tools that are missing or out of range:\n${unmet
         .map((r) => `  ${r.name}: ${r.reason}${r.optional ? ' (optional)' : ''}`)
         .join('\n')}`,
       'EXTERNAL_TOOL_UNMET',
-      `Install a version in range, then retry:\n${unmetResults.map((r) => `  ${r.hint}`).join('\n')}`,
+      `Install a version in range, then retry:\n${unmet.map((r) => `  ${r.hint}`).join('\n')}`,
     );
   }
-  return { declared, checked: true, results };
-}
-
-/** The summary's lines: a dry run's note, or one line per unmet optional tool. */
-export function summarizeExternalTools(report: ExternalToolsReport): string[] {
-  if (!report.declared) return [];
-  if (!report.checked) return ['external tools not checked (dry run)'];
-  return report.results.flatMap((r) => (r.status === 'unmet' ? [`${r.name}: ${r.reason}. Install: ${r.hint}`] : []));
+  return unmet.map((r) => `${r.name}: ${r.reason}. Install: ${r.hint}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -204,8 +180,10 @@ export function makeProbe(opts: { env?: NodeJS.ProcessEnv; timeoutMs?: number } 
         windowsVerbatimArguments: batch,
       });
       let stdout = '';
-      child.stdout.on('data', (chunk: Buffer) => {
-        if (stdout.length < STDOUT_CAP) stdout += chunk.toString('utf-8').slice(0, STDOUT_CAP - stdout.length);
+      // Decoded by the stream, so a character split across chunks stays whole.
+      child.stdout.setEncoding('utf-8');
+      child.stdout.on('data', (chunk: string) => {
+        if (stdout.length < STDOUT_CAP) stdout += chunk.slice(0, STDOUT_CAP - stdout.length);
       });
       const timer = setTimeout(() => {
         child.kill();
@@ -213,8 +191,8 @@ export function makeProbe(opts: { env?: NodeJS.ProcessEnv; timeoutMs?: number } 
         child.stdout.destroy();
         settle({ kind: 'failed', reason: `timed out after ${timeoutMs / 1000}s` });
       }, timeoutMs);
-      child.on('error', (error: NodeJS.ErrnoException) => {
-        settle(error.code === 'ENOENT' ? { kind: 'not-found' } : { kind: 'failed', reason: `could not start (${error.code ?? error.message})` });
+      child.on('error', (error: Error) => {
+        settle(isEnoent(error) ? { kind: 'not-found' } : { kind: 'failed', reason: `could not start (${errnoCode(error) ?? error.message})` });
       });
       child.on('close', (code) => {
         settle(code === 0 ? { kind: 'output', stdout } : { kind: 'failed', reason: `exited ${code}` });

@@ -15,8 +15,8 @@ import { ensureBuilt } from './helpers/build-once.js';
 import { spawnCli } from './helpers/spawn-cli.js';
 import { buildMutatedShard } from './tui/helpers/build-fixture-shard.js';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { envWithSearchPath, writeFakeTool } from '../helpers/fake-tool.js';
 
-const isWindows = process.platform === 'win32';
 const SLUG = 'acme/tools';
 const VALUES = { user_name: 'Alice', org_name: 'Acme Labs', vault_purpose: 'engineering', qmd_enabled: true };
 
@@ -44,17 +44,10 @@ async function shardWith(ref: string, tool: Record<string, unknown>): Promise<st
   return tarPath;
 }
 
-/** PATH holding only the fake tool, plus what node and cmd.exe need. */
+/** A search path holding only the fake tool and node. */
 function env(): Record<string, string> {
-  const base = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'PATH')) as Record<string, string>;
-  const system = isWindows ? [path.join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32')] : ['/bin', '/usr/bin'];
-  const searchPath = [toolDir, path.dirname(process.execPath), ...system].join(path.delimiter);
   return {
-    ...base,
-    // spawnCli merges the parent env first, which on Windows spells it Path:
-    // set both spellings so the child sees one search path.
-    PATH: searchPath,
-    Path: searchPath,
+    ...envWithSearchPath([toolDir, path.dirname(process.execPath)]),
     SHARDMIND_GITHUB_API_BASE: stub.url,
     SHARDMIND_NO_UPDATE_CHECK: '1',
   };
@@ -73,12 +66,10 @@ beforeAll(async () => {
   scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'shardmind-e2e-tools-'));
   toolDir = path.join(scratch, 'bin');
   marker = path.join(scratch, 'tool-ran');
-  await fs.mkdir(toolDir, { recursive: true });
-  if (isWindows) {
-    await fs.writeFile(path.join(toolDir, 'fakeqmd.cmd'), `@echo off\r\necho ran> "${marker}"\r\necho fakeqmd 2.5.3\r\n`);
-  } else {
-    await fs.writeFile(path.join(toolDir, 'fakeqmd'), `#!/bin/sh\ntouch '${marker}'\necho fakeqmd 2.5.3\n`, { mode: 0o755 });
-  }
+  await writeFakeTool(toolDir, 'fakeqmd', {
+    win: `echo ran> "${marker}"\r\necho fakeqmd 2.5.3`,
+    posix: `touch '${marker}'\necho fakeqmd 2.5.3`,
+  });
   stub = await createGitHubStub({ shards: { [SLUG]: { versions: {}, latest: '0.1.0' } } });
 }, 120_000);
 

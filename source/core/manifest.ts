@@ -89,10 +89,7 @@ export const ShardManifestSchema = z.object({
     // a declared-but-empty `shardmind: ""` would parse clean and then silently
     // disable the check — worse than a typo, because it reads as a constraint.
     // Deliberate match-all (`*`, `x`) stays valid.
-    shardmind: z
-      .string()
-      .refine(v => v.trim().length > 0 && semver.validRange(v) !== null, 'Must be a valid, non-empty semver range')
-      .optional(),
+    shardmind: SemverRangeSchema.optional(),
   }).optional(),
   dependencies: z.array(z.object({
     name: z.string(),

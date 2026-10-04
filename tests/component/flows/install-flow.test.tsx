@@ -28,6 +28,7 @@ import {
   makeVaultDir,
   cleanupVault,
   buildCustomTarball,
+  allFrames,
   driveMinimalWizard,
   SHARD_SLUG,
   SHARD_REF,
@@ -115,9 +116,6 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     stub.setRef(SLUG_TOOLS, ref, STUB_SHA, tarPath);
     return `github:${SLUG_TOOLS}#${ref}`;
   }
-
-  // The command exits right after its last frame: search every frame it drew.
-  const allFrames = (r: { frames: string[] }) => () => r.frames.join('\n');
 
   const stateWritten = (vault: string) =>
     fs.stat(path.join(vault, '.shardmind', 'state.json')).then((st) => st.isFile(), () => false);

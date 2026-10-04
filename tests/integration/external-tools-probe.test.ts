@@ -10,29 +10,14 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { makeProbe, resolveExecutable } from '../../source/core/external-tools.js';
+import { envWithSearchPath, writeFakeTool as writeTool } from '../helpers/fake-tool.js';
 
 const isWindows = process.platform === 'win32';
 let root: string;
 
-/** Write a tool named `name` into `dir` whose body is the given script, for this OS. */
-async function writeTool(dir: string, name: string, script: { win: string; posix: string }): Promise<string> {
-  await fs.mkdir(dir, { recursive: true });
-  if (isWindows) {
-    const file = path.join(dir, `${name}.cmd`);
-    await fs.writeFile(file, `@echo off\r\n${script.win}\r\n`);
-    return file;
-  }
-  const file = path.join(dir, name);
-  await fs.writeFile(file, `#!/bin/sh\n${script.posix}\n`, { mode: 0o755 });
-  return file;
-}
-
-/** A probe whose PATH is only `dir` (plus the system dir cmd.exe needs on Windows). */
+/** A probe whose PATH is only `dir` plus the system folders. */
 function probeOn(dir: string, timeoutMs = 5_000) {
-  const extra = isWindows ? [path.join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32')] : ['/bin', '/usr/bin'];
-  // Windows spells it Path; drop every spelling before setting one.
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'PATH'));
-  return makeProbe({ env: { ...env, PATH: [dir, ...extra].join(path.delimiter) }, timeoutMs });
+  return makeProbe({ env: envWithSearchPath([dir]), timeoutMs });
 }
 
 beforeAll(async () => {

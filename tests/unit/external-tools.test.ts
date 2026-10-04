@@ -7,7 +7,6 @@ import { describe, it, expect } from 'vitest';
 import {
   checkExternalTools,
   checkExternalToolsForRun,
-  summarizeExternalTools,
   type ProbeOutcome,
   type ToolProbe,
 } from '../../source/core/external-tools.js';
@@ -99,16 +98,19 @@ describe('checkExternalTools', () => {
 });
 
 describe('checkExternalToolsForRun', () => {
-  it('never runs a probe on a dry run', async () => {
+  it('never runs a probe on a dry run, and says so', async () => {
     const probe = probeOf({});
-    expect(await checkExternalToolsForRun({ manifest: manifestWith({ qmd }), values: {}, dryRun: true, probe })).toEqual({ declared: true, checked: false, results: [] });
+    expect(await checkExternalToolsForRun({ manifest: manifestWith({ qmd }), values: {}, dryRun: true, probe })).toEqual([
+      'external tools not checked (dry run)',
+    ]);
     expect(probe.calls).toEqual([]);
   });
 
-  it('checks nothing for a shard that declares no tools', async () => {
+  it('checks nothing and says nothing for a shard that declares no tools', async () => {
     const probe = probeOf({});
     const manifest = ShardManifestSchema.parse({ apiVersion: 'v1', name: 'demo', namespace: 'acme', version: '1.0.0' }) as ShardManifest;
-    expect(await checkExternalToolsForRun({ manifest, values: {}, dryRun: false, probe })).toEqual({ declared: false, checked: false, results: [] });
+    expect(await checkExternalToolsForRun({ manifest, values: {}, dryRun: false, probe })).toEqual([]);
+    expect(await checkExternalToolsForRun({ manifest, values: {}, dryRun: true, probe })).toEqual([]);
     expect(probe.calls).toEqual([]);
   });
 
@@ -120,38 +122,39 @@ describe('checkExternalToolsForRun', () => {
     const error = (await run.catch((e: unknown) => e)) as ShardMindError;
     expect(error.code).toBe('EXTERNAL_TOOL_UNMET');
     expect(error.message).toContain('qmd: found 2.0.1, needs >=2.5.0');
-    expect(error.message).toContain('rg: not found on PATH');
+    expect(error.message).toContain('rg: not found on PATH (optional)');
     expect(error.hint).toContain('npm i -g @tobilu/qmd@">=2.5.0"');
     expect(error.hint).toContain('npm i -g ripgrep@">=13"');
   });
 
-  it('returns the report when only optional tools are unmet', async () => {
-    const probe = probeOf({ qmd: { kind: 'not-found' } });
-    const report = await checkExternalToolsForRun({ manifest: manifestWith({ qmd: { ...qmd, optional: true } }), values: {}, dryRun: false, probe });
-    expect(report).toMatchObject({ declared: true, checked: true, results: [{ name: 'qmd', status: 'unmet', optional: true }] });
-  });
-});
-
-describe('summarizeExternalTools', () => {
-  it('says a dry run did not check declared tools', () => {
-    expect(summarizeExternalTools({ declared: true, checked: false, results: [] })).toEqual(['external tools not checked (dry run)']);
-  });
-
-  it('says nothing for a shard without tools', () => {
-    expect(summarizeExternalTools({ declared: false, checked: false, results: [] })).toEqual([]);
-  });
-
-  it('lists each unmet optional tool with its hint, and nothing for met or skipped ones', () => {
-    expect(
-      summarizeExternalTools({
-        declared: true,
-        checked: true,
-        results: [
-          { name: 'qmd', status: 'unmet', reason: 'not found on PATH', hint: 'npm i -g @tobilu/qmd@">=2.5.0"', optional: true },
-          { name: 'rg', status: 'met', version: '14.0.0' },
-          { name: 'fd', status: 'skipped' },
-        ],
+  it('returns one summary line per unmet optional tool, and none for met or skipped ones', async () => {
+    const probe = probeOf({ qmd: { kind: 'not-found' }, rg: { kind: 'output', stdout: 'ripgrep 14.0.0' } });
+    const lines = await checkExternalToolsForRun({
+      manifest: manifestWith({
+        qmd: { ...qmd, optional: true },
+        rg: { package: 'ripgrep', version: '>=13', command: 'rg' },
+        fd: { package: 'fd-find', version: '>=8', command: 'fd', when: 'fd_enabled' },
       }),
-    ).toEqual(['qmd: not found on PATH. Install: npm i -g @tobilu/qmd@">=2.5.0"']);
+      values: { fd_enabled: false },
+      dryRun: false,
+      probe,
+    });
+    expect(lines).toEqual(['qmd: not found on PATH. Install: npm i -g @tobilu/qmd@">=2.5.0"']);
+  });
+
+  it('runs the probes at once, keeping declaration order', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const slow: ToolProbe = async (command) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((r) => setTimeout(r, command === 'a' ? 30 : 5));
+      inFlight -= 1;
+      return { kind: 'not-found' };
+    };
+    const tool = (command: string) => ({ package: command, version: '>=1', command, optional: true });
+    const lines = await checkExternalToolsForRun({ manifest: manifestWith({ a: tool('a'), b: tool('b') }), values: {}, dryRun: false, probe: slow });
+    expect(most).toBe(2);
+    expect(lines.map((l) => l.split(':')[0])).toEqual(['a', 'b']);
   });
 });

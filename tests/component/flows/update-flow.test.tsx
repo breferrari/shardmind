@@ -19,6 +19,7 @@ import {
   setupFlowSuite,
   mountUpdate,
   buildCustomTarball,
+  allFrames,
   driveDiffIteration,
   SHARD_SLUG,
   SHARD_REF,
@@ -106,7 +107,6 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     return vault;
   }
 
-  const allFrames = (r: { frames: string[] }) => () => r.frames.join('\n');
   const installedVersion = async (vault: Vault) =>
     (JSON.parse(await vault.readFile('.shardmind/state.json')) as { version: string }).version;
 

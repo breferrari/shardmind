@@ -23,6 +23,7 @@ import {
   makeVaultDir,
   cleanupVault,
   buildCustomTarball,
+  allFrames,
   driveMinimalWizard,
   driveDiffIteration,
   SHARD_SLUG,
@@ -87,9 +88,8 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
         vaultRoot: vault,
         options: { yes: true, values: valuesFile },
       });
-      // The command exits right after its last frame: search every frame it drew.
       const frame = await waitFor(
-        () => r.frames.join('\n'),
+        allFrames(r),
         (f) => /EXTERNAL_TOOL_UNMET/.test(f) && /npm i -g node@">=999\.0\.0"/.test(f),
         30_000,
       );
@@ -127,7 +127,7 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
         options: { yes: true, values: valuesFile },
       });
       const frame = await waitFor(
-        () => r.frames.join('\n'),
+        allFrames(r),
         (f) => /Adopted flowtest\/adopt-external-tools/.test(f) && /shardmind-no-such-tool: not found on PATH/.test(f),
         30_000,
       );

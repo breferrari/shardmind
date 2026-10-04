@@ -1779,17 +1779,14 @@ type ToolResult =
   | { name: string; status: 'skipped' }                              // `when` value is false
   | { name: string; status: 'unmet'; reason: string; hint: string; optional: boolean };
 
-interface ExternalToolsReport { declared: boolean; checked: boolean; results: ToolResult[] }
-
 checkExternalTools(manifest, values, probe): Promise<ToolResult[]>;
-checkExternalToolsForRun(opts: { manifest; values; dryRun: boolean; probe?: ToolProbe }): Promise<ExternalToolsReport>;
-summarizeExternalTools(report: ExternalToolsReport): string[];   // the summary's lines
+checkExternalToolsForRun(opts: { manifest; values; dryRun: boolean; probe?: ToolProbe }): Promise<string[]>;   // the summary's lines
 makeProbe(opts?: { env?; timeoutMs? }): ToolProbe;
 resolveExecutable(name, env): string | undefined;
 spawnProbe: ToolProbe;   // makeProbe() with process.env and 5 s
 ```
 
-1. `checkExternalTools`: for each declared tool, in declaration order:
+1. `checkExternalTools`: one result per declared tool, in declaration order. The probes run at once (`Promise.all`), so the wait is the slowest tool, not their sum.
    - When `when` names a value that is `false`, the tool is `skipped`. A missing or non-boolean value does not skip it.
    - Otherwise it runs `probe(command, args)`:
      - `not-found` → unmet, "not found on PATH";
@@ -1799,14 +1796,11 @@ spawnProbe: ToolProbe;   // makeProbe() with process.env and 5 s
        - a version that fails `semver.satisfies(v, range, { includePrerelease: true })` → unmet, "found <v>, needs <range>";
        - otherwise met.
    - Each unmet result carries its hint, `npm i -g <package>@"<range>"`.
-2. `checkExternalToolsForRun`, the one call each machine makes after values are final and before the executor:
-   - A dry run, or a manifest with no `external_tools`, returns `{ declared, checked: false, results: [] }` with no probe run.
-   - Otherwise it runs step 1 with `probe ?? spawnProbe`. If any non-optional result is unmet, it throws `EXTERNAL_TOOL_UNMET`: the message lists every unmet tool (optional ones too) with its reason, and the hint lists each install command. Otherwise it returns the report.
-3. `summarizeExternalTools`:
-   - A dry run of a shard that declares tools (`declared`, not `checked`) gives `external tools not checked (dry run)`. A shard without tools gives nothing.
-   - A checked run gives one line per unmet optional tool, `<name>: <reason>. Install: <hint>`.
-   - Met and skipped tools give no line.
-4. `makeProbe`:
+2. `checkExternalToolsForRun`, the one call each machine makes after values are final and before any prompt, move or write. It returns the summary's lines, which the machine passes to the summary as they are:
+   - A manifest with no `external_tools` returns `[]`, dry run or not. A dry run of one that declares tools returns `['external tools not checked (dry run)']`. Neither runs a probe.
+   - Otherwise it runs step 1 with `probe ?? spawnProbe`. If any non-optional result is unmet, it throws `EXTERNAL_TOOL_UNMET`: the message lists every unmet tool with its reason (an optional one marked `(optional)`), and the hint lists each install command.
+   - Otherwise it returns one line per unmet optional tool, `<name>: <reason>. Install: <hint>`. Met and skipped tools give no line.
+3. `makeProbe`:
    - It checks `command` and every arg against the manifest patterns again (`TOOL_NAME_PATTERN`, `TOOL_ARG_PATTERN`), failing with "unsafe command name" / "unsafe argument" before anything runs.
    - It looks up `command` on `PATH`. On Windows it tries each `PATHEXT` extension (default `.COM;.EXE;.BAT;.CMD`) in each directory; elsewhere it takes the first executable file. Nothing found → `not-found`.
    - A found path containing any of `% " ^ & | < > !` → `failed`, "unsafe path <path>".

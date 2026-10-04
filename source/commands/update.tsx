@@ -17,7 +17,6 @@ import RemovedFilesReview from '../components/RemovedFilesReview.js';
 import CommandProgress from '../components/CommandProgress.js';
 import HookProgress from '../components/HookProgress.js';
 import UpdateSummary from '../components/UpdateSummary.js';
-import { summarizeExternalTools } from '../core/external-tools.js';
 import CommandFrame from '../components/CommandFrame.js';
 import Header from '../components/Header.js';
 
@@ -208,7 +207,7 @@ export default function Update({ options }: Props) {
             hooks={phase.hooks}
             dryRun={phase.dryRun}
             backupDir={phase.backupDir}
-            externalTools={summarizeExternalTools(phase.externalTools)}
+            externalTools={phase.externalTools}
           />
         </CommandFrame>
       );
