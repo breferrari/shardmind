@@ -38,6 +38,9 @@ import { runInstall } from '../../source/core/install-executor.js';
 import { buildRenderContext } from '../../source/core/renderer.js';
 import { renamesBetween, applyRenames } from '../../source/core/rename-migrations.js';
 import { sha256 } from '../../source/core/fs-utils.js';
+import React from 'react';
+import { render } from 'ink-testing-library';
+import { useSigintRollback } from '../../source/commands/hooks/shared.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -885,6 +888,57 @@ describe('update applies rename migrations (#178)', () => {
         expect((await fsp.readdir(path.join(vault, 'Brain'))).filter((n) => n.toLowerCase() === 'sub')).toEqual(['sub']);
         expect(await fsp.readdir(path.join(vault, 'Brain', 'sub'))).toContain('mine.md');
       }
+    });
+
+    it("a real SIGINT mid-update, through the command's rollback handler, leaves the vault as it was", async () => {
+      await install();
+      await write('brain/mine.md', 'mine\n');
+      const before = await vaultTree();
+      const v2 = await folderCase('0.2.0', changeNote);
+      let backupDir: string | undefined;
+      const added: string[] = [];
+      let blocked = false;
+      let release!: (err: Error) => void;
+      const held = new Promise<never>((_, reject) => {
+        release = reject;
+      });
+      const realWrite = fsp.writeFile;
+      vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+        if (String(file).toLowerCase().endsWith(path.join('brain', 'north star.md').toLowerCase())) {
+          blocked = true;
+          await held;
+        }
+        return realWrite(file, data, opts as Parameters<typeof realWrite>[2]);
+      });
+      // The update command's handler, mounted as the command mounts it, with
+      // the process exit it ends in stubbed.
+      const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as typeof process.exit);
+      const Handler = () => {
+        useSigintRollback({
+          isActive: () => backupDir !== undefined,
+          rollback: async () => {
+            await rollbackUpdate(vault, backupDir!, added);
+          },
+        });
+        return null;
+      };
+      const ui = render(React.createElement(Handler));
+      const running = update(v2, 'keep_mine', false, undefined, {
+        onBackupReady: (dir) => {
+          backupDir = dir;
+        },
+        onFileTouched: (rel, introduced) => {
+          if (introduced) added.push(rel);
+        },
+      }).catch(() => undefined);
+      await vi.waitFor(() => expect(blocked).toBe(true), { timeout: 10_000 });
+      process.emit('SIGINT');
+      await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(130), { timeout: 10_000 });
+      expect(await vaultTree()).toEqual(before);
+      ui.unmount();
+      release(new Error('interrupted'));
+      await running;
+      vi.restoreAllMocks();
     });
 
     it('a Ctrl+C mid-update, rolled back from the backup and touched paths the SIGINT handler holds, leaves the vault as it was', async () => {
