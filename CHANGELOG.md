@@ -19,7 +19,9 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 ### Changed (an unexpected error is reported as a bug — #225)
 
 - **An error that is a bug in shardmind now says so, with what you need to report it.** It used to show its message alone. Now every command shows the message, the line "This is a bug in shardmind. Please report it:" with a link that opens a new issue, and the stack trace. The link carries only the shardmind version, nothing from the error itself. The message and stack stay on your screen, and you decide what to paste. Errors shardmind expects (a missing shard, a bad values file) look as before, with their code and hint.
-- `--json`: the `error` object gains `stack`. It is the stack trace for such a bug and `null` for every other error.
+- **A problem with your machine is no longer reported as a bug.** A full disk, a permission refused, a file another program holds, a read-only folder or too many open files used to show only the system's message. Now it shows the error code and what to do about it, with no bug report link.
+- **A crash outside any command is reported the same way.** An error that escapes every command, for example a part of shardmind that fails to load, used to print Node's raw stack trace. Now it prints the message, the report link and the stack, and exits 1. Ctrl+C still exits 130.
+- `--json`: the `error` object gains `stack`. It holds the stack trace for a bug and is `null` for every other error. For a problem with your machine, `code` is the system's error code (for example `EACCES`) and `hint` says what to do.
 
 ### Changed (`_each` files from a string list — #227)
 
