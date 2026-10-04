@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (a rollback that can't put your files back says so — #247)
+
+- **A failed install, update or adopt no longer says "Rolled back" when a file could not be put back.** If the rollback could not restore a file (a permission error, or a file held open by another program), the command now fails with `ROLLBACK_INCOMPLETE`. It names every path left behind and where its backup is, so you can copy it back by hand. Adopt and install used to report success here, leaving your file under a backup name. A Ctrl+C rollback prints the same list before it exits.
+
 ### Fixed (two shard files that install to one path — #240)
 
 - **A shard whose files would install to the same vault path is refused before anything is written.** A static `people/alice.md` next to `people/_each.md.njk` with an item `Alice`, or two templates differing only in case, used to overwrite each other, and on macOS or Windows the vault then tracked two names for one file. Install, update and adopt now stop with `OUTPUT_PATH_CLASH`, naming both files, and `shardmind validate` reports it to the shard's author.
