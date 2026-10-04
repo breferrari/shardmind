@@ -2,11 +2,11 @@ import path from 'node:path';
 import os from 'node:os';
 import fsp from 'node:fs/promises';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { runHooks, bootstrapShouldRerun, type HookRunPlan, type HookRunUi } from '../../source/core/hook-orchestrator.js';
+import { runHooks, bootstrapShouldRerun, type HookRunPlan, type HookRunResult, type HookRunUi } from '../../source/core/hook-orchestrator.js';
 import { writeState } from '../../source/core/state.js';
 import { sha256 } from '../../source/core/fs-utils.js';
 import { makeShardState, makeFileState } from '../helpers/shard-state.js';
-import type { ShardManifest, ShardSchema } from '../../source/runtime/types.js';
+import type { HookSlot, ShardManifest, ShardSchema } from '../../source/runtime/types.js';
 
 // A schema with one value whose default is 'default'. valuesAreDefaults is true
 // iff plan.values === { user_name: 'default' }.
@@ -83,6 +83,19 @@ function installPlan(over: Partial<HookRunPlan> & { manifest: ShardManifest }): 
     dryRun: false,
     ...over,
   };
+}
+
+/**
+ * The slot's violation, after asserting that its hook exited 0. A hook that
+ * died before writing (#175: seen once under full-suite load) leaves no
+ * violation, and the bare violation assertion then reads "expected undefined"
+ * with the cause lost. This fails with the hook's own exit code and stderr.
+ */
+function violationOf(result: HookRunResult, slot: HookSlot) {
+  const summary = result.outcomes.find((o) => o.slot === slot)?.summary;
+  expect(summary, `${slot} produced no outcome`).toBeTruthy();
+  expect(summary?.exitCode, `${slot} hook did not exit 0. stderr:\n${summary?.stderr ?? ''}`).toBe(0);
+  return summary?.violation;
 }
 
 describe('bootstrapShouldRerun', () => {
@@ -181,7 +194,7 @@ describe('runHooks — write-boundary detection', () => {
       }),
       NOOP_UI,
     );
-    const v = result.outcomes.find((o) => o.slot === 'bootstrap')?.summary?.violation;
+    const v = violationOf(result, 'bootstrap');
     expect(v).toEqual({ kind: 'managed-write', paths: ['Home.md'] });
   }, 30_000);
 
@@ -201,7 +214,7 @@ describe('runHooks — write-boundary detection', () => {
       }),
       NOOP_UI,
     );
-    const v = result.outcomes.find((o) => o.slot === 'personalize')?.summary?.violation;
+    const v = violationOf(result, 'personalize');
     expect(v).toEqual({ kind: 'unmanaged-create', paths: ['.cache/stray.json'] });
   }, 30_000);
 
@@ -223,7 +236,7 @@ describe('runHooks — write-boundary detection', () => {
     );
     // A deleted managed file lands in rehash.missing, not changed — it must
     // still surface as a managed-write boundary crossing.
-    const v = result.outcomes.find((o) => o.slot === 'bootstrap')?.summary?.violation;
+    const v = violationOf(result, 'bootstrap');
     expect(v).toEqual({ kind: 'managed-write', paths: ['Home.md'] });
   }, 30_000);
 });
