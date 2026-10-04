@@ -18,7 +18,9 @@ const VaultPathSchema = z
   .refine((p) => !p.includes('\\'), 'Must use forward slashes')
   .refine((p) => !p.startsWith('/') && !/^[A-Za-z]:/.test(p), 'Must be relative to the vault')
   .refine((p) => !p.split('/').includes('..'), 'Must stay inside the vault')
-  .refine((p) => p.split('/')[0] !== '.shardmind', 'Must not be under .shardmind/');
+  // Written as it is tracked: `./a.md`, `a//b.md` or `b/` never match a path.
+  .refine((p) => p.split('/').every((seg) => seg !== '' && seg !== '.'), 'Must be a plain path: no empty or "." segments, no trailing slash')
+  .refine((p) => !['.shardmind', '.git'].includes(p.split('/')[0]!.toLowerCase()), 'Must not be under .shardmind/ or .git/');
 
 const RenameMigrationSchema = z
   .object({

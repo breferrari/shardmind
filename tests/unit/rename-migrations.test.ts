@@ -27,6 +27,11 @@ describe('ShardManifestSchema migrations (#178)', () => {
     ['a path renamed to itself', [{ from: '5.1.0', to: '6.1.0', renames: { 'a.md': 'a.md' } }]],
     ['two old paths to one new path', [{ from: '5.1.0', to: '6.1.0', renames: { 'a.md': 'c.md', 'b.md': 'c.md' } }]],
     ['an empty path', [{ from: '5.1.0', to: '6.1.0', renames: { '': 'c.md' } }]],
+    ['a ./ prefix, which never matches a tracked path', [{ from: '5.1.0', to: '6.1.0', renames: { './a.md': 'b.md' } }]],
+    ['an empty segment', [{ from: '5.1.0', to: '6.1.0', renames: { 'a//b.md': 'b.md' } }]],
+    ['a trailing slash', [{ from: '5.1.0', to: '6.1.0', renames: { 'a.md': 'b/' } }]],
+    ['.shardmind/ in another case', [{ from: '5.1.0', to: '6.1.0', renames: { 'a.md': '.ShardMind/b.md' } }]],
+    ['a path under .git/', [{ from: '5.1.0', to: '6.1.0', renames: { 'a.md': '.git/b.md' } }]],
   ])('rejects %s', (_label, migrations) => {
     expect(parse(migrations).success).toBe(false);
   });

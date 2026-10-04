@@ -10,6 +10,7 @@ import path from 'node:path';
 import semver from 'semver';
 import type { DriftEntry, DriftReport, RenameMigration, ShardState } from '../runtime/types.js';
 import { mapConcurrent } from './fs-utils.js';
+import { isEnoent } from '../runtime/errno.js';
 
 /**
  * Old path → new path for an update from `installed` to `target`. A
@@ -52,9 +53,11 @@ export interface AppliedRenames {
 /**
  * Re-key the state and drift an update plans from, so each renamed file is
  * planned at its new path (#178). A rename applies only when its old path is
- * tracked, its new path is untracked, produced by the new shard, claimed by
- * no other rename, and free on disk; otherwise it is dropped and the update
- * removes and adds as it would without it. Reads the disk, writes nothing.
+ * tracked and no longer shipped, its new path is untracked, produced by the
+ * new shard, claimed by no other rename, and free on disk; otherwise it is
+ * dropped and the update removes and adds as it would without it. A new path
+ * another rename vacates in the same update counts as taken. Reads the disk,
+ * writes nothing.
  */
 export async function applyRenames(input: {
   vaultRoot: string;
@@ -65,13 +68,20 @@ export async function applyRenames(input: {
 }): Promise<AppliedRenames> {
   const { vaultRoot, state, drift, renames, newPaths } = input;
   const candidates = [...renames].filter(
-    ([from, to]) => state.files[from] !== undefined && state.files[to] === undefined && newPaths.has(to),
+    ([from, to]) =>
+      state.files[from] !== undefined &&
+      state.files[to] === undefined &&
+      newPaths.has(to) &&
+      // A shard that still ships the old path did not move it.
+      !newPaths.has(from),
   );
   const claims = new Map<string, number>();
   for (const [, to] of candidates) claims.set(to, (claims.get(to) ?? 0) + 1);
   const unique = candidates.filter(([, to]) => claims.get(to) === 1);
+  // Free means nothing there at all; any other error (a file where a
+  // folder should be, no access) keeps the old behaviour.
   const free = await mapConcurrent(unique, 16, async ([, to]) =>
-    fsp.lstat(path.join(vaultRoot, to)).then(() => false, () => true),
+    fsp.lstat(path.join(vaultRoot, to)).then(() => false, (err: unknown) => isEnoent(err)),
   );
   const newOf = new Map(unique.filter((_, i) => free[i]));
   const movedFrom = new Map([...newOf].map(([from, to]) => [to, from]));

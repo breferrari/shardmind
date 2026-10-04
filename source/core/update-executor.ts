@@ -196,6 +196,17 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     // progress but don't actually write. Counting only write-actions
     // would under-count total and let `index` overshoot 100% on the
     // progress bar.
+    // A rename's new path is introduced by this run, whichever pass fills it:
+    // registered before any write, so a failure or Ctrl+C mid-pass removes it
+    // (#178).
+    if (!dryRun) {
+      for (const action of plan.actions) {
+        if (action.renamedFrom === undefined) continue;
+        addedPaths.push(action.path);
+        onFileTouched?.(action.path, true);
+      }
+    }
+
     const progressTotal = plan.actions.filter(actionEmitsProgress).length;
     onProgress?.({ kind: 'start', total: progressTotal });
 
@@ -241,7 +252,6 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       if (action.renamedFrom === undefined) continue;
       await completeRename(action, action.renamedFrom, {
         vaultRoot,
-        conflictResolutions,
         nextFiles,
         summary,
         addedPaths,
@@ -619,7 +629,6 @@ async function completeRename(
   from: string,
   ctx: {
     vaultRoot: string;
-    conflictResolutions: Record<string, ConflictResolution>;
     nextFiles: Record<string, FileState>;
     summary: UpdateSummary;
     addedPaths: string[];
@@ -627,21 +636,33 @@ async function completeRename(
   },
 ): Promise<void> {
   const to = action.path;
-  const wroteNewPath =
-    action.kind === 'overwrite' ||
-    action.kind === 'auto_merge' ||
-    action.kind === 'restore_missing' ||
-    (action.kind === 'conflict' && (ctx.conflictResolutions[to] ?? 'keep_mine') === 'accept_new');
+  // What the write pass did, not a re-derivation of it.
+  const wroteNewPath = ctx.summary.wroteFiles.includes(to);
   if (!ctx.dryRun) {
     const fromAbs = path.join(ctx.vaultRoot, from);
     const toAbs = path.join(ctx.vaultRoot, to);
     if (wroteNewPath) {
       await fsp.rm(fromAbs, { force: true });
     } else {
+      // Planned free; something may have arrived during the prompts. Never
+      // move over it, and keep it out of the rollback's removals.
+      if (await pathExists(toAbs)) {
+        const i = ctx.addedPaths.lastIndexOf(to);
+        if (i >= 0) ctx.addedPaths.splice(i, 1);
+        throw new ShardMindError(
+          `A file appeared at '${to}' while the update was planned, where '${from}' was to move`,
+          'UPDATE_WRITE_FAILED',
+          `Move or remove '${to}', then run \`shardmind update\` again.`,
+        );
+      }
       await fsp.mkdir(path.dirname(toAbs), { recursive: true });
-      await fsp.rename(fromAbs, toAbs);
+      try {
+        await fsp.rename(fromAbs, toAbs);
+      } catch (err) {
+        // A volatile file the user deleted: its state moves, there is no file to.
+        if (!isEnoent(err)) throw err;
+      }
     }
-    ctx.addedPaths.push(to);
   }
   // An action that wrote or re-recorded the new path set its own entry;
   // otherwise the old entry moves across, under the new template keys.
@@ -687,8 +708,11 @@ async function snapshotForRollback(
       case 'keep_as_user':
         break;
     }
-    // A rename deletes or moves its old path (#178).
-    if (action.renamedFrom !== undefined) toSnapshot.add(action.renamedFrom);
+    // A rename deletes or moves its old path, and fills its new one (#178).
+    if (action.renamedFrom !== undefined) {
+      toSnapshot.add(action.renamedFrom);
+      toSnapshot.add(action.path);
+    }
   }
 
   const filesBackupDir = path.join(backupDir, 'files');

@@ -123,7 +123,12 @@ describe('update applies rename migrations (#178)', () => {
   }
 
   /** One update as the machine runs it, resolving every conflict as `resolution`. */
-  async function update(shardDir: string, resolution: ConflictResolution = 'keep_mine', dryRun = false) {
+  async function update(
+    shardDir: string,
+    resolution: ConflictResolution = 'keep_mine',
+    dryRun = false,
+    beforeRun?: () => Promise<void>,
+  ) {
     const state = (await readState(vault)) as ShardState;
     const values = parseYaml(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')) as Record<string, unknown>;
     const manifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
@@ -147,6 +152,7 @@ describe('update applies rename migrations (#178)', () => {
       removedFileDecisions: {},
     });
     const conflictResolutions = Object.fromEntries(plan.pendingConflicts.map((c) => [c.path, resolution]));
+    await beforeRun?.();
     const result = await runUpdate({
       vaultRoot: vault,
       plan,
@@ -367,6 +373,75 @@ describe('update applies rename migrations (#178)', () => {
     const { result } = await update(v2);
     expect(result.summary.renamedFiles).toEqual([]);
     expect(await read('AGENTS.md')).toBe('Already here.\n');
+  });
+
+  it('restores a volatile file the user deleted at the new path, without failing', async () => {
+    const v1 = await shardAt('0.1.0', { edits: { 'log.md.njk': () => `${VOLATILE_MARKER}\nStarts empty.\n` } });
+    await install(v1);
+    await fsp.rm(path.join(vault, 'log.md'));
+    const v2 = await shardAt('0.2.0', {
+      from: v1,
+      moves: { 'log.md.njk': 'logs/log.md.njk' },
+      migrations: `  - from: "0.1.0"\n    to: "0.2.0"\n    renames:\n      "log.md": "logs/log.md"\n`,
+    });
+    await update(v2);
+    // Missing, so restored there from the template, as without a rename.
+    expect(await read('logs/log.md')).toContain('Starts empty.');
+    expect((await files())['log.md']).toBeUndefined();
+  });
+
+  it('drops a rename whose old path the new shard still ships', async () => {
+    await install();
+    await write(COPY, 'My edit.\n');
+    const v2 = await shardAt('0.2.0', {
+      edits: { 'AGENTS.md': () => 'Agents.\n' },
+      migrations: `  - from: "0.1.0"\n    to: "0.2.0"\n    renames:\n      "${COPY}": "AGENTS.md"\n`,
+    });
+    const { result } = await update(v2);
+    expect(result.summary.renamedFiles).toEqual([]);
+    expect(await read(COPY)).toBe('My edit.\n');
+    expect(await read('AGENTS.md')).toBe('Agents.\n');
+  });
+
+  it('falls back when a file sits where the new path needs a folder', async () => {
+    await install();
+    await write('notes', 'a file, not a folder\n');
+    const v2 = await shardAt('0.2.0', {
+      moves: { [COPY]: 'notes/AGENTS.md' },
+      migrations: `  - from: "0.1.0"\n    to: "0.2.0"\n    renames:\n      "${COPY}": "notes/AGENTS.md"\n`,
+    });
+    const { result } = await update(v2).catch((e: unknown) => ({ result: { summary: { renamedFiles: ['threw'] } }, e }));
+    expect(result.summary.renamedFiles).not.toContainEqual({ from: COPY, to: 'notes/AGENTS.md' });
+  });
+
+  it('refuses to move over a file that appeared at the new path after planning, and keeps it', async () => {
+    await install();
+    await write(COPY, 'My edit.\n');
+    const v2 = await moveCopy('0.2.0');
+    // Something creates the new path between the plan and the run.
+    const arrive = () => fsp.writeFile(path.join(vault, 'AGENTS.md'), 'Arrived meanwhile.\n', 'utf-8');
+    await expect(update(v2, 'keep_mine', false, arrive)).rejects.toMatchObject({ code: 'UPDATE_WRITE_FAILED' });
+    expect(await read('AGENTS.md')).toBe('Arrived meanwhile.\n');
+    expect(await read(COPY)).toBe('My edit.\n');
+  });
+
+  it('a failure later in the write pass removes a new path already written', async () => {
+    await install();
+    const note = await read(NOTE);
+    await write(NOTE, note.replace('## Goals\n\n-', '## Goals\n\n- Ship v6'));
+    const v2 = await moveNote('0.2.0', {
+      'brain/Guiding Star.md.njk': (src) => src.replace('# North Star', '# Guiding Star'),
+      'zz-new.md.njk': () => 'Added in 0.2.0.\n',
+    });
+    const realWrite = fsp.writeFile;
+    vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (String(file).endsWith('zz-new.md')) throw new Error('disk full');
+      return realWrite(file, data, opts as Parameters<typeof realWrite>[2]);
+    });
+    await expect(update(v2)).rejects.toThrow(/zz-new\.md/);
+    vi.restoreAllMocks();
+    expect(await exists('brain/Guiding Star.md')).toBe(false);
+    expect(await read(NOTE)).toContain('- Ship v6');
   });
 
   it('without migrations, a moved file is removed and added as before', async () => {

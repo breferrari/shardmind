@@ -124,7 +124,7 @@ migrations:
       "brain/philosophy.md": "brain/manifesto.md"
 ```
 
-A rename applies to an update from installed version I to target T when `I < to ≤ T`; renames chain in `to` order (a→b at 6.1, then b→c at 6.2, gives a→c). It is skipped, and the update behaves as it would without it (the old file removed or kept, the new one added), when the old path is not tracked, the new path is already tracked or not produced by the new shard (an excluded module), anything already sits at the new path on disk, or two old paths chain to the same new path. Keep every past migration in `shard.yaml`: a user updating from an old release needs the whole chain.
+A rename applies to an update from installed version I to target T when `I < to ≤ T`; renames chain in `to` order (a→b at 6.1, then b→c at 6.2, gives a→c). It is skipped, and the update behaves as it would without it (the old file removed or kept, the new one added), when the old path is not tracked or the new shard still ships it, the new path is already tracked (even by a file another rename moves away in the same update) or not produced by the new shard (an excluded module), anything already sits at the new path on disk, or two old paths chain to the same new path. Paths are written as they are tracked: no `./`, empty or `.` segments, no trailing slash, nothing under `.shardmind/` or `.git/`. A case-only rename is #169. Keep every past migration in `shard.yaml`: a user updating from an old release needs the whole chain.
 
 ## 4. `shard-schema.yaml` — the schema
 
