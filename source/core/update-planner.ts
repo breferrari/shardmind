@@ -115,6 +115,12 @@ export type UpdateAction = (
    * path, or moves it there when nothing new is written.
    */
   renamedFrom?: string;
+  /**
+   * The new path's template keys, set with `renamedFrom`. An entry the
+   * executor moves as it is (no change, a volatile file) records them, so a
+   * later merge finds its base in the new shard's cache.
+   */
+  renamedKeys?: { templateKey: string; iteratorKey?: string };
 };
 
 /**
@@ -398,7 +404,11 @@ const WRITE_ACTIONS = new Set<UpdateAction['kind']>([
  */
 export function pathsTheUpdateTouches(actions: readonly UpdateAction[]): { writes: string[]; deletes: string[] } {
   const writes = actions.filter(
-    (a) => WRITE_ACTIONS.has(a.kind) || (a.kind === 'noop' && a.reason === ALREADY_NEW_VERSION),
+    (a) =>
+      WRITE_ACTIONS.has(a.kind) ||
+      (a.kind === 'noop' && a.reason === ALREADY_NEW_VERSION) ||
+      // A rename writes or moves into its new path, whatever the kind (#178).
+      a.renamedFrom !== undefined,
   );
   return {
     writes: writes.map((a) => a.path),
@@ -419,6 +429,9 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   const { vault, values, newShard, removedFileDecisions } = input;
   const { root: vaultRoot, state: currentState, drift } = vault;
   const movedFrom = vault.movedFrom ?? new Map<string, string>();
+  // `state` and `drift` are keyed by a renamed file's new path while its bytes
+  // are still at the old one (#178): every vault read goes through here.
+  const diskPathOf = (rel: string): string => movedFrom.get(rel) ?? rel;
   const { old: oldValues, new: newValues } = values;
   const {
     schema: newSchema,
@@ -555,8 +568,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
       }
 
       const [actualRead, oldBytes] = await Promise.all([
-        // A renamed file is still at its old path (#178).
-        readBytesAndHash(path.join(vaultRoot, movedFrom.get(entry.path) ?? entry.path)),
+        readBytesAndHash(path.join(vaultRoot, diskPathOf(entry.path))),
         readCachedTemplate(vaultRoot, fileState.template),
       ]);
       if (actualRead === null) {
@@ -784,7 +796,10 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
 
   for (const action of actions) {
     const from = movedFrom.get(action.path);
-    if (from !== undefined) action.renamedFrom = from;
+    const target = newByPath.get(action.path);
+    if (from === undefined || target === undefined) continue;
+    action.renamedFrom = from;
+    action.renamedKeys = targetKeys(target, newTempDir);
   }
 
   // Refuse before any prompt or `--json` plan, so a dry run reports what

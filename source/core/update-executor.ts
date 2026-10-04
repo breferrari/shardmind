@@ -643,8 +643,19 @@ async function completeRename(
     }
     ctx.addedPaths.push(to);
   }
+  // An action that wrote or re-recorded the new path set its own entry;
+  // otherwise the old entry moves across, under the new template keys.
   const previous = ctx.nextFiles[from];
-  if (ctx.nextFiles[to] === undefined && previous !== undefined) ctx.nextFiles[to] = previous;
+  if (ctx.nextFiles[to] === undefined && previous !== undefined) {
+    const keys = action.renamedKeys;
+    ctx.nextFiles[to] = keys
+      ? {
+          ...previous,
+          template: keys.templateKey,
+          ...(keys.iteratorKey === undefined ? {} : { iterator_key: keys.iteratorKey }),
+        }
+      : previous;
+  }
   delete ctx.nextFiles[from];
   ctx.summary.renamedFiles.push({ from, to });
 }

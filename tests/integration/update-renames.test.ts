@@ -190,7 +190,26 @@ describe('update applies rename migrations (#178)', () => {
     const state = await files();
     expect(state[COPY]).toBeUndefined();
     expect(state['AGENTS.md']?.ownership).toBe('managed');
+    // Recorded under the new template, so a later merge finds its base.
+    expect(state['AGENTS.md']?.template).toBe('AGENTS.md');
     expect(result.summary.renamedFiles).toEqual([{ from: COPY, to: 'AGENTS.md' }]);
+  });
+
+  it('merges a later edit into a moved file on the next update', async () => {
+    await install();
+    const v2 = await moveCopy('0.2.0');
+    await update(v2);
+    const moved = await read('AGENTS.md');
+    await write('AGENTS.md', moved.replace('# Minimal Shard', '# My Shard'));
+    const v3 = await shardAt('0.3.0', {
+      from: v2,
+      edits: { 'AGENTS.md': (src) => src.replace(COPY_LINE, 'Changed in 0.3.0.') },
+    });
+    const { plan } = await update(v3);
+    expect(plan.pendingConflicts).toEqual([]);
+    const merged = await read('AGENTS.md');
+    expect(merged).toContain('# My Shard');
+    expect(merged).toContain('Changed in 0.3.0.');
   });
 
   it('overwrites a managed file the shard changed, at the new path', async () => {
@@ -293,6 +312,7 @@ describe('update applies rename migrations (#178)', () => {
     await update(v2);
     expect(await exists('log.md')).toBe(false);
     expect(await read('logs/log.md')).toBe('My running log.\n');
+    expect((await files())['logs/log.md']?.template).toBe('logs/log.md.njk');
   });
 
   it('restores a file the user deleted at the new path', async () => {
@@ -301,6 +321,52 @@ describe('update applies rename migrations (#178)', () => {
     await update(await moveCopy('0.2.0'));
     expect(await read('AGENTS.md')).toContain(COPY_LINE);
     expect((await files())[COPY]).toBeUndefined();
+  });
+
+  it('refuses a rename whose new path lies under a symlinked folder (#163)', async (ctx) => {
+    await install();
+    const outside = path.join(root, 'outside');
+    await fsp.mkdir(outside);
+    try {
+      await fsp.symlink(outside, path.join(vault, 'linked'), 'dir');
+    } catch {
+      ctx.skip();
+    }
+    const v2 = await shardAt('0.2.0', {
+      moves: { [COPY]: 'linked/AGENTS.md' },
+      migrations: `  - from: "0.1.0"\n    to: "0.2.0"\n    renames:\n      "${COPY}": "linked/AGENTS.md"\n`,
+    });
+    await expect(update(v2)).rejects.toMatchObject({ code: 'VAULT_PATH_UNSAFE' });
+    expect(await fsp.readdir(outside)).toEqual([]);
+  });
+
+  it('drops both renames when two tracked files would move to one path', async () => {
+    const v1 = await shardAt('0.1.0', { edits: { 'NOTES.md': () => 'Notes.\n' } });
+    await install(v1);
+    const v3 = await shardAt('0.3.0', {
+      from: v1,
+      moves: { [COPY]: 'AGENTS.md' },
+      edits: { 'NOTES.md': null },
+      migrations:
+        `  - from: "0.1.0"\n    to: "0.2.0"\n    renames:\n      "${COPY}": "AGENTS.md"\n` +
+        `  - from: "0.2.0"\n    to: "0.3.0"\n    renames:\n      "NOTES.md": "AGENTS.md"\n`,
+    });
+    const { result } = await update(v3);
+    expect(result.summary.renamedFiles).toEqual([]);
+    expect(await read('AGENTS.md')).toContain(COPY_LINE);
+  });
+
+  it('falls back when the new path is already tracked', async () => {
+    const v1 = await shardAt('0.1.0', { edits: { 'AGENTS.md': () => 'Already here.\n' } });
+    await install(v1);
+    const v2 = await shardAt('0.2.0', {
+      from: v1,
+      edits: { [COPY]: null },
+      migrations: `  - from: "0.1.0"\n    to: "0.2.0"\n    renames:\n      "${COPY}": "AGENTS.md"\n`,
+    });
+    const { result } = await update(v2);
+    expect(result.summary.renamedFiles).toEqual([]);
+    expect(await read('AGENTS.md')).toBe('Already here.\n');
   });
 
   it('without migrations, a moved file is removed and added as before', async () => {
