@@ -1402,6 +1402,19 @@ Call sites, each before any prompt, move or write, and in dry runs too:
 
 The second check covers a link that appears while a prompt is open.
 
+### 4.21 `color-env.ts`
+
+Honours `NO_COLOR` (#37). Ink colours every `<Text color>` and `dimColor` through chalk, and chalk 5 reads `FORCE_COLOR` but ignores `NO_COLOR`. chalk resolves its level once, when it is first imported, so the rule is applied to the environment before that import.
+
+```typescript
+export function applyNoColor(env: NodeJS.ProcessEnv): void;
+```
+
+1. If `FORCE_COLOR` is set, even to an empty string, return. The explicit opt-in wins, and chalk reads it as before.
+2. If `NO_COLOR` is set to a non-empty value, set `env.FORCE_COLOR = '0'`, which chalk reads as level 0. An empty `NO_COLOR` does nothing (no-color.org).
+
+Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` loads `pastel` and `./cli-options.js` with `await import()` after it, because a static import would load Ink, and with it chalk, before any statement runs. Hook subprocesses inherit the resulting `FORCE_COLOR=0`. `--json` output is `JSON.stringify`, written outside Ink, and carries no ANSI whatever the environment.
+
 ---
 
 ## 5. Runtime Module: `shardmind/runtime`
