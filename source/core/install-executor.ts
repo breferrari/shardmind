@@ -312,10 +312,11 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   // so a rollback removes exactly what this install made (#207, #215, #258).
   // A folder an earlier write created exists by then, so it is never
   // reported twice.
+  const folderSeen = new Map<string, boolean>();
   const recordWrite = async (rel: string): Promise<void> => {
     // Every write is recorded first, so this is the one place to stop (#249).
     throwIfCancelled(signal);
-    for (const dir of await missingFolders(vaultRoot, [rel])) {
+    for (const dir of await missingFolders(vaultRoot, [rel], { seen: folderSeen })) {
       createdDirs.push(dir);
       onDirCreated?.(dir);
     }
@@ -436,9 +437,10 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
  * restore any backups. Removes only what this install made: never
  * `.shardmind/` wholesale, and never a folder the user already had (#215).
  * Best-effort: it never throws. It returns what it could not undo (#247):
- * each backup it could not move back, with where that backup still is, and
- * each file it wrote but could not remove, so the caller reports the
- * rollback as incomplete.
+ * each backup it could not move back, with where that backup still is,
+ * each file it wrote but could not remove, and each folder it created that
+ * `rmdir` refused for a reason other than holding files (#258), so the
+ * caller reports the rollback as incomplete.
  *
  * `createdDirs` is what `runInstall` reported through `onDirCreated`; only
  * those folders are removed, and only when empty.

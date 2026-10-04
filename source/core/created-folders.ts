@@ -15,7 +15,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
-import type { RollbackFailure } from './rollback-report.js';
+import { reasonOf, type RollbackFailure } from './rollback-report.js';
 
 /** Where a run that keeps a snapshot (update, adopt) records its list. */
 const FOLDERS_FILE = 'folders.json';
@@ -29,13 +29,19 @@ const FOLDERS_FILE = 'folders.json';
 export async function missingFolders(
   vaultRoot: string,
   paths: readonly string[],
-  opts: { folders?: readonly string[] } = {},
+  opts: { folders?: readonly string[]; seen?: Map<string, boolean> } = {},
 ): Promise<string[]> {
+  // A path that would leave the vault is never the run's to create or
+  // remove; the writes themselves are refused by the vault path guard.
   const chains = [
     ...paths.map((rel) => segmentsOf(rel).slice(0, -1)),
     ...(opts.folders ?? []).map(segmentsOf),
-  ];
-  const seen = new Map<string, boolean>();
+  ].filter((segments) => !segments.includes('..'));
+  // `seen` carries the answers across calls in one run (install asks per
+  // write): a folder judged existing or missing at its first sight keeps
+  // that answer, so one the run created is never reported twice, and one
+  // that existed is never reported as created even if it vanishes mid-run.
+  const seen = opts.seen ?? new Map<string, boolean>();
   const missing: string[] = [];
   for (const segments of chains) {
     let current = '';
@@ -54,9 +60,39 @@ export async function missingFolders(
   return missing.sort();
 }
 
-/** Keep the list in the run's snapshot folder, for its rollback. */
+/**
+ * Keep the list in the run's snapshot folder, for its rollback. Written
+ * whole through a temporary file, so a crash or a full disk never leaves a
+ * half-written record.
+ */
 export async function recordCreatedFolders(backupDir: string, folders: readonly string[]): Promise<void> {
-  await fsp.writeFile(path.join(backupDir, FOLDERS_FILE), JSON.stringify(folders), 'utf-8');
+  const record = path.join(backupDir, FOLDERS_FILE);
+  await fsp.writeFile(`${record}.tmp`, JSON.stringify(folders), 'utf-8');
+  await fsp.rename(`${record}.tmp`, record);
+}
+
+/** Where `recordCreatedFolders` keeps the list, for a failure that names it. */
+export function createdFoldersRecord(backupDir: string): string {
+  return path.join(backupDir, FOLDERS_FILE);
+}
+
+/**
+ * A snapshotted run's rollback step: remove the folders it recorded, once
+ * empty. An unreadable record is a failure naming the record itself
+ * (`recordPath`, vault-relative), never silence.
+ */
+export async function rollbackCreatedFolders(
+  vaultRoot: string,
+  backupDir: string,
+  recordPath: string,
+): Promise<RollbackFailure[]> {
+  let folders: string[];
+  try {
+    folders = await readCreatedFolders(backupDir);
+  } catch (err) {
+    return [{ path: recordPath, reason: `folder record unreadable: ${reasonOf(err)}` }];
+  }
+  return removeCreatedFolders(vaultRoot, folders);
 }
 
 /** The recorded list; none when nothing was recorded. An unreadable record throws. */
@@ -82,14 +118,16 @@ export async function readCreatedFolders(backupDir: string): Promise<string[]> {
  */
 export async function removeCreatedFolders(vaultRoot: string, folders: readonly string[]): Promise<RollbackFailure[]> {
   const failures: RollbackFailure[] = [];
-  const deepestFirst = [...new Set(folders.map((f) => segmentsOf(f).join('/')))].sort((a, b) => depth(b) - depth(a));
+  // An entry that would leave the vault (a hand-edited record) is skipped.
+  const inside = folders.map(segmentsOf).filter((segments) => segments.length > 0 && !segments.includes('..'));
+  const deepestFirst = [...new Set(inside.map((segments) => segments.join('/')))].sort((a, b) => depth(b) - depth(a));
   for (const rel of deepestFirst) {
     try {
       await fsp.rmdir(path.join(vaultRoot, rel));
     } catch (err) {
       const code = errnoCode(err);
       if (code === 'ENOENT' || code === 'ENOTEMPTY' || code === 'EEXIST') continue;
-      failures.push({ path: rel, reason: `remove failed: ${err instanceof Error ? err.message : String(err)}` });
+      failures.push({ path: rel, reason: `remove failed: ${reasonOf(err)}` });
     }
   }
   return failures;
@@ -105,7 +143,10 @@ async function isMissingFolder(absolute: string): Promise<boolean> {
 }
 
 function segmentsOf(rel: string): string[] {
-  return rel.split(/[\\/]/).filter((s) => s.length > 0);
+  // An absolute path keeps a leading empty or drive segment out, but is
+  // never inside the vault: marked with '..' so it is filtered.
+  if (path.isAbsolute(rel)) return ['..'];
+  return rel.split(/[\\/]/).filter((s) => s.length > 0 && s !== '.');
 }
 
 function depth(rel: string): number {

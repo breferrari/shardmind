@@ -7,6 +7,7 @@ import {
   recordCreatedFolders,
   readCreatedFolders,
   removeCreatedFolders,
+  rollbackCreatedFolders,
 } from '../../source/core/created-folders.js';
 
 describe('created folders (#258)', () => {
@@ -67,5 +68,65 @@ describe('created folders (#258)', () => {
     });
     const failures = await removeCreatedFolders(vault, ['busy']);
     expect(failures).toEqual([{ path: 'busy', reason: 'remove failed: simulated EBUSY' }]);
+  });
+
+  it('never records or removes a path that would leave the vault', async () => {
+    expect(await missingFolders(vault, ['a/../x.md', '../out/y.md', path.join(vault, 'abs', 'z.md')])).toEqual([]);
+    const outside = await fsp.mkdtemp(path.join(os.tmpdir(), 'created-outside-'));
+    const empty = path.join(outside, 'empty');
+    await fsp.mkdir(empty);
+    try {
+      expect(await removeCreatedFolders(vault, [path.relative(vault, empty), empty, 'a/..'])).toEqual([]);
+      expect((await fsp.stat(empty)).isDirectory()).toBe(true);
+      expect((await fsp.stat(vault)).isDirectory()).toBe(true);
+    } finally {
+      await fsp.rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('with a shared memo, reports a folder once and keeps a folder that existed at first sight as existing', async () => {
+    await fsp.mkdir(path.join(vault, 'kept'));
+    const seen = new Map<string, boolean>();
+    expect(await missingFolders(vault, ['made/a.md', 'kept/a.md'], { seen })).toEqual(['made']);
+    await fsp.mkdir(path.join(vault, 'made'));
+    // A folder that existed vanishes mid-run and the write makes it again.
+    await fsp.rmdir(path.join(vault, 'kept'));
+    expect(await missingFolders(vault, ['made/b.md', 'kept/b.md'], { seen })).toEqual([]);
+  });
+
+  it('writes the record whole, leaving no temporary file', async () => {
+    await recordCreatedFolders(vault, ['a']);
+    expect(await fsp.readdir(vault)).toEqual(['folders.json']);
+  });
+
+  it('rollbackCreatedFolders names the unreadable record by the path given', async () => {
+    await fsp.writeFile(path.join(vault, 'folders.json'), '{not json');
+    const failures = await rollbackCreatedFolders(vault, vault, '.shardmind/backups/adopt-1/folders.json');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]!.path).toBe('.shardmind/backups/adopt-1/folders.json');
+    expect(failures[0]!.reason).toMatch(/^folder record unreadable: /);
+  });
+});
+
+// On a case-folding filesystem a folder under another spelling exists.
+const caseFolds = await (async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'case-probe-'));
+  try {
+    await fsp.mkdir(path.join(dir, 'Probe'));
+    return await fsp.lstat(path.join(dir, 'probe')).then(() => true, () => false);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+})();
+
+describe.skipIf(!caseFolds)('created folders on a case-folding filesystem (#258)', () => {
+  it('counts a folder under another spelling as existing, never as created', async () => {
+    const vault = await fsp.mkdtemp(path.join(os.tmpdir(), 'created-case-'));
+    try {
+      await fsp.mkdir(path.join(vault, 'Notes'));
+      expect(await missingFolders(vault, ['notes/a.md'])).toEqual([]);
+    } finally {
+      await fsp.rm(vault, { recursive: true, force: true });
+    }
   });
 });

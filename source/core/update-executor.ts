@@ -21,9 +21,14 @@ import type {
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
-import { missingFolders, recordCreatedFolders, readCreatedFolders, removeCreatedFolders } from './created-folders.js';
+import {
+  createdFoldersRecord,
+  missingFolders,
+  recordCreatedFolders,
+  rollbackCreatedFolders,
+} from './created-folders.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
-import { pathExists, mapConcurrent } from './fs-utils.js';
+import { pathExists, mapConcurrent, toPosix } from './fs-utils.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { throwIfCancelled } from './run-cancel.js';
@@ -216,7 +221,15 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   try {
     if (!dryRun) {
       await snapshotForRollback(vaultRoot, plan, backupDir!);
-      await recordFolders(vaultRoot, touched, folderMoves, backupDir!);
+      // The folders on the way to every touched path that do not exist, and
+      // every new spelling of a folder renamed by case, so a rollback
+      // removes the ones the run created (#195, #258).
+      await recordCreatedFolders(
+        backupDir!,
+        await missingFolders(vaultRoot, [...touched.writes, ...touched.deletes], {
+          folders: folderMoves.map((move) => move.to),
+        }),
+      );
       // Report the backup dir to the caller before any writes happen,
       // once it holds the restore data. Progress only: the rollback is
       // this run's own catch (#249).
@@ -679,24 +692,6 @@ function folderChangesOf(pairs: ReadonlyArray<readonly [string, string]>): Array
   return [...byFrom.values()].sort((a, b) => a.from.split('/').length - b.from.split('/').length);
 }
 
-/**
- * Record, before any write, the folders on the way to every path the run
- * touches that do not exist, and every new spelling of a folder renamed by
- * case, so a rollback removes the ones the run created (#195, #258). One
- * mechanism with install and adopt (`created-folders.ts`).
- */
-async function recordFolders(
-  vaultRoot: string,
-  touched: ReturnType<typeof pathsTheUpdateTouches>,
-  folderMoves: ReadonlyArray<{ from: string; to: string }>,
-  backupDir: string,
-): Promise<void> {
-  const created = await missingFolders(vaultRoot, [...touched.writes, ...touched.deletes], {
-    folders: folderMoves.map((move) => move.to),
-  });
-  await recordCreatedFolders(backupDir, created);
-}
-
 async function snapshotForRollback(
   vaultRoot: string,
   plan: UpdatePlan,
@@ -815,11 +810,9 @@ export async function rollbackUpdate(
 
   // Folders the run created (a new file's folder, a rename's new folder on a
   // case-sensitive filesystem, #195), once nothing is left in them (#258).
-  try {
-    failures.push(...(await removeCreatedFolders(vaultRoot, await readCreatedFolders(backupDir))));
-  } catch (err) {
-    failures.push({ path: 'folders.json', reason: `folder record unreadable: ${reasonOf(err)}` });
-  }
+  failures.push(
+    ...(await rollbackCreatedFolders(vaultRoot, backupDir, toPosix(vaultRoot, createdFoldersRecord(backupDir)))),
+  );
 
   return failures;
 }

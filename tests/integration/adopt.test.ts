@@ -928,6 +928,17 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     expect(await fsp.readdir(path.join(vault, 'brain'))).toEqual([]);
   });
 
+  it('rollbackAdopt keeps the snapshot when its folder record cannot be read, and names the record (#258)', async () => {
+    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
+    await fsp.mkdir(path.join(backupDir, 'files'), { recursive: true });
+    await fsp.writeFile(path.join(backupDir, 'folders.json'), '{truncated');
+    const failures = await rollbackAdopt(vault, backupDir, []);
+    expect(failures).toContainEqual(
+      expect.objectContaining({ path: '.shardmind/backups/adopt-isolated/folders.json' }),
+    );
+    expect(await fsp.readFile(path.join(backupDir, 'folders.json'), 'utf-8')).toBe('{truncated');
+  });
+
   it('runAdopt with a zero-classification plan still writes engine metadata', async () => {
     // Pin the empty-plan path: a shard whose every file is excluded
     // ends up with `matches=[], differs=[], shardOnly=[]`. Adopt
