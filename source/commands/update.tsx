@@ -214,13 +214,12 @@ export default function Update({ options }: Props) {
           </Box>
         </CommandFrame>
       );
-    case 'error': {
+    case 'error':
       return (
         <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
           <ErrorView error={phase.error} detail={phase.detail} version={resolveEngineVersion()} />
         </CommandFrame>
       );
-    }
     default:
       return assertNever(phase);
   }
