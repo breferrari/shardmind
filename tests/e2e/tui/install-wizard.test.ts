@@ -201,6 +201,31 @@ describe.skipIf(skipOnWindows)(
       90_000,
     );
 
+    it(
+      'Ctrl+C at a later prompt (confirm) also exits 130 with nothing written (#155)',
+      async () => {
+        const vault = await makeVault('s155b');
+        const handle = await spawnCliPty(['install', SHARD_REF], {
+          cwd: vault,
+          env: { SHARDMIND_GITHUB_API_BASE: stub.url },
+        });
+        try {
+          // Every wizard step mounts a new prompt, so raw mode goes off and
+          // on between them: the observer must re-attach each time.
+          await driveMinimalWizard(handle, 'Frank');
+          handle.write(CTRL_C);
+
+          const exit = await handle.waitForExit();
+          expect(exit.timedOut).toBe(false);
+          expect(exit.exitCode).toBe(130);
+          expect(await fs.readdir(vault)).toEqual([]);
+        } finally {
+          await handle.dispose();
+        }
+      },
+      90_000,
+    );
+
     // ───── Scenario 11 — Confirm → Cancel → no vault writes ─────
 
     it(

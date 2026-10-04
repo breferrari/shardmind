@@ -22,17 +22,24 @@
  * SIGINT handler runs and a cancelled install exits 0. In a TTY the bridge
  * therefore observes the bytes Ink reads. It wraps `stdin.setRawMode` and
  * attaches a passive `data` listener only while raw mode is on, which is
- * exactly while Ink's `readable` listener is attached (Ink adds it right
- * after `setRawMode(true)` and removes it right before `setRawMode(false)`).
+ * which is the span Ink's `readable` listener is attached for: Ink adds it
+ * right after `setRawMode(true)` and removes it right after
+ * `setRawMode(false)` (ink/build/components/App.js, enable and
+ * `disableRawMode`). Either order is safe: a `data` listener only flows the
+ * stream when no `readable` listener is attached by the next tick.
  * With a `readable` listener present, Node emits `data` from inside each
  * `read()` and never switches the stream to flowing mode, so Ink still gets
  * every byte and the observer sees each chunk before Ink parses it. Outside
  * raw mode the kernel turns Ctrl+C into a real SIGINT, as before.
  *
  * Scope: this file is imported once at CLI startup and has no runtime
- * consumers beyond that. The listener stays alive for the lifetime of
- * the process; Node's default behavior on process exit cleans up the
- * stdin reference.
+ * consumers beyond that. In a pipe the listener stays alive for the
+ * lifetime of the process; in a TTY it comes and goes with raw mode.
+ *
+ * A second Ctrl+C forces exit 130 at once: the first starts the rollback
+ * handlers, which end in `exit(130)` themselves, and a second is the user
+ * escalating (a wrapper writing ETX again, or a rollback stuck on a held
+ * file), so it must not be swallowed or start a second rollback.
  */
 
 const ETX = 0x03;
@@ -73,10 +80,18 @@ export function attachStdinCancellation(stdin: StdinLike, deps: CancellationDeps
   // and `process.emit('SIGINT')` with zero listeners is a no-op that
   // violates the documented "Ctrl+C cancels cleanly" contract. If no
   // handler is present at emit time, exit 130 directly so cancellation is
-  // always observable to the parent.
+  // always observable to the parent. (While Ink is mounted, its
+  // signal-exit dependency always has a SIGINT listener, so in a TTY the
+  // fallback is in practice the pipe's.)
+  let cancelled = false;
   const onData = (chunk: Buffer | string): void => {
     // Buffers unless someone set an encoding on stdin; both have includes().
     if (!(typeof chunk === 'string' ? chunk.includes(ETX_CHAR) : chunk.includes(ETX))) return;
+    if (cancelled) {
+      deps.exit(130);
+      return;
+    }
+    cancelled = true;
     if (!deps.emitSigint()) deps.exit(130);
   };
 
@@ -84,12 +99,16 @@ export function attachStdinCancellation(stdin: StdinLike, deps: CancellationDeps
     // Observe only while raw mode is on (see the header). A `data` listener
     // left behind after Ink stops reading would switch the stream to
     // flowing mode on its own and swallow keystrokes typed before the next
-    // prompt mounts. Node's Readable does not emit `removeListener` events,
-    // so raw mode is the signal to follow, not Ink's listener.
+    // prompt mounts. Node's Readable does not emit `removeListener` events
+    // (measured on Node 22.14), so raw mode is the signal to follow, not
+    // Ink's listener.
     const setRawMode = stdin.setRawMode?.bind(stdin);
     if (!setRawMode) return;
     let observing = false;
     stdin.setRawMode = (mode: boolean) => {
+      // The real call first: if it throws (a hung-up terminal), nothing is
+      // left attached to flow the stream.
+      const result = setRawMode(mode);
       if (mode && !observing) {
         observing = true;
         stdin.on('data', onData);
@@ -97,7 +116,7 @@ export function attachStdinCancellation(stdin: StdinLike, deps: CancellationDeps
         observing = false;
         stdin.removeListener('data', onData);
       }
-      return setRawMode(mode);
+      return result;
     };
     return;
   }

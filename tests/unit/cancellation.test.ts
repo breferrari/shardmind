@@ -25,8 +25,8 @@ function fakeStdin(isTTY: boolean): FakeStdin {
 
 /**
  * Ink's raw-mode reader, in App.js's order: setRawMode(true), then add the
- * `readable` listener that drains `read()`; on stop, remove it, then
- * setRawMode(false).
+ * `readable` listener that drains `read()`; on stop (`disableRawMode`),
+ * setRawMode(false), then remove it.
  */
 function inkReader(stdin: FakeStdin, received: string[]): () => void {
   const onReadable = () => {
@@ -36,8 +36,8 @@ function inkReader(stdin: FakeStdin, received: string[]): () => void {
   stdin.setRawMode!(true);
   stdin.addListener('readable', onReadable);
   return () => {
-    stdin.removeListener('readable', onReadable);
     stdin.setRawMode!(false);
+    stdin.removeListener('readable', onReadable);
   };
 }
 
@@ -74,6 +74,31 @@ describe('attachStdinCancellation — TTY (raw mode, #155)', () => {
     expect(d.emitSigint).toHaveBeenCalledTimes(1);
     expect(d.exit).not.toHaveBeenCalled();
     expect(received.join('')).toBe(`ab${ETX}c`);
+  });
+
+  it('starts one rollback; a second Ctrl+C forces exit 130', async () => {
+    const stdin = fakeStdin(true);
+    const d = deps(true);
+    attachStdinCancellation(stdin, d);
+    inkReader(stdin, []);
+    stdin.push(ETX);
+    await tick();
+    expect(d.exit).not.toHaveBeenCalled();
+    stdin.push(ETX);
+    await tick();
+    expect(d.emitSigint).toHaveBeenCalledTimes(1);
+    expect(d.exit).toHaveBeenCalledWith(130);
+  });
+
+  it('attaches nothing when switching raw mode on throws', () => {
+    const stdin = fakeStdin(true);
+    stdin.setRawMode = () => {
+      throw new Error('EIO');
+    };
+    attachStdinCancellation(stdin, deps(true));
+    expect(() => stdin.setRawMode!(true)).toThrow('EIO');
+    expect(stdin.listenerCount('data')).toBe(0);
+    expect(stdin.readableFlowing).not.toBe(true);
   });
 
   it('exits 130 itself when no SIGINT handler is registered', async () => {

@@ -1657,7 +1657,7 @@ staying hermetic. No test reaches the public internet.
 - **Cross-platform SIGINT — production vs CI**: Node's `child.kill('SIGINT')`
   force-terminates on Windows instead of delivering a catchable signal.
   `source/core/cancellation.ts` compensates in the **production** CLI: it
-  installs a stdin listener in non-TTY mode that watches for the ETX byte
+  installs a stdin listener that watches for the ETX byte
   (`0x03`, the ASCII form of Ctrl+C) and calls `process.emit('SIGINT')`
   inside the child's own process — where every `process.on('SIGINT', ...)`
   handler, including `useSigintRollback`, fires exactly as it would on
@@ -1669,12 +1669,14 @@ staying hermetic. No test reaches the public internet.
   way to turn that off): no SIGINT handler ran, and a cancelled install
   exited 0. In a TTY the bridge wraps `stdin.setRawMode` and, only while
   raw mode is on, observes the bytes Ink reads through a passive `data`
-  listener. Ink's `readable` listener is attached for exactly that span,
-  and with one attached Node emits `data` from inside each `read()`
-  without switching the stream to flowing mode. Ink still receives every
+  listener. Ink adds its `readable` listener right after switching raw
+  mode on and removes it right after switching it off, so the two spans
+  match, and with a `readable` listener attached Node emits `data` from
+  inside each `read()` without switching the stream to flowing mode. Ink still receives every
   byte, keystrokes typed between prompts stay buffered, and on `0x03` the
-  bridge emits SIGINT (or exits 130 when no handler is registered). So
-  Ctrl+C exits 130 at any prompt. Outside raw mode the kernel delivers a
+  bridge emits SIGINT, which the rollback handlers answer with exit 130. So
+  Ctrl+C exits 130 at any prompt, and a second Ctrl+C forces exit 130 at
+  once. Outside raw mode the kernel delivers a
   real SIGINT, as before.
 
   The **test harness** delivers ETX on Windows and a real signal on POSIX.
