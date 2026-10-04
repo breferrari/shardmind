@@ -101,6 +101,43 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
     }
   }, 60_000);
 
+  it('an optional tool missing → the adopt completes and the summary lists it (#138)', async () => {
+    const { stub } = getCtx();
+    const vault = await makeVaultDir('s-adopt-tools-optional');
+    try {
+      const tarPath = await buildCustomTarball({
+        version: '0.1.0',
+        prefix: 'adopt-external-tools-optional-0.1.0',
+        manifestOverrides: {
+          hooks: {},
+          name: 'adopt-external-tools',
+          namespace: 'flowtest',
+          external_tools: {
+            'shardmind-no-such-tool': { package: 'no-such-tool', version: '>=1.0.0', command: 'shardmind-no-such-tool', optional: true },
+          },
+        },
+        outDir: vault,
+      });
+      stub.setRef(SLUG_TOOLS, 'v0.1.0-optional', STUB_SHA, tarPath);
+      const valuesFile = path.join(vault, 'values.yaml');
+      await fs.writeFile(valuesFile, stringifyYaml(DEFAULT_VALUES), 'utf-8');
+      const r = mountAdopt({
+        shardRef: `github:${SLUG_TOOLS}#v0.1.0-optional`,
+        vaultRoot: vault,
+        options: { yes: true, values: valuesFile },
+      });
+      const frame = await waitFor(
+        () => r.frames.join('\n'),
+        (f) => /Adopted flowtest\/adopt-external-tools/.test(f) && /shardmind-no-such-tool: not found on PATH/.test(f),
+        30_000,
+      );
+      expect(frame).toMatch(/External tools:/);
+      await expect(fs.access(path.join(vault, '.shardmind', 'state.json'))).resolves.toBeUndefined();
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
   afterEach(() => {
     cleanup();
     // A Ctrl+C sets a once-per-process latch (#155); reset it between tests (#249).
