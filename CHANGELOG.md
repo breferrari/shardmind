@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (`update --dry-run --json` that needs answers — #230)
+
+- **`update --dry-run --json` always answers with a document.** When the new version adds an optional module, or removes a file you edited, the run used to stop at a prompt that `--json` never shows and wrote nothing. It now fails with `UPDATE_JSON_NEEDS_ANSWERS`, naming the decision, and `--yes` answers it.
+
 ### Fixed (`--json` in a terminal — #198)
 
 - **`--json` writes one clean document in a terminal too.** `update`, `adopt` and `shardmind --json` used to wrap the document in invisible cursor codes when stdout was a terminal. A terminal now gets byte for byte what a pipe gets. Errors still go to stderr.

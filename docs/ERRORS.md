@@ -370,7 +370,7 @@ Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-fl
 
 ### `JSON_REQUIRES_DRY_RUN`
 
-**Meaning:** `--json` was passed without `--dry-run` on `adopt` or `update`. The JSON surface is currently the **plan** surface: the document is emitted at the dry-run decision point, before any prompt.
+**Meaning:** `--json` was passed without `--dry-run` on `adopt` or `update`. The JSON surface is currently the **plan** surface: the document is emitted at the dry-run decision point, before any conflict prompt. A decision the dry run itself would ask about fails with `UPDATE_JSON_NEEDS_ANSWERS` on update and `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES` on adopt.
 
 Allowing it on a real run would render no UI (the command renders nothing under `--json`) and emit no document, so the process would sit at a prompt nobody can answer and exit 0 — a silent no-op reporting success. The engine refuses instead.
 
@@ -480,6 +480,18 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 - `--include-prerelease` on a ref-installed vault — the widen flag tunes `/releases` filtering, which ref installs don't use (they re-resolve `/commits/<ref>` instead).
 
 **Remedy:** Drop the conflicting flag. To switch a ref-installed vault to a tag pin, reinstall via `shardmind install <source>@<version>` (the explicit transition).
+
+### `UPDATE_JSON_NEEDS_ANSWERS`
+
+**Meaning:** `shardmind update --dry-run --json` reached decisions the update would ask you about, and `--json` cannot ask. The message names every pending decision, with every path (a JSON document is never capped) (#230):
+
+- **new optional modules**: the new version adds a removable module your install has never chosen;
+- **removed files you edited**: the new version drops files you modified;
+- **new required values**: the new schema requires values your `shard-values.yaml` lacks. Every value declares a default today, so this is unreachable with a valid schema.
+
+The run writes this as its one JSON failure document and exits 1, instead of writing nothing.
+
+**Remedy:** Add `--yes`, which includes new optional modules and keeps removed files you edited. For new required values, add them to `shard-values.yaml`; `--yes` cannot supply them either (`VALUES_MISSING`). Or run without `--json` to choose interactively.
 
 ### `UPDATE_CACHE_MISSING`
 

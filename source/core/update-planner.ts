@@ -246,6 +246,22 @@ export interface SchemaAdditions {
   dropped: string[];
 }
 
+/** Every count at zero: the start of a plan, and the whole of an up-to-date one (#230). */
+export function emptyUpdatePlanCounts(): UpdatePlanCounts {
+  return {
+    silent: 0,
+    overwritten: 0,
+    adopted: 0,
+    autoMerged: 0,
+    conflicts: 0,
+    volatile: 0,
+    added: 0,
+    deleted: 0,
+    keptAsUser: 0,
+    restored: 0,
+  };
+}
+
 export function computeSchemaAdditions(
   newSchema: ShardSchema,
   currentSelections: ModuleSelections,
@@ -467,18 +483,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
 
   const actions: UpdateAction[] = [];
   const pendingConflicts: PendingConflict[] = [];
-  const counts: UpdatePlanCounts = {
-    silent: 0,
-    overwritten: 0,
-    adopted: 0,
-    autoMerged: 0,
-    conflicts: 0,
-    volatile: 0,
-    added: 0,
-    deleted: 0,
-    keptAsUser: 0,
-    restored: 0,
-  };
+  const counts = emptyUpdatePlanCounts();
 
   // A file whose template is volatile in the new shard is skipped like one
   // whose installed template was (drift's volatile bucket): a template that

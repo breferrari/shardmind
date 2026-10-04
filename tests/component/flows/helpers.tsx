@@ -236,6 +236,7 @@ export interface UpdateOptions {
   includePrerelease?: boolean;
   adoptPreexisting?: boolean;
   updateCheck?: boolean;
+  json?: boolean;
 }
 
 export function mountUpdate(opts: {
