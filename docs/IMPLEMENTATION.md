@@ -1858,13 +1858,15 @@ Files ShardMind wrote itself (its own helpers, `index.ts`, `LICENSE*`, `PROVENAN
 
 **`npm run vendor:check`** (`check.ts`): for every `source/*-kit/VENDOR.json`, compare `version` with npm's `dist-tags.latest` and list the kits behind. It also recomputes each file's `modified` (our bytes without the header, against upstream at `commit`) and reports a record that disagrees. It always exits 0. `--summary <file>` writes the report as Markdown; the weekly workflow `.github/workflows/vendor-check.yml` appends it to the job summary.
 
-**`npm run vendor:update <kit> <version> [--commit]`** (`update.ts`): base = upstream at the recorded `commit`; new = upstream at the new version's tag (`tagPattern`) commit. For each file in `files`:
+**`npm run vendor:update <kit> <version> [--commit "Name <email>"] [--resolved]`** (`update.ts`): base = upstream at the recorded `commit`; new = upstream at the new version's tag (`tagPattern`) commit. For each file in `files`:
 1. Ours (without its header) equal to base: take new. A clean update.
 2. Otherwise `threeWayMerge(base, ours, new)` (§4.9). With no conflict, the merge is written. With conflicts, the merge is written with its markers relabelled `<<<<<<< shardmind` / `>>>>>>> <package>@<version>`, and the file is listed.
 3. An `upstream` path the new version no longer has is listed as a conflict and left as it is. Files the new version adds are listed, never added.
-4. Each file written gets the new version's header.
+4. Each file written gets the new version's header when the update completes. A run with a conflict keeps every header as the record describes it, so `vendor:check` still reads the kit.
 
-The record advances (`version`, `tag`, `commit`, `tarball`, each `modified`) only when no file conflicted; otherwise the command exits 1 with the list. `--commit` makes the two commits the original vendoring had: the new upstream as-is (with headers and the advanced record), then ShardMind's changes re-applied. Upstream access goes through an `UpstreamSource` (npm metadata, tag → commit, repository at a commit), so tests use fixture upstreams on disk and never the network.
+The record advances (`version`, `tag`, `commit`, `tarball`, each `modified`) only when no file conflicted; otherwise the command exits 1 with the list. Text is read as LF, so a CRLF checkout is not a change on every line. `--commit` makes the two commits the original vendoring had: the new upstream as-is (with headers and the advanced record), then ShardMind's changes re-applied, the second skipped when nothing of ShardMind's is left. It refuses to start unless the kit and the index are clean, and commits the kit's paths only.
+
+**Finishing a conflicted update: `--resolved`.** A re-run cannot finish it: a resolution that keeps ShardMind's line conflicts with the old base again. After a person resolves the markers, `vendor:update <kit> <version> --resolved` takes each file as it stands and advances the record: `modified` is whether the file differs from the new upstream, a file's `change` is kept, and each file gets the new header. It refuses a file that still holds a marker, a file the new version no longer has (drop it from the kit and `VENDOR.json` first), and `--commit`. Upstream access goes through an `UpstreamSource` (npm metadata, tag → commit, repository at a commit), so tests use fixture upstreams on disk and never the network.
 
 ## 5. Runtime Module: `shardmind/runtime`
 
