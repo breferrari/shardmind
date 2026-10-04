@@ -1650,7 +1650,7 @@ Ink decides the first from `stdout.isTTY` (`interactive` defaults to `!isInCi &&
 
 The second is decided where the prompt is decided, not by faking stdin. Ink derives `isRawModeSupported` from `stdin.isTTY`, but marking stdin non-interactive would send the stdin SIGINT bridge (`core/cancellation.ts`) down its pipe path on a real terminal. A backgrounded run would then get SIGTTIN and stop, and type-ahead would be swallowed. Instead, a machine with a `--json` mode treats `json` like a missing terminal at its prompt decision:
 - adopt: `!isRawModeSupported || json` refuses with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`, or uses `--values`, exactly as piped;
-- update: #230.
+- update: a prompt it would show (a new required value, a new optional module, a removed file to keep or delete) refuses with `UPDATE_JSON_NEEDS_ANSWERS`, naming every pending decision. `--yes` answers the module and removed-file decisions as it does piped; a new required value has to be added to `shard-values.yaml` (#230).
 
 A throw that escapes every command (#225) also answers on stdout under `--json`. The top-level crash handler in `cli.ts` is given `writeJson` for a run `isJsonRun` accepts, and it writes one failure document (`ok: false`, `code: null`, the `stack`) before the plain-text report on stderr. The exit waits for both streams to drain. `json-output.ts` is loaded after the handlers are installed, and a failure to load it, or a throw while writing, still leaves the stderr report and exit 1. A run that already wrote its document (`jsonEmitted()`) gets no second one. For `validate --json` this covers a crash outside its runner, which catches its own errors. A `--json` caller never gets an empty stdout, and a terminal gets the same document as a pipe.
 

@@ -108,10 +108,8 @@ describe.skipIf(process.platform === 'win32')('--json in a real terminal (#198)'
     const { piped, terminal } = await bothWays(vault.root, args);
     expect(terminal).not.toContain(ESC);
     expect(terminal).toBe(piped);
-    // An up-to-date `update --dry-run --json` writes no document until #230
-    // lands (only Ink's trailing newline, #231); identity with the piped run
-    // is what this asserts there.
-    if (terminal.trim() !== '') expect(() => JSON.parse(terminal)).not.toThrow();
+    // Every run here answers with a document, an up-to-date update included (#230).
+    expect(() => JSON.parse(terminal)).not.toThrow();
   }, 90_000);
 
   it.each([
