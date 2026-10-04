@@ -245,7 +245,9 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         // The cleanup is registered before the fetch, so a Ctrl+C during the
         // download removes the temp dir too (#57).
         const temp = await downloadShard(resolved.tarballUrl, (cleanup) => {
-          ctxCleanupRef.current = cleanup;
+          // A superseded run removes its own dir instead of taking the ref.
+          if (disposed) void cleanup().catch(() => {});
+          else ctxCleanupRef.current = cleanup;
         });
 
         setPhase({ kind: 'loading', message: 'Parsing manifest and schema…' });

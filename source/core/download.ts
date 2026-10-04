@@ -15,10 +15,12 @@ import {
 
 /**
  * Fetch and extract a shard tarball into a fresh temp dir. `onTempDir`
- * receives that dir's cleanup as soon as the dir exists, before the
- * fetch: a command's Ctrl+C handler can then remove it mid-download,
- * which `TempShard.cleanup`, only returned once the download finishes,
- * cannot (#57).
+ * receives the dir's cleanup as soon as the dir exists, before the fetch,
+ * so a command's Ctrl+C handler can remove it mid-download, which
+ * `TempShard.cleanup`, only returned once the download finishes, cannot
+ * (#57). That cleanup first aborts the fetch and the extraction and waits
+ * for them to stop, so the removal does not race tar still writing into
+ * the dir.
  */
 export async function downloadShard(
   tarballUrl: string,
@@ -26,8 +28,32 @@ export async function downloadShard(
 ): Promise<TempShard> {
   const tempDir = path.join(os.tmpdir(), `shardmind-${crypto.randomUUID()}`);
   await fs.mkdir(tempDir, { recursive: true });
-  onTempDir?.(() => cleanup(tempDir));
 
+  const controller = new AbortController();
+  let inFlight: Promise<unknown> = Promise.resolve();
+  const dispose = async (): Promise<void> => {
+    controller.abort();
+    await inFlight.catch(() => {});
+    await cleanup(tempDir);
+  };
+  try {
+    onTempDir?.(dispose);
+  } catch (err) {
+    await safeCleanup(tempDir);
+    throw err;
+  }
+
+  const work = fetchAndExtract(tarballUrl, tempDir, controller.signal, dispose);
+  inFlight = work;
+  return work;
+}
+
+async function fetchAndExtract(
+  tarballUrl: string,
+  tempDir: string,
+  signal: AbortSignal,
+  dispose: () => Promise<void>,
+): Promise<TempShard> {
   // Fetch tarball
   const headers: Record<string, string> = {
     'Accept': 'application/vnd.github+json',
@@ -38,7 +64,7 @@ export async function downloadShard(
 
   let response: Response;
   try {
-    response = await fetch(tarballUrl, { headers });
+    response = await fetch(tarballUrl, { headers, signal });
   } catch (err) {
     await safeCleanup(tempDir);
     const message = err instanceof Error ? err.message : String(err);
@@ -78,7 +104,7 @@ export async function downloadShard(
       },
     });
     const extractor = tar.x({ strip: 1, C: tempDir });
-    await pipeline(nodeStream, hashTap, extractor);
+    await pipeline(nodeStream, hashTap, extractor, { signal });
   } catch (err) {
     await safeCleanup(tempDir);
     const message = err instanceof Error ? err.message : String(err);
@@ -120,7 +146,7 @@ export async function downloadShard(
     manifest: manifestPath,
     schema: schemaPath,
     tarball_sha256: hasher.digest('hex'),
-    cleanup: () => cleanup(tempDir),
+    cleanup: dispose,
   };
 }
 
@@ -134,7 +160,8 @@ function isGitHubUrl(url: string): boolean {
 }
 
 async function cleanup(dir: string): Promise<void> {
-  await fs.rm(dir, { recursive: true, force: true });
+  // Retries ride out a Windows handle the aborted extraction is still closing.
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 }
 
 async function safeCleanup(dir: string): Promise<void> {
