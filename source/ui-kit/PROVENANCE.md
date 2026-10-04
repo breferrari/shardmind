@@ -9,7 +9,7 @@
    - #273: `components/alert`, `components/badge`, `components/progress-bar`, `components/spinner`, `components/status-message`.
 2. Adapted to stand alone:
    - `theme.tsx` holds only these components, with no `deepmerge` and no `any`;
-   - `figures` became `lib/figures.ts`: the glyphs the components draw, with `is-unicode-supported`'s rule for falling back;
+   - `figures` became `lib/figures.ts`: the glyphs the components draw, with `is-unicode-supported` 2.1.0's rule for falling back. The rule is a copy, so a terminal upstream adds later has to be added here by hand;
    - `cli-spinners` became `lib/spinners.ts`: the `dots` frames. `SpinnerName` is the union of its keys, so a new frame set is a non-breaking widening;
    - `TextInput` renders its cursor and placeholder as Ink `Text` segments instead of `chalk` strings;
    - the theme parameters are typed;

@@ -54,11 +54,28 @@ describe('ui-kit ProgressBar', () => {
   });
 });
 
-describe('ui-kit glyphs without Unicode', () => {
+const UNICODE = { tick: '✔', cross: '✘', warning: '⚠', info: 'ℹ', pointer: '❯' };
+const ASCII_FALLBACK = { tick: '√', cross: '×', warning: '‼', info: 'i', pointer: '>' };
+
+describe('ui-kit glyphs', () => {
+  // The golden frames take their glyphs from lib/figures.ts, so these pin
+  // the glyphs themselves to what figures 6 draws.
+  it.skipIf(process.platform === 'win32')("are figures' Unicode set on a Unicode terminal", async () => {
+    vi.stubEnv('TERM', 'xterm-256color');
+    const { figures } = await import('../../source/ui-kit/lib/figures.js');
+    expect(figures).toMatchObject(UNICODE);
+  });
+
+  it.runIf(process.platform === 'win32')("are figures' Unicode set in Windows Terminal", async () => {
+    vi.stubEnv('WT_SESSION', '1');
+    const { figures } = await import('../../source/ui-kit/lib/figures.js');
+    expect(figures).toMatchObject(UNICODE);
+  });
+
   it.skipIf(process.platform === 'win32')('falls back on the Linux console', async () => {
     vi.stubEnv('TERM', 'linux');
     const { figures } = await import('../../source/ui-kit/lib/figures.js');
-    expect(figures).toMatchObject({ tick: '√', cross: '×', warning: '‼', info: 'i', pointer: '>' });
+    expect(figures).toMatchObject(ASCII_FALLBACK);
   });
 
   it.runIf(process.platform === 'win32')('falls back on a Windows console that names no Unicode terminal', async () => {
@@ -66,6 +83,6 @@ describe('ui-kit glyphs without Unicode', () => {
       vi.stubEnv(name, '');
     }
     const { figures } = await import('../../source/ui-kit/lib/figures.js');
-    expect(figures).toMatchObject({ tick: '√', cross: '×', warning: '‼', info: 'i', pointer: '>' });
+    expect(figures).toMatchObject(ASCII_FALLBACK);
   });
 });

@@ -7,8 +7,9 @@
 import {type BoxProps, type TextProps} from 'ink';
 import {figures} from '../../lib/figures.js';
 import {type ComponentTheme} from '../../theme.js';
+import {type AlertProps} from './alert.js';
 
-type AlertVariant = 'info' | 'success' | 'error' | 'warning';
+type AlertVariant = AlertProps['variant'];
 
 const colorByVariant: Record<string, string> = {
 	info: 'blue',
