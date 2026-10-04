@@ -20,7 +20,8 @@ exitQuietlyWhenStdoutCloses(process);
 // left alone: the stdin SIGINT bridge reads a non-TTY stdin directly, which
 // on a real terminal would stop a backgrounded run (SIGTTIN).
 // The document keeps its single trailing newline: Ink's unmount would add
-// another (#231).
+// another (#231). Both are workarounds for a mounted Ink app; running these
+// commands headless, as `validate --json` runs below, would retire them.
 const jsonRun = isJsonRun(process.argv.slice(2));
 if (jsonRun) {
   markNonInteractive(process.stdout);

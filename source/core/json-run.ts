@@ -51,13 +51,14 @@ export function dropTrailingBlankWrites(stream: Pick<NodeJS.WritableStream, 'wri
   const write = stream.write.bind(stream) as Write;
   let wroteContent = false;
   const filtered: Write = (chunk, ...rest) => {
-    const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8');
-    if (wroteContent && text === '\n') {
+    const isNewline = typeof chunk === 'string' ? chunk === '\n' : chunk.length === 1 && chunk[0] === 0x0a;
+    if (wroteContent && isNewline) {
       const callback = rest.find((r): r is () => void => typeof r === 'function');
       callback?.();
       return true;
     }
-    if (text.trim() !== '') wroteContent = true;
+    // Decoded only until the document starts, not for every later write.
+    if (!wroteContent) wroteContent = (typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8')).trim() !== '';
     return write(chunk, ...rest);
   };
   // `write` is overloaded; the filter forwards every overload's arguments as is.
