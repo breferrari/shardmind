@@ -336,7 +336,7 @@ A template whose first non-whitespace content is `{# shardmind: volatile #}` ren
 
 ### `_each` templates
 
-A template whose output path contains `_each` renders once per entry of a list-typed value. The rendered filename uses the item's `slug` or `name` field for the path segment that replaces `_each`.
+A template whose output path contains `_each` renders once per entry of a list-typed value. The rendered filename replaces `_each` with the item itself when it is a string or number (what a `list` value entered in the wizard holds), or with an object item's `slug`, else its `name`, sanitized for the filesystem.
 
 ## 6. Hooks
 
