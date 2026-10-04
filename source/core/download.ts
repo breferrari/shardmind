@@ -35,10 +35,56 @@ export class DownloadCancelledError extends Error {
   }
 }
 
+/**
+ * Default extraction limits (#32). obsidian-mind v9.0.0 extracts to about
+ * 6.9 MB in 318 entries (measured 2026-10-04): these leave ~37x and ~300x
+ * headroom while stopping a decompression bomb well before it fills a disk.
+ */
+const DEFAULT_MAX_SHARD_BYTES = 256 * 1024 * 1024;
+const DEFAULT_MAX_SHARD_ENTRIES = 100_000;
+const SIZE_SUFFIX: Record<string, number> = { K: 1024, M: 1024 ** 2, G: 1024 ** 3 };
+
+interface ExtractionLimits {
+  bytes: number;
+  entries: number;
+}
+
+/**
+ * A limit from the environment, or `fallback` when the variable is unset. A
+ * set value that is not a positive whole number (with a `K`/`M`/`G` suffix
+ * where `withSuffix`) is refused, never ignored: a typo must not change or
+ * remove a limit silently.
+ */
+function readLimit(name: string, fallback: number, withSuffix: boolean): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const match = (withSuffix ? /^(\d+)([KMG])?$/i : /^(\d+)$/).exec(raw);
+  const value = match ? Number(match[1]) * (match[2] ? SIZE_SUFFIX[match[2].toUpperCase()]! : 1) : NaN;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new ShardMindError(
+      `${name} is not a valid limit: '${raw}'`,
+      'DOWNLOAD_LIMIT_INVALID',
+      withSuffix
+        ? `Set ${name} to a positive whole number of bytes, optionally with K, M or G (e.g. 1G), or unset it.`
+        : `Set ${name} to a positive whole number, or unset it.`,
+    );
+  }
+  return value;
+}
+
+function extractionLimits(): ExtractionLimits {
+  return {
+    bytes: readLimit('SHARDMIND_MAX_SHARD_SIZE', DEFAULT_MAX_SHARD_BYTES, true),
+    entries: readLimit('SHARDMIND_MAX_SHARD_ENTRIES', DEFAULT_MAX_SHARD_ENTRIES, false),
+  };
+}
+
 export async function downloadShard(
   tarballUrl: string,
   onTempDir?: (cleanup: () => Promise<void>) => void,
 ): Promise<TempShard> {
+  // Read first: an invalid override refuses before any network or disk work.
+  const limits = extractionLimits();
   const tempDir = path.join(os.tmpdir(), `shardmind-${crypto.randomUUID()}`);
   await fs.mkdir(tempDir, { recursive: true });
 
@@ -56,7 +102,7 @@ export async function downloadShard(
     throw err;
   }
 
-  const work = fetchAndExtract(tarballUrl, tempDir, controller.signal, dispose);
+  const work = fetchAndExtract(tarballUrl, tempDir, controller.signal, dispose, limits);
   inFlight = work;
   return work;
 }
@@ -66,6 +112,7 @@ async function fetchAndExtract(
   tempDir: string,
   signal: AbortSignal,
   dispose: () => Promise<void>,
+  limits: ExtractionLimits,
 ): Promise<TempShard> {
   // Disposed inside `onTempDir`, before any work: there is nothing to fetch.
   if (signal.aborted) throw new DownloadCancelledError();
@@ -119,11 +166,37 @@ async function fetchAndExtract(
         cb(null, chunk);
       },
     });
-    const extractor = tar.x({ strip: 1, C: tempDir });
+    // Count what each entry declares before its body is written (#32). The
+    // declared size is what extraction writes: a pax size override is applied
+    // to the header before the body is read, the body is consumed to exactly
+    // that size, and sparse entries are never written. So a small, highly
+    // compressed archive (a decompression bomb) stops before filling the disk.
+    let bytes = 0;
+    let entries = 0;
+    const extractor = tar.x({
+      strip: 1,
+      C: tempDir,
+      filter: (_path, entry) => {
+        entries += 1;
+        bytes += 'size' in entry ? entry.size : 0;
+        const tripped =
+          bytes > limits.bytes ? `${limits.bytes} bytes` : entries > limits.entries ? `${limits.entries} entries` : null;
+        if (tripped === null) return true;
+        extractor.abort(
+          new ShardMindError(
+            `Shard archive is larger than the limit of ${tripped}`,
+            'SHARD_TOO_LARGE',
+            'Raise SHARDMIND_MAX_SHARD_SIZE or SHARDMIND_MAX_SHARD_ENTRIES only for a shard you trust. See docs/ERRORS.md#shard_too_large.',
+          ),
+        );
+        return false;
+      },
+    });
     await pipeline(nodeStream, hashTap, extractor, { signal });
   } catch (err) {
     if (signal.aborted) throw new DownloadCancelledError();
     await safeCleanup(tempDir);
+    if (err instanceof ShardMindError && err.code === 'SHARD_TOO_LARGE') throw err;
     const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(
       `Downloaded archive is not a valid tarball: ${message}`,

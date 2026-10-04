@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { downloadShard } from '../../source/core/download.js';
+import * as tar from 'tar';
 
 const FIXTURE_TARBALL = path.resolve('tests/fixtures/shards/minimal-shard.tar.gz');
 
@@ -14,6 +15,11 @@ function createMockResponse(filePath: string, status = 200): Response {
       stream.on('data', (chunk: Buffer) => controller.enqueue(chunk));
       stream.on('end', () => controller.close());
       stream.on('error', (err) => controller.error(err));
+    },
+    // A consumer that stops reading (an aborted extraction) cancels the body,
+    // as fetch's does: stop the file stream so nothing enqueues after close.
+    cancel() {
+      stream.destroy();
     },
   });
   return new Response(webStream, {
@@ -232,5 +238,83 @@ describe('downloadShard', () => {
         process.env['GITHUB_TOKEN'] = originalToken;
       }
     }
+  });
+
+  describe('extraction limits (#32)', () => {
+    const savedLimits = {
+      SHARDMIND_MAX_SHARD_SIZE: process.env['SHARDMIND_MAX_SHARD_SIZE'],
+      SHARDMIND_MAX_SHARD_ENTRIES: process.env['SHARDMIND_MAX_SHARD_ENTRIES'],
+    };
+    afterEach(() => {
+      for (const [k, v] of Object.entries(savedLimits)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    });
+
+    /** A gzip tarball of a minimal shard plus `extra` files, laid out under one top folder. */
+    async function shardTarball(extra: Record<string, string | Buffer>): Promise<string> {
+      const work = await fs.mkdtemp(path.join(privateTmp, 'tarsrc-'));
+      const root = path.join(work, 'shard');
+      const files: Record<string, string | Buffer> = {
+        '.shardmind/shard.yaml': 'apiVersion: v1\nname: big\nnamespace: test\nversion: 0.1.0\n',
+        '.shardmind/shard-schema.yaml': 'schema_version: 1\nvalues: {}\ngroups: []\n',
+        ...extra,
+      };
+      for (const [rel, body] of Object.entries(files)) {
+        await fs.mkdir(path.dirname(path.join(root, rel)), { recursive: true });
+        await fs.writeFile(path.join(root, rel), body);
+      }
+      const file = path.join(work, 'shard.tar.gz');
+      await tar.c({ gzip: true, file, cwd: work }, ['shard']);
+      return file;
+    }
+
+    const leftovers = async () => (await fs.readdir(privateTmp)).filter((n) => n.startsWith('shardmind-'));
+
+    it('stops a tarball whose entries declare more bytes than the cap, and removes its temp dir', async () => {
+      process.env['SHARDMIND_MAX_SHARD_SIZE'] = '4K';
+      // 64 KiB of zeros: tiny compressed, over the cap extracted.
+      const file = await shardTarball({ 'big.bin': Buffer.alloc(64 * 1024) });
+      globalThis.fetch = vi.fn().mockResolvedValue(createMockResponse(file));
+      await expect(downloadShard('https://example.com/tarball')).rejects.toMatchObject({
+        code: 'SHARD_TOO_LARGE',
+        message: expect.stringMatching(/bytes/),
+      });
+      expect(await leftovers()).toEqual([]);
+    });
+
+    it('stops a tarball with more entries than the cap', async () => {
+      process.env['SHARDMIND_MAX_SHARD_ENTRIES'] = '5';
+      const many = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`notes/n${i}.md`, '']));
+      const file = await shardTarball(many);
+      globalThis.fetch = vi.fn().mockResolvedValue(createMockResponse(file));
+      await expect(downloadShard('https://example.com/tarball')).rejects.toMatchObject({
+        code: 'SHARD_TOO_LARGE',
+        message: expect.stringMatching(/entries/),
+      });
+      expect(await leftovers()).toEqual([]);
+    });
+
+    it('extracts a shard under the caps, including one raised with a suffix', async () => {
+      process.env['SHARDMIND_MAX_SHARD_SIZE'] = '1M';
+      const file = await shardTarball({ 'big.bin': Buffer.alloc(64 * 1024) });
+      globalThis.fetch = vi.fn().mockResolvedValue(createMockResponse(file));
+      const result = await downloadShard('https://example.com/tarball');
+      cleanupFns.push(result.cleanup);
+      expect((await fs.stat(path.join(result.tempDir, 'big.bin'))).size).toBe(64 * 1024);
+    });
+
+    it.each([['12abc'], ['-1'], ['0'], ['1.5M'], ['']])('refuses SHARDMIND_MAX_SHARD_SIZE=%j instead of ignoring it', async (value) => {
+      process.env['SHARDMIND_MAX_SHARD_SIZE'] = value;
+      globalThis.fetch = vi.fn().mockResolvedValue(createMockResponse(FIXTURE_TARBALL));
+      await expect(downloadShard('https://example.com/tarball')).rejects.toMatchObject({ code: 'DOWNLOAD_LIMIT_INVALID' });
+    });
+
+    it('refuses an invalid SHARDMIND_MAX_SHARD_ENTRIES', async () => {
+      process.env['SHARDMIND_MAX_SHARD_ENTRIES'] = '10K';
+      globalThis.fetch = vi.fn().mockResolvedValue(createMockResponse(FIXTURE_TARBALL));
+      await expect(downloadShard('https://example.com/tarball')).rejects.toMatchObject({ code: 'DOWNLOAD_LIMIT_INVALID' });
+    });
   });
 });
