@@ -963,6 +963,7 @@ buildStatusReport(
     verbose: boolean;
     now?: number;              // injectable clock for tests
     skipUpdateCheck?: boolean; // offline/CI mode
+    uncapped?: boolean;        // lift every list cap (`--json`, §10.3a)
   },
 ): Promise<StatusReport | null>
 ```
@@ -990,6 +991,7 @@ Returns `null` when the vault has no `.shardmind/state.json` — the "not in a s
 - `MAX_INVALID_VALUE_KEYS = 20` with `invalidCount` preserving the pre-cap total.
 - `FRONTMATTER_READ_CONCURRENCY = 16` (matches `SNAPSHOT_CONCURRENCY` in update-executor).
 - `MODIFIED_DIFF_CONCURRENCY = 8` for the per-file render + diff pass.
+- `uncapped: true` lifts the three list caps (and the 20-file cap on the per-modified-file diff), so `shardmind --json` lists every file. The concurrency bounds stay.
 
 **Deviations from the spec** (`docs/ARCHITECTURE.md §10.2–10.3`):
 - Flavor text like `"you added a custom section"` is rendered as a plain path without a natural-language summary — semantic diff of user edits would require an LLM. Numeric `+N/−M` counts **are** shipped.
