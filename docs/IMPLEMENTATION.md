@@ -1785,14 +1785,19 @@ Commands catch errors and render them in Ink with `StatusMessage variant="error"
 
 ### 7.2a Unexpected errors (#225)
 
-Every command's error view is one component, `components/ErrorView.tsx` (install, update, adopt, status and validate). A `ShardMindError` keeps its view: message, `code: <CODE>`, hint, and any detail. Anything else is an engine error:
+One classifier, `describeError(error, version, cwd)` (`core/bug-report.ts`), sorts every error a command shows into three kinds, and every surface renders from it: `components/ErrorView.tsx` (the error view of install, update, adopt, status and validate), `formatErrorPlain` (the top-level handler below), and `toJsonError` (`--json`).
 
-1. The message, then "This is a bug in shardmind. Please report it:" and a new-issue link built by `bugReportUrl(version)` (`core/bug-report.ts`).
-2. The stack, dimmed, printed locally only.
+| Kind | Which errors | Shown |
+|------|--------------|-------|
+| `known` | A `ShardMindError` | Message, `code: <CODE>`, hint, any detail. Unchanged. |
+| `environment` | A Node errno error the user's machine causes, not shardmind: `EACCES`, `EPERM`, `ENOSPC`, `EBUSY`, `EROFS`, `EMFILE`, and `ENOENT` on a path inside the working directory (the vault, which the user owns and can change under a running command) | Message (Node's names the operation and the path), `code: <ERRNO>`, a hint for that code. No bug framing, no link: telling a user to report a full disk is wrong, and it teaches them to ignore the prompt. |
+| `bug` | Anything else: an unrecognised errno code, an `ENOENT` outside the working directory (shardmind's own temp or cache), a raw `ZodError` (input validation should already have wrapped it in a `ShardMindError`; its arriving raw is the defect), a thrown non-`Error` | Message, "This is a bug in shardmind. Please report it:", a new-issue link from `bugReportUrl(version)`, and the stack, printed locally only. |
 
 The link carries the shardmind version (`?body=shardmind <version>`; the bare new-issue URL when the version cannot be read) and nothing from the error, so no value, vault path or file content can leave the machine through it; the user pastes the message and stack if they choose to. It is kept to about 70 characters on purpose: Ink wraps a line at the terminal width with real line breaks, and a link broken across lines can be neither clicked nor copied whole, so a title carrying the error's first line (which #225 allowed) would break the link on an 80-column terminal.
 
-`--json`: `error.stack` is the stack for an error that is not a `ShardMindError`, and `null` otherwise (additive; `schemaVersion` stays 1). The document stays free of terminal codes. The stack is not scrubbed: it can name local paths, so a caller that publishes the document (a CI log) should treat it as it would the terminal output. Nothing sends it anywhere.
+**Top level.** `cli.ts` runs the headless `--json` path and Pastel inside one `try`, and installs `uncaughtException` / `unhandledRejection` handlers first (`installCrashHandlers`). A throw that escapes every command (a command module that fails to load, a rejection nobody awaited) is printed by `formatErrorPlain` to stderr as plain text, the same three kinds without Ink (Ink may not be mounted), and the process exits 1. The SIGINT path is untouched: a Ctrl+C still exits 130 with no bug framing.
+
+`--json`: `error.stack` is the stack for a `bug`, and `null` otherwise (additive; `schemaVersion` stays 1). An `environment` error's `code` is its errno code (`EACCES`) and its `hint` is the table's; a `bug`'s `code` is `null`. The document stays free of terminal codes. The stack is not scrubbed: it can name local paths, so a caller that publishes the document (a CI log) should treat it as it would the terminal output. Nothing sends it anywhere.
 
 ### 7.3 Rollback on Install Failure
 
