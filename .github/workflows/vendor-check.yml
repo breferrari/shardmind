@@ -1,0 +1,25 @@
+# Weekly: are the vendored kits (source/*-kit) behind their upstream on npm? (#280)
+# Reports in the job summary and never fails: a kit behind is news, not a broken build.
+name: Vendor check
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run vendor:check -- --summary "$GITHUB_STEP_SUMMARY"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
