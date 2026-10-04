@@ -20,6 +20,7 @@ import {
 } from '../../source/commands/hooks/shared.js';
 import { ShardMindError } from '../../source/runtime/types.js';
 import { withRollbackFailures } from '../../source/core/rollback-report.js';
+import { withSigintHeld } from '../../source/core/editor.js';
 
 function Probe(props: { rollback: () => Promise<unknown>; cleanup: () => Promise<void> }) {
   useSigintRollback({ isActive: () => true, rollback: props.rollback, cleanup: props.cleanup });
@@ -121,6 +122,29 @@ describe('useSigintRollback', () => {
     await new Promise((r) => setImmediate(r));
     const written = stderr.mock.calls.map((c) => String(c[0])).join('');
     expect(written).toMatch(/\(the rollback\): stopped partway: EIO on the snapshot/);
+    expect(exit).toHaveBeenCalledWith(130);
+  });
+
+  it('a Ctrl+C while the editor holds SIGINT starts nothing, and later runs are not aborted (#50, #249)', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const rollback = vi.fn(async () => []);
+    render(<Probe rollback={rollback} cleanup={async () => {}} />);
+    await new Promise((r) => setImmediate(r));
+    // The editor runs inside withSigintHeld; a Ctrl+C there is absorbed.
+    withSigintHeld(() => {
+      process.emit('SIGINT');
+    });
+    // Listeners come back two turns later; the user returns and accepts.
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    expect(rollback).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+    expect(newRunAbort().signal.aborted).toBe(false);
+    // And a Ctrl+C after the editor still works.
+    process.emit('SIGINT');
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
     expect(exit).toHaveBeenCalledWith(130);
   });
 
