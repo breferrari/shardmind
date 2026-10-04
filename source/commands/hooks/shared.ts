@@ -14,7 +14,12 @@
 
 import type React from 'react';
 import { useEffect, useRef } from 'react';
-import { attemptRollback, formatRollbackFailures, type RollbackFailure } from '../../core/rollback-report.js';
+import {
+  attemptRollback,
+  formatRollbackFailures,
+  rollbackFailuresOf,
+  type RollbackFailure,
+} from '../../core/rollback-report.js';
 import {
   tailAtUtf8Boundary,
   summarizeHook,
@@ -161,4 +166,37 @@ export function resetSigintRollbackForTests(): void {
   sigintRollbackStarted = false;
   for (const handler of sigintHandlers) process.off('SIGINT', handler);
   sigintHandlers.clear();
+}
+
+/**
+ * A run that writes to the vault, as a Ctrl+C sees it (#249). The handler
+ * never rolls back while a run is in flight: it aborts `abort`, which the
+ * executor checks before every write, and awaits `done`, so the run's own
+ * rollback is the only one and starts after the writes have stopped.
+ */
+export interface RunInFlight {
+  readonly abort: AbortController;
+  /** Settles once the run and its rollback have finished, with what the rollback could not undo. */
+  readonly done: Promise<readonly RollbackFailure[]>;
+}
+
+/** Track a run whose own catch rolls back (update, adopt): `done` follows it. */
+export function trackRun(abort: AbortController, run: Promise<unknown>): RunInFlight {
+  return { abort, done: run.then(() => [], (err: unknown) => rollbackFailuresOf(err)) };
+}
+
+/** A run whose rollback the caller performs (install): settle `done` once it is over. */
+export function openRun(): RunInFlight & { settle: (failures: readonly RollbackFailure[]) => void } {
+  let settle!: (failures: readonly RollbackFailure[]) => void;
+  const done = new Promise<readonly RollbackFailure[]>((resolve) => {
+    settle = resolve;
+  });
+  return { abort: new AbortController(), done, settle };
+}
+
+/** The Ctrl+C rollback: stop the run in flight and wait for it and its rollback. */
+export async function stopRun(run: RunInFlight | null): Promise<readonly RollbackFailure[]> {
+  if (!run) return [];
+  run.abort.abort();
+  return run.done;
 }

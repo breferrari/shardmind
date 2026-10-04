@@ -53,12 +53,15 @@ import {
   type NewFilePlan,
 } from '../../core/update-planner.js';
 import { applyRenames, renamesBetween, type AppliedRenames } from '../../core/rename-migrations.js';
-import { runUpdate, rollbackUpdate, type UpdateSummary } from '../../core/update-executor.js';
+import { runUpdate, type UpdateSummary } from '../../core/update-executor.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
 import {
   appendHookOutput,
   useSigintRollback,
+  stopRun,
+  trackRun,
+  type RunInFlight,
 } from './shared.js';
 import { buildRenderContext } from '../../core/renderer.js';
 import { rollbackDetail } from '../../core/rollback-report.js';
@@ -184,9 +187,8 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
   phaseRef.current = phase;
 
   const ctxCleanupRef = useRef<(() => Promise<void>) | null>(null);
-  const backupDirRef = useRef<string | null>(null);
-  const writingRef = useRef(false);
-  const addedPathsRef = useRef<string[]>([]);
+  // The update in flight, which a Ctrl+C stops and waits for (#249).
+  const runRef = useRef<RunInFlight | null>(null);
   // AbortController that owns the currently-executing post-update hook.
   // Null when no hook is in flight. Ctrl+C in the running-hook phase
   // aborts the subprocess but does NOT roll the update back — by the
@@ -217,9 +219,9 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
   // download/plan phase would leak the extracted shard on disk.
   // What `rollbackUpdate` could not restore is printed before the exit (#247).
   useSigintRollback({
-    isActive: () => !dryRun && writingRef.current && backupDirRef.current !== null,
-    rollback: async () =>
-      backupDirRef.current ? rollbackUpdate(vaultRoot, backupDirRef.current, addedPathsRef.current) : [],
+    isActive: () => !dryRun && runRef.current !== null,
+    // runUpdate rolls back in its own catch once the abort stops it.
+    rollback: () => stopRun(runRef.current),
     cleanup: async () => {
       // Abort any in-flight post-update hook subprocess. Runs on every
       // Ctrl+C regardless of `isActive` — during the running-hook phase
@@ -603,12 +605,10 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       const history: string[] = [];
 
       setPhase({ kind: 'writing', total: 0, current: 0, label: 'Preparing…', history });
-      writingRef.current = true;
-      addedPathsRef.current = [];
-      backupDirRef.current = null;
 
       try {
-        const result = await runUpdate({
+        const abort = new AbortController();
+        const run = runUpdate({
           vaultRoot,
           plan,
           conflictResolutions: resolutions,
@@ -622,17 +622,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           newTempDir: ctx.newTempDir,
           dryRun,
           adoptPreexisting,
-          // Populate the refs EAGERLY so a mid-write SIGINT can actually
-          // find the backup dir and the list of paths to erase. The
-          // post-runUpdate assignment below still runs for the
-          // non-cancelled success path; these streaming callbacks make
-          // the same values available while the run is in flight.
-          onBackupReady: (dir) => {
-            backupDirRef.current = dir;
-          },
-          onFileTouched: (_outputPath, introduced) => {
-            if (introduced) addedPathsRef.current.push(_outputPath);
-          },
+          signal: abort.signal,
           onProgress: (ev) => {
             if (ev.kind === 'start') {
               setPhase((prev) =>
@@ -656,13 +646,14 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
             }
           },
         });
-        backupDirRef.current = result.backupDir;
+        runRef.current = trackRun(abort, run);
+        const result = await run;
 
         // State.json is now on disk — we're past the point-of-no-return.
-        // Clear the write guard BEFORE firing the hook so a SIGINT during
-        // hook execution can't walk the update back. The only remaining
-        // work (hook subprocess) is non-fatal per spec §9.3.
-        writingRef.current = false;
+        // Drop the run BEFORE firing the hook so a SIGINT during hook
+        // execution can't walk the update back. The only remaining work
+        // (hook subprocess) is non-fatal per spec §9.3.
+        runRef.current = null;
 
         // The orchestrator runs bootstrap (only if its fingerprint changed)
         // then post-update, builds per-slot context, applies the re-hash and
@@ -709,7 +700,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           backupDir: result.backupDir ? toPosix(vaultRoot, result.backupDir) : null,
         });
       } catch (err) {
-        writingRef.current = false;
+        runRef.current = null;
         finish({
           kind: 'error',
           error: err as Error,
