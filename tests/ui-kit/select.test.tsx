@@ -66,6 +66,28 @@ describe('ui-kit Select', () => {
     expect(onChange).toHaveBeenCalledWith('a');
   });
 
+  it('starts focused on the default, scrolled into view', async () => {
+    const onChange = vi.fn();
+    const { stdin, lastFrame } = render(
+      <Select options={OPTIONS} defaultValue="c" visibleOptionCount={2} onChange={onChange} />,
+    );
+    await tick();
+    expect(lastFrame()).toMatch(/[❯>] Gamma/);
+    expect(lastFrame()).not.toContain('Alpha');
+    stdin.write(ENTER);
+    await tick();
+    expect(onChange.mock.calls).toEqual([['c']]);
+  });
+
+  it('starts on the first option when the default is not an option', async () => {
+    const onChange = vi.fn();
+    const { stdin } = render(<Select options={OPTIONS} defaultValue="zz" onChange={onChange} />);
+    await tick();
+    stdin.write(ENTER);
+    await tick();
+    expect(onChange.mock.calls).toEqual([['a']]);
+  });
+
   it('fires onChange once per Enter, never again on a parent re-render (vadimdemedes/ink-ui#26)', async () => {
     const onChange = vi.fn();
     const r = render(<Select options={OPTIONS} onChange={(v) => onChange(v)} />);

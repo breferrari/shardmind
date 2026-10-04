@@ -232,12 +232,23 @@ const createDefaultState = ({
 
 	const optionMap = new OptionMap(options);
 
+	// Focus starts on the default and the window scrolls to show it
+	// (ShardMind fix): upstream always focused the first option, so Enter
+	// on an untouched prompt picked the first option, not the default.
+	const focused =
+		(defaultValue === undefined ? undefined : optionMap.get(defaultValue)) ??
+		optionMap.first;
+	const visibleFromIndex = Math.max(
+		0,
+		Math.min(focused?.index ?? 0, options.length - visibleOptionCount),
+	);
+
 	return {
 		optionMap,
 		visibleOptionCount,
-		focusedValue: optionMap.first?.value,
-		visibleFromIndex: 0,
-		visibleToIndex: visibleOptionCount,
+		focusedValue: focused?.value,
+		visibleFromIndex,
+		visibleToIndex: visibleFromIndex + visibleOptionCount,
 		previousValue: defaultValue,
 		value: defaultValue,
 	};
