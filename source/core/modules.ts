@@ -190,7 +190,9 @@ function classifyModule(relPath: string, schema: ShardSchema): string | null {
   if (segments.length >= 2) {
     const resourceType = getResourceType(segments[segments.length - 2]!.toLowerCase());
     if (resourceType !== null) {
-      const baseNoExt = segments[segments.length - 1]!.replace(/\.[^./]+$/, '');
+      // A rendered resource (`reflect.md.njk`) loses `.njk` before its own
+      // extension, so it gates by the same name as a plain one (#208).
+      const baseNoExt = segments[segments.length - 1]!.replace(/\.njk$/, '').replace(/\.[^./]+$/, '');
       for (const [moduleId, mod] of Object.entries(schema.modules)) {
         const list = mod[resourceType];
         if (list && list.includes(baseNoExt)) {

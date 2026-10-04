@@ -22,6 +22,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **A shard's tarball can no longer extract to an unbounded size.** Extraction stops at 256 MiB or 100,000 entries, counted before anything past the limit is written, so a small, highly compressed archive (a decompression bomb) cannot fill the disk. The error is `SHARD_TOO_LARGE`. For scale, obsidian-mind extracts to about 6.9 MB in 318 entries.
   - Raise the limits for a shard you trust with `SHARDMIND_MAX_SHARD_SIZE` (e.g. `1G`) or `SHARDMIND_MAX_SHARD_ENTRIES`. An invalid value is refused (`DOWNLOAD_LIMIT_INVALID`).
 
+### Fixed (templated commands and agents in a deselected module — #208)
+
+- **A command or agent rendered from a template (`.claude/commands/reflect.md.njk`) is no longer installed when its module is deselected.** It is gated by its name, as a plain `.md` command is.
+
 ### Fixed (NO_COLOR — #37)
 
 - **`NO_COLOR` now turns colour off in a terminal.** Any non-empty value works, per [no-color.org](https://no-color.org); an empty one does not. `FORCE_COLOR` still turns colour on, even when piped, and wins when both are set. `--help` output, and `--json` output read through a pipe, carry no colour codes. A hook's own colour codes are dropped from its displayed output when colour is off.

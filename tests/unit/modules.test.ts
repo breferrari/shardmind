@@ -267,6 +267,41 @@ describe('resolveModules — v6 shard-root walker', () => {
     }
   });
 
+  it('gates a templated command or agent (.md.njk) by its name (#208)', async () => {
+    const tmpShard = await makeTempShard('modules-templated-commands');
+    try {
+      await fs.mkdir(path.join(tmpShard, '.claude', 'commands'), { recursive: true });
+      await fs.mkdir(path.join(tmpShard, '.claude', 'agents'), { recursive: true });
+      await fs.writeFile(path.join(tmpShard, '.claude', 'commands', 'reflect.md.njk'), '# {{ user_name }}');
+      await fs.writeFile(path.join(tmpShard, '.claude', 'agents', 'scout.md.njk'), '# scout');
+      // A dotted name keeps its dots: only the extensions come off.
+      await fs.writeFile(path.join(tmpShard, '.claude', 'commands', 'v1.2.md'), '# v1.2');
+      const schema: ShardSchema = {
+        ...EMPTY_SCHEMA,
+        modules: {
+          extras: {
+            label: 'Extras',
+            paths: ['extras/'],
+            commands: ['reflect', 'v1.2'],
+            agents: ['scout'],
+            removable: true,
+          },
+        },
+      };
+      const excluded = await resolveModules(schema, { extras: 'excluded' }, tmpShard);
+      expect(excluded.skip.map((f) => f.outputPath)).toEqual(
+        expect.arrayContaining(['.claude/commands/reflect.md', '.claude/agents/scout.md', '.claude/commands/v1.2.md']),
+      );
+      expect(excluded.render.map((f) => f.outputPath)).toEqual([]);
+
+      const included = await resolveModules(schema, { extras: 'included' }, tmpShard);
+      expect(included.render.map((f) => f.outputPath).sort()).toEqual(['.claude/agents/scout.md', '.claude/commands/reflect.md']);
+      expect(included.render.every((f) => f.module === 'extras')).toBe(true);
+    } finally {
+      await fs.rm(tmpShard, { recursive: true, force: true });
+    }
+  });
+
   it('handles missing .shardmindignore + empty shard root gracefully', async () => {
     const tmpShard = await makeTempShard('modules-empty');
     try {
