@@ -110,6 +110,37 @@ describe('a bug no error view catches (#225)', () => {
     expect(terminal.stdout).toBe(piped.stdout);
   }, 60_000);
 
+  // validate --json runs headless and its runner catches its own errors; a
+  // crash before the runner (its module failing to load) still answers.
+  it('writes a crash outside the validate --json runner as one failure document on stdout', async () => {
+    await dist.setChunk('validate-shard', "throw new TypeError('boom loading validate');\n");
+    const piped = runCli(['validate', '--json']);
+    const terminal = runCli(['validate', '--json'], { tty: true });
+    expect(piped.status, piped.stderr).toBe(1);
+    const doc = JSON.parse(piped.stdout) as { ok: boolean; command: string; error: { code: null; stack: string } };
+    expect(doc).toMatchObject({ ok: false, command: 'validate', error: { code: null } });
+    expect(doc.error.stack).toContain('boom loading validate');
+    expect(terminal.status).toBe(1);
+    expect(terminal.stdout).not.toContain('\u001b');
+    expect(terminal.stdout).toBe(piped.stdout);
+  }, 60_000);
+
+  it('does not write a second document after a run already wrote one', async () => {
+    const jsonOutput = await dist.chunk('json-output');
+    await dist.setRootCommand(
+      [
+        `import { emitJson, jsonSuccess } from '../${jsonOutput}';`,
+        "emitJson(jsonSuccess('status', { early: true }));",
+        "throw new TypeError('boom after the document');",
+        '',
+      ].join('\n'),
+    );
+    const result = runCli(['--json']);
+    expect(result.status, result.stderr).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, result: { early: true } });
+    expect(result.stderr).toContain('boom after the document');
+  }, 60_000);
+
   it('keeps stdout empty for a crash in a run without --json', async () => {
     await dist.setRootCommand("throw new TypeError('boom without json');\n");
     const result = runCli(['update', '--dry-run']);

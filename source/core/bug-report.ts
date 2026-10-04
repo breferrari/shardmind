@@ -101,7 +101,11 @@ export function installCrashHandlers(
   const crash = (error: unknown): void => {
     if (crashed) return;
     crashed = true;
-    opts.writeJson?.(error);
+    try {
+      opts.writeJson?.(error);
+    } catch {
+      // The plain-text report and the exit below must still happen.
+    }
     opts.write(formatErrorPlain(error, opts.version));
     opts.exit(1);
   };

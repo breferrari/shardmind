@@ -22,16 +22,13 @@ if (jsonRun) markNonInteractive(process.stdout);
 // exits 130.
 const { installCrashHandlers } = await import('./core/bug-report.js');
 const { resolveEngineVersion } = await import('./commands/hooks/cli-version.js');
-// A --json caller reads stdout, so a --json run also answers there with a
-// failure document (#198). `validate --json` catches its own errors.
-const json = jsonRun ? await import('./core/json-output.js') : undefined;
 const crash = {
   // Read when needed (cached after the first read), not on every launch.
   get version() {
     return resolveEngineVersion();
   },
   write: (text: string) => void process.stderr.write(text),
-  writeJson: json && ((error: unknown) => json.emitJson(json.jsonFailure(json.jsonCommandOf(process.argv.slice(2)), error))),
+  writeJson: undefined as ((error: unknown) => void) | undefined,
   // Exit once stdout and stderr drain: a pipe write can still be queued
   // (Windows, macOS). The code is set first, so an exit elsewhere in the
   // meantime still fails.
@@ -41,6 +38,19 @@ const crash = {
   },
 };
 const reportCrash = installCrashHandlers(process, crash);
+
+// A --json caller reads stdout, so a crash in a --json run also answers there
+// with one failure document (#198), unless the run already wrote its document.
+// Loaded once the handlers are in place: if it cannot load, the plain-text
+// report on stderr still stands.
+if (jsonRun) {
+  const json = await import('./core/json-output.js').catch(() => undefined);
+  if (json) {
+    crash.writeJson = (error) => {
+      if (!json.jsonEmitted()) json.emitJson(json.jsonFailure(json.jsonCommandOf(process.argv.slice(2)), error));
+    };
+  }
+}
 
 try {
   // `<command> --json` for the commands listed here runs before Pastel loads

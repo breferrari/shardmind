@@ -10,12 +10,13 @@
  * `--json` themselves). Imports nothing, so `cli.ts` can load it statically.
  */
 
-// Commands whose `--json` runs through the Ink app. `validate --json` never
-// mounts Ink (#34), and install has no `--json`.
-const JSON_COMMANDS = new Set(['update', 'adopt']);
+// Commands with a `--json`. Install has none. `validate --json` never mounts
+// Ink (#34), so marking stdout changes nothing there; it is listed so a crash
+// outside its runner still answers on stdout (cli.ts).
+const JSON_COMMANDS = new Set(['update', 'adopt', 'validate']);
 
 /**
- * True for a `--json` run of update, adopt or the status command (no
+ * True for a `--json` run of update, adopt, validate or the status command (no
  * subcommand): `--json` before any `--`, and no help flag. (`--json=true` is
  * not a form Commander accepts for a boolean flag.)
  */

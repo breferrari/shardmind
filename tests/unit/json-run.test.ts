@@ -17,6 +17,7 @@ describe('isJsonRun', () => {
     [['update', '--dry-run', '--json']],
     [['adopt', 'github:acme/demo', '--dry-run', '--json']],
     [['--json', 'update', '--dry-run']],
+    [['validate', '--json']],
   ])('is a JSON run: %j', (argv) => {
     expect(isJsonRun(argv)).toBe(true);
   });
@@ -29,7 +30,6 @@ describe('isJsonRun', () => {
     [['update', '--json=false']],
     [['update', '--json=true', '--dry-run']],
     [['install', 'github:acme/demo', '--json']],
-    [['validate', '--json']],
     [['update', '--', '--json']],
   ])('is not a JSON run: %j', (argv) => {
     expect(isJsonRun(argv)).toBe(false);
@@ -39,7 +39,6 @@ describe('isJsonRun', () => {
 describe('every command with --json goes through the gate', () => {
   // A command that gains a `json` option must be a JSON run here, or its
   // --json in a terminal would get Ink's cursor codes and live prompts again.
-  // `validate --json` never mounts Ink (#34), so it is exempt.
   const commandsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../source/commands');
   // Any `json:` key declared through zod (`zod.` or `z.`), quoted or not, in
   // any command file at any depth; index.tsx is the status command.
@@ -47,11 +46,10 @@ describe('every command with --json goes through the gate', () => {
   const withJson = (fs.readdirSync(commandsDir, { recursive: true }) as string[])
     .filter((file) => file.endsWith('.tsx'))
     .filter((file) => declaresJson.test(fs.readFileSync(path.join(commandsDir, file), 'utf-8')))
-    .map((file) => file.replace(/\.tsx$/, '').split(path.sep).join('/'))
-    .filter((name) => name !== 'validate');
+    .map((file) => file.replace(/\.tsx$/, '').split(path.sep).join('/'));
 
   it('finds the --json commands', () => {
-    expect(withJson).toEqual(expect.arrayContaining(['index', 'update', 'adopt']));
+    expect(withJson).toEqual(expect.arrayContaining(['index', 'update', 'adopt', 'validate']));
   });
 
   it.each(withJson)('%s --json is a JSON run', (name) => {

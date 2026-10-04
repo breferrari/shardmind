@@ -13,7 +13,7 @@
  *      and unstable order makes run-to-run diffing useless.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   JSON_SCHEMA_VERSION,
   adoptPlanResult,
@@ -98,6 +98,14 @@ describe('json envelope', () => {
     expect(chunks[0]!.endsWith('\n')).toBe(true);
     expect(chunks[0]!.trimEnd().endsWith('}')).toBe(true);
     expect(() => JSON.parse(chunks[0]!)).not.toThrow();
+  });
+
+  it('remembers that a document went out, so a later crash does not write a second', async () => {
+    vi.resetModules();
+    const fresh = await import('../../source/core/json-output.js');
+    expect(fresh.jsonEmitted()).toBe(false);
+    fresh.emitJson(fresh.jsonSuccess('status', {}), () => {});
+    expect(fresh.jsonEmitted()).toBe(true);
   });
 });
 

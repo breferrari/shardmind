@@ -182,6 +182,23 @@ describe('installCrashHandlers (#225)', () => {
     expect(exits).toEqual([1]);
   });
 
+  it('still prints the report and exits 1 when writeJson itself throws', () => {
+    const proc = new EventEmitter();
+    const written: string[] = [];
+    const exits: number[] = [];
+    installCrashHandlers(proc, {
+      version: '0.1.9',
+      write: (s) => written.push(s),
+      writeJson: () => {
+        throw new Error('stdout is gone');
+      },
+      exit: (c) => exits.push(c),
+    });
+    proc.emit('uncaughtException', new TypeError('escaped'));
+    expect(written.join('')).toContain('escaped');
+    expect(exits).toEqual([1]);
+  });
+
   it('prints an unhandled rejection the same way', () => {
     const { proc, written, exits } = harness();
     proc.emit('unhandledRejection', new RangeError('nobody awaited'));
