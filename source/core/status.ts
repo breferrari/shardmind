@@ -102,6 +102,29 @@ export interface BuildStatusReportOptions {
    * paths that only need the local picture (e.g. CI-mode dashboards).
    */
   skipUpdateCheck?: boolean;
+  /**
+   * Lift every list cap (drift paths, invalid value keys, frontmatter
+   * issues, and the per-modified-file diff), so `shardmind --json` lists
+   * every file (#139). Counts are full either way; concurrency bounds stay.
+   */
+  uncapped?: boolean;
+}
+
+/** Caps for one report: the display caps, or none under `uncapped`. */
+interface ListCaps {
+  paths: number;
+  invalidValueKeys: number;
+  frontmatterIssues: number;
+}
+
+function listCaps(uncapped: boolean | undefined): ListCaps {
+  return uncapped
+    ? { paths: Infinity, invalidValueKeys: Infinity, frontmatterIssues: Infinity }
+    : {
+        paths: MAX_PATHS_PER_BUCKET,
+        invalidValueKeys: MAX_INVALID_VALUE_KEYS,
+        frontmatterIssues: MAX_FRONTMATTER_ISSUES,
+      };
 }
 
 export async function buildStatusReport(
@@ -109,6 +132,7 @@ export async function buildStatusReport(
   opts: BuildStatusReportOptions,
 ): Promise<StatusReport | null> {
   const now = opts.now ?? Date.now();
+  const caps = listCaps(opts.uncapped);
 
   const state = await readState(vaultRoot);
   if (!state) return null;
@@ -140,7 +164,7 @@ export async function buildStatusReport(
         })
       : resolveUpdate(state, currentVersion, vaultRoot, now, warnings, opts.verbose),
     schema
-      ? buildValuesSummary(rawValues, schema)
+      ? buildValuesSummary(rawValues, schema, caps.invalidValueKeys)
       : Promise.resolve<StatusValuesSummary>({
           valid: false,
           total: 0,
@@ -154,7 +178,7 @@ export async function buildStatusReport(
   // synthesize a minimal one from state so the status view can still render.
   const effectiveManifest: ShardManifest = manifest ?? synthesizeManifest(state);
 
-  const driftSummary = summarizeDrift(drift);
+  const driftSummary = summarizeDrift(drift, caps.paths);
   const modules: StatusModuleSummary = buildModuleSummary(state);
 
   // Verbose sections are independent — fan them out in parallel. Each has
@@ -165,13 +189,13 @@ export async function buildStatusReport(
         driftSummary.modified > 0
           ? computeModifiedChanges(
               vaultRoot,
-              drift.modified.slice(0, MAX_PATHS_PER_BUCKET),
+              drift.modified.slice(0, caps.paths),
               effectiveManifest,
               rawValues,
               state.modules,
             )
           : Promise.resolve(null),
-        schema ? lintFrontmatter(vaultRoot, drift, schema) : Promise.resolve(null),
+        schema ? lintFrontmatter(vaultRoot, drift, schema, caps.frontmatterIssues) : Promise.resolve(null),
         probeEnvironment(),
       ])
     : [null, null, null];
@@ -273,15 +297,15 @@ async function safeDetectDrift(
 // Summary builders.
 // ---------------------------------------------------------------------------
 
-function summarizeDrift(drift: DriftReport): StatusDriftSummary {
+function summarizeDrift(drift: DriftReport, cap: number): StatusDriftSummary {
   const modifiedPaths = drift.modified.map(e => e.path);
   const orphanedPaths = drift.orphaned;
   const missingPaths = drift.missing.map(e => e.path);
 
   const truncated =
-    modifiedPaths.length > MAX_PATHS_PER_BUCKET ||
-    orphanedPaths.length > MAX_PATHS_PER_BUCKET ||
-    missingPaths.length > MAX_PATHS_PER_BUCKET;
+    modifiedPaths.length > cap ||
+    orphanedPaths.length > cap ||
+    missingPaths.length > cap;
 
   return {
     managed: drift.managed.length,
@@ -289,10 +313,10 @@ function summarizeDrift(drift: DriftReport): StatusDriftSummary {
     volatile: drift.volatile.length,
     missing: drift.missing.length,
     orphaned: drift.orphaned.length,
-    modifiedPaths: modifiedPaths.slice(0, MAX_PATHS_PER_BUCKET),
+    modifiedPaths: modifiedPaths.slice(0, cap),
     modifiedChanges: null,
-    orphanedPaths: orphanedPaths.slice(0, MAX_PATHS_PER_BUCKET),
-    missingPaths: missingPaths.slice(0, MAX_PATHS_PER_BUCKET),
+    orphanedPaths: orphanedPaths.slice(0, cap),
+    missingPaths: missingPaths.slice(0, cap),
     truncated,
   };
 }
@@ -332,6 +356,7 @@ async function loadRawValues(
 function buildValuesSummary(
   rawValues: Record<string, unknown> | null,
   schema: ShardSchema,
+  cap: number,
 ): StatusValuesSummary {
   if (rawValues === null) {
     return {
@@ -366,7 +391,7 @@ function buildValuesSummary(
   return {
     valid: false,
     total: totalValuesCount(schema),
-    invalidKeys: allInvalid.slice(0, MAX_INVALID_VALUE_KEYS),
+    invalidKeys: allInvalid.slice(0, cap),
     invalidCount: allInvalid.length,
     fileMissing: false,
   };
@@ -448,6 +473,7 @@ async function lintFrontmatter(
   vaultRoot: string,
   drift: DriftReport,
   schema: ShardSchema,
+  cap: number,
 ): Promise<StatusFrontmatterSummary> {
   const candidates = [...drift.managed, ...drift.modified].filter(e =>
     e.path.toLowerCase().endsWith('.md'),
@@ -492,11 +518,11 @@ async function lintFrontmatter(
   }
 
   const issueCount = issues.length;
-  const truncated = issueCount > MAX_FRONTMATTER_ISSUES;
+  const truncated = issueCount > cap;
   return {
     valid,
     total,
-    issues: issues.slice(0, MAX_FRONTMATTER_ISSUES),
+    issues: issues.slice(0, cap),
     issueCount,
     truncated,
   };

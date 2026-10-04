@@ -467,4 +467,34 @@ describe('status (adversarial)', () => {
     expect(report!.drift.modifiedPaths.length).toBe(20);
     expect(report!.drift.truncated).toBe(true);
   });
+
+  it('lists every modified and missing path when uncapped (`--json`, #139)', async () => {
+    await installMinimal(vault);
+    const state = (await readState(vault)) as ShardState;
+    const fakeFiles: typeof state.files = { ...state.files };
+    await fsp.mkdir(path.join(vault, 'brain'), { recursive: true });
+    for (let i = 0; i < 30; i++) {
+      const modified = `brain/modified-${i}.md`;
+      fakeFiles[modified] = { template: null, rendered_hash: 'deadbeef', ownership: 'managed' };
+      await fsp.writeFile(path.join(vault, modified), `mismatch-${i}`, 'utf-8');
+      // Tracked but never written: drift reports it missing.
+      fakeFiles[`brain/missing-${i}.md`] = { template: null, rendered_hash: 'deadbeef', ownership: 'managed' };
+    }
+    await fsp.writeFile(
+      path.join(vault, STATE_FILE),
+      JSON.stringify({ ...state, files: fakeFiles }, null, 2),
+      'utf-8',
+    );
+
+    const report = await buildStatusReport(vault, {
+      verbose: true,
+      skipUpdateCheck: true,
+      uncapped: true,
+    });
+    expect(report!.drift.modifiedPaths.length).toBe(30);
+    expect(report!.drift.missingPaths.length).toBe(30);
+    // The verbose line-count pass covers every modified file too.
+    expect(report!.drift.modifiedChanges).toHaveLength(30);
+    expect(report!.drift.truncated).toBe(false);
+  });
 });
