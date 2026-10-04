@@ -166,6 +166,7 @@ The release pipeline, dependencies and test harness are settled: built, or decli
 | ⬜ | Run the Layer 2 real-terminal tests on Windows under ConPTY | [#174](https://github.com/breferrari/shardmind/issues/174) |
 | ⬜ | Reach the write-phase SIGINT rollback deterministically in E2E | [#186](https://github.com/breferrari/shardmind/issues/186) |
 | ⬜ | Run one fault-injection contract suite against every pipeline | [#267](https://github.com/breferrari/shardmind/issues/267) |
+| ⬜ | Upgrade to Ink 8 with React 19.3 and chalk 6 | [#270](https://github.com/breferrari/shardmind/issues/270) |
 
 ## Phase 9 — the second shard
 
