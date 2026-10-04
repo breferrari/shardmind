@@ -29,7 +29,7 @@ import type {
   ModuleSelections,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { isEnoent } from '../runtime/errno.js';
+import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { resolveModules } from './modules.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { isFree } from './rename-migrations.js';
@@ -200,11 +200,12 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
 
   // Refuse before any prompt or `--json` plan (#163); the executor checks
   // again before it writes.
-  await assertSafeVaultPaths(
-    vaultRoot,
-    classifications.map((c) => c.path),
-    classifications.flatMap((c) => movedFromOf(c) ?? []),
-  );
+  // A moved file's old path is checked as a write: moving a symlink or a
+  // hard-linked file would put the link at a managed path (#179).
+  await assertSafeVaultPaths(vaultRoot, [
+    ...classifications.map((c) => c.path),
+    ...classifications.flatMap((c) => movedFromOf(c) ?? []),
+  ]);
 
   return {
     matches,
@@ -246,6 +247,20 @@ async function readUserFile(vaultRoot: string, rel: string): Promise<Buffer | nu
       err instanceof Error ? err.message : String(err),
     );
   }
+}
+
+/**
+ * The user's bytes at a rename's old path, or null when no file is there: a
+ * folder, or a path under a file, is no file to move (#179).
+ */
+async function readOldPath(vaultRoot: string, rel: string): Promise<Buffer | null> {
+  const st = await fsp.lstat(path.join(vaultRoot, rel)).catch((err: unknown) => {
+    const code = errnoCode(err);
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw err;
+  });
+  if (st === null || st.isDirectory()) return null;
+  return readUserFile(vaultRoot, rel);
 }
 
 interface ShardOutputItem {
@@ -299,7 +314,7 @@ async function classifyOne(
   // of anything, a dangling link or a file where a folder goes included.
   let movedFrom: string | undefined;
   if (userBuf === null && renamedFrom !== undefined && (await isFree(vaultRoot, item.outputPath))) {
-    userBuf = await readUserFile(vaultRoot, renamedFrom);
+    userBuf = await readOldPath(vaultRoot, renamedFrom);
     if (userBuf !== null) movedFrom = renamedFrom;
   }
   if (userBuf === null) {

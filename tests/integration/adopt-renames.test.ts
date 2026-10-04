@@ -224,6 +224,24 @@ describe('adopt --from-version applies rename migrations (#179)', () => {
     expect(await exists('.shardmind/state.json')).toBe(false);
   });
 
+  it('refuses to move a hard-linked file from the old path (#163)', async () => {
+    await cloneOfV1();
+    await fsp.link(path.join(vault, COPY), path.join(root, 'elsewhere.md'));
+    await expect(adopt(await shardV2(), '0.1.0')).rejects.toMatchObject({ code: 'VAULT_PATH_UNSAFE' });
+    expect(await exists(COPY)).toBe(true);
+    expect(await exists('AGENTS.md')).toBe(false);
+  });
+
+  it('treats a folder at the old path as no file, and installs the new path fresh', async () => {
+    await cloneOfV1();
+    await fsp.rm(path.join(vault, COPY));
+    await fsp.mkdir(path.join(vault, COPY));
+    const { plan, result } = await adopt(await shardV2(), '0.1.0');
+    expect(plan.shardOnly.map((c) => c.path)).toContain('AGENTS.md');
+    expect(result!.summary.renamedFiles).toEqual([]);
+    expect((await fsp.stat(path.join(vault, COPY))).isDirectory()).toBe(true);
+  });
+
   it('a failed adopt puts the old file back and removes the new one', async () => {
     await cloneOfV1();
     await write(COPY, 'My edit.\n');

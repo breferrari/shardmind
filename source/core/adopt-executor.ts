@@ -231,12 +231,12 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
   await assertAdoptable(vaultRoot);
   const moves = plannedMoves(plan);
   // Every path adopt writes or starts tracking, before any of them (#163),
-  // and the old paths of the files it moves (#179).
-  await assertSafeVaultPaths(
-    vaultRoot,
-    [...plan.matches, ...plan.shardOnly, ...plan.differs].map((c) => c.path),
-    moves.map((m) => m.from),
-  );
+  // and the old paths of the files it moves, checked as writes: a moved link
+  // would land at a managed path (#179).
+  await assertSafeVaultPaths(vaultRoot, [
+    ...[...plan.matches, ...plan.shardOnly, ...plan.differs].map((c) => c.path),
+    ...moves.map((m) => m.from),
+  ]);
   // A move's new path was free when classified; refuse before any write if
   // something arrived there during the prompts (#179).
   for (const move of moves) await assertRenameTargetFree(vaultRoot, move.from, move.to, 'adopt');
