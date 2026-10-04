@@ -185,7 +185,7 @@ function renderEach(
 export function eachOutputPaths(outputPath: string, list: readonly unknown[]): string[] {
   const dir = path.posix.dirname(outputPath);
   const base = path.posix.basename(outputPath);
-  return list.map((item) => {
+  const paths = list.map((item) => {
     // A string, number or boolean item (the wizard's list input produces
     // strings) names its own file (#227); an object item names it by `slug`,
     // else `name`. Anything else has no name to give.
@@ -206,6 +206,32 @@ export function eachOutputPaths(outputPath: string, list: readonly unknown[]): s
     const named = base.replace('_each', () => slug);
     return dir === '.' ? named : `${dir}/${named}`;
   });
+  refuseNameClashes(outputPath, list, paths);
+  return paths;
+}
+
+/**
+ * Two items that name the same file would overwrite each other (the last
+ * one wins) and, on a case-insensitive filesystem, record two state
+ * entries for one file (#234). Compared case-insensitively on every OS, so
+ * a shard's list behaves the same everywhere.
+ */
+function refuseNameClashes(outputPath: string, list: readonly unknown[], paths: readonly string[]): void {
+  const seen = new Map<string, number>();
+  for (let i = 0; i < paths.length; i++) {
+    const key = paths[i]!.toLowerCase();
+    const first = seen.get(key);
+    if (first === undefined) {
+      seen.set(key, i);
+      continue;
+    }
+    const show = (item: unknown) => JSON.stringify(item);
+    throw new ShardMindError(
+      `Items ${first + 1} (${show(list[first])}) and ${i + 1} (${show(list[i])}) of the list for ${outputPath} both name ${paths[i]}`,
+      'RENDER_ITERATOR_NAME_CLASH',
+      'Give each list item a name that differs by more than case or by characters a file name cannot hold (such as / or a trailing dot).',
+    );
+  }
 }
 
 function renderContent(
