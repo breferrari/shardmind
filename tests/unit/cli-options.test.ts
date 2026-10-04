@@ -69,7 +69,6 @@ describe('Commander positional options under Pastel (#147)', () => {
     expect(seen.command).toBe('index');
     expect(seen.options['verbose']).toBe(true);
   });
-
 });
 
 // Error paths and parseAsync, on the program the cli-kit builds
@@ -160,5 +159,24 @@ describe('update-check option shape on the real commands', () => {
     expect(Object.keys(mod.options.shape)).toContain('updateCheck');
     expect(Object.keys(mod.options.shape)).not.toContain('noUpdateCheck');
     expect(mod.options.parse({})['updateCheck']).toBe(true);
+  });
+});
+
+// The cli-kit names a variadic option's value with plur's regular rule only
+// (cli-kit/lib/plur.ts drops plur's irregular plurals), which is safe while
+// no command declares one. Pastel makes an option variadic when its schema,
+// unwrapped, is an array or a set.
+describe('no real command declares a variadic option', () => {
+  type Def = { type: string; innerType?: { _zod: { def: Def } } };
+  const unwrap = (def: Def): Def => (def.innerType ? unwrap(def.innerType._zod.def) : def);
+
+  it.each(['index', 'install', 'update', 'adopt', 'validate'])('%s', async (name) => {
+    const mod = (await import(`../../source/commands/${name}.tsx`)) as {
+      options?: { shape: Record<string, { _zod: { def: Def } }> };
+    };
+    const variadic = Object.entries(mod.options?.shape ?? {})
+      .filter(([, schema]) => ['array', 'set'].includes(unwrap(schema._zod.def).type))
+      .map(([key]) => key);
+    expect(variadic).toEqual([]);
   });
 });
