@@ -42,7 +42,7 @@ import {
   STATE_FILE,
   VALUES_FILE,
 } from '../runtime/vault-paths.js';
-import { mapConcurrent, pathExists } from './fs-utils.js';
+import { mapConcurrent, pathExists, removePath } from './fs-utils.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { assertRenameTargetFree, moveToFreePath } from './rename-migrations.js';
 import { hashValues } from './install-planner.js';
@@ -588,7 +588,7 @@ export async function rollbackAdopt(
   // adopt by virtue of `assertAdoptable`. Best-effort: errors during
   // cleanup are logged into `failures` but don't block.
   try {
-    await fsp.rm(path.join(vaultRoot, SHARDMIND_DIR), { recursive: true, force: true });
+    await removePath(path.join(vaultRoot, SHARDMIND_DIR));
   } catch (err) {
     failures.push({
       path: SHARDMIND_DIR,

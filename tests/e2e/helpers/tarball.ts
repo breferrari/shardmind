@@ -23,6 +23,7 @@ import os from 'node:os';
 import * as tar from 'tar';
 import { stringify as stringifyYaml, parse as parseYaml } from 'yaml';
 import { fileURLToPath } from 'node:url';
+import { removePath } from '../../../source/core/fs-utils.js';
 import { copyDir, hashSourceTree, cachedFilesExist } from './tarball-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -120,7 +121,7 @@ export async function buildTarballFixtures(): Promise<TarballFixtures> {
  */
 export async function cleanupTarballFixtures(): Promise<void> {
   if (!cached) return;
-  await fs.rm(cached.fixtures.baseDir, { recursive: true, force: true });
+  await removePath(cached.fixtures.baseDir);
   cached = null;
 }
 
@@ -160,7 +161,7 @@ async function buildOne(opts: BuildOneOpts): Promise<string> {
     );
     return tarPath;
   } finally {
-    await fs.rm(workRoot, { recursive: true, force: true });
+    await removePath(workRoot);
   }
 }
 

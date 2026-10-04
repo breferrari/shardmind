@@ -25,6 +25,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { removePath } from '../../../source/core/fs-utils.js';
 import { stringify as stringifyYaml, parse as parseYaml } from 'yaml';
 import * as tar from 'tar';
 import { tick, waitFor, ENTER, typeText } from '../helpers.js';
@@ -100,12 +101,12 @@ export async function makeVaultDir(prefix = 'flow'): Promise<string> {
 
 export async function cleanupVault(root: string): Promise<void> {
   tempVaults.delete(root);
-  await fs.rm(root, { recursive: true, force: true });
+  await removePath(root);
 }
 
 async function cleanupAllVaults(): Promise<void> {
   for (const v of [...tempVaults]) {
-    await fs.rm(v, { recursive: true, force: true }).catch(() => {});
+    await removePath(v).catch(() => {});
   }
   tempVaults.clear();
 }
@@ -384,7 +385,7 @@ export async function buildCustomTarball(
     await tar.c({ file: tarPath, gzip: true, cwd: workRoot }, [prefix]);
     return tarPath;
   } finally {
-    await fs.rm(workRoot, { recursive: true, force: true });
+    await removePath(workRoot);
   }
 }
 

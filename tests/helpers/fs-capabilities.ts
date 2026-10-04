@@ -6,6 +6,7 @@
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { removePath } from '../../source/core/fs-utils.js';
 
 async function probe(attempt: (dir: string) => Promise<unknown>): Promise<boolean> {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'shardmind-fsprobe-'));
@@ -15,7 +16,7 @@ async function probe(attempt: (dir: string) => Promise<unknown>): Promise<boolea
   } catch {
     return false;
   } finally {
-    await fsp.rm(dir, { recursive: true, force: true });
+    await removePath(dir);
   }
 }
 
