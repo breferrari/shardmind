@@ -55,10 +55,14 @@ export function holdWriteNodeArgs(opts: HoldWriteOptions): string[] {
   return ['--import', tsx, '--import', `data:text/javascript,${encodeURIComponent(code)}`];
 }
 
-/** Resolves once the hold has begun: the child is mid-write. */
-export async function waitForHold(marker: string, timeoutMs = 30_000): Promise<void> {
+/**
+ * Resolves once the hold has begun: the child is mid-write. A run that never
+ * reaches the held write rejects here; `signalAt.when` swallows that, the run
+ * finishes unsignalled, and the test's own `held` check reports it.
+ */
+export async function waitForHold(marker: string, timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!fs.existsSync(marker)) {
+  while (!(await fs.promises.access(marker).then(() => true, () => false))) {
     if (Date.now() > deadline) throw new Error(`the CLI never reached the held write (${marker})`);
     await new Promise((r) => setTimeout(r, 20));
   }
