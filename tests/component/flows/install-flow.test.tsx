@@ -842,7 +842,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   // ───── Scenario 17: a --force reinstall that fails puts everything back (#55) ─────
 
-  it('17. --yes --force reinstall of a shard with a broken template → refused before anything is touched (#55, #35)', async () => {
+  it('17. --force reinstall whose render fails → old install and edits restored, nothing left aside (#55)', async () => {
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
     stub.setLatest(SHARD_SLUG, '0.1.0');
@@ -862,19 +862,26 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         manifestOverrides: { hooks: {}, name: 'minimal', namespace: 'shardmind' },
         outDir: vault.root,
         mutate: async (work) => {
-          await fs.writeFile(path.join(work, 'zz-broken.md.njk'), '{{ not_a_function() }}\n');
+          // Fails only with a name typed in the wizard, so the pre-install check
+          // (#35), which renders with the defaults, lets it through.
+          await fs.writeFile(
+            path.join(work, 'zz-broken.md.njk'),
+            '{% if user_name == "Boom" %}{{ user_name | nosuchfilter }}{% endif %}\n',
+          );
         },
       });
       stub.setRef(SLUG_BROKEN, 'v0.1.0', STUB_SHA, tarPath);
       const r = mountInstall({
         shardRef: `github:${SLUG_BROKEN}#v0.1.0`,
         vaultRoot: vault.root,
-        options: { yes: true, force: true },
+        options: { force: true },
       });
+      await driveMinimalWizard(r, 'Boom');
+      r.stdin.write(ENTER);
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER);
       // An error exits ~100 ms after rendering, which clears lastFrame; read the history.
-      // The pre-install check (#35) refuses it before any move; the executor's
-      // own rollback is covered by tests/integration/install.test.ts.
-      await waitFor(() => r.frames.join('\n'), (f) => /INSTALL_SHARD_INVALID/.test(f), 30_000);
+      await waitFor(() => r.frames.join('\n'), (f) => /RENDER_TEMPLATE_ERROR/.test(f), 30_000);
       await tick(200);
       expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
       expect(await vault.readFile('shard-values.yaml')).toBe(valuesBefore);

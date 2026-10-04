@@ -514,7 +514,7 @@ Thrown by `source/core/adopt-executor.ts` (and surfaced through `source/commands
 
 ## Walk + `.shardmindignore`
 
-Thrown by `source/core/modules.ts::walkShardSource` and `source/core/shardmindignore.ts::loadShardmindignore` during the install / update walk over the extracted shard. Pre-write — these never leave a partial vault behind because they fire before any `runInstall` / `runUpdate` mutation.
+Thrown by `source/core/modules.ts::walkShardSource` and `source/core/shardmindignore.ts::loadShardmindignore` during the install / update walk over the extracted shard. Pre-write — these never leave a partial vault behind because they fire before any `runInstall` / `runUpdate` mutation. On install, the pre-install check (#35) walks first, so one of these arrives as a line in `INSTALL_SHARD_INVALID`'s list, with its own code.
 
 ### `WALK_SYMLINK_REJECTED`
 

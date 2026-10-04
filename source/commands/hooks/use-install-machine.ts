@@ -270,8 +270,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         const prefill = valuesFile ? await loadValuesFile(valuesFile, schema) : {};
         // A template that cannot render fails here, every one listed, before
         // the user answers anything (#35).
+        if (disposed) return;
         setPhase({ kind: 'loading', message: 'Checking the shard…' });
-        await assertShardInstallable(temp.tempDir, prefill);
+        await assertShardInstallable(temp.tempDir, prefill, vaultRoot);
 
         const { moduleFileCounts, alwaysIncludedFileCount } = await planOutputs(
           schema,
