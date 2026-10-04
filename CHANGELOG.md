@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (Windows file holds during cleanup — #191)
+
+- **On Windows, a file a virus scanner or search indexer still holds no longer breaks a cleanup.** Clearing the shard cache, a rollback, a backup's removal and the update-check caches now retry `ENOTEMPTY`, `EBUSY` and `EPERM` a few times before failing. A cache clear could otherwise abort an install or update that would have succeeded, and a backup removal could leave a stray `.shardmind-backup-*` behind.
+
 ### Added (adopt a vault cloned from an older release — #179)
 
 - **`shardmind adopt --from-version <v>` adopts a vault cloned from release `<v>` at the shard's current paths.** Adopt applies the shard's rename migrations since `<v>`:
