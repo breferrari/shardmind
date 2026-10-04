@@ -1402,6 +1402,31 @@ Call sites, each before any prompt, move or write, and in dry runs too:
 
 The second check covers a link that appears while a prompt is open.
 
+### 4.21 `color-env.ts`
+
+Honours `NO_COLOR` (#37). Ink colours every `<Text color>` and `dimColor` through chalk, and chalk 5 reads `FORCE_COLOR` but ignores `NO_COLOR`. chalk resolves its level once, when it is first imported, so the rule is applied to the environment before that import.
+
+```typescript
+export function applyNoColor(env: NodeJS.ProcessEnv): void;
+export function stripSgr(text: string): string;
+```
+
+And in `source/components/hook-output.ts`, the display wrapper (it reads chalk's level, so it lives outside `core/`):
+
+```typescript
+export function hookOutputForDisplay(text: string): string;
+```
+
+0. If `FORCE_COLOR` parses (`parseInt`) to a negative integer, set it to `'0'`. chalk turns such a value into a negative level and throws at import on Linux and macOS ("The `level` option should be an integer from 0 to 3"), which took the whole CLI down, Ink included.
+1. If `FORCE_COLOR` is set, even to an empty string, return. The explicit opt-in wins, and chalk reads it as before.
+2. If `NO_COLOR` is set to a non-empty value, set `env.FORCE_COLOR = '0'`, which chalk reads as level 0. An empty `NO_COLOR` does nothing (no-color.org).
+
+`applyNoColor` writes `FORCE_COLOR=0` into `process.env`, so every child process, hook subprocesses included, sees `FORCE_COLOR` set although the user set only `NO_COLOR`. chalk, Node's `getColorDepth` and the common colour libraries read `'0'` as off. A tool that only tests whether `FORCE_COLOR` is present would turn colour on. The env route is kept rather than setting `chalk.level` in-process, because it reaches every chalk instance and the hook subprocesses.
+
+`hookOutputForDisplay` reads `chalk.level` (chalk is a direct dependency for this, pinned to Ink's ^5 range so the tree holds one copy). It strips when the level is 0, so hook output is coloured exactly when our own output is, whatever heuristics chalk applies (TERM, CI vendors, `FORCE_COLOR` parsing). It strips before the summary trims or checks for emptiness, and the live tail strips only the lines it shows. `stripSgr` removes SGR sequences only: CSI (`ESC [` or U+009B), parameters of digits, `;` and `:` (truecolor's colon form), then final `m`. A lone ESC, an unterminated CSI and every other sequence are left as they are. Non-colour control sequences in hook output are #204. `hookOutputForDisplay` is what `HookProgress` and `HookSummarySection` render: hook output (shard code) with its own colour codes dropped when ours are off.
+
+Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` loads `pastel` and `./cli-options.js` with `await import()` after it, because a static import would load Ink, and with it chalk, before any statement runs. Hook subprocesses inherit the resulting `FORCE_COLOR=0`. `--json` output is `JSON.stringify`, written outside Ink, so a piped `--json` run carries no ANSI whatever the colour variables say. With stdout a terminal, Ink still writes cursor codes around it (#198).
+
 ---
 
 ## 5. Runtime Module: `shardmind/runtime`

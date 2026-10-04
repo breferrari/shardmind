@@ -102,6 +102,7 @@ Every PR for a v6 issue must demonstrate in its description:
 | **Pastel** | CLI framework — file-system routing, zod arg parsing, Commander under the hood |
 | **Ink** + **@inkjs/ui** | React terminal renderer + pre-built components |
 | **React** | Required peer dep for Ink |
+| **chalk** | The colour decision Ink already makes; read `chalk.level`, don't re-derive it. Same range as Ink's (^5), one deduped copy (#37) |
 | **Nunjucks** | Template engine (`{{ }}` syntax). Config: `autoescape: false` |
 | **yaml** (eemeli/yaml) | YAML parsing. TypeScript-typed, comment-preserving |
 | **tar** (node-tar) | Tarball download + extraction |
@@ -194,6 +195,7 @@ shardmind/
 │   │   ├── hook-orchestrator.ts       # Hook lifecycle: slot selection/order, boundary checks, re-hash, fingerprint (#102)
 │   │   ├── hook-boundary.ts           # Pure detect-and-warn write-boundary detector — managed-write / unmanaged-create (#102)
 │   │   ├── vault-path-guard.ts        # Refuse writes through symlinks, hard links, case-folded names (#163)
+│   │   ├── color-env.ts               # NO_COLOR → chalk level 0 before Ink loads; FORCE_COLOR wins (#37)
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   └── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
@@ -350,6 +352,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `update-check.ts` | §4.15 | 24h cached GitHub latest-version lookup shared by status + update |
 | `self-update-check.ts` | §4.19 | 24h cached npm-registry check for newer shardmind engine versions; powers `<SelfUpdateBanner>` |
 | `vault-path-guard.ts` | §4.20 | Refuses install / update / adopt over a symlinked, hard-linked or case-folded vault path (`VAULT_PATH_UNSAFE`, #163) |
+| `color-env.ts` | §4.21 | Applies `NO_COLOR` to the environment before chalk loads; `FORCE_COLOR` wins when both are set (#37) |
 | `cancellation.ts` | ARCHITECTURE §19.7 | Cross-platform SIGINT bridge (Windows stdin-ETX → process.emit SIGINT) |
 | `state-migrator.ts` | §4.7 | Forward-migration framework for `.shardmind/state.json`; first rule (v1→v2, `bootstrap_fingerprint`) landed with #102 |
 | `hook.ts` | §4.16 | Slot-agnostic hook lookup + execute via bundled `tsx` subprocess (non-fatal) |

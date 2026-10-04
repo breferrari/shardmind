@@ -12,6 +12,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
 import React from 'react';
+import chalk from 'chalk';
 import HookSummarySection from '../../source/components/HookSummarySection.js';
 import type { HookOutcome } from '../../source/core/hook-orchestrator.js';
 
@@ -208,4 +209,35 @@ describe('HookSummarySection', () => {
     const frame = out([{ slot: 'bootstrap', summary: { stdout: 'ok', stderr: '' } }]).lastFrame() ?? '';
     expect(frame).toContain('Bootstrap hook completed.');
   });
+
+  describe('hook output colour (#37)', () => {
+    // chalk's level is the colour decision hook output follows.
+    const saved = chalk.level;
+    afterEach(() => {
+      chalk.level = saved;
+    });
+    const coloured = { stdout: '\x1b[32mclone ok\x1b[0m', stderr: '\x1b[33mwarn\x1b[0m', exitCode: 0 };
+
+    it("strips the hook's own colour codes from stdout and stderr when colour is off", () => {
+      chalk.level = 0;
+      const frame = out([{ slot: 'bootstrap', summary: coloured }]).lastFrame() ?? '';
+      expect(frame).toContain('clone ok');
+      expect(frame).toContain('warn');
+      expect(frame).not.toMatch(/\x1b\[3[23]m/);
+    });
+
+    it("keeps the hook's colour codes when colour is on", () => {
+      chalk.level = 1;
+      const frame = out([{ slot: 'bootstrap', summary: coloured }]).lastFrame() ?? '';
+      expect(frame).toContain('\x1b[32mclone ok');
+    });
+
+    it('renders no output block for output that is only colour codes when colour is off', () => {
+      chalk.level = 0;
+      const frame = out([{ slot: 'bootstrap', summary: { stdout: '\x1b[0m\n', stderr: '', exitCode: 0 } }]).lastFrame() ?? '';
+      expect(frame).toContain('Bootstrap hook completed.');
+      expect(frame).not.toContain('Hook stdout:');
+    });
+  });
 });
+

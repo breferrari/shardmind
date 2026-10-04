@@ -704,6 +704,8 @@ No `list` (vault-local, one shard per vault, nothing to list). No `doctor` (bake
 
 **Negatable flags are named for the positive.** Pastel turns a boolean option that defaults to `true` into a `--no-<name>` flag, which Commander stores under `<name>`. A `--no-` flag must therefore be declared as its positive (`updateCheck: zod.boolean().default(true)` for `--no-update-check`). Declared as `noUpdateCheck` defaulting to `false`, Pastel still emits `--no-update-check`, Commander stores it under `updateCheck`, and the command's `noUpdateCheck` never changes (#147).
 
+**Colour follows the environment.** Output is coloured in a terminal and plain when piped. `NO_COLOR` set to any non-empty value turns colour off ([no-color.org](https://no-color.org)), and `FORCE_COLOR` turns it on, even when piped. When both are set, `FORCE_COLOR` wins, because it is the explicit opt-in. `--help` never carries ANSI, and neither does `--json` read through a pipe (in a terminal, Ink's cursor codes still surround it: #198). See [`core/color-env.ts`](IMPLEMENTATION.md#421-color-envts) (#37).
+
 **Vault paths are written only as themselves.** Before `install`, `update` or `adopt` writes or deletes anything, it checks every vault path it will touch, walking each component from the vault root, and refuses the whole run with `VAULT_PATH_UNSAFE` if any is a symlink (dangling or not), sits under a symlinked folder, is a file with another hard link, or exists only under a different case on a case-folding filesystem (#163). The one exception is an update's own case-only rename of a file (#169): either spelling of that file's name is the file the update moves. Each of those would send the write somewhere other than the path the engine records, outside the vault in the first two. Refusing leaves the link as the user made it; the error names each path and why. Dry runs refuse too, so the preview matches the run.
 
 ### 10.2 `shardmind` — Status
@@ -868,13 +870,13 @@ Then the diff review:
   Conflict in CLAUDE.md (1 of 1)
     lines 47–52
     before line
-    <<<<<<< yours
+        ## Auth Review Workflow
+    Updated process for Q2 2026
+    
+
     ## Custom Section
     My custom workflow for auth reviews
-    =======
-    ## Auth Review Workflow
-    Updated process for Q2 2026
-    >>>>>>> shard update
+    
     after line
 
     150 unchanged · 8 auto-merged · 1 region conflicted
@@ -926,12 +928,12 @@ shardmind adopt breferrari/obsidian-mind
   Differs from shard: CLAUDE.md (1 of 2)
     lines 14–22
       ## Setup notes
-    <<<<<<< mine
-      Personal shortcuts I added in week 1
-    =======
-      ## Module reference
+          ## Module reference
       Generated section (every shard ships this)
-    >>>>>>> shard
+    
+
+      Personal shortcuts I added in week 1
+    
 
   [Keep mine] [Use shard]
 ```
@@ -1006,6 +1008,7 @@ The update-check cache (`.shardmind/update-check.json`, 24h TTL) is stable-only.
 | **pastel** | CLI framework — file-system routing, zod arg parsing, Commander under the hood |
 | **ink** | React renderer for terminal (Yoga flexbox) |
 | **@inkjs/ui** | Pre-built components: Select, TextInput, ConfirmInput, Spinner, ProgressBar, Badge, StatusMessage |
+| **chalk** | The colour decision Ink already makes; read it (`chalk.level`), don't re-derive it. Pinned to Ink's range (^5) so the tree keeps one deduped copy (#37) |
 | **react** | Required peer dependency |
 
 ### 11.2 Core Layer

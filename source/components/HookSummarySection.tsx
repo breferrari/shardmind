@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
 import { headLines, type HookStage, type HookSummary } from '../core/hook.js';
+import { hookOutputForDisplay } from './hook-output.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
 import { assertNever } from '../runtime/types.js';
 
@@ -72,8 +73,9 @@ function renderOutcome(
 
   const exitCode = summary.exitCode ?? 0;
   const succeeded = exitCode === 0;
-  const stdout = summary.stdout?.trim();
-  const stderr = summary.stderr?.trim();
+  // Strip before trimming, so output that is only colour codes renders no block.
+  const stdout = summary.stdout === undefined ? undefined : hookOutputForDisplay(summary.stdout).trim();
+  const stderr = summary.stderr === undefined ? undefined : hookOutputForDisplay(summary.stderr).trim();
 
   return (
     <Box key={key} flexDirection="column" marginTop={key > 0 ? 1 : 0}>

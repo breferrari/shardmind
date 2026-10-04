@@ -1,7 +1,15 @@
 import { createRequire } from 'node:module';
-import Pastel from 'pastel';
 import { installStdinCancellation } from './core/cancellation.js';
-import { enablePositionalOptions, pastelCommander } from './cli-options.js';
+import { applyNoColor } from './core/color-env.js';
+
+// NO_COLOR turns colour off unless FORCE_COLOR is set (#37). chalk, which Ink
+// colours through, reads the environment once when it is first imported, so
+// this runs before Pastel loads Ink: Pastel and cli-options are imported
+// dynamically below, never statically above this line.
+applyNoColor(process.env);
+
+const { default: Pastel } = await import('pastel');
+const { enablePositionalOptions, pastelCommander } = await import('./cli-options.js');
 
 // Windows doesn't deliver parent→child SIGINT via child_process.kill() — Node
 // emulates SIGINT/SIGTERM as TerminateProcess, which skips every registered
