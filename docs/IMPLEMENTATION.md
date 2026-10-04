@@ -282,8 +282,15 @@ to point at a local stub server (see `tests/e2e/helpers/github-stub.ts`).
 
 **Inputs**:
 ```typescript
-downloadShard(tarballUrl: string): Promise<TempShard>
+downloadShard(
+  tarballUrl: string,
+  // Receives the temp dir's cleanup as soon as the dir exists, before the
+  // fetch, so a Ctrl+C handler can remove it mid-download (#57).
+  onTempDir?: (cleanup: () => Promise<void>) => void,
+): Promise<TempShard>
 ```
+
+`cleanup` (the same function `onTempDir` receives) aborts the fetch and the extraction, waits for them to stop, then removes the dir with retries. A download stopped that way rejects with `DownloadCancelledError`, which callers treat as a cancel, not a failure.
 
 **Outputs**:
 ```typescript

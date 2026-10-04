@@ -1628,10 +1628,10 @@ staying hermetic. No test reaches the public internet.
   — the stdin listener attaches only when `stdin.isTTY` is falsy on boot
   so Ink's keyboard handling doesn't fight for stdin bytes.
 
-  The **test harness** delivers ETX on Windows and a real signal on POSIX;
-  `signalAt: { afterMs }` times the interrupt against a slowed-down stub
-  tarball (`stub.setTarballDelay(ms)`) since non-TTY Ink renders only the
-  final frame and pattern-based timing isn't reliable. The stub holds the
+  The **test harness** delivers ETX on Windows and a real signal on POSIX.
+  Non-TTY Ink renders only the final frame, so output patterns cannot time
+  the interrupt, and a fixed `signalAt.afterMs` guesses at startup. The
+  stub holds the
   tarball GET and the interrupt fires when that request arrives
   (`stub.waitForTarballRequest()` → `signalAt.when`): by then the CLI has
   mounted its SIGINT handler and created its download temp dir, and no
