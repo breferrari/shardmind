@@ -210,6 +210,7 @@ shardmind/
 │   │   ├── rollback-report.ts         # ROLLBACK_INCOMPLETE: what a failed rollback left behind (#247)
 │   │   ├── json-run.ts                # A terminal --json run behaves as piped: stdout non-interactive before Ink (#198)
 │   │   ├── editor.ts                  # Open in editor: $VISUAL/$EDITOR, temp copy, raw-mode handoff (#50)
+│   │   ├── created-folders.ts         # The folders a run created, removed by its rollback (#258)
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   └── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
@@ -383,6 +384,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `rollback-report.ts` | §4.11b (Reporting the rollback) | `ROLLBACK_INCOMPLETE` for a rollback that left files behind, shared by install / update / adopt (#247) |
 | `editor.ts` | §4.24 | Open a conflict in `$VISUAL` / `$EDITOR`: temp copy, outcome (saved / cancelled), raw-mode handoff, marker check (#50) |
 | `vault-lock.ts` | §4.25 | One run per vault: `<vault>/.shardmind.lock` (wx), `VAULT_LOCKED`, stale same-host takeover, release + exit backstop (#253) |
+| `created-folders.ts` | §4.11b, §4.12 (4a), §4.18 | The folders a run created, for install / update / adopt rollbacks (#258) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
