@@ -18,7 +18,7 @@ import type { ShardState, DriftReport, DriftEntry, FileState } from '../runtime/
 import { sha256, mapConcurrent } from './fs-utils.js';
 import { isEnoent } from '../runtime/errno.js';
 import { detectVolatile } from './modules.js';
-import { SHARDMIND_DIR, VALUES_FILE, LOCK_FILE, GIT_DIR, OBSIDIAN_DIR, CACHED_TEMPLATES } from '../runtime/vault-paths.js';
+import { SHARDMIND_DIR, VALUES_FILE, LOCK_FILE, LOCK_TAKEOVER_FILE, GIT_DIR, OBSIDIAN_DIR, CACHED_TEMPLATES } from '../runtime/vault-paths.js';
 
 type Bucket = 'managed' | 'modified' | 'volatile' | 'missing';
 type Classified = { bucket: Bucket; entry: DriftEntry };
@@ -28,7 +28,7 @@ type Classified = { bucket: Bucket; entry: DriftEntry };
  * orphan detection because they're the engine's own scaffolding, not user
  * content.
  */
-const ENGINE_RESERVED_FILES: ReadonlySet<string> = new Set([VALUES_FILE, LOCK_FILE]);
+const ENGINE_RESERVED_FILES: ReadonlySet<string> = new Set([VALUES_FILE, LOCK_FILE, LOCK_TAKEOVER_FILE]);
 
 /**
  * Top-level directory names that should never be treated as "tracked" for

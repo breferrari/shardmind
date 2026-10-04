@@ -557,7 +557,7 @@ Thrown by `source/core/adopt-executor.ts` (and surfaced through `source/commands
 
 **Meaning:** Another shardmind run (`install`, `update` or `adopt`) is working on this vault, and holds `.shardmind.lock` at the vault root (#253). Two runs at once would overwrite each other's state and undo each other's work, so the second is refused. The message names the command, its PID and when it started. It is also raised when the lock file can't be read, or comes from another computer (a synced vault).
 
-**Remedy:** Wait for the other run to finish, then run again. If no shardmind process is running (it crashed or was killed on another computer, or the lock file was committed or synced into the vault), `.shardmind.lock` is safe to delete. A stale lock left on this computer by a run that is no longer alive is taken over automatically.
+**Remedy:** Wait for the other run to finish, then run again. If no shardmind process is running (it crashed or was killed on another computer, or the lock file was committed or synced into the vault), `.shardmind.lock`, and `.shardmind.lock.takeover` if it is there, are safe to delete. A stale lock left on this computer by a run that is no longer alive is taken over automatically.
 
 ## Walk + `.shardmindignore`
 

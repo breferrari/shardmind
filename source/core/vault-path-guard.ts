@@ -22,6 +22,7 @@ import {
   CACHED_TEMPLATES,
   HOOK_LOGS_DIR,
   LOCK_FILE,
+  LOCK_TAKEOVER_FILE,
   SHARDMIND_DIR,
   STATE_FILE,
   VALUES_FILE,
@@ -39,8 +40,9 @@ export interface UnsafeVaultPath {
 /** The engine's own files and folders, which install, update and adopt write into. */
 const ENGINE_WRITE_PATHS: readonly string[] = [
   VALUES_FILE,
-  // The run lock at the vault root (#253).
+  // The run lock at the vault root, and its takeover guard (#253).
   LOCK_FILE,
+  LOCK_TAKEOVER_FILE,
   STATE_FILE,
   CACHED_MANIFEST,
   CACHED_SCHEMA,

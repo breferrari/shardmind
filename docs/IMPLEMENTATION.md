@@ -1712,26 +1712,26 @@ One run per vault (#253, ARCHITECTURE §10.5c). Synchronous, so the process `exi
 ```typescript
 interface VaultLockInfo { pid: number; hostname: string; command: string; startedAt: string }
 interface VaultLock { release(): void; tookOver?: VaultLockInfo }
-acquireVaultLock(vaultRoot: string, command: 'install' | 'update' | 'adopt', deps?: { pid?; hostname?; isAlive?; now?; beforeTakeover? }): VaultLock
-isHeldByAnotherRun(vaultRoot: string): boolean
+acquireVaultLock(vaultRoot: string, command: 'install' | 'update' | 'adopt', deps?: { pid?; hostname?; isAlive?; now?; processStartedAt? }): VaultLock
 ```
 
-1. **Create.** `openSync(<vault>/.shardmind.lock, 'wx')` writes `VaultLockInfo` as JSON.
-   - `EEXIST`, `EISDIR` (a folder by that name), and `EPERM` with the file present (on Windows, a delete still pending) mean the name is taken. `EPERM` with nothing there (a folder the user cannot write to) is thrown as itself.
-   - A failed write removes the file it created.
-   - On success it registers a `process.on('exit')` handler that releases.
-2. **On a taken name,** it inspects the path.
-   - **A holder:** JSON with an integer `pid > 0`, a `hostname`, a `command` and a `startedAt`.
-   - **Abandoned:** an empty file older than 30 s, a run that died between create and write.
-   - **Unreadable:** anything else, including a fresh empty file whose run may still be writing it.
-3. **Stale or not.** It is stale when abandoned, or when the holder is on the same host and its PID is our own (a leftover of this process, or a reused PID in a container) or not running. Hosts compare without case or a trailing `.local`, which macOS adds and drops as the network changes. `isAlive` is `process.kill(pid, 0)`, where `EPERM` means alive. Anything else throws `VAULT_LOCKED`, and nothing is overwritten.
-4. **Takeover.** The stale file is renamed to a unique name and checked against what was judged.
-   - If another run took it over meanwhile, that run's lock is linked back (a link never overwrites) and its holder is reported as `VAULT_LOCKED`.
-   - Otherwise the stale file is deleted and the create runs again. If that create finds the name taken, the new holder is reported.
-   - The result carries `tookOver` when a holder was replaced.
-5. **The error.** The message names the command, PID, start time and, for another host, the hostname. The hint says to wait or, when no shardmind process is running, that `.shardmind.lock` in the vault folder is safe to delete.
-6. **`release()`** removes the file only if it still holds this run's PID and start time. It is idempotent, and removes the `exit` handler.
-7. **`isHeldByAnotherRun`**: a live run of another process holds the vault, an unreadable lock counting as held. Status takes no lock, and checks this before writing its update-check cache into `.shardmind/`, which a locked reinstall may have moved aside.
+1. **Create.** `openSync(<vault>/.shardmind.lock, 'wx')` writes `VaultLockInfo` as JSON. `EEXIST` or `EISDIR` (a folder by that name) means the name is taken; any other error, such as a folder the user cannot write to, is thrown as itself. A failed write removes the file it created.
+2. **On a taken name,** it reads it.
+   - **None** (the holder released between our create and our read): create again, up to three times.
+   - **Unreadable:** not a regular file, or not JSON with an integer `pid > 0`, a `hostname`, a `command` and a `startedAt`. This includes an empty or cut-off file, which may be a run still writing it. It throws `VAULT_LOCKED`, and the file is left alone. No time rule applies: a vault on a network share can have a skewed clock.
+3. **Stale or not.** A holder is stale when it is on the same host and either:
+   - its PID is not running (`process.kill(pid, 0)`, where `EPERM` means alive); or
+   - its PID is our own and its `startedAt` predates this process. That is a reused PID's leftover, such as a container whose runs are all PID 1. Our own PID started after this process is another live run with the same PID, and is not stale.
+
+   Hosts compare without case or a trailing `.local`, which macOS adds and drops as the network changes. Anything not stale throws `VAULT_LOCKED`.
+4. **Takeover** runs under `.shardmind.lock.takeover`, created with `wx`.
+   - If another run holds that guard, it throws `VAULT_LOCKED`. That run is taking the same stale lock over.
+   - Holding the guard, it deletes the lock only if it still names the holder it judged, then removes the guard and creates again. A live lock is never moved or renamed.
+   - The result carries `tookOver`.
+5. **The error.** The message names the command, PID, start time and, for another host, the hostname. The hint says to wait or, when no shardmind process is running, that `.shardmind.lock` (and `.shardmind.lock.takeover`, if present) in the vault folder is safe to delete.
+6. **`release()`** removes the file only if it still holds this run's PID and start time; it is idempotent. Every lock a process holds is released by one `process.on('exit')` handler, installed once, so a test that unmounts without finishing does not pile up listeners.
+
+The status command takes no lock. Its update-check cache write never creates `.shardmind/`: with no folder, there is no write. A reinstall holding the lock may have moved that folder aside, and recreating it would break that run's rollback.
 
 `commands/hooks/use-vault-lock.ts` wraps it for the three machines:
 - `take()` at the start of the run effect (not under `--dry-run`). A stale takeover's note goes through Ink's `useStderr`.

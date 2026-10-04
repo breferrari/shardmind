@@ -38,6 +38,8 @@ export function hookLogRelPath(slot: string): string {
 export const VALUES_FILE = 'shard-values.yaml';
 /** One run per vault (#253): held by install, update and adopt for the whole run. At the root: a run moves or deletes `.shardmind/`. */
 export const LOCK_FILE = '.shardmind.lock';
+/** Held only while a run removes a stale lock, so two runs never both take it over (#253). */
+export const LOCK_TAKEOVER_FILE = '.shardmind.lock.takeover';
 
 /** Claude Code namespace inside the vault (commands, agents, settings). */
 export const CLAUDE_DIR = '.claude';

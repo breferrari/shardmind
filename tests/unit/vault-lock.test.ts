@@ -8,8 +8,8 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { acquireVaultLock, isHeldByAnotherRun } from '../../source/core/vault-lock.js';
-import { LOCK_FILE } from '../../source/runtime/vault-paths.js';
+import { acquireVaultLock } from '../../source/core/vault-lock.js';
+import { LOCK_FILE, LOCK_TAKEOVER_FILE } from '../../source/runtime/vault-paths.js';
 
 let vault: string;
 const lockPath = () => path.join(vault, LOCK_FILE);
@@ -97,11 +97,18 @@ describe('acquireVaultLock (#253)', () => {
     (won[0] as PromiseFulfilledResult<{ release(): void }>).value.release();
   });
 
-  it("takes over a lock carrying this process's own PID: a leftover, or a reused PID in a container", async () => {
+  it("takes over a lock with this process's PID from before it started: a reused PID's leftover", async () => {
     await holder({ pid: process.pid, hostname: os.hostname(), command: 'update', startedAt: '2026-01-01T00:00:00.000Z' });
-    const lock = acquireVaultLock(vault, 'install');
+    const lock = acquireVaultLock(vault, 'install', { processStartedAt: Date.parse('2026-06-01T00:00:00.000Z') });
     expect(lock.tookOver).toMatchObject({ pid: process.pid });
     lock.release();
+  });
+
+  it("refuses a lock with this process's PID from after it started: another live run with the same PID (a container)", async () => {
+    await holder({ pid: process.pid, hostname: os.hostname(), command: 'update', startedAt: '2026-10-04T12:00:00.000Z' });
+    expect(() => acquireVaultLock(vault, 'install', { processStartedAt: Date.parse('2026-10-04T11:00:00.000Z') })).toThrow(
+      expect.objectContaining({ code: 'VAULT_LOCKED' }),
+    );
   });
 
   it('refuses a lock whose PID is not a positive integer, rather than probing it', async () => {
@@ -118,41 +125,55 @@ describe('acquireVaultLock (#253)', () => {
     lock.release();
   });
 
-  it('takes over an empty lock left by a run that died while writing it, once it is old', async () => {
+  it('refuses an empty lock, whatever its age: it may be a run still writing it, and it says the file is safe to delete', async () => {
     await fsp.writeFile(lockPath(), '');
-    const old = new Date(Date.now() - 120_000);
+    const old = new Date(Date.now() - 3_600_000);
     await fsp.utimes(lockPath(), old, old);
-    const lock = acquireVaultLock(vault, 'update');
-    expect(JSON.parse(await fsp.readFile(lockPath(), 'utf-8')).pid).toBe(process.pid);
-    lock.release();
+    let err: unknown;
+    try {
+      acquireVaultLock(vault, 'update');
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ code: 'VAULT_LOCKED' });
+    expect((err as { hint?: string }).hint).toMatch(/safe to delete/);
+    expect(await fsp.readFile(lockPath(), 'utf-8')).toBe('');
   });
 
-  it('refuses a fresh empty lock: its run may still be writing it', async () => {
-    await fsp.writeFile(lockPath(), '');
-    expect(() => acquireVaultLock(vault, 'update')).toThrow(expect.objectContaining({ code: 'VAULT_LOCKED' }));
-  });
-
-  it("does not delete a run's fresh lock that replaced the stale one it judged", async () => {
+  it('takes over a stale lock only while holding the takeover guard, and never a run that holds it', async () => {
     await holder({ pid: 999999, hostname: os.hostname(), command: 'adopt', startedAt: '2026-01-01T00:00:00.000Z' });
-    const fresh = { pid: 4242, hostname: os.hostname(), command: 'install', startedAt: '2026-10-04T12:00:00.000Z' };
-    expect(() =>
-      acquireVaultLock(vault, 'update', {
-        isAlive: (pid) => pid === 4242,
-        // Another run takes the stale lock over between our read and our move.
-        beforeTakeover: () => fs.writeFileSync(lockPath(), JSON.stringify(fresh)),
-      }),
-    ).toThrow(expect.objectContaining({ code: 'VAULT_LOCKED', message: expect.stringContaining('PID 4242') }));
-    expect(JSON.parse(await fsp.readFile(lockPath(), 'utf-8'))).toEqual(fresh);
-    expect((await fsp.readdir(vault)).filter((n) => n !== LOCK_FILE)).toEqual([]);
+    // Another run is mid-takeover.
+    await fsp.writeFile(path.join(vault, LOCK_TAKEOVER_FILE), JSON.stringify({ pid: 4242, hostname: os.hostname(), command: 'install', startedAt: '2026-10-04T12:00:00.000Z' }));
+    expect(() => acquireVaultLock(vault, 'update', { isAlive: () => false })).toThrow(expect.objectContaining({ code: 'VAULT_LOCKED' }));
+    // The stale lock is left to the run that holds the guard.
+    expect(JSON.parse(await fsp.readFile(lockPath(), 'utf-8')).pid).toBe(999999);
   });
 
-  it('isHeldByAnotherRun: a live lock of another process, not our own or none', async () => {
-    expect(isHeldByAnotherRun(vault)).toBe(false);
-    const lock = acquireVaultLock(vault, 'update');
-    expect(isHeldByAnotherRun(vault)).toBe(false);
+  it('leaves no takeover guard behind after a takeover', async () => {
+    await holder({ pid: 999999, hostname: os.hostname(), command: 'adopt', startedAt: '2026-01-01T00:00:00.000Z' });
+    const lock = acquireVaultLock(vault, 'update', { isAlive: () => false });
+    expect(fs.existsSync(path.join(vault, LOCK_TAKEOVER_FILE))).toBe(false);
     lock.release();
-    await holder({ pid: process.pid + 1, hostname: os.hostname(), command: 'update', startedAt: '2026-01-01T00:00:00.000Z' });
-    expect(isHeldByAnotherRun(vault)).toBe(true);
+  });
+
+  it('creates again when the holder releases between the create and the look', async () => {
+    // A lock that vanishes when read the first time: the holder released.
+    let reads = 0;
+    const realLstat = fs.lstatSync;
+    const spy = (await import('vitest')).vi.spyOn(fs, 'lstatSync').mockImplementation(((p: fs.PathLike, ...rest: unknown[]) => {
+      if (String(p) === lockPath() && reads++ === 0) {
+        fs.rmSync(lockPath(), { force: true });
+      }
+      return (realLstat as (...a: unknown[]) => fs.Stats)(p, ...rest);
+    }) as typeof fs.lstatSync);
+    try {
+      await holder({ pid: 4242, hostname: os.hostname(), command: 'install', startedAt: '2026-10-04T12:00:00.000Z' });
+      const lock = acquireVaultLock(vault, 'update', { isAlive: () => true });
+      expect(JSON.parse(await fsp.readFile(lockPath(), 'utf-8')).pid).toBe(process.pid);
+      lock.release();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('releases on process exit, as a backstop for paths that miss the explicit release', () => {
