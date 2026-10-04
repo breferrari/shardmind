@@ -1652,6 +1652,8 @@ The second is decided where the prompt is decided, not by faking stdin. Ink deri
 - adopt: `!isRawModeSupported || json` refuses with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`, or uses `--values`, exactly as piped;
 - update: #230.
 
+A throw that escapes every command (#225) also answers on stdout under `--json`. The top-level crash handler in `cli.ts` is given `writeJson` for a run `isJsonRun` accepts, and it writes one failure document (`ok: false`, `code: null`, the `stack`) before the plain-text report on stderr. The exit waits for both streams to drain. A `--json` caller never gets an empty stdout, and a terminal gets the same document as a pipe.
+
 stdin and stderr are never touched.
 
 ---
