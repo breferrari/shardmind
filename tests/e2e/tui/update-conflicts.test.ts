@@ -9,7 +9,7 @@
  *         Layer-2-only — real OS SIGINT delivery via the PTY exercises
  *         the production `useSigintRollback` handler timing window.
  *
- * Skipped on Windows: PTY semantics + cancellation bridge mismatch (#57).
+ * Skipped on Windows: PTY semantics + cancellation bridge mismatch (#174).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

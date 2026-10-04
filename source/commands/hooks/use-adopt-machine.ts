@@ -35,7 +35,7 @@ import type {
 import { ShardMindError } from '../../runtime/types.js';
 import { adoptPlanResult, emitJson, jsonSuccess } from '../../core/json-output.js';
 import { resolve as resolveRef } from '../../core/registry.js';
-import { downloadShard } from '../../core/download.js';
+import { downloadShard, DownloadCancelledError } from '../../core/download.js';
 import { parseManifest, assertEngineCompatible } from '../../core/manifest.js';
 import { resolveEngineVersion } from './cli-version.js';
 import { parseSchema, buildValuesValidator } from '../../core/schema.js';
@@ -242,8 +242,13 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           kind: 'loading',
           message: `Downloading ${resolved.namespace}/${resolved.name}@${resolved.version}…`,
         });
-        const temp = await downloadShard(resolved.tarballUrl);
-        ctxCleanupRef.current = temp.cleanup;
+        // The cleanup is registered before the fetch, so a Ctrl+C during the
+        // download removes the temp dir too (#57).
+        const temp = await downloadShard(resolved.tarballUrl, (cleanup) => {
+          // A superseded run removes its own dir instead of taking the ref.
+          if (disposed) void cleanup().catch(() => {});
+          else ctxCleanupRef.current = cleanup;
+        });
 
         setPhase({ kind: 'loading', message: 'Parsing manifest and schema…' });
         const manifest = await parseManifest(temp.manifest);
@@ -287,7 +292,9 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           setPhase({ kind: 'wizard', ctx });
         }
       } catch (err) {
-        if (disposed) return;
+        // A Ctrl+C mid-download stops the fetch; the command is exiting, so
+        // that is not an error to render.
+        if (disposed || err instanceof DownloadCancelledError) return;
         finish({ kind: 'error', error: err as Error });
       }
     })();

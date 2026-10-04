@@ -1,4 +1,5 @@
 import path from 'node:path';
+import os from 'node:os';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -25,11 +26,25 @@ describe('downloadShard', () => {
   const originalFetch = globalThis.fetch;
   let cleanupFns: Array<() => Promise<void>>;
 
-  beforeEach(() => {
+  // A private temp dir, so the leftover checks below see only this suite's
+  // downloads, not other suites' `shardmind-*` dirs created in parallel.
+  const savedTmp = { TMPDIR: process.env['TMPDIR'], TEMP: process.env['TEMP'], TMP: process.env['TMP'] };
+  let privateTmp = '';
+
+  beforeEach(async () => {
     cleanupFns = [];
+    privateTmp = await fs.mkdtemp(path.join(os.tmpdir(), 'dl-test-'));
+    process.env['TMPDIR'] = privateTmp;
+    process.env['TEMP'] = privateTmp;
+    process.env['TMP'] = privateTmp;
   });
 
   afterEach(async () => {
+    for (const [k, v] of Object.entries(savedTmp)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    await fs.rm(privateTmp, { recursive: true, force: true });
     globalThis.fetch = originalFetch;
     for (const fn of cleanupFns) {
       await fn().catch(() => {});
@@ -74,6 +89,42 @@ describe('downloadShard', () => {
     await result.cleanup();
 
     await expect(fs.access(tempDir)).rejects.toThrow();
+  });
+
+  it('hands over a cleanup that stops a download in flight and removes its dir (#57)', async () => {
+    let handedOver: (() => Promise<void>) | undefined;
+    let fetchStarted!: () => void;
+    const started = new Promise<void>((r) => (fetchStarted = r));
+    // A body that sends nothing until aborted: the download is in flight.
+    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      fetchStarted();
+      const body = new ReadableStream({
+        start(controller) {
+          init?.signal?.addEventListener('abort', () => controller.error(new Error('aborted')));
+        },
+      });
+      return new Response(body, { status: 200 });
+    });
+    const download = downloadShard('https://example.com/tarball', (cleanup) => {
+      handedOver = cleanup;
+    }).catch((e: unknown) => e);
+    await started;
+    expect(handedOver).toBeTypeOf('function');
+    expect((await fs.readdir(privateTmp)).filter((n) => n.startsWith('shardmind-'))).toHaveLength(1);
+    await handedOver!();
+    const err = await download;
+    expect((err as Error).name).toBe('DownloadCancelledError');
+    expect((await fs.readdir(privateTmp)).filter((n) => n.startsWith('shardmind-'))).toEqual([]);
+  });
+
+  it('removes its temp dir when the callback throws', async () => {
+    globalThis.fetch = vi.fn();
+    const err = await downloadShard('https://example.com/tarball', () => {
+      throw new Error('callback failed');
+    }).catch((e: unknown) => e);
+    expect((err as Error).message).toBe('callback failed');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(await fs.readdir(privateTmp)).toEqual([]);
   });
 
   it('throws DOWNLOAD_HTTP_ERROR on non-200 response', async () => {

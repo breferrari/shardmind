@@ -13,10 +13,61 @@ import {
   SHARD_SOURCE_DIR,
 } from '../runtime/vault-paths.js';
 
-export async function downloadShard(tarballUrl: string): Promise<TempShard> {
+/**
+ * Fetch and extract a shard tarball into a fresh temp dir. `onTempDir`
+ * receives the dir's cleanup as soon as the dir exists, before the fetch,
+ * so a command's Ctrl+C handler can remove it mid-download, which
+ * `TempShard.cleanup`, only returned once the download finishes, cannot
+ * (#57). That cleanup first aborts the fetch and the extraction and waits
+ * for them to stop, so the removal does not race tar still writing into
+ * the dir.
+ */
+/**
+ * Thrown when a download is stopped by its own cleanup (Ctrl+C). Not a
+ * failure: the command is exiting, and a caller must not report it as a
+ * network or archive error.
+ */
+export class DownloadCancelledError extends Error {
+  constructor() {
+    super('Download cancelled');
+    this.name = 'DownloadCancelledError';
+  }
+}
+
+export async function downloadShard(
+  tarballUrl: string,
+  onTempDir?: (cleanup: () => Promise<void>) => void,
+): Promise<TempShard> {
   const tempDir = path.join(os.tmpdir(), `shardmind-${crypto.randomUUID()}`);
   await fs.mkdir(tempDir, { recursive: true });
 
+  const controller = new AbortController();
+  let inFlight: Promise<unknown> = Promise.resolve();
+  const dispose = async (): Promise<void> => {
+    controller.abort();
+    await inFlight.catch(() => {});
+    await cleanup(tempDir);
+  };
+  try {
+    onTempDir?.(dispose);
+  } catch (err) {
+    await safeCleanup(tempDir);
+    throw err;
+  }
+
+  const work = fetchAndExtract(tarballUrl, tempDir, controller.signal, dispose);
+  inFlight = work;
+  return work;
+}
+
+async function fetchAndExtract(
+  tarballUrl: string,
+  tempDir: string,
+  signal: AbortSignal,
+  dispose: () => Promise<void>,
+): Promise<TempShard> {
+  // Disposed inside `onTempDir`, before any work: there is nothing to fetch.
+  if (signal.aborted) throw new DownloadCancelledError();
   // Fetch tarball
   const headers: Record<string, string> = {
     'Accept': 'application/vnd.github+json',
@@ -27,8 +78,9 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
 
   let response: Response;
   try {
-    response = await fetch(tarballUrl, { headers });
+    response = await fetch(tarballUrl, { headers, signal });
   } catch (err) {
+    if (signal.aborted) throw new DownloadCancelledError();
     await safeCleanup(tempDir);
     const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(
@@ -67,8 +119,9 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
       },
     });
     const extractor = tar.x({ strip: 1, C: tempDir });
-    await pipeline(nodeStream, hashTap, extractor);
+    await pipeline(nodeStream, hashTap, extractor, { signal });
   } catch (err) {
+    if (signal.aborted) throw new DownloadCancelledError();
     await safeCleanup(tempDir);
     const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(
@@ -109,7 +162,7 @@ export async function downloadShard(tarballUrl: string): Promise<TempShard> {
     manifest: manifestPath,
     schema: schemaPath,
     tarball_sha256: hasher.digest('hex'),
-    cleanup: () => cleanup(tempDir),
+    cleanup: dispose,
   };
 }
 
@@ -123,7 +176,8 @@ function isGitHubUrl(url: string): boolean {
 }
 
 async function cleanup(dir: string): Promise<void> {
-  await fs.rm(dir, { recursive: true, force: true });
+  // Retries ride out a Windows handle the aborted extraction is still closing.
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 }
 
 async function safeCleanup(dir: string): Promise<void> {

@@ -25,7 +25,7 @@
  * different alt-screen behavior), and the in-tree SIGINT bridge
  * (`source/core/cancellation.ts`) targets the non-TTY pipe path. Tests
  * `it.skipIf(process.platform === 'win32')` per scenario; tracking
- * follow-up via #57. Importing this module on Windows is allowed (the
+ * follow-up via #174. Importing this module on Windows is allowed (the
  * file parses) but `spawnCliPty` throws — guarding the call site with
  * the skip prevents the throw.
  */
@@ -223,7 +223,7 @@ export async function spawnCliPty(
 ): Promise<PtyHandle> {
   if (process.platform === 'win32') {
     throw new Error(
-      'spawnCliPty is not supported on Windows — Layer 2 scenarios skip via it.skipIf. See #57.',
+      'spawnCliPty is not supported on Windows — Layer 2 scenarios skip via it.skipIf. See #174.',
     );
   }
 

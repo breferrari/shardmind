@@ -11,7 +11,7 @@
  * suites do, narrowing the blame surface.
  *
  * Skipped on Windows: ConPTY semantics diverge from POSIX pty enough
- * that Layer 2 doesn't run there. Tracking via #57.
+ * that Layer 2 doesn't run there. Tracking via #174.
  */
 
 import { describe, it, expect } from 'vitest';

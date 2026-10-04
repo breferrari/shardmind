@@ -282,8 +282,15 @@ to point at a local stub server (see `tests/e2e/helpers/github-stub.ts`).
 
 **Inputs**:
 ```typescript
-downloadShard(tarballUrl: string): Promise<TempShard>
+downloadShard(
+  tarballUrl: string,
+  // Receives the temp dir's cleanup as soon as the dir exists, before the
+  // fetch, so a Ctrl+C handler can remove it mid-download (#57).
+  onTempDir?: (cleanup: () => Promise<void>) => void,
+): Promise<TempShard>
 ```
+
+`cleanup` (the same function `onTempDir` receives) aborts the fetch and the extraction, waits for them to stop, then removes the dir with retries. A download stopped that way rejects with `DownloadCancelledError`, which callers treat as a cancel, not a failure.
 
 **Outputs**:
 ```typescript
@@ -1713,8 +1720,7 @@ Afternoon:
                         + VERSION_NOT_FOUND + SHARD_NOT_FOUND +
                         REGISTRY_INVALID_REF + VALUES_MISSING + collision
                         backup + dry-run-over-collision + SIGINT rollback
-                        (skipped on GH Actions Windows only; see §19.7
-                        and #57 — production bridge is cross-platform)
+                        (every OS, on the held tarball request; see §19.7)
       → Update    (7): UPDATE_NO_INSTALL typed error, up-to-date,
                        real bump + file add, auto-merge on non-conflict,
                        UPDATE_SOURCE_MISMATCH on corrupted state.source,

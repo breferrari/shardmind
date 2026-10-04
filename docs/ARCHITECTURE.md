@@ -1566,7 +1566,7 @@ staying hermetic. No test reaches the public internet.
   `stdin.isRaw === true`), and incremental ANSI rendering during the
   `running-hook` phase. macOS + Linux only — Windows skipped because
   ConPTY semantics diverge enough that those scenarios are their own
-  track (**#57**). Helpers: `tests/e2e/tui/helpers/pty-cli.ts` (typed
+  track (**#174**). Helpers: `tests/e2e/tui/helpers/pty-cli.ts` (typed
   PTY wrapper with `write` / `waitForScreen` / `sigint` / `kill`),
   `virtual-screen.ts` (xterm-headless feeder + serializer),
   `build-fixture-shard.ts` (custom-shard tarball builder for hook
@@ -1628,19 +1628,22 @@ staying hermetic. No test reaches the public internet.
   — the stdin listener attaches only when `stdin.isTTY` is falsy on boot
   so Ink's keyboard handling doesn't fight for stdin bytes.
 
-  The **test harness** delivers ETX on Windows and a real signal on POSIX;
-  `signalAt: { afterMs }` times the interrupt against a slowed-down stub
-  tarball (`stub.setTarballDelay(ms)`) since non-TTY Ink renders only the
-  final frame and pattern-based timing isn't reliable. This works on
-  Windows dev boxes but not on GitHub Actions Windows Server 2022 runners
-  — the runner image has a pipe-buffering quirk where the parent's
-  single-byte write doesn't reach the child before the test's outer
-  timeout fires. Until we find a test-harness mechanism that bridges
-  reliably, the two SIGINT E2E scenarios carry an
-  `it.skipIf(process.platform === 'win32')` on that cell; follow-up
-  tracked as **#57**. The production bridge is not gated — real Windows
-  users get the same cancellation behavior as POSIX, and local Windows
-  dev boxes exercise the path end-to-end.
+  The **test harness** delivers ETX on Windows and a real signal on POSIX.
+  Non-TTY Ink renders only the final frame, so output patterns cannot time
+  the interrupt, and a fixed `signalAt.afterMs` guesses at startup. The
+  stub holds the
+  tarball GET and the interrupt fires when that request arrives
+  (`stub.waitForTarballRequest()` → `signalAt.when`): by then the CLI has
+  mounted its SIGINT handler and created its download temp dir, and no
+  write has started. The scenarios assert that the handler's cleanup
+  removed that dir, which the bridge's exit-130 fallback would leave.
+  Install, update and adopt run on every CI cell, Windows included; they
+  were skipped on GitHub Actions Windows runners until #57, where a fixed
+  500 ms delay was found to fire before any handler existed. The
+  write-phase rollback branch (`installingRef`) is not reached by these
+  scenarios on any OS; #57 tracks whether to add a seam for it. The
+  production bridge is not gated: real Windows users get the same
+  cancellation behavior as POSIX.
 - **Exit code contract**: install and update set `process.exitCode = 1`
   on error-phase transitions so scripting / CI can detect failures. The
   status command (`commands/index.tsx`) intentionally keeps exit 0 even

@@ -64,6 +64,21 @@ import { verifyInvariant1 } from './helpers/invariant1.js';
 const SHARD_SLUG = 'acme/demo';
 const SHARD_REF = `github:${SHARD_SLUG}`;
 
+/**
+ * A directory the CLI uses as its `os.tmpdir()`, so a SIGINT test can see
+ * whether the handler's cleanup removed the shard download dir (#57). The
+ * bridge's exit-130 fallback, which runs when no handler is registered
+ * yet, exits without that cleanup and leaves `shardmind-<uuid>` behind.
+ */
+async function childTmpDir(): Promise<{ dir: string; env: Record<string, string>; leftovers: () => Promise<string[]> }> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sm-child-tmp-'));
+  return {
+    dir,
+    env: { TMPDIR: dir, TEMP: dir, TMP: dir },
+    leftovers: async () => (await fs.readdir(dir)).filter((n) => n.startsWith('shardmind-')),
+  };
+}
+
 const DEFAULT_VALUES = {
   user_name: 'Alice',
   org_name: 'Acme Labs',
@@ -751,40 +766,37 @@ describe('shardmind install', () => {
     expect(await vault.readFile('.shardmind/state.json')).toBe(stateBefore);
   });
 
-  it.skipIf(process.platform === 'win32' && process.env['GITHUB_ACTIONS'] === 'true')(
+  it(
     'exits cleanly and leaves no partial state on SIGINT mid-install',
     async () => {
       // POSIX sends a real SIGINT via `child.kill`. Windows uses the
-      // stdin-ETX bridge (`source/core/cancellation.ts`), which works on
-      // local Windows 11 dev boxes. GitHub Actions Windows Server 2022
-      // runners have an inter-process pipe-buffering quirk where the
-      // parent's single-byte write doesn't reach the child before the
-      // outer timeout — we haven't found a test-harness mechanism that
-      // bridges both local Windows and the CI image. Narrowing the skip
-      // to `GITHUB_ACTIONS=true` keeps local Windows exercising the full
-      // SIGINT path. Follow-up tracked as #57; methodology in
-      // ARCHITECTURE §19.7.
+      // stdin-ETX bridge (`source/core/cancellation.ts`), on GitHub Actions
+      // runners too (#57); methodology in ARCHITECTURE §19.7.
       //
       // Timing: Ink in non-TTY mode renders only the final frame, so we
       // can't pattern-match `[N/M]` to detect the installing phase. Instead
-      // we slow the stub's tarball GET so the child spends ~600 ms in the
-      // download phase, then fire SIGINT at t=200 ms — well into the active
-      // download, well before any write starts. That exercises the SIGINT
-      // plumbing + the shard-tempdir cleanup path that
-      // `useSigintRollback({ cleanup: … })` promises on every signal, and
+      // the stub holds the tarball GET and SIGINT fires when that request
+      // arrives: by then the CLI has mounted `useSigintRollback` and made
+      // its download temp dir, and no write has started. A fixed delay
+      // fired before the handler existed on fast starts and only tested the
+      // bridge's exit-130 fallback (#57). This exercises the handler + the
+      // shard-tempdir cleanup that `useSigintRollback({ cleanup: … })`
+      // promises on every signal, and
       // keeps the "no partial state in the vault" invariant the test is
       // really about: SIGINT at any phase leaves the vault exactly as the
       // user found it.
-      stub.setTarballDelay(2000);
+      stub.setTarballDelay(10_000);
+      let tmp: Awaited<ReturnType<typeof childTmpDir>> | undefined;
       try {
         vault = await createEmptyVault('install-sigint');
         const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+        tmp = await childTmpDir();
         const result = await spawnCli(
           ['install', SHARD_REF, '--yes', '--values', valuesPath],
           {
             cwd: vault.root,
-            env: envWithStub(),
-            signalAt: { signal: 'SIGINT', afterMs: 500 },
+            env: { ...envWithStub(), ...tmp.env },
+            signalAt: { signal: 'SIGINT', when: stub.waitForTarballRequest() },
             timeoutMs: 20_000,
           },
         );
@@ -798,8 +810,14 @@ describe('shardmind install', () => {
         // behind regardless of which phase the signal interrupted.
         expect(await vault.exists('.shardmind/state.json')).toBe(false);
         expect(await vault.exists('Home.md')).toBe(false);
+        // The handler ran, not the bridge's fallback: its cleanup removed
+        // the shard download dir, which existed when the signal fired.
+        expect(await tmp.leftovers()).toEqual([]);
+        // A cancel is not reported as a failed download (#57).
+        expect(result.stdout).not.toMatch(/DOWNLOAD_|not a valid tarball/);
       } finally {
         stub.setTarballDelay(0);
+        if (tmp) await fs.rm(tmp.dir, { recursive: true, force: true });
       }
     },
     25_000,
@@ -1263,21 +1281,22 @@ describe('shardmind update', () => {
     expect(afterFiles).toEqual(beforeFiles);
   });
 
-  it.skipIf(process.platform === 'win32' && process.env['GITHUB_ACTIONS'] === 'true')(
+  it(
     'exits cleanly and leaves state.json byte-identical on SIGINT mid-update',
     async () => {
-      // Same GH-Actions-Windows narrow skip as install-sigint — see that
-      // test's comment. Local Windows dev boxes run this test through
-      // the stdin-ETX bridge end-to-end.
+      // Same timing as install-sigint (see that test's comment): SIGINT
+      // when the held tarball request arrives, after the handler is up.
       vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-sigint' });
       stub.setLatest(SHARD_SLUG, '0.2.0');
-      stub.setTarballDelay(2000);
+      stub.setTarballDelay(10_000);
+      let tmp: Awaited<ReturnType<typeof childTmpDir>> | undefined;
       try {
         const beforeState = await vault.readFile('.shardmind/state.json');
+        tmp = await childTmpDir();
         const result = await spawnCli(['update', '--yes'], {
           cwd: vault.root,
-          env: envWithStub(),
-          signalAt: { signal: 'SIGINT', afterMs: 500 },
+          env: { ...envWithStub(), ...tmp.env },
+          signalAt: { signal: 'SIGINT', when: stub.waitForTarballRequest() },
           timeoutMs: 20_000,
         });
         const viaCode = result.exitCode === 130;
@@ -1288,8 +1307,12 @@ describe('shardmind update', () => {
         ).toBe(true);
         const afterState = await vault.readFile('.shardmind/state.json');
         expect(afterState).toBe(beforeState);
+        expect(await tmp.leftovers()).toEqual([]);
+        // A cancel is not reported as a failed download (#57).
+        expect(result.stdout).not.toMatch(/DOWNLOAD_|not a valid tarball/);
       } finally {
         stub.setTarballDelay(0);
+        if (tmp) await fs.rm(tmp.dir, { recursive: true, force: true });
       }
     },
     25_000,
@@ -1696,6 +1719,35 @@ describe('shardmind adopt', () => {
     // Dry run: nothing on disk.
     expect(await vault.exists('.shardmind/state.json')).toBe(false);
   });
+
+  it('exits cleanly on SIGINT mid-download and leaves the vault and temp dir as they were (#57)', async () => {
+    vault = await createEmptyVault('adopt-sigint');
+    await vault.writeFile('Home.md', '# My own home\n');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    stub.setTarballDelay(10_000);
+    const tmp = await childTmpDir();
+    try {
+      const result = await spawnCli(['adopt', SHARD_REF, '--yes', '--values', valuesPath], {
+        cwd: vault.root,
+        env: { ...envWithStub(), ...tmp.env },
+        signalAt: { signal: 'SIGINT', when: stub.waitForTarballRequest() },
+        timeoutMs: 20_000,
+      });
+      expect(
+        result.exitCode === 130 || result.signal === 'SIGINT',
+        `exitCode=${result.exitCode} signal=${result.signal} stdout=${result.stdout}`,
+      ).toBe(true);
+      expect(await vault.exists('.shardmind/state.json')).toBe(false);
+      expect(await vault.readFile('Home.md')).toBe('# My own home\n');
+      // The handler's cleanup removed the download dir.
+      expect(await tmp.leftovers()).toEqual([]);
+        // A cancel is not reported as a failed download (#57).
+        expect(result.stdout).not.toMatch(/DOWNLOAD_|not a valid tarball/);
+    } finally {
+      stub.setTarballDelay(0);
+      await fs.rm(tmp.dir, { recursive: true, force: true });
+    }
+  }, 25_000);
 
   it('rejects --json without --dry-run rather than silently doing nothing', async () => {
     // Before the guard this produced one byte on stdout and exit 0 while
