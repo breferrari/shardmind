@@ -86,10 +86,9 @@ function installPlan(over: Partial<HookRunPlan> & { manifest: ShardManifest }): 
 }
 
 /**
- * The slot's violation, after asserting that its hook exited 0. A hook that
- * died before writing (#175: seen once under full-suite load) leaves no
- * violation, and the bare violation assertion then reads "expected undefined"
- * with the cause lost. This fails with the hook's own exit code and stderr.
+ * The slot's violation, after asserting that its hook ran and exited 0, so a
+ * hook that failed reports its own exit code and stderr rather than an
+ * undefined violation (#175).
  */
 function violationOf(result: HookRunResult, slot: HookSlot) {
   const summary = result.outcomes.find((o) => o.slot === slot)?.summary;
@@ -173,7 +172,7 @@ describe('runHooks — install/adopt order + gating', () => {
     expect(result.stateChanged).toBe(true);
     expect(result.finalState.files['North Star.md']!.rendered_hash).toBe(sha256(body));
     // No boundary violation: personalize is allowed to edit managed files.
-    expect(result.outcomes.find((o) => o.slot === 'personalize')?.summary?.violation).toBeUndefined();
+    expect(violationOf(result, 'personalize')).toBeUndefined();
   }, 30_000);
 });
 
@@ -215,7 +214,10 @@ describe('runHooks — write-boundary detection', () => {
       NOOP_UI,
     );
     const v = violationOf(result, 'personalize');
-    expect(v).toEqual({ kind: 'unmanaged-create', paths: ['.cache/stray.json'] });
+    // The hook wrote the file, so an undefined violation past this point means
+    // the post-hook walk missed it, not that the hook never wrote it (#175).
+    await expect(fsp.access(path.join(vault, '.cache', 'stray.json')), 'personalize did not create .cache/stray.json').resolves.toBeUndefined();
+    expect(v, 'post-hook walk missed .cache/stray.json').toEqual({ kind: 'unmanaged-create', paths: ['.cache/stray.json'] });
   }, 30_000);
 
   it('flags bootstrap DELETING a managed file (A1 — destructive write)', async () => {
@@ -625,7 +627,7 @@ describe('runHooks — user edits made before the hook phase (#150)', () => {
       }),
       NOOP_UI,
     );
-    expect(result.outcomes.find((o) => o.slot === 'bootstrap')?.summary?.violation).toBeUndefined();
+    expect(violationOf(result, 'bootstrap')).toBeUndefined();
     expect(result.finalState.files['mine.md']!.rendered_hash).toBe(sha256('engine render\n'));
   }, 30_000);
 
