@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import * as tar from 'tar';
 import type { TempShard } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
+import { removePath } from './fs-utils.js';
 import {
   SHARD_MANIFEST_FILE,
   SHARD_SCHEMA_FILE,
@@ -177,7 +178,7 @@ function isGitHubUrl(url: string): boolean {
 
 async function cleanup(dir: string): Promise<void> {
   // Retries ride out a Windows handle the aborted extraction is still closing.
-  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  await removePath(dir);
 }
 
 async function safeCleanup(dir: string): Promise<void> {

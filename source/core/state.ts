@@ -28,7 +28,7 @@ import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { migrateState } from './state-migrator.js';
 import { walkShardSource } from './modules.js';
 import { loadShardmindignore } from './shardmindignore.js';
-import { mapConcurrent, sha256 } from './fs-utils.js';
+import { mapConcurrent, removePath, sha256 } from './fs-utils.js';
 
 /**
  * Cap on parallel `copyFile` operations during cache population. Same budget
@@ -162,7 +162,7 @@ export async function cacheTemplates(vaultRoot: string, tempDir: string): Promis
   const ignoreFilter = await loadShardmindignore(tempDir);
   const files = await walkShardSource(tempDir, ignoreFilter);
 
-  await fsp.rm(dest, { recursive: true, force: true });
+  await removePath(dest);
   await fsp.mkdir(dest, { recursive: true });
   await mapConcurrent(files, CACHE_COPY_CONCURRENCY, async ({ relPath, absPath }) => {
     const destPath = path.join(dest, relPath);

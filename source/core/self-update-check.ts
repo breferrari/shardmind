@@ -50,6 +50,7 @@ import path from 'node:path';
 import semver from 'semver';
 import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
+import { removePath } from './fs-utils.js';
 
 /**
  * Cache entry shape. `schema_version` lets a future incompatible change
@@ -240,7 +241,7 @@ async function writeCache(
 
 async function deleteCache(cacheDir: string): Promise<void> {
   try {
-    await fsp.rm(cachePath(cacheDir), { force: true, recursive: true });
+    await removePath(cachePath(cacheDir));
   } catch {
     // swallow
   }

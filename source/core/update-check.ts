@@ -42,6 +42,7 @@ import { ShardMindError } from '../runtime/types.js';
 import { SHARDMIND_DIR } from '../runtime/vault-paths.js';
 import { errnoCode } from '../runtime/errno.js';
 import { fetchLatestVersion } from './registry.js';
+import { removePath } from './fs-utils.js';
 
 /**
  * Cache entry shape. `schema_version` is tracked so a future incompatible
@@ -200,7 +201,7 @@ export async function writeCache(vaultRoot: string, entry: UpdateCheck): Promise
  */
 async function deleteCache(vaultRoot: string): Promise<void> {
   try {
-    await fsp.rm(cachePath(vaultRoot), { force: true, recursive: true });
+    await removePath(cachePath(vaultRoot));
   } catch {
     // swallow
   }

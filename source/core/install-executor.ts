@@ -28,7 +28,7 @@ import {
   writeState,
   STATE_SCHEMA_VERSION,
 } from './state.js';
-import { sha256, toPosix, pathExists } from './fs-utils.js';
+import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
@@ -179,7 +179,7 @@ export async function discardSetAside(
         continue;
       }
     }
-    await fsp.rm(record.backupPath, { recursive: true, force: true }).catch(() => {});
+    await removePath(record.backupPath).catch(() => {});
   }
 }
 
@@ -213,7 +213,7 @@ export async function restoreBackups(
     try {
       // Remove whatever the partial install wrote at the original path,
       // then move the backup back.
-      await fsp.rm(record.originalPath, { recursive: true, force: true });
+      await removePath(record.originalPath);
       await fsp.rename(record.backupPath, record.originalPath);
       restored.push(record);
     } catch (err) {
@@ -382,7 +382,7 @@ export async function rollbackInstall(
   }
 
   try {
-    await fsp.rm(path.join(vaultRoot, SHARDMIND_DIR), { recursive: true, force: true });
+    await removePath(path.join(vaultRoot, SHARDMIND_DIR));
   } catch {
     // ignore
   }

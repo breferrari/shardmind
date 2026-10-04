@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -194,6 +194,32 @@ describe('core/state', () => {
           fsp.access(path.join(vault, '.shardmind', 'templates', 'stale.md')),
         ).rejects.toThrow();
       } finally {
+        await fsp.rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('rides out a Windows hold on the old cache while clearing it (#191)', async () => {
+      const tempDir = await makeTempShardSource();
+      await fsp.writeFile(path.join(tempDir, 'new.md'), 'new', 'utf-8');
+      await fsp.mkdir(path.join(vault, '.shardmind', 'templates'), { recursive: true });
+      await fsp.writeFile(path.join(vault, '.shardmind', 'templates', 'stale.md'), 'stale', 'utf-8');
+      // The first remove of the old cache fails as a held file makes it fail.
+      const realRm = fsp.rm.bind(fsp);
+      let held = true;
+      vi.spyOn(fsp, 'rm').mockImplementation(async (p, opts) => {
+        if (held && String(p).endsWith('templates')) {
+          held = false;
+          throw Object.assign(new Error('ENOTEMPTY: directory not empty'), { code: 'ENOTEMPTY' });
+        }
+        return realRm(p, opts);
+      });
+      try {
+        await cacheTemplates(vault, tempDir);
+        expect(held).toBe(false);
+        await expect(fsp.access(path.join(vault, '.shardmind', 'templates', 'stale.md'))).rejects.toThrow();
+        expect(await fsp.readFile(path.join(vault, '.shardmind', 'templates', 'new.md'), 'utf-8')).toBe('new');
+      } finally {
+        vi.restoreAllMocks();
         await fsp.rm(tempDir, { recursive: true, force: true });
       }
     });
