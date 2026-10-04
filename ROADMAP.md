@@ -163,7 +163,7 @@ The release pipeline, dependencies and test harness are settled: built, or decli
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | Re-evaluate @inkjs/ui dependency at v0.2 scope freeze | [#43](https://github.com/breferrari/shardmind/issues/43) |
+| ✅ | Re-evaluate @inkjs/ui dependency at v0.2 scope freeze | [#43](https://github.com/breferrari/shardmind/issues/43) |
 | ⬜ | release.yml: split into two pipelines (GitHub release before npm publish) | [#108](https://github.com/breferrari/shardmind/issues/108) |
 | ✅ | TUI testing framework — continuing-hardening tracker | [#122](https://github.com/breferrari/shardmind/issues/122) |
 | ⬜ | Run the Layer 2 real-terminal tests on Windows under ConPTY | [#174](https://github.com/breferrari/shardmind/issues/174) |
@@ -483,7 +483,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [ ] `NO_COLOR` / `FORCE_COLOR` respect across Ink components ([#37](https://github.com/breferrari/shardmind/issues/37))
 - [ ] Alternate registry configurability (GHE, private, custom URL) ([#39](https://github.com/breferrari/shardmind/issues/39))
 - [x] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
-- [ ] Re-evaluate `@inkjs/ui` dependency ([#43](https://github.com/breferrari/shardmind/issues/43))
+- [x] Re-evaluate `@inkjs/ui` dependency: `Select` and `TextInput` vendored ([#43](https://github.com/breferrari/shardmind/issues/43))
 - [x] Drop `LineInterner` workaround once `node-diff3` releases the prototype-lookup fix ([#49](https://github.com/breferrari/shardmind/issues/49))
 - [x] `$EDITOR` integration for DiffView conflict resolution ([#50](https://github.com/breferrari/shardmind/issues/50))
 - [x] 24h update-check cache shared between status + update ([#51](https://github.com/breferrari/shardmind/issues/51) — shipped with #13)

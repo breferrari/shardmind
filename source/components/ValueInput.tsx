@@ -94,43 +94,33 @@ function renderInput(
     case 'boolean': {
       const fallback = typeof def.default === 'boolean' ? def.default : false;
       const initial = typeof initialValue === 'boolean' ? initialValue : fallback;
-      // Reorder so the cursor pre-positions on the resolved initial choice.
-      // Same #103 shape as `case 'select'` below — see the comment there for
-      // why `defaultValue` is dropped and the initial option goes to index 0.
-      const yes = { label: 'Yes', value: 'yes' };
-      const no = { label: 'No', value: 'no' };
-      const options = initial ? [yes, no] : [no, yes];
       return (
         <Select
           key={key}
-          options={options}
+          options={[
+            { label: 'Yes', value: 'yes' },
+            { label: 'No', value: 'no' },
+          ]}
+          defaultValue={initial ? 'yes' : 'no'}
           onChange={(v) => onSubmit(v === 'yes')}
         />
       );
     }
     case 'select': {
-      const rawOptions = (def.options ?? []).map((o) => ({ label: o.label, value: o.value }));
+      const options = (def.options ?? []).map((o) => ({ label: o.label, value: o.value }));
       const initial = typeof initialValue === 'string'
         ? initialValue
         : typeof def.default === 'string'
         ? def.default
         : undefined;
-      // @inkjs/ui's Select seeds `previousValue === value` from
-      // `defaultValue`; on Enter the `previousValue !== value` change-fire
-      // guard then rejects any focused option whose value equals the
-      // seeded default, freezing the wizard. Drop `defaultValue` so
-      // `previousValue` initializes to undefined; reorder so `initial`
-      // is index 0 (where the cursor pre-positions). #103.
-      const options = initial && rawOptions.some((o) => o.value === initial)
-        ? [
-            ...rawOptions.filter((o) => o.value === initial),
-            ...rawOptions.filter((o) => o.value !== initial),
-          ]
-        : rawOptions;
+      // A seed that is not one of the options (the shard dropped it
+      // upstream) falls back to the first option.
+      const defaultValue = initial && options.some((o) => o.value === initial) ? initial : undefined;
       return (
         <Select
           key={key}
           options={options}
+          defaultValue={defaultValue}
           onChange={(v) => onSubmit(v)}
         />
       );

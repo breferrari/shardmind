@@ -17,9 +17,8 @@ type Screen = 'choose' | 'confirm-reinstall';
 export default function ExistingInstallGate({ state, onChoice }: ExistingInstallGateProps) {
   const [screen, setScreen] = useState<Screen>('choose');
   const [error, setError] = useState<string | null>(null);
-  const lastSubmittedValue = useRef<string | null>(null);
-  // Same `Select` double-fire guard as CollisionReview / DiffView:
-  // without it, a second onChange firing of `update` or `cancel` would
+  // Same double-Enter guard as CollisionReview / DiffView: without it, a
+  // second Enter on `update` or `cancel` before the gate unmounts would
   // call `onChoice` twice and the machine would transition twice.
   const firedRef = useRef(false);
 
@@ -37,28 +36,18 @@ export default function ExistingInstallGate({ state, onChoice }: ExistingInstall
           <Text bold>Type REINSTALL to proceed:</Text>
           <TextInput
             placeholder="REINSTALL"
-            onChange={(v) => {
-              // @inkjs/ui fires onChange on parent re-renders, which
-              // would clear the error the same tick it's set. Compare
-              // against lastSubmittedValue so we only clear once the
-              // user actually types something new.
-              // Upstream: vadimdemedes/ink-ui#26 (fix in PR #27).
-              if (lastSubmittedValue.current !== null && v !== lastSubmittedValue.current) {
-                lastSubmittedValue.current = null;
-                setError(null);
-              }
-            }}
+            // The ui-kit TextInput fires onChange only when the text
+            // changes, so a re-render cannot clear the error it set.
+            onChange={() => setError(null)}
             onSubmit={(v) => {
               if (v === 'REINSTALL') {
-                // Same firedRef guard as the Select path — TextInput
-                // can fire onSubmit more than once on Ink re-focus,
-                // and `reinstall` is destructive; a double-fire would
-                // queue two wipes.
+                // Same firedRef guard as the Select path: a second
+                // Enter fires onSubmit again, and `reinstall` is
+                // destructive; a double-fire would queue two wipes.
                 if (firedRef.current) return;
                 firedRef.current = true;
                 onChoice('reinstall');
               } else {
-                lastSubmittedValue.current = v;
                 setError('Exact text required. Press Esc or Ctrl+C to cancel.');
               }
             }}

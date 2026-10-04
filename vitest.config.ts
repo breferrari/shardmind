@@ -8,6 +8,7 @@ export default defineConfig({
       'tests/component/**/*.test.tsx',
       'tests/integration/**/*.test.ts',
       'tests/e2e/**/*.test.ts',
+      'tests/ui-kit/**/*.test.{ts,tsx}',
     ],
     // Builds dist/ once, before any worker spawns dist/cli.js (#176).
     globalSetup: ['tests/global-setup.ts'],
