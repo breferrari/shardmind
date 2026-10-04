@@ -684,7 +684,7 @@ The shard's `.gitignore` (a plain file, so Invariant 1 holds) includes:
 
 ### 10.1 Command Surface
 
-Four commands. Three that write. One that reads.
+Four commands for vault owners: three that write, one that reads. One more for shard authors (`validate`), which reads a shard, not a vault.
 
 | Command | What | Writes? |
 |---------|------|---------|
@@ -693,6 +693,7 @@ Four commands. Three that write. One that reads.
 | `shardmind update` | Upgrade to a newer version | Yes |
 | `shardmind adopt <namespace/name>` | Retrofit the engine onto a vault that was already cloned without shardmind | Yes |
 | `shardmind --verbose` | Detailed diagnostics | No |
+| `shardmind validate [dir \| shard]` | Check a shard before publishing it (author-facing, §10.5b) | No |
 
 No `list` (vault-local, one shard per vault, nothing to list). No `doctor` (baked into status). No `init` (v1 shards are authored by hand).
 
@@ -971,6 +972,16 @@ Volatile templates (`{# shardmind: volatile #}`) skip the differs prompt entirel
 Excluded modules' files in the user's vault are not classified — adopt mirrors install's "module excluded → file not installed" rule, so user content at those paths stays user-content without any prompt.
 
 Implementation modules: `source/core/adopt-planner.ts` (IMPLEMENTATION §4.17), `source/core/adopt-executor.ts` (§4.18), `source/core/adopt-merge.ts` (two-way union merge for auto-merge mode). Orchestration lives in `source/commands/hooks/use-adopt-machine.ts`; UI components are `source/components/AdoptValuesGate.tsx` (values confirm-or-override), `source/components/AdoptModePicker.tsx` (batch mode picker), `source/components/AdoptDiffView.tsx` + `source/components/AdoptSummary.tsx`.
+
+### 10.5b `shardmind validate [dir | shard]` — Check a Shard Before Publishing
+
+For shard authors: finds what would break an install before a user hits it (#34). The target is a local shard directory (default `.`) or any shard reference `install` accepts, downloaded through the same path (`downloadShard`, including its size and entry limits, #32) into a temporary directory that is removed on every exit, error included.
+
+It runs install's own steps in check mode (`lintShard`, `core/lint-shard.ts`, which #35's pre-install check reuses) and collects every finding instead of stopping at the first: the manifest and schema parse, the engine-version requirement, the values, module resolution with every module included, and a render of every template. **It never runs shard code**: no hook slot executes, for a local directory or a downloaded shard.
+
+Values come from `--values <file>` when given; otherwise each value's default (computed defaults evaluated), and for a required value with no default a placeholder shaped by its type. A render error on a template that used a placeholder says so (`rendered with a placeholder for <keys>`), so an author can tell a template bug from a value `validate` made up. Warnings (not errors): a module whose paths match no file, a group with no values.
+
+The human view lists each finding with its code and a link into `docs/ERRORS.md`. `--json` writes one document in the shared envelope (`command: "validate"`): `result.findings` (each `severity`, `code`, `message`, `hint`, `path` when the finding is about a file), `errors`, `warnings`. `--json` does not mount Ink, so the document carries no terminal control codes even in a terminal (see #198). Exit 1 when any error was found, 0 otherwise; a target that cannot be read or fetched is `ok: false`, exit 1.
 
 ### 10.6 Install Location
 

@@ -16,6 +16,7 @@ See also:
 |------|------|
 | `0` | Success, user cancellation, already-up-to-date, or `shardmind` status (any phase). |
 | `1` | `install` or `update` failed — the CLI renders the error message, code, and hint on stdout, then exits non-zero so CI / scripts can branch on it. |
+| `1` (validate) | `shardmind validate` found at least one error, or could not read or fetch its target. Warnings alone exit `0`. |
 | `130` | Interrupted by SIGINT (Ctrl+C in a terminal, or the ETX byte `0x03` on stdin when invoked non-interactively). Any in-flight writes are rolled back and temp files cleaned up before exit. |
 
 Status (`shardmind` / `shardmind --verbose`) deliberately stays at `0` on every phase — including when it surfaces a corrupt `state.json`. It's an ambient read-only report, never a gate. The typed error code still appears in stdout, so a script that wants to assert "status ran clean" can grep for the absence of `code: ` lines rather than reading the exit code.

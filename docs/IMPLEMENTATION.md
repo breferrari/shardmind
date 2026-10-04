@@ -1600,6 +1600,23 @@ Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` 
 
 ## 5. Runtime Module: `shardmind/runtime`
 
+
+### 4.22 `lint-shard.ts`
+
+Check a shard directory the way install would, collecting every finding (#34; #35's pre-install check calls the same function). Pure of Ink; never runs shard code.
+
+```typescript
+interface LintFinding { severity: 'error' | 'warning'; code: string; message: string; hint?: string; path?: string }
+lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: string }): Promise<{ findings: LintFinding[]; placeholders: string[] }>
+```
+
+1. `parseManifest`; on a `ShardMindError`, record it and stop (nothing after can run). With `engineVersion`, `assertEngineCompatible`, recorded.
+2. `parseSchema`; on error, record and stop.
+3. Values: `opts.values` over each value's default; `resolveComputedDefaults`; for a required value still missing, a placeholder by type (`string` → its key, `number` → `min` or 0, `boolean` → false, `select` → its first option, `multiselect` / `list` → empty). The placeholder keys are returned. `buildValuesValidator(schema)` on the result; failures recorded.
+4. `resolveModules(schema, every module included, shardDir)`; on error, record and stop.
+5. `renderFile` for every render entry with `buildRenderContext(manifest, values, selections)`; each failure is recorded with the entry's output path, and when placeholders exist its message ends `(rendered with a placeholder for <keys>)`.
+6. Warnings: a module whose paths match no file in the walk; a group no value belongs to.
+
 ### 5.1 `resolveVaultRoot()`
 
 Walk up from `process.cwd()` looking for `.shardmind/state.json`. Max 20 levels. Return absolute path or throw.
