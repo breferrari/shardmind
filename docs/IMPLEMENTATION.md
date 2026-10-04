@@ -1610,9 +1610,7 @@ export function hookOutputForDisplay(text: string): string;
 
 Call site: the first statement of `source/cli.ts`, with `process.env`. `cli.ts` loads `pastel` and `./cli-options.js` with `await import()` after it, because a static import would load Ink, and with it chalk, before any statement runs. Hook subprocesses inherit the resulting `FORCE_COLOR=0`. `--json` output is `JSON.stringify`, written outside Ink, so a piped `--json` run carries no ANSI whatever the colour variables say.
 
-A `--json` run of `update`, `adopt` or the status command also runs Ink non-interactively in a terminal (#198). A mounted Ink app in a TTY writes synchronized-output and cursor codes around its frame even when it renders nothing, which put `\x1b[?2026h\x1b[?25l` before the document and `\x1b[?25h` after it. Ink decides from `stdout.isTTY` (`interactive` defaults to `!isInCi && stdout.isTTY`), and Pastel passes no render options, so `cli.ts` sets `process.stdout.isTTY = false` for such a run, right after `applyNoColor` and before Pastel or any component loads. That makes the run behave exactly as piped, prompts included. `--json` with `-h` or `--help` is left alone, and stdin and stderr are untouched. `isJsonRun(argv)` and `markStdoutNonInteractive(stream)` live in `source/core/json-run.ts`. `validate --json` does not mount Ink at all (#34).
-
----
+A terminal `--json` run behaves exactly as a piped one: see §4.23.
 
 ### 4.22 `lint-shard.ts`
 
@@ -1630,6 +1628,27 @@ lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: st
 5. `renderFile` for every render entry with `buildRenderContext(manifest, values, selections)`; each failure is recorded with the entry's output path.
 6. `findOutputClashes` over `plannedOutputRefs` (`output-clash.ts`), with `_each` lists expanded with these values (#240). Every clash is reported: across two different modules as the warning `LINT_OUTPUT_CLASH_ACROSS_MODULES` (they may be alternatives a user picks between), otherwise as an `OUTPUT_PATH_CLASH` error. #35's install check counts a clash, like an invalid value, as the prefill's when it disappears with the defaults alone.
 7. Warnings: a module whose paths match no file in the walk; a group no value belongs to.
+
+
+### 4.23 `json-run.ts`
+
+Makes a `--json` run in a terminal behave exactly as piped (#198).
+
+```typescript
+export function isJsonRun(argv: readonly string[]): boolean;
+export function markNonInteractive(stream: { isTTY?: boolean }): void;
+```
+
+A mounted Ink app in a TTY did two things under `--json` that a pipe never sees:
+- it wrote synchronized-output and cursor codes around its frame even when the command rendered nothing (`\x1b[?2026h\x1b[?25l` before the document, `\x1b[?25h` after);
+- it offered prompts, because stdin was a TTY, which `--json` renders as nothing. `adopt --dry-run --json` without `--yes` or `--values` waited in an invisible wizard where the piped run refused with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`. This predates #198.
+
+Ink decides the first from `stdout.isTTY` (`interactive` defaults to `!isInCi && stdout.isTTY`) and the second from `stdin.isTTY` (`isRawModeSupported`), and Pastel passes no render options. So for a run `isJsonRun` accepts, `cli.ts` marks stdout and stdin non-interactive right after `applyNoColor`, before Pastel or any component loads. stderr is never touched.
+
+1. `isJsonRun`: `--json` appears before any `--`, there is no `-h` or `--help`, and the first non-option argument is `update`, `adopt` or absent (the status command). `--json=true` is not a form Commander accepts for a boolean flag. `validate --json` runs headless without Ink (#34), and install has no `--json`. A unit test ties the accepted commands to every `source/commands/*.tsx` that declares a `json` option.
+2. `markNonInteractive` defines `isTTY` as `false` on the stream. With stdin marked before `installStdinCancellation` runs, the SIGINT bridge reads stdin as it does a pipe. Ctrl+C in a terminal still raises SIGINT through the tty.
+
+---
 
 ---
 

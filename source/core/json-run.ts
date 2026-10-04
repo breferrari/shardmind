@@ -1,5 +1,5 @@
 /**
- * `--json` in a terminal (#198). Spec: docs/IMPLEMENTATION.md §4.21.
+ * `--json` in a terminal (#198). Spec: docs/IMPLEMENTATION.md §4.23.
  *
  * A mounted Ink app in a TTY writes synchronized-output and cursor codes
  * around its frame even when it renders nothing, so a `--json` document came

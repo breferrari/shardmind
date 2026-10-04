@@ -1,7 +1,7 @@
 /**
  * `source/core/json-run.ts` (#198): which runs are `--json` runs of update,
- * adopt or status, and making stdout non-interactive for them.
- * See docs/IMPLEMENTATION.md §4.21.
+ * adopt or status, and making stdout and stdin non-interactive for them.
+ * See docs/IMPLEMENTATION.md §4.23.
  */
 
 import { describe, it, expect } from 'vitest';
