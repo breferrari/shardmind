@@ -30,6 +30,7 @@ import type {
 import { ShardMindError } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { computeMergeAction } from './differ.js';
+import { assertNoOutputClashes, plannedOutputRefs } from './output-clash.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { isCaseOnlyRename } from './rename-migrations.js';
 import { resolveModules } from './modules.js';
@@ -354,6 +355,9 @@ export async function renderNewShard(
   newRenderContext: RenderContext,
 ): Promise<NewFilePlan> {
   const resolution = await resolveModules(newSchema, newSelections, newTempDir);
+  // Two outputs naming one vault path are refused before rendering or any
+  // write (#240).
+  assertNoOutputClashes(plannedOutputRefs(resolution, newRenderContext.values, newTempDir));
   const env = createRenderer(newTempDir);
 
   // Render and copy in parallel (bounded by PLAN_IO_CONCURRENCY) since

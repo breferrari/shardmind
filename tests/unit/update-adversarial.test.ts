@@ -385,6 +385,20 @@ describe('planUpdate — hostile inputs', () => {
 // createBackupDir
 // ---------------------------------------------------------------------------
 
+describe('renderNewShard — two outputs that name the same file (#240)', () => {
+  it('refuses a template and a static file differing only in case', async () => {
+    const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'update-clash-'));
+    try {
+      const shardDir = await makeShardDir(tempRoot, { 'brain/Notes.md.njk': '# n\n', 'brain/notes.md': 'static\n' });
+      await expect(
+        renderNewShard(baseSchema(), shardDir, { brain: 'included' }, renderCtx()),
+      ).rejects.toMatchObject({ code: 'OUTPUT_PATH_CLASH' });
+    } finally {
+      await fsp.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('renderNewShard — _each items that name the same file (#234)', () => {
   it('refuses the list while planning, before the update writes anything', async () => {
     const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'update-clash-'));

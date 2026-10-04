@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (two shard files that install to one path — #240)
+
+- **A shard whose files would install to the same vault path is refused before anything is written.** A static `people/alice.md` next to `people/_each.md.njk` with an item `Alice`, or two templates differing only in case, used to overwrite each other, and on macOS or Windows the vault then tracked two names for one file. Install, update and adopt now stop with `OUTPUT_PATH_CLASH`, naming both files, and `shardmind validate` reports it to the shard's author.
+
 ### Fixed (a failed adopt keeps your files under `.shardmind/` — #243)
 
 - **A failed or cancelled adopt no longer deletes your files under `.shardmind/`.** Its rollback removed the whole folder, which can hold your `boundary-ignore` (#190) before any adopt. It now removes only what the adopt wrote there, the same rule a failed install has followed since #215.

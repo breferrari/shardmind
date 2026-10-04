@@ -19,6 +19,7 @@ import { ShardMindError, assertNever } from '../runtime/types.js';
 import { isEnoent } from '../runtime/errno.js';
 import { isComputedDefault } from './schema.js';
 import { resolveModules } from './modules.js';
+import { assertNoOutputClashes, plannedOutputRefs } from './output-clash.js';
 import { eachOutputPaths } from './renderer.js';
 import { sha256, mapConcurrent } from './fs-utils.js';
 
@@ -281,6 +282,11 @@ export async function planOutputs(
     }
   }
   for (const entry of resolution.copy) tally(entry, 'copy');
+
+  // Two outputs naming one vault path are refused before any write (#240).
+  // Only with the values: without them (module review, the default
+  // selection) the plan is not the one that will be written.
+  if (values) assertNoOutputClashes(plannedOutputRefs(resolution, values, tempDir));
 
   return { outputs, moduleFileCounts, alwaysIncludedFileCount };
 }
