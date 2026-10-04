@@ -360,6 +360,9 @@ export async function spawnCliPty(
       }
       await tick(poll);
     }
+    // Dump what the child actually sent, not a half-parsed grid.
+    await screen.settled();
+    last = screen.serialize();
     throw new Error(
       `waitForScreen timed out after ${limit}ms waiting for ${description}.\nLast screen:\n${last}`,
     );
@@ -372,11 +375,20 @@ export async function spawnCliPty(
     pty.kill('SIGINT');
   };
 
-  const waitForExit = async (): Promise<{
-    exitCode: number | null;
-    signal: string | null;
-    timedOut: boolean;
-  }> => {
+  type ExitResult = { exitCode: number | null; signal: string | null; timedOut: boolean };
+
+  const waitForExit = async (): Promise<ExitResult> => {
+    const result = await waitForExitEvent();
+    // node-pty emits `exit` only after the PTY socket closes, so every
+    // `onData` chunk has been fed by now — but xterm parses them in
+    // 12 ms slices across timer ticks. Wait for the parse, not a
+    // delay, so a fast-exiting child's last output is on screen when
+    // this resolves (#177).
+    await screen.settled();
+    return result;
+  };
+
+  const waitForExitEvent = async (): Promise<ExitResult> => {
     let timeoutHandle: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<'timeout'>((resolve) => {
       timeoutHandle = setTimeout(() => resolve('timeout'), timeoutMs);
@@ -402,18 +414,11 @@ export async function spawnCliPty(
       });
       const graceWinner = await Promise.race([exitPromise, gracePromise]);
       if (graceHandle !== undefined) clearTimeout(graceHandle);
-      await screen.settled();
       if (graceWinner === 'killed') {
         return { exitCode: null, signal: 'SIGKILL', timedOut: true };
       }
       return { ...graceWinner, timedOut: true };
     }
-    // node-pty emits `exit` only after the PTY socket closes, so every
-    // `onData` chunk has been fed by now — but xterm parses them in
-    // 12 ms slices across timer ticks. Wait for the parse, not a
-    // delay, so a fast-exiting child's last output is on screen when
-    // this resolves (#177).
-    await screen.settled();
     return { ...winner, timedOut: false };
   };
 

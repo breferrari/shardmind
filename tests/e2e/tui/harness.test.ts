@@ -144,7 +144,7 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — virtual screen', () => {
     }
   });
 
-  it('settled() resolves with nothing fed and after dispose()', async () => {
+  it('settled() resolves when nothing is pending, and releases on dispose()', async () => {
     const screen = createVirtualScreen({ cols: 10, rows: 2 });
     await expect(screen.settled()).resolves.toBeUndefined();
     void screen.feed('pending');
@@ -512,6 +512,7 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
  */
 function blockUntilExited(pid: number, limitMs: number): void {
   const deadline = Date.now() + limitMs;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
   while (Date.now() < deadline) {
     let stat: string;
     try {
@@ -522,6 +523,9 @@ function blockUntilExited(pid: number, limitMs: number): void {
       break;
     }
     if (stat === '' || stat.startsWith('Z')) break;
+    // Sleep without yielding to the event loop, so `ps` isn't forked
+    // back to back.
+    Atomics.wait(pause, 0, 0, 10);
   }
   const settleUntil = Date.now() + 100;
   while (Date.now() < settleUntil) {

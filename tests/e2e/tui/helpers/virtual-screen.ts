@@ -83,19 +83,17 @@ export function createVirtualScreen(opts: VirtualScreenOptions = {}): VirtualScr
   // The most recent write's completion. xterm processes writes in
   // order, so awaiting the last one awaits them all.
   let lastWrite: Promise<void> = Promise.resolve();
-  // Resolves the pending writes when `dispose()` drops the terminal:
-  // xterm never fires the callbacks of writes it had not processed.
-  let releaseOnDispose: () => void = () => {};
-  const disposedSignal = new Promise<void>((resolve) => {
-    releaseOnDispose = resolve;
-  });
+  // Releases `settled()` when `dispose()` drops the terminal: xterm
+  // never fires the callbacks of writes it had not processed.
+  let releaseOnDispose!: () => void;
+  const disposedSignal = new Promise<void>((resolve) => (releaseOnDispose = resolve));
   const feed = (chunk: string | Uint8Array): Promise<void> => {
     // No-op once disposed: late `pty.onData` chunks can arrive after
     // a test's `finally` ran `screen.dispose()`, and xterm's parser
     // throws on writes to a disposed Terminal. Resolving immediately
     // is harmless — the screen is no longer being observed by anyone.
     if (disposed) return Promise.resolve();
-    const written = new Promise<void>((resolve) => {
+    lastWrite = new Promise<void>((resolve) => {
       // xterm.write() is fire-and-forget by default; the callback
       // form fires once the data is processed and reflected in the
       // buffer. node-pty hands us strings (utf-8 encoded by default);
@@ -103,11 +101,12 @@ export function createVirtualScreen(opts: VirtualScreenOptions = {}): VirtualScr
       // to a Buffer.
       term.write(chunk, () => resolve());
     });
-    lastWrite = Promise.race([written, disposedSignal]);
     return lastWrite;
   };
 
-  const settled = (): Promise<void> => lastWrite;
+  // One race per call, not per chunk: a race per `feed` would hang a
+  // reaction on `disposedSignal` for every chunk of a long session.
+  const settled = (): Promise<void> => Promise.race([lastWrite, disposedSignal]);
 
   const serialize = (): string => {
     const buf = term.buffer.active;
