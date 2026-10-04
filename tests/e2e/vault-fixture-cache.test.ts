@@ -207,14 +207,42 @@ describe('createInstalledVault fixture cache', () => {
     }
   }, 90_000);
 
-  it('installs again when a tarball is rebuilt at the same path', async () => {
-    const { run, calls } = countingInstall();
-    await make(VALUES, run);
-    const tarball = fixtures.byVersion['0.1.0'];
-    const later = new Date(Date.now() + 60_000);
-    await fs.utimes(tarball, later, later);
-    await make(VALUES, run);
-    expect(calls()).toBe(2);
+  it('installs again when a tarball is rebuilt at the same path, and not when only its mtime moves', async () => {
+    const dir = await fs.mkdtemp(path.join(path.dirname(fixtures.byVersion['0.1.0']), 'rebuilt-'));
+    const tarball = path.join(dir, 'demo.tar.gz');
+    await fs.copyFile(fixtures.byVersion['0.1.0'], tarball);
+    const own = await createGitHubStub({ shards: { [SLUG]: { versions: { '0.1.0': tarball }, latest: '0.1.0' } } });
+    try {
+      const { run, calls } = countingInstall();
+      const install = async (): Promise<void> => {
+        vaults.push(await createInstalledVault({ stub: own, shardRef: REF, values: VALUES, prefix: 'fixture-rebuilt', install: run }));
+      };
+      await install();
+      const later = new Date(Date.now() + 60_000);
+      await fs.utimes(tarball, later, later);
+      await install();
+      expect(calls()).toBe(1);
+      await fs.copyFile(fixtures.byVersion['0.2.0'], tarball);
+      await install();
+      expect(calls()).toBe(2);
+    } finally {
+      await own.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it.skipIf(process.platform === 'win32')('never caches a vault holding a symlink', async () => {
+    let calls = 0;
+    const run: InstallRunner = async (args, opts) => {
+      calls += 1;
+      const result = await spawnCli(args, opts);
+      await fs.symlink(path.join(opts.cwd, 'Home.md'), path.join(opts.cwd, 'home-link.md'));
+      return result;
+    };
+    const values = { ...VALUES, user_name: 'Linked' };
+    await make(values, run);
+    await make(values, run);
+    expect(calls).toBe(2);
   }, 90_000);
 
   it("keeps a custom runner's side effects out of the default runner's vaults", async () => {

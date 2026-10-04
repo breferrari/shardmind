@@ -24,6 +24,7 @@
 
 import http from 'node:http';
 import { AddressInfo } from 'node:net';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { createReadStream } from 'node:fs';
 
@@ -284,14 +285,15 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
     setTarballDelay: (ms) => {
       tarballDelayMs = Math.max(0, ms);
     },
-    // A tarball path alone would not notice a rebuild at the same path, so
-    // each file the spec points at carries its size and mtime.
+    // A tarball path alone would not notice a rebuild at the same path, and
+    // size plus mtime miss a same-size rebuild within mtime granularity, so
+    // each tarball the spec points at carries a hash of its bytes (fixture
+    // tarballs are a few KB).
     servingState: (slug) =>
       JSON.stringify(shards.get(slug.toLowerCase()) ?? null, (_key, value: unknown) => {
         if (typeof value !== 'string' || !value.endsWith('.tar.gz')) return value;
         try {
-          const stat = fs.statSync(value);
-          return `${value}|${stat.size}|${stat.mtimeMs}`;
+          return `${value}|${crypto.createHash('sha256').update(fs.readFileSync(value)).digest('hex')}`;
         } catch {
           return value;
         }

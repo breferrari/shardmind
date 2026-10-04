@@ -93,14 +93,26 @@ export type InstallRunner = typeof spawnCli;
 const installedTemplates = new Map<InstallRunner, Map<string, Promise<string | null>>>();
 /** Every template directory made, for cleanup. */
 const templateRoots = new Set<string>();
+/** Bumped by `cleanupAllVaults`, so a template still being built when it runs is discarded. */
+let cacheGeneration = 0;
 
 let exitCleanupRegistered = false;
-/** Removes leftover templates when the worker exits, for files that never call `cleanupAllVaults`. */
+/**
+ * Removes leftover templates when the worker exits normally, for files that
+ * never call `cleanupAllVaults`. A worker killed by a signal runs no
+ * handlers; `cleanupAllVaults` stays the primary path.
+ */
 function registerExitCleanup(): void {
   if (exitCleanupRegistered) return;
   exitCleanupRegistered = true;
   process.once('exit', () => {
-    for (const root of templateRoots) fsSync.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    for (const root of templateRoots) {
+      try {
+        fsSync.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+      } catch {
+        // A Windows file hold: leave this one, keep removing the rest.
+      }
+    }
   });
 }
 
@@ -178,7 +190,13 @@ export async function createInstalledVault(input: {
     // it so it doesn't leak into listFiles() / drift detection.
     await fs.rm(valuesPath, { force: true });
 
-    if (settle) settle(await buildTemplate(vault.root));
+    if (settle) {
+      const built = await buildTemplate(vault.root);
+      // A failed copy is worth retrying on the next call; a vault that is
+      // tied to its own path never is.
+      if (built.kind === 'failed') cache.delete(key);
+      settle(built.kind === 'template' ? built.root : null);
+    }
     return vault;
   } catch (err) {
     if (settle) {
@@ -191,26 +209,27 @@ export async function createInstalledVault(input: {
 
 const COPY_OPTIONS = { recursive: true, verbatimSymlinks: true } as const;
 
+type Built = { kind: 'template'; root: string } | { kind: 'position-dependent' } | { kind: 'failed' };
+
 /**
- * Copies an installed vault into a template, or returns null when it cannot
- * be reused: it mentions its own path, or the copy failed (a Windows file
- * hold just after the install exits). Never throws.
+ * Copies an installed vault into a template. It cannot be reused when it is
+ * tied to its own path; the copy can also fail (a Windows file hold just after
+ * the install exits), or be overtaken by `cleanupAllVaults`. Never throws.
  */
-async function buildTemplate(root: string): Promise<string | null> {
+async function buildTemplate(root: string): Promise<Built> {
+  const generation = cacheGeneration;
   let copy: string | undefined;
   try {
-    if (!(await isPositionIndependent(root))) return null;
+    if (!(await isPositionIndependent(root))) return { kind: 'position-dependent' };
     copy = await fs.mkdtemp(path.join(os.tmpdir(), 'shardmind-e2e-template-'));
+    await fs.cp(root, copy, COPY_OPTIONS);
+    if (generation !== cacheGeneration) throw new Error('cache was cleared while the template was built');
     templateRoots.add(copy);
     registerExitCleanup();
-    await fs.cp(root, copy, COPY_OPTIONS);
-    return copy;
+    return { kind: 'template', root: copy };
   } catch {
-    if (copy) {
-      templateRoots.delete(copy);
-      await removePath(copy).catch(() => {});
-    }
-    return null;
+    if (copy) await removePath(copy).catch(() => {});
+    return { kind: 'failed' };
   }
 }
 
@@ -223,10 +242,12 @@ function slugOf(shardRef: string): string {
  * True when no file under `root` mentions `root` itself in any of the forms a
  * path is written: as given and as its real path (which resolves Windows 8.3
  * names), each native, forward-slash, JSON-escaped and as a `file:` URL, and
- * compared case-insensitively on Windows. Such a vault can be copied
- * elsewhere and stay the same vault.
+ * compared case-insensitively on Windows and macOS. A vault holding any
+ * symlink is treated as tied to its path too, since a link's target is not
+ * checked. Such a vault can be copied elsewhere and stay the same vault.
  */
 async function isPositionIndependent(root: string): Promise<boolean> {
+  if (await containsSymlink(root)) return false;
   const spellings = new Set<string>();
   for (const p of new Set([root, await fs.realpath(root)])) {
     spellings.add(p);
@@ -235,7 +256,8 @@ async function isPositionIndependent(root: string): Promise<boolean> {
     spellings.add(pathToFileURL(p).href);
     spellings.add(decodeURI(pathToFileURL(p).href));
   }
-  const fold = process.platform === 'win32' ? (s: string) => s.toLowerCase() : (s: string) => s;
+  const caseInsensitive = process.platform === 'win32' || process.platform === 'darwin';
+  const fold = caseInsensitive ? (s: string) => s.toLowerCase() : (s: string) => s;
   const forms = [...spellings].map(fold);
   for (const rel of await listRecursive(root)) {
     const content = fold(await fs.readFile(path.join(root, rel), 'utf-8'));
@@ -248,6 +270,11 @@ function toPosix(p: string): string {
   return p.split(path.sep).join('/');
 }
 
+async function containsSymlink(root: string): Promise<boolean> {
+  const entries = await fs.readdir(root, { recursive: true, withFileTypes: true });
+  return entries.some((entry) => entry.isSymbolicLink());
+}
+
 /**
  * Best-effort cleanup of all live vaults and installed-vault templates.
  * Called from the global `afterAll` in case a test threw before its local
@@ -255,6 +282,7 @@ function toPosix(p: string): string {
  */
 export async function cleanupAllVaults(): Promise<void> {
   const roots = [...activeVaults, ...templateRoots];
+  cacheGeneration += 1;
   activeVaults.clear();
   installedTemplates.clear();
   templateRoots.clear();
