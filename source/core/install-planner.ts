@@ -188,7 +188,12 @@ export function staleOutputs(previous: ShardState | null, plannedOutputs: string
   if (!previous) return [];
   const planned = new Set(plannedOutputs);
   return Object.keys(previous.files).filter(
-    (rel) => !planned.has(rel) && !path.isAbsolute(rel) && !rel.split(/[\\/]/).includes('..'),
+    // Absolute on either platform: `state.json` travels between machines.
+    (rel) =>
+      !planned.has(rel) &&
+      !path.posix.isAbsolute(rel) &&
+      !path.win32.isAbsolute(rel) &&
+      !rel.split(/[\\/]/).includes('..'),
   );
 }
 
