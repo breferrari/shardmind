@@ -676,7 +676,16 @@ describe('update applies rename migrations (#178)', () => {
       const v1 = await shardAt('0.1.0', { edits: { [HOME_SRC]: mark } });
       await install(v1);
       await fsp.rm(path.join(vault, HOME));
-      await update(await shardAt('0.2.0', { from: v1 }));
+      const v2 = await shardAt('0.2.0', { from: v1 });
+      await update(v2);
+      expect(await exists(HOME)).toBe(false);
+      // The entry is kept, as it moves with a rename (the renamed case
+      // above), and a later run reads it as volatile, never as missing.
+      expect((await files())[HOME]).toBeDefined();
+      const drift = await detectDrift(vault, (await readState(vault)) as ShardState);
+      expect(drift.missing.map((e) => e.path)).not.toContain(HOME);
+      expect(drift.volatile.map((e) => e.path)).toContain(HOME);
+      await update(await shardAt('0.3.0', { from: v2 }));
       expect(await exists(HOME)).toBe(false);
     });
 
