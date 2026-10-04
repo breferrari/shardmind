@@ -285,10 +285,11 @@ describe('statusResult (#139)', () => {
         orphanedPaths: ['old.md'],
         missingPaths: ['gone.md'],
         truncated: false,
+        failed: false,
       },
       update: { kind: 'available', current: '0.1.0', latest: '0.2.0', cacheAge: 'fresh' },
       modules: { included: ['brain'], excluded: ['perf'] },
-      values: { valid: true, total: 4, invalidKeys: [], invalidCount: 0, fileMissing: false },
+      values: { valid: true, total: 4, invalidKeys: [], invalidCount: 0, fileMissing: false, checked: true },
       frontmatter: null,
       environment: null,
       warnings: [{ severity: 'info', message: 'v0.2.0 available', hint: "Run 'shardmind update'." }],
@@ -374,6 +375,52 @@ describe('statusResult (#139)', () => {
       { path: 'z.md', linesAdded: 9, linesRemoved: 0 },
     ]);
     expect(out.installed && out.files.missing).toEqual(['b.md', 'y.md']);
+  });
+
+  it('gives files: null when drift detection failed, never a clean zero count', () => {
+    const base = report();
+    const out = statusResult(report({ drift: { ...base.drift, failed: true } }));
+    expect(out.installed && out.files).toBeNull();
+  });
+
+  it('gives values.valid: null when the values could not be checked', () => {
+    const base = report();
+    const out = statusResult(
+      report({ values: { ...base.values, valid: false, total: 0, checked: false } }),
+    );
+    expect(out.installed && out.values.valid).toBeNull();
+  });
+
+  it('sorts invalid value keys and frontmatter issues too', () => {
+    const base = report();
+    const out = statusResult(
+      report({
+        values: { ...base.values, valid: false, invalidKeys: ['z_key', 'a_key'], invalidCount: 2 },
+        frontmatter: {
+          valid: 1,
+          total: 3,
+          issues: [
+            { path: 'z.md', missing: ['date'], noteType: null },
+            { path: 'a.md', missing: ['title'], noteType: 'person' },
+          ],
+          issueCount: 2,
+          truncated: false,
+        },
+      }),
+    );
+    expect(out.installed && out.values.invalidKeys).toEqual(['a_key', 'z_key']);
+    expect(out.installed && out.frontmatter!.issues.map((i) => i.path)).toEqual(['a.md', 'z.md']);
+  });
+
+  it('reports the normalized version and a usable shard id from a hand-broken state.json', () => {
+    const base = report();
+    const out = statusResult(
+      report({
+        state: { ...base.state, version: '', shard: '' },
+        update: { kind: 'unknown', current: 'unknown', reason: 'cache-miss' },
+      }),
+    );
+    expect(out).toMatchObject({ version: 'unknown', shard: 'shardmind/minimal' });
   });
 
   it('carries ref and resolvedSha for a #<ref> install', () => {

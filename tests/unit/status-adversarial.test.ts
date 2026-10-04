@@ -468,6 +468,34 @@ describe('status (adversarial)', () => {
     expect(report!.drift.truncated).toBe(true);
   });
 
+  it('marks drift as failed, not empty, when detection throws (#139)', async () => {
+    await installMinimal(vault);
+    const state = (await readState(vault)) as ShardState;
+    // A null files map makes detectDrift throw (Object.keys(null)).
+    await fsp.writeFile(
+      path.join(vault, STATE_FILE),
+      JSON.stringify({ ...state, files: null }, null, 2),
+      'utf-8',
+    );
+    const report = await buildStatusReport(vault, { verbose: false, skipUpdateCheck: true });
+    expect(report!.drift.failed).toBe(true);
+    expect(report!.warnings.some((w) => w.severity === 'error' && /Drift detection failed/.test(w.message))).toBe(true);
+  });
+
+  it('reports drift as not failed on a healthy vault (#139)', async () => {
+    await installMinimal(vault);
+    const report = await buildStatusReport(vault, { verbose: false, skipUpdateCheck: true });
+    expect(report!.drift.failed).toBe(false);
+    expect(report!.values.checked).toBe(true);
+  });
+
+  it('marks values as unchecked, not invalid, when the cached schema is gone (#139)', async () => {
+    await installMinimal(vault);
+    await fsp.rm(path.join(vault, SHARDMIND_DIR, 'shard-schema.yaml'));
+    const report = await buildStatusReport(vault, { verbose: false, skipUpdateCheck: true });
+    expect(report!.values.checked).toBe(false);
+  });
+
   it('lists every modified and missing path when uncapped (`--json`, #139)', async () => {
     await installMinimal(vault);
     const state = (await readState(vault)) as ShardState;

@@ -176,7 +176,7 @@ export function adoptPlanResult(
     ...plan.matches.map((e) => adoptFile(e, 'matches')),
     ...plan.differs.map((e) => adoptFile(e, 'differs')),
     ...plan.shardOnly.map((e) => adoptFile(e, 'shard-only')),
-  ].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  ].sort((a, b) => byPath(a.path, b.path));
 
   return {
     dryRun: opts.dryRun,
@@ -260,7 +260,7 @@ export function updatePlanResult(
     counts: plan.counts,
     files: plan.actions
       .map(updateFile)
-      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+      .sort((a, b) => byPath(a.path, b.path)),
   };
 }
 
@@ -297,6 +297,7 @@ export type StatusResult =
       readonly installedAt: string;
       readonly updatedAt: string;
       readonly update: UpdateStatus;
+      /** Null when drift detection failed: nothing was checked (§10.3a). */
       readonly files: {
         readonly counts: {
           readonly managed: number;
@@ -308,10 +309,11 @@ export type StatusResult =
         readonly modified: readonly StatusModifiedFile[];
         readonly missing: readonly string[];
         readonly orphaned: readonly string[];
-      };
+      } | null;
       readonly modules: StatusModuleSummary;
       readonly values: {
-        readonly valid: boolean;
+        /** Null when the cached schema is unavailable, so nothing was validated. */
+        readonly valid: boolean | null;
         readonly total: number;
         readonly invalidKeys: readonly string[];
         readonly fileMissing: boolean;
@@ -330,13 +332,13 @@ export type StatusResult =
 /** `report` is null when the directory has no `.shardmind/state.json`. */
 export function statusResult(report: StatusReport | null): StatusResult {
   if (report === null) return { installed: false };
-  const { state, drift } = report;
-  // `modifiedChanges` is index-aligned with `modifiedPaths` when present, so
-  // pair them before sorting. Drift lists modified and missing files in
-  // state.json key order; the document promises path order (§10.3a).
+  const { state, drift, manifest } = report;
+  // Drift lists modified and missing files in state.json key order; the
+  // document promises path order (§10.3a). Line counts carry their own path.
+  const changes = new Map((drift.modifiedChanges ?? []).map((c) => [c.path, c]));
   const modified = drift.modifiedPaths
-    .map((p, i): StatusModifiedFile => {
-      const change = drift.modifiedChanges?.[i];
+    .map((p): StatusModifiedFile => {
+      const change = changes.get(p);
       if (!change) return { path: p };
       return 'skipped' in change
         ? { path: p, diffSkipped: change.reason }
@@ -345,38 +347,46 @@ export function statusResult(report: StatusReport | null): StatusResult {
     .sort((a, b) => byPath(a.path, b.path));
   return {
     installed: true,
-    shard: state.shard,
+    // state.json is read without field validation; take the identity and
+    // version the report already normalized (the manifest falls back to
+    // one synthesized from state, the update check to 'unknown').
+    shard:
+      typeof state.shard === 'string' && state.shard.trim() !== ''
+        ? state.shard
+        : `${manifest.namespace}/${manifest.name}`,
     source: state.source,
-    version: state.version,
+    version: report.update.current,
     ...(state.ref === undefined ? {} : { ref: state.ref }),
     ...(state.resolvedSha === undefined ? {} : { resolvedSha: state.resolvedSha }),
     installedAt: state.installed_at,
     updatedAt: state.updated_at,
     update: report.update,
-    files: {
-      counts: {
-        managed: drift.managed,
-        modified: drift.modified,
-        volatile: drift.volatile,
-        missing: drift.missing,
-        orphaned: drift.orphaned,
-      },
-      modified,
-      missing: [...drift.missingPaths].sort(byPath),
-      orphaned: [...drift.orphanedPaths].sort(byPath),
-    },
+    files: drift.failed
+      ? null
+      : {
+          counts: {
+            managed: drift.managed,
+            modified: drift.modified,
+            volatile: drift.volatile,
+            missing: drift.missing,
+            orphaned: drift.orphaned,
+          },
+          modified,
+          missing: [...drift.missingPaths].sort(byPath),
+          orphaned: [...drift.orphanedPaths].sort(byPath),
+        },
     modules: report.modules,
     values: {
-      valid: report.values.valid,
+      valid: report.values.checked ? report.values.valid : null,
       total: report.values.total,
-      invalidKeys: report.values.invalidKeys,
+      invalidKeys: [...report.values.invalidKeys].sort(byPath),
       fileMissing: report.values.fileMissing,
     },
     frontmatter: report.frontmatter
       ? {
           valid: report.frontmatter.valid,
           total: report.frontmatter.total,
-          issues: report.frontmatter.issues,
+          issues: [...report.frontmatter.issues].sort((a, b) => byPath(a.path, b.path)),
         }
       : null,
     environment: report.environment,
@@ -384,7 +394,7 @@ export function statusResult(report: StatusReport | null): StatusResult {
   };
 }
 
-/** Code-unit order, the same comparison the adopt and update plans sort by. */
+/** Code-unit order: every `--json` list sorts by this, so runs diff cleanly. */
 function byPath(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }

@@ -135,7 +135,7 @@ export async function buildStatusReport(
 
   const rawValues = await loadRawValues(vaultRoot);
 
-  const [drift, update, values] = await Promise.all([
+  const [detected, update, values] = await Promise.all([
     safeDetectDrift(vaultRoot, state, warnings),
     opts.skipUpdateCheck
       ? Promise.resolve<UpdateStatus>({
@@ -155,14 +155,18 @@ export async function buildStatusReport(
           invalidKeys: [],
           invalidCount: 0,
           fileMissing: rawValues === null,
+          checked: false,
         }),
   ]);
+  // A failed detection degrades to an empty report so every section still
+  // renders, flagged `failed` so no reader mistakes it for a clean vault.
+  const drift = detected ?? EMPTY_DRIFT;
 
   // manifest is load-bearing for display; if the cached file is gone, we
   // synthesize a minimal one from state so the status view can still render.
   const effectiveManifest: ShardManifest = manifest ?? synthesizeManifest(state);
 
-  const driftSummary = summarizeDrift(drift, cap(MAX_PATHS_PER_BUCKET));
+  const driftSummary = summarizeDrift(drift, cap(MAX_PATHS_PER_BUCKET), detected === null);
   const modules: StatusModuleSummary = buildModuleSummary(state);
 
   // Verbose sections are independent — fan them out in parallel. Each has
@@ -266,7 +270,7 @@ async function safeDetectDrift(
   vaultRoot: string,
   state: ShardState,
   warnings: StatusWarning[],
-): Promise<DriftReport> {
+): Promise<DriftReport | null> {
   try {
     return await detectDrift(vaultRoot, state);
   } catch (err) {
@@ -275,15 +279,17 @@ async function safeDetectDrift(
       message: 'Drift detection failed.',
       hint: err instanceof Error ? err.message : String(err),
     });
-    return { managed: [], modified: [], volatile: [], missing: [], orphaned: [] };
+    return null;
   }
 }
+
+const EMPTY_DRIFT: DriftReport = { managed: [], modified: [], volatile: [], missing: [], orphaned: [] };
 
 // ---------------------------------------------------------------------------
 // Summary builders.
 // ---------------------------------------------------------------------------
 
-function summarizeDrift(drift: DriftReport, limit: number): StatusDriftSummary {
+function summarizeDrift(drift: DriftReport, limit: number, failed: boolean): StatusDriftSummary {
   const modifiedPaths = drift.modified.map(e => e.path);
   const orphanedPaths = drift.orphaned;
   const missingPaths = drift.missing.map(e => e.path);
@@ -304,6 +310,7 @@ function summarizeDrift(drift: DriftReport, limit: number): StatusDriftSummary {
     orphanedPaths: orphanedPaths.slice(0, limit),
     missingPaths: missingPaths.slice(0, limit),
     truncated,
+    failed,
   };
 }
 
@@ -351,6 +358,7 @@ function buildValuesSummary(
       invalidKeys: [],
       invalidCount: 0,
       fileMissing: true,
+      checked: true,
     };
   }
 
@@ -363,6 +371,7 @@ function buildValuesSummary(
       invalidKeys: [],
       invalidCount: 0,
       fileMissing: false,
+      checked: true,
     };
   }
 
@@ -380,6 +389,7 @@ function buildValuesSummary(
     invalidKeys: allInvalid.slice(0, limit),
     invalidCount: allInvalid.length,
     fileMissing: false,
+    checked: true,
   };
 }
 
