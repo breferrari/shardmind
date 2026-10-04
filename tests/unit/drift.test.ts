@@ -75,6 +75,12 @@ interface Scenario {
    * `computeMergeAction`'s `literal` flag. See #132.
    */
   copy_origin?: boolean;
+  /**
+   * An `_each` output's own list item, the same before and after. Threads to
+   * `computeMergeAction`'s `oldItem` / `newItem`, so both sides render
+   * `{{ item }}` as the install did (#233).
+   */
+  each_item?: unknown;
 }
 
 interface FixtureFiles {
@@ -160,7 +166,7 @@ function makeRenderContext(scenario: Scenario): RenderContext {
   };
 }
 
-const EXPECTED_FIXTURE_COUNT = 21;
+const EXPECTED_FIXTURE_COUNT = 22;
 
 describe('merge engine (fixture-driven)', () => {
   it(`discovers all ${EXPECTED_FIXTURE_COUNT} scenarios`, () => {
@@ -236,6 +242,7 @@ async function assertStandardMerge(
     actualContent: files.actualContent,
     renderContext: makeRenderContext(scenario),
     literal: scenario.copy_origin ?? false,
+    ...(scenario.each_item === undefined ? {} : { oldItem: scenario.each_item, newItem: scenario.each_item }),
   });
 
   expect(action.type).toBe(scenario.expected_action);

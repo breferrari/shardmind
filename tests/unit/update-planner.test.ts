@@ -381,6 +381,111 @@ describe('planUpdate', () => {
     ]);
   });
 
+  it("merges an edited _each file with its own item on both sides (#233)", async () => {
+    const schema = baseSchema();
+    const selections: ModuleSelections = { brain: 'included' };
+    const values = { user_name: 'brenno', perf: ['Alpha'] };
+    const oldTemplate = '# {{ item }}\n\nNotes.\n';
+    const newTemplate = '## {{ item }}\n\nNotes.\n';
+    const installed = '# Alpha\n\nNotes.\n';
+    const vault = await buildVault({
+      vaultFiles: { 'perf/Alpha.md': '# Alpha\n\nNotes.\nMy line.\n' },
+      cachedTemplates: { 'perf/_each.md.njk': oldTemplate },
+    });
+    const shardDir = await buildShardTempDir({ 'perf/_each.md.njk': newTemplate });
+    const state = makeShardState({
+      version: '1.0.0',
+      modules: selections,
+      files: {
+        'perf/Alpha.md': makeFileState({ template: 'perf/_each.md.njk', rendered_hash: sha256(installed), ownership: 'managed', iterator_key: 'perf' }),
+      },
+    });
+    const drift: DriftReport = {
+      managed: [],
+      modified: [{ path: 'perf/Alpha.md', template: 'perf/_each.md.njk', renderedHash: sha256(installed), actualHash: 'x', ownership: 'modified' }],
+      volatile: [],
+      missing: [],
+      orphaned: [],
+    };
+    const content = '## Alpha\n\nNotes.\n';
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: values, new: values },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx(values),
+        filePlan: {
+          outputs: [{
+            outputPath: 'perf/Alpha.md',
+            entry: { sourcePath: path.join(shardDir, 'perf/_each.md.njk'), outputPath: 'perf/_each.md', module: null, volatile: false, iterator: 'perf' },
+            content,
+            hash: sha256(content),
+          }],
+        },
+      },
+      removedFileDecisions: {},
+    });
+    const action = plan.actions.find((a) => a.path === 'perf/Alpha.md');
+    expect(action?.kind).toBe('auto_merge');
+    expect(action).toMatchObject({ content: '## Alpha\n\nNotes.\nMy line.\n' });
+  });
+
+  it("renders each side with the item it was made from when the item changed (#233)", async () => {
+    const schema = baseSchema();
+    const selections: ModuleSelections = { brain: 'included' };
+    const template = '# {{ item.name }}\n\nNotes.\n';
+    const oldValues = { user_name: 'brenno', perf: [{ slug: 'alpha', name: 'Alpha' }] };
+    const newValues = { user_name: 'brenno', perf: [{ slug: 'alpha', name: 'Alpha Prime' }] };
+    const installed = '# Alpha\n\nNotes.\n';
+    const vault = await buildVault({
+      vaultFiles: { 'perf/alpha.md': '# Alpha\n\nNotes.\nMy line.\n' },
+      cachedTemplates: { 'perf/_each.md.njk': template },
+    });
+    const shardDir = await buildShardTempDir({ 'perf/_each.md.njk': template });
+    const state = makeShardState({
+      version: '1.0.0',
+      modules: selections,
+      files: {
+        'perf/alpha.md': makeFileState({ template: 'perf/_each.md.njk', rendered_hash: sha256(installed), ownership: 'managed', iterator_key: 'perf' }),
+      },
+    });
+    const drift: DriftReport = {
+      managed: [],
+      modified: [{ path: 'perf/alpha.md', template: 'perf/_each.md.njk', renderedHash: sha256(installed), actualHash: 'x', ownership: 'modified' }],
+      volatile: [],
+      missing: [],
+      orphaned: [],
+    };
+    const content = '# Alpha Prime\n\nNotes.\n';
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: newValues },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx(newValues),
+        filePlan: {
+          outputs: [{
+            outputPath: 'perf/alpha.md',
+            entry: { sourcePath: path.join(shardDir, 'perf/_each.md.njk'), outputPath: 'perf/_each.md', module: null, volatile: false, iterator: 'perf' },
+            content,
+            hash: sha256(content),
+          }],
+        },
+      },
+      removedFileDecisions: {},
+    });
+    // Base renders "Alpha" (old item), ours "Alpha Prime" (new item): the
+    // heading change merges with the user's added line.
+    expect(plan.actions.find((a) => a.path === 'perf/alpha.md')).toMatchObject({
+      kind: 'auto_merge',
+      content: '# Alpha Prime\n\nNotes.\nMy line.\n',
+    });
+  });
+
   // The whole-file fallback conflict (cached template missing) used to drop
   // iteratorKey, so an iterator output's state entry lost iterator_key.
   it('keeps iteratorKey on the whole-file conflict when the cached template is missing', async () => {

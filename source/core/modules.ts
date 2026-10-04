@@ -154,7 +154,7 @@ function isRenderable(relPath: string): boolean {
   return relPath.endsWith('.njk');
 }
 
-function stripNjk(relPath: string): string {
+export function stripNjk(relPath: string): string {
   return relPath.endsWith('.njk') ? relPath.slice(0, -4) : relPath;
 }
 

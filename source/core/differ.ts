@@ -71,6 +71,14 @@ export interface ComputeMergeActionInput {
    * `false` keeps the rendered path for `.njk` templates. See #132.
    */
   readonly literal?: boolean;
+  /**
+   * An `_each` output's list item on each side: the old item renders the
+   * merge base, the new one the shard's new version, as `renderEach` did at
+   * install. Without them both sides render `{{ item }}` empty, so a
+   * template change looks like a conflict with the user's file (#233).
+   */
+  readonly oldItem?: unknown;
+  readonly newItem?: unknown;
 }
 
 export interface ThreeWayMergeResult {
@@ -85,12 +93,16 @@ export async function computeMergeAction(
   // Copy-origin files are verbatim — never run Nunjucks over them (see
   // `literal` on the input type). Template files render old/new values so the
   // diff3 below sees only the user's manual edits, not value churn.
-  const sideContent = (template: string, values: Record<string, unknown>): string =>
+  const sideContent = (template: string, values: Record<string, unknown>, item: unknown): string =>
     input.literal
       ? template
-      : renderString(template, { ...input.renderContext, values }, input.path);
-  const base = sideContent(input.oldTemplate, input.oldValues);
-  const ours = sideContent(input.newTemplate, input.newValues);
+      : renderString(
+          template,
+          { ...input.renderContext, values, ...(item === undefined ? {} : { item }) },
+          input.path,
+        );
+  const base = sideContent(input.oldTemplate, input.oldValues, input.oldItem);
+  const ours = sideContent(input.newTemplate, input.newValues, input.newItem);
 
   if (sha256(base) === sha256(ours)) {
     return { type: 'skip', reason: 'no upstream change' };

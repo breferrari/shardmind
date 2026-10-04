@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { stripNjk } from './modules.js';
 import nunjucks from 'nunjucks';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type {
@@ -255,6 +256,47 @@ function showItem(item: unknown): string {
   const label = itemLabel(item);
   if (label === null) return 'no slug or name';
   return JSON.stringify(label.length > 60 ? `${label.slice(0, 57)}...` : label);
+}
+
+/**
+ * The list item an `_each` template expanded into `outputPath`, or undefined
+ * when no item names that file (the list changed, or isn't a list) or the
+ * template is not an `_each` one. Uses the same naming rule as the render,
+ * so a re-render of a tracked `_each` file (the update merge, status's line
+ * counts) sees the item it was made from (#233).
+ */
+export function eachItemFor(templateOutputPath: string, list: unknown, outputPath: string): unknown {
+  if (!Array.isArray(list) || !path.posix.basename(templateOutputPath).includes('_each')) return undefined;
+  for (const item of list) {
+    try {
+      if (eachOutputPaths(templateOutputPath, [item])[0] === outputPath) return item;
+    } catch (err) {
+      // An item that names no file (null, say) can't be this file's.
+      if (!(err instanceof ShardMindError && err.code === 'RENDER_ITERATOR_ERROR')) throw err;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The item for a tracked file rendered from template `templateKey` (a
+ * shard-relative source path, as `state.files[].template` holds it), read
+ * from `values`. The iterator is the template's folder, as the walk names it.
+ */
+export function itemForTemplate(
+  templateKey: string | null | undefined,
+  values: Record<string, unknown>,
+  outputPath: string,
+): unknown {
+  if (!templateKey) return undefined;
+  const templateOutputPath = stripNjk(toPosixPath(templateKey));
+  const iterator = path.posix.basename(path.posix.dirname(templateOutputPath));
+  if (iterator === '.' || iterator === '') return undefined;
+  return eachItemFor(templateOutputPath, values[iterator], outputPath);
+}
+
+function toPosixPath(p: string): string {
+  return p.split(path.sep).join('/');
 }
 
 function renderContent(
