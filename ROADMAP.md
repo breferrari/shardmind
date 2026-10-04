@@ -93,6 +93,10 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ⬜ | Align the RELEASE-SMOKE cancellation rows with the engine | [#155](https://github.com/breferrari/shardmind/issues/155) |
 | ⬜ | Apply a shard release that only changes a folder's case | [#195](https://github.com/breferrari/shardmind/issues/195) |
 | ⬜ | Strip non-colour terminal control sequences from rendered hook output | [#204](https://github.com/breferrari/shardmind/issues/204) |
+| ⬜ | Roll back the files a failed install already wrote | [#207](https://github.com/breferrari/shardmind/issues/207) |
+| ⬜ | Gate a templated command or agent by its name | [#208](https://github.com/breferrari/shardmind/issues/208) |
+| ⬜ | Undo collision backups when a backup name cannot be found | [#209](https://github.com/breferrari/shardmind/issues/209) |
+| ⬜ | Decide whether update skips volatile files that install recorded as managed | [#210](https://github.com/breferrari/shardmind/issues/210) |
 
 ## Phase 6 — docs match the code
 
