@@ -75,13 +75,17 @@ describe('vendor record (#280)', () => {
     expect(() => parseRecord({ ...RECORD, schemaVersion: 2 })).toThrow();
   });
 
-  it('writes keys in a stable order with a trailing newline, and reads it back', async () => {
+  it('writes keys sorted at every depth with a trailing newline, and reads it back', async () => {
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'vendor-record-'));
     dirs.push(dir);
     await writeRecord(dir, RECORD);
     const text = await fsp.readFile(path.join(dir, 'VENDOR.json'), 'utf-8');
     expect(text.endsWith('}\n')).toBe(true);
-    expect(Object.keys(JSON.parse(text).files)).toEqual(['a.ts', 'b.ts']);
+    const json = JSON.parse(text);
+    expect(Object.keys(json)).toEqual([...Object.keys(json)].sort());
+    expect(Object.keys(json.files)).toEqual(['a.ts', 'b.ts']);
+    expect(Object.keys(json.files['a.ts'])).toEqual(['change', 'modified', 'upstream']);
+    expect(Object.keys(json.tarball)).toEqual(['integrity', 'url']);
     expect(await readRecord(dir)).toEqual(RECORD);
   });
 

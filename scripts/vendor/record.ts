@@ -57,18 +57,23 @@ export async function readRecord(kitDir: string): Promise<VendorRecord> {
   return parseRecord(JSON.parse(await fsp.readFile(path.join(kitDir, RECORD_FILE), 'utf-8')));
 }
 
-/** Written in the schema's key order, `files` sorted, two-space JSON and a trailing newline. */
+/** `value` with every object's keys sorted, at every depth. */
+function sortedKeys(value: unknown): unknown {
+  if (Array.isArray(value) || value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, sortedKeys((value as Record<string, unknown>)[key])]),
+  );
+}
+
+/** The record's bytes: keys sorted at every depth, two-space JSON, a trailing newline (#281's committed form). */
+export function formatRecord(record: VendorRecord): string {
+  return `${JSON.stringify(sortedKeys(record), null, 2)}\n`;
+}
+
 export async function writeRecord(kitDir: string, record: VendorRecord): Promise<void> {
-  const ordered: Record<string, unknown> = {};
-  for (const key of Object.keys(VendorRecordSchema.shape)) {
-    const value = record[key as keyof VendorRecord];
-    if (value === undefined) continue;
-    ordered[key] =
-      key === 'files'
-        ? Object.fromEntries(Object.keys(record.files).sort().map((k) => [k, record.files[k]]))
-        : value;
-  }
-  await fsp.writeFile(path.join(kitDir, RECORD_FILE), `${JSON.stringify(ordered, null, 2)}\n`, 'utf-8');
+  await fsp.writeFile(path.join(kitDir, RECORD_FILE), formatRecord(record), 'utf-8');
 }
 
 /** Text with CRLF line ends read as LF, so a checkout's line-end setting never reads as a change. */
