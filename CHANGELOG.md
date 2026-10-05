@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Internal (no Windows timeout in the Invariant 2 contract test — #288)
+
+- **The Invariant 2 mixed-defaults contract test runs its five installs one at a time.** Run five at once on a 4-core Windows CI runner, they were the slowest CLI runs in the suite, and one now and then hit the 45 s kill. The test's budget is now set from the time measured on CI.
+
 ### Fixed (the update banner on `shardmind` status, and no command waits for npm — #285)
 
 - **`shardmind` (status) now shows the "newer shardmind available" banner.** Status usually finished before npm answered, and exiting cut the lookup off, so the banner almost never showed and the answer was never saved for next time.
