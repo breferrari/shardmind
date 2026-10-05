@@ -42,6 +42,7 @@ import React from 'react';
 import { render } from 'ink-testing-library';
 import { useSigintRollback } from '../../source/commands/hooks/shared.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
+import { asShown } from '../helpers/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MINIMAL_SHARD = path.resolve(__dirname, '../../examples/minimal-shard');
@@ -546,6 +547,48 @@ describe('update applies rename migrations (#178)', () => {
     expect(await exists('AGENTS.md')).toBe(false);
   });
 
+  it.each([
+    ['moving a renamed file', 'rename', (v: string) => moveCopy(v)],
+    ["removing a renamed file's old path", 'rm', (v: string) => moveCopy(v, { 'AGENTS.md': (c) => c.replace(COPY_LINE, 'Changed.') })],
+    ['deleting a file the release dropped', 'rm', (v: string) => shardAt(v, { moves: { [COPY]: 'AGENTS.md' } })],
+  ] as const)('a full disk while %s fails as UPDATE_WRITE_FAILED with the disk hint, and rolls back (#301)', async (_, op, shard) => {
+    await install();
+    const before = await read(COPY);
+    const v2 = await shard('0.2.0');
+    const oldAbs = path.join(vault, COPY);
+    const enospc = () => Object.assign(new Error(`ENOSPC: no space left on device, ${op} '${oldAbs}'`), { code: 'ENOSPC', path: oldAbs });
+    let thrown = false;
+    if (op === 'rename') {
+      const real = fsp.rename;
+      vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+        if (!thrown && from === oldAbs) {
+          thrown = true;
+          throw enospc();
+        }
+        return real(from, to);
+      });
+    } else {
+      const real = fsp.rm;
+      vi.spyOn(fsp, 'rm').mockImplementation(async (target, opts) => {
+        if (!thrown && target === oldAbs) {
+          thrown = true;
+          throw enospc();
+        }
+        return real(target, opts);
+      });
+    }
+    const err = await update(v2).catch((e: unknown) => e);
+    vi.restoreAllMocks();
+    expect(thrown).toBe(true);
+    const { shown, errnos } = asShown(err);
+    expect(shown).toMatchObject({ kind: 'known', code: 'UPDATE_WRITE_FAILED' });
+    expect(shown.message).toContain(COPY);
+    expect(shown.kind === 'known' ? shown.hint : '').toMatch(/The disk is full/);
+    expect(errnos).toContain('ENOSPC');
+    expect(await read(COPY)).toBe(before);
+    expect(await exists('AGENTS.md')).toBe(false);
+  });
+
   describe('a case-only rename needs no migration (#169)', () => {
     const LOWER = 'claude.md';
     /** The release that renames CLAUDE.md to claude.md, with no `migrations` entry. */
@@ -913,6 +956,33 @@ describe('update applies rename migrations (#178)', () => {
         expect((await fsp.readdir(path.join(vault, 'Brain'))).filter((n) => n.toLowerCase() === 'sub')).toEqual(['sub']);
         expect(await fsp.readdir(path.join(vault, 'Brain', 'sub'))).toContain('mine.md');
       }
+    });
+
+    it('a full disk while renaming the folder in place fails as UPDATE_WRITE_FAILED with the disk hint, and rolls back (#301)', async (ctx) => {
+      // The folder is renamed in place only where the filesystem folds case.
+      if (!(await foldsCase())) ctx.skip();
+      await install();
+      const before = await vaultTree();
+      const v2 = await folderCase('0.2.0');
+      const brainAbs = path.join(vault, 'brain');
+      const real = fsp.rename;
+      let thrown = false;
+      vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+        if (!thrown && from === brainAbs) {
+          thrown = true;
+          throw Object.assign(new Error(`ENOSPC: no space left on device, rename '${brainAbs}'`), { code: 'ENOSPC', path: brainAbs });
+        }
+        return real(from, to);
+      });
+      const err = await update(v2).catch((e: unknown) => e);
+      vi.restoreAllMocks();
+      expect(thrown).toBe(true);
+      const { shown, errnos } = asShown(err);
+      expect(shown).toMatchObject({ kind: 'known', code: 'UPDATE_WRITE_FAILED' });
+      expect(shown.message).toContain('brain');
+      expect(shown.kind === 'known' ? shown.hint : '').toMatch(/The disk is full/);
+      expect(errnos).toContain('ENOSPC');
+      expect(await vaultTree()).toEqual(before);
     });
 
     it("a real SIGINT mid-update, through the command's handler, stops the run and its own rollback leaves the vault as it was (#249)", async () => {
