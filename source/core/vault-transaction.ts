@@ -25,24 +25,21 @@ import { restoreTree } from './restore-tree.js';
 import { throwIfCancelled } from './run-cancel.js';
 import { toPosix } from './fs-utils.js';
 import { isEnoent } from '../runtime/errno.js';
-import type { RollbackFailure } from './rollback-report.js';
+import { reasonOf, type RollbackFailure } from './rollback-report.js';
 
 export interface TransactionOptions {
-  kind: 'update' | 'adopt';
+  kind: Parameters<typeof createBackupDir>[2];
   now?: Date;
   signal?: AbortSignal;
   /**
    * What the snapshot folder becomes after a rollback: `always` kept, or
    * kept only when a restore failed, when it holds the only copy of a file
-   * or the only list of the folders to remove (adopt, #246).
+   * (adopt, #246).
    */
   keepAfterRollback: 'always' | 'on-restore-failure';
   /** No install before this run: a rollback also removes what it wrote under `.shardmind/` (adopt, #243). */
   noPriorInstall: boolean;
 }
-
-/** A rollback failure that leaves a file only in the snapshot. */
-const RESTORE_FAILED = /^(restore|readdir|read) failed|^folder record unreadable/;
 
 export interface VaultTransaction {
   /** The run's snapshot folder. */
@@ -128,7 +125,7 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
         try {
           await fsp.rm(path.join(vaultRoot, rel), { force: true });
         } catch (err) {
-          failures.push({ path: rel, reason: `unlink failed: ${err instanceof Error ? err.message : String(err)}` });
+          failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
         }
       }
       await restoreTree(filesDir, vaultRoot, failures);
@@ -137,8 +134,8 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
       );
       if (opts.noPriorInstall) {
         // The snapshot goes with the rest, unless it holds the only copy of
-        // a file or the only list of folders to remove.
-        const keep = opts.keepAfterRollback === 'always' || failures.some((f) => RESTORE_FAILED.test(f.reason));
+        // a file: a failure that names its backup there (restore-tree.ts).
+        const keep = opts.keepAfterRollback === 'always' || failures.some((f) => f.backup !== undefined);
         for (const failure of await removeEngineWrites(vaultRoot, { snapshotDir: keep ? null : dir, removeEmptyDir: true })) {
           failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
         }

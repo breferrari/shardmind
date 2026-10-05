@@ -394,8 +394,10 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
 
     // Finish each move once its new path holds what was decided (#179).
     for (const move of moves) {
-      if (!dryRun) throwIfCancelled(signal);
-      if (tx) await completeMove(vaultRoot, move, resolutions[move.to], tx.introduced);
+      if (tx) {
+        throwIfCancelled(signal);
+        await completeMove(vaultRoot, move, resolutions[move.to], tx.introduced);
+      }
       summary.renamedFiles.push({ from: move.from, to: move.to });
     }
 
@@ -468,7 +470,7 @@ async function completeMove(
   vaultRoot: string,
   move: PlannedMove,
   resolution: AdoptResolution | undefined,
-  addedPaths: string[],
+  introduced: string[],
 ): Promise<void> {
   try {
     if (!move.matched && overwritesUserFile(resolution)) {
@@ -476,7 +478,7 @@ async function completeMove(
       return;
     }
     // Checked before any write; something may still arrive meanwhile.
-    await moveToFreePath(vaultRoot, move.from, move.to, addedPaths, 'adopt');
+    await moveToFreePath(vaultRoot, move.from, move.to, introduced, 'adopt');
   } catch (err) {
     // A refusal from the move keeps its own code; an errno keeps its hint (#225).
     if (err instanceof ShardMindError) throw err;
