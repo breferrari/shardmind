@@ -41,7 +41,7 @@ import {
   STATE_FILE,
   VALUES_FILE,
 } from '../runtime/vault-paths.js';
-import { mapConcurrent, pathExists, toPosix } from './fs-utils.js';
+import { mapConcurrent, pathExists, removePath, toPosix } from './fs-utils.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { throwIfCancelled } from './run-cancel.js';
 import { assertRenameTargetFree, moveToFreePath } from './rename-migrations.js';
@@ -54,6 +54,7 @@ import {
   STATE_SCHEMA_VERSION,
   removeEngineWrites,
   createBackupDir,
+  ENGINE_INSTALL_WRITES,
 } from './state.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
 import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
@@ -266,6 +267,8 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
 
   const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now, 'adopt');
   const addedPaths: string[] = [];
+  // The engine entries set aside before the run wrote its own (0.2.1).
+  const engine: EngineWrites = { started: false, setAside: [] };
 
   const fileStates: Record<string, FileState> = {};
   const summary: AdoptSummary = {
@@ -433,6 +436,18 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
 
     if (!dryRun) {
       throwIfCancelled(signal);
+      // A clone of the shard repo carries the shard's own `.shardmind/`
+      // entries (shard.yaml, shard-schema.yaml): set aside before they are
+      // overwritten, put back by a rollback, discarded once committed.
+      // Only from here may a rollback remove engine entries (0.2.1).
+      for (const rel of ENGINE_INSTALL_WRITES) {
+        const original = path.join(vaultRoot, rel);
+        if (!(await pathExists(original))) continue;
+        const backupPath = `${original}.shardmind-backup-${backupStamp(now)}`;
+        await fsp.rename(original, backupPath);
+        engine.setAside.push({ originalPath: original, backupPath });
+      }
+      engine.started = true;
       await initShardDir(vaultRoot);
       await cacheTemplates(vaultRoot, tempDir);
       await cacheManifest(vaultRoot, manifest, schema, tempDir);
@@ -444,13 +459,15 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
       // state.json commits the adopt: the last point a Ctrl+C can stop it.
       throwIfCancelled(signal);
       await writeState(vaultRoot, state);
+      // Committed: what was set aside goes. Best effort, never rolls back.
+      for (const moved of engine.setAside) await removePath(moved.backupPath).catch(() => {});
     }
 
     return { state, summary, backupDir };
   } catch (err) {
     if (!dryRun && backupDir) {
       // A file left unrestored is never reported as rolled back (#247).
-      const failures = await attemptRollback(() => rollbackAdopt(vaultRoot, backupDir, addedPaths, createdFolders));
+      const failures = await attemptRollback(() => rollbackAdopt(vaultRoot, backupDir, addedPaths, createdFolders, engine));
       throw withRollbackFailures(err, failures);
     }
     throw err;
@@ -557,6 +574,12 @@ export async function rollbackAdopt(
   addedPaths: string[],
   /** The folders the run recorded, for an unusable record on disk (#295). */
   createdFolders?: readonly string[],
+  /**
+   * Whether the run started writing `.shardmind/`'s engine entries, and the
+   * ones it set aside first (0.2.1). Without it, as before: every engine
+   * entry is the run's.
+   */
+  engine: EngineWrites = { started: true, setAside: [] },
 ): Promise<RollbackFailure[]> {
   const failures: RollbackFailure[] = [];
 
@@ -626,14 +649,37 @@ export async function rollbackAdopt(
   // and was removed with them above. The snapshot is kept, too, when its
   // folder record could not be read: it is the only list of those folders.
   const restoreFailed = failures.some((f) => /^(restore|readdir) failed|^folder record unreadable/.test(f.reason));
+  // Engine entries are the run's only once it started writing them: before
+  // that, the ones there are the vault's (a clone's sidecar, 0.2.1).
   for (const failure of await removeEngineWrites(vaultRoot, {
+    entries: engine.started,
     snapshotDir: restoreFailed ? null : backupDir,
     removeEmptyDir: true,
   })) {
     failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
   }
+  // Then the engine entries that were there before, back in place.
+  for (const moved of [...engine.setAside].reverse()) {
+    try {
+      await removePath(moved.originalPath);
+      await fsp.rename(moved.backupPath, moved.originalPath);
+    } catch (err) {
+      failures.push({ path: toPosix(vaultRoot, moved.originalPath), reason: `restore failed: ${reasonOf(err)}`, backup: moved.backupPath });
+    }
+  }
 
   return failures;
+}
+
+/** The engine entries a run set aside before writing its own, and whether it started (0.2.1). */
+export interface EngineWrites {
+  started: boolean;
+  setAside: Array<{ originalPath: string; backupPath: string }>;
+}
+
+/** The backup suffix's timestamp: ISO, `:` → `-`, no fractional seconds, as install's. */
+function backupStamp(now: Date): string {
+  return now.toISOString().replace(/:/g, '-').replace(/\..+$/, '');
 }
 
 async function writeVaultFileBuffer(

@@ -8,6 +8,15 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-05
+
+Patch release.
+
+### Fixed
+
+- **A failed `adopt` into a clone of a shard repo no longer deletes the clone's own `.shardmind/` files (#326).** A clone of a shard repo (obsidian-mind, for one) carries the shard's `.shardmind/shard.yaml` and `shard-schema.yaml`. When `shardmind adopt` failed partway, because a write failed (permissions, a full disk, a file locked by Obsidian, antivirus or a sync client), you pressed Ctrl+C, or a `shard-values.yaml` appeared during the run, its rollback deleted them, along with any `.shardmind/templates/` there. 0.1.x deleted the whole `.shardmind/` folder in the same case. Now an adopt that fails before writing its own `.shardmind/` files leaves them untouched, and one that fails after puts the originals back. A successful adopt is unchanged.
+  - **Already hit?** The files are tracked by git in the clone: `git checkout -- .shardmind` brings them back.
+
 ## [0.2.0] - 2026-10-05
 
 Minor release.

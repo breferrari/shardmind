@@ -367,7 +367,7 @@ export const ENGINE_INSTALL_WRITES: readonly string[] = [STATE_FILE, CACHED_MANI
  */
 export async function removeEngineWrites(
   vaultRoot: string,
-  opts: { snapshotDir?: string | null; removeEmptyDir: boolean },
+  opts: { entries?: boolean; snapshotDir?: string | null; removeEmptyDir: boolean },
 ): Promise<Array<{ path: string; reason: string }>> {
   const failures: Array<{ path: string; reason: string }> = [];
   const attempt = async (rel: string, op: () => Promise<unknown>, tolerate: (code: string | undefined) => boolean) => {
@@ -379,10 +379,14 @@ export async function removeEngineWrites(
       }
     }
   };
-  for (const rel of ENGINE_INSTALL_WRITES.filter((r) => r !== CACHED_TEMPLATES)) {
-    await attempt(rel, () => fsp.unlink(path.join(vaultRoot, rel)), (code) => code === 'ENOENT');
+  // `entries: false`: the run never started writing them, so the ones there
+  // are not its own (a clone of the shard repo carries its sidecar, 0.2.1).
+  if (opts.entries !== false) {
+    for (const rel of ENGINE_INSTALL_WRITES.filter((r) => r !== CACHED_TEMPLATES)) {
+      await attempt(rel, () => fsp.unlink(path.join(vaultRoot, rel)), (code) => code === 'ENOENT');
+    }
+    await attempt(CACHED_TEMPLATES, () => removePath(path.join(vaultRoot, CACHED_TEMPLATES)), () => false);
   }
-  await attempt(CACHED_TEMPLATES, () => removePath(path.join(vaultRoot, CACHED_TEMPLATES)), () => false);
   if (opts.snapshotDir) {
     const snapshot = opts.snapshotDir;
     await attempt(path.relative(vaultRoot, snapshot), () => removePath(snapshot), () => false);
