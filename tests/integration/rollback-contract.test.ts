@@ -377,6 +377,15 @@ for (const pipeline of PIPELINES) {
       });
     }
   }
+  // The commit itself fails (#301): state.json is the last write, so a
+  // failure there must still roll everything back. Named, so the order is
+  // pinned by the test that checks state.json is last.
+  rows.push({
+    id: `${pipeline.name}: fail the state.json write, the commit (#301)`,
+    pipeline,
+    fault: 'write',
+    plan: () => ({ fail: { kind: 'write', nth: last } }),
+  });
   // A created-folders record that is not a list (#292): update and adopt keep
   // one in their snapshot folder; install tracks its folders in memory.
   if (pipeline.name !== 'install') {
@@ -426,6 +435,22 @@ describe('rollback contract (#267)', () => {
           ...(faults.has('rename') ? ['rename'] : []),
         ].sort(),
       );
+    }
+  });
+
+  it.each(PIPELINES)('$name writes state.json last: the commit is its last write (#301)', async (pipeline) => {
+    const work = await freshWork();
+    try {
+      const { run } = await pipeline.setUp(work);
+      const injector = injectFaults();
+      try {
+        await run(new AbortController().signal);
+      } finally {
+        injector.uninstall();
+      }
+      expect(injector.writes.at(-1)).toMatch(/[\\/]\.shardmind[\\/]state\.json$/);
+    } finally {
+      await fsp.rm(work, { recursive: true, force: true });
     }
   });
 

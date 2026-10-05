@@ -89,6 +89,8 @@ export function injectFaults(plan: FaultPlan = {}): {
    * hook ran (the write it ran before is not one).
    */
   writtenAfterHook: string[];
+  /** The destination of every write, in order: what a run writes last (#301). */
+  writes: string[];
   /** Which of the plan's faults happened: a row whose fault never fired proves nothing. */
   fired: { fail: boolean; restore: boolean; hook: boolean; rollback: boolean };
   /** The calls of each kind made after `fail` fired: the rollback's (#292). */
@@ -107,6 +109,7 @@ export function injectFaults(plan: FaultPlan = {}): {
   let settled = false;
   const touchedAfterSettle: string[] = [];
   const writtenAfterHook: string[] = [];
+  const writes: string[] = [];
   const target = fsp as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
   const originals = new Map<string, (...args: unknown[]) => Promise<unknown>>();
   for (const [method, base] of Object.entries(KIND)) {
@@ -116,6 +119,7 @@ export function injectFaults(plan: FaultPlan = {}): {
       const isRestore = (method === 'copyFile' || method === 'rename') && BACKUP.test(String(args[0]));
       const kind: FaultKind = isRestore ? 'restore' : base;
       const n = ++counts[kind];
+      if (kind === 'write') writes.push(String(method === 'writeFile' ? args[0] : args[1]));
       const late = fired.fail ? ++afterFail[kind] : 0;
       if (settled && kind !== 'read') touchedAfterSettle.push(`${method} ${String(method === 'copyFile' || method === 'cp' || method === 'rename' ? args[1] : args[0])}`);
       if (hooked && (kind === 'write' || kind === 'rename')) {
@@ -151,6 +155,7 @@ export function injectFaults(plan: FaultPlan = {}): {
     counts,
     afterFail,
     writtenAfterHook,
+    writes,
     fired,
     settle: () => {
       settled = true;

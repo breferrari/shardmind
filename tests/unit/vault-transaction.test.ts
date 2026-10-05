@@ -345,6 +345,23 @@ describe('vault transaction for install (#301)', () => {
     expect((await fsp.readdir(vault)).sort()).toEqual(['a.md', 'b.md']);
   });
 
+  it('no free backup name is BACKUP_FAILED, and the rollback puts the earlier moves back (#209)', async () => {
+    await fsp.writeFile(at('a.md'), 'a');
+    await fsp.writeFile(at('b.md'), 'b');
+    const tx = await beginInstall();
+    await tx.recordSetAside(at('a.md'), false);
+    const realAccess = fsp.access;
+    vi.spyOn(fsp, 'access').mockImplementation(async (p, mode) => {
+      // Every name for b.md is taken.
+      if (String(p).startsWith(`${at('b.md')}.shardmind-backup-`)) return;
+      return realAccess(p, mode);
+    });
+    await expect(tx.recordSetAside(at('b.md'), false)).rejects.toMatchObject({ code: 'BACKUP_FAILED' });
+    vi.restoreAllMocks();
+    expect(await tx.rollback()).toEqual([]);
+    expect((await fsp.readdir(vault)).sort()).toEqual(['a.md', 'b.md']);
+  });
+
   it('a set-aside that cannot be moved back is reported with where it still is', async () => {
     await fsp.writeFile(at('Home.md'), 'mine\n');
     const tx = await beginInstall();
