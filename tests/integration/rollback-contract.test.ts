@@ -21,6 +21,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -54,6 +55,7 @@ import { attemptRollback, rollbackFailuresOf, withRollbackFailures } from '../..
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
 import { injectFaults, type FaultKind, type FaultPlan } from '../helpers/fault-fs.js';
 import { treeOf } from '../helpers/vault-tree.js';
+import { explainedByReport } from '../helpers/rollback-explained.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const MINIMAL_SHARD = path.join(ROOT, 'examples', 'minimal-shard');
@@ -252,7 +254,7 @@ const PIPELINES = [install, update, adopt];
 // Rows
 // ---------------------------------------------------------------------------
 
-type Fault = 'write' | 'rename' | 'mkdir' | 'restore' | 'ctrl-c';
+type Fault = 'write' | 'rename' | 'mkdir' | 'restore' | 'ctrl-c' | 'rollback-remove' | 'rollback-read' | 'tracker';
 
 interface Row {
   id: string;
@@ -276,8 +278,21 @@ interface KnownDefect {
   leaves: string[];
 }
 
-const KNOWN_DEFECTS: KnownDefect[] = [];
-/** Per issue, the paths a row passed on it with. */
+const KNOWN_DEFECTS: KnownDefect[] = [
+  {
+    issue: '#294',
+    pipeline: 'update',
+    fault: 'rollback-read',
+    leaves: ['.shardmind/templates/Fresh', '.shardmind/templates/Fresh/Deep', '.shardmind/templates/Fresh/Deep/note.md'],
+  },
+  { issue: '#295', pipeline: 'update', fault: 'rollback-read', leaves: ['Fresh', 'Fresh/Deep'] },
+  { issue: '#295', pipeline: 'update', fault: 'tracker', leaves: ['Fresh', 'Fresh/Deep'] },
+  { issue: '#295', pipeline: 'adopt', fault: 'rollback-read', leaves: ['.claude', '.claude/commands', 'brain'] },
+  { issue: '#295', pipeline: 'adopt', fault: 'tracker', leaves: ['.claude', '.claude/commands', 'brain'] },
+];
+/** One key per entry: an issue can leave different paths in different rows. */
+const defectKey = (d: KnownDefect) => `${d.issue} ${d.pipeline} ${d.fault}`;
+/** Per entry, the paths a row passed on it with. */
 const knownDefectsSeen = new Map<string, Set<string>>();
 /** Pipelines with a row whose restore fault actually fired. */
 const restoreFaultsFired = new Set<Pipeline['name']>();
@@ -303,7 +318,51 @@ async function countCalls(pipeline: Pipeline): Promise<Record<FaultKind, number>
   }
 }
 
+/**
+ * The rollback's own calls of each kind when the last write fails, the run
+ * with the most to roll back: the Ns the rollback-fault rows cover (#292).
+ */
+async function countRollbackCalls(pipeline: Pipeline, lastWrite: number): Promise<Record<FaultKind, number>> {
+  const work = await freshWork();
+  try {
+    const { run } = await pipeline.setUp(work);
+    const injector = injectFaults({ fail: { kind: 'write', nth: lastWrite } });
+    try {
+      await run(new AbortController().signal);
+    } catch {
+      // The injected write: the rollback after it is what is counted.
+    } finally {
+      injector.uninstall();
+    }
+    return { ...injector.afterFail };
+  } finally {
+    await fsp.rm(work, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Overwrite the run's created-folders record (`folders.json` in its snapshot
+ * folder) with something that is not a list of folders, as a crash or a
+ * hand edit could leave it (#292). Sync, so the injector does not count it.
+ * Returns whether there was a record to corrupt.
+ */
+function corruptFolderRecord(vault: string): boolean {
+  const backups = path.join(vault, '.shardmind', 'backups');
+  if (!fs.existsSync(backups)) return false;
+  let found = false;
+  for (const name of fs.readdirSync(backups)) {
+    const record = path.join(backups, name, 'folders.json');
+    if (fs.existsSync(record)) {
+      fs.writeFileSync(record, '{"not": "a list"}');
+      found = true;
+    }
+  }
+  return found;
+}
+
 const rows: Row[] = [];
+/** Pipelines whose tracker row found a folder record to corrupt. */
+const trackerCorrupted = new Set<Pipeline['name']>();
 for (const pipeline of PIPELINES) {
   const counts = await countCalls(pipeline);
   for (const kind of ['write', 'rename', 'mkdir'] as const) {
@@ -323,6 +382,30 @@ for (const pipeline of PIPELINES) {
       pipeline,
       fault: 'ctrl-c',
       plan: (abort) => ({ beforeWrite: { nth, hook: () => abort.abort() } }),
+    });
+  }
+  // The rollback's own failures (#292): the last write fails, then each
+  // remove and each read the rollback makes fails in turn.
+  const last = counts.write;
+  const rollback = await countRollbackCalls(pipeline, last);
+  for (const kind of ['remove', 'read'] as const) {
+    for (let nth = 1; nth <= rollback[kind]; nth++) {
+      rows.push({
+        id: `${pipeline.name}: fail write #${last}, then rollback ${kind} #${nth}`,
+        pipeline,
+        fault: `rollback-${kind}`,
+        plan: () => ({ fail: { kind: 'write', nth: last }, inRollback: { kind, nth } }),
+      });
+    }
+  }
+  // A created-folders record that is not a list (#292): update and adopt keep
+  // one in their snapshot folder; install tracks its folders in memory.
+  if (pipeline.name !== 'install') {
+    rows.push({
+      id: `${pipeline.name}: fail write #${last} with an unreadable folder record`,
+      pipeline,
+      fault: 'tracker',
+      plan: () => ({ fail: { kind: 'write', nth: last } }),
     });
   }
 }
@@ -352,7 +435,18 @@ describe('rollback contract (#267)', () => {
   it('covers every pipeline with rows of every fault kind', () => {
     for (const pipeline of PIPELINES) {
       const faults = new Set(rows.filter((r) => r.pipeline === pipeline).map((r) => r.fault));
-      expect([...faults].sort()).toEqual(['ctrl-c', 'mkdir', 'restore', 'write', ...(faults.has('rename') ? ['rename'] : [])].sort());
+      expect([...faults].sort()).toEqual(
+        [
+          'ctrl-c',
+          'mkdir',
+          'restore',
+          'write',
+          'rollback-remove',
+          // Install rolls back from in-memory lists, so its rollback reads nothing.
+          ...(pipeline.name === 'install' ? [] : ['rollback-read', 'tracker']),
+          ...(faults.has('rename') ? ['rename'] : []),
+        ].sort(),
+      );
     }
   });
 
@@ -363,7 +457,13 @@ describe('rollback contract (#267)', () => {
         const { vault, run } = await row.pipeline.setUp(work);
         const before = await treeOf(vault);
         const abort = new AbortController();
-        const injector = injectFaults(row.plan(abort));
+        const plan = row.plan(abort);
+        if (row.fault === 'tracker') {
+          plan.onFail = () => {
+            if (corruptFolderRecord(vault)) trackerCorrupted.add(row.pipeline.name);
+          };
+        }
+        const injector = injectFaults(plan);
         let error: unknown = null;
         try {
           await run(abort.signal);
@@ -381,6 +481,9 @@ describe('rollback contract (#267)', () => {
         // would pass for the wrong reason.
         if (row.fault === 'ctrl-c') expect(injector.fired.hook, 'Ctrl+C fired').toBe(true);
         else if (row.fault !== 'restore') expect(injector.fired.fail, `${row.fault} fault fired`).toBe(true);
+        if (row.fault === 'rollback-remove' || row.fault === 'rollback-read') {
+          expect(injector.fired.rollback, 'rollback fault fired').toBe(true);
+        }
         if (injector.fired.restore) restoreFaultsFired.add(row.pipeline.name);
 
         if (row.fault === 'ctrl-c') {
@@ -416,26 +519,15 @@ describe('rollback contract (#267)', () => {
         expect(ours, `failed with the injected fault, not: ${String(error)}`).toBe(true);
 
         const failures = rollbackFailuresOf(error);
-        // A named path may differ, and so may the folders on its way (as
-        // folders, never their other contents).
-        const named = new Set<string>();
-        const namedFolders = new Set<string>();
-        for (const f of failures) {
-          for (const p of [f.path, f.backup ? path.relative(vault, f.backup) : null]) {
-            if (!p) continue;
-            const segments = p.split(path.sep).join('/').split('/');
-            named.add(segments.join('/'));
-            for (let i = 1; i < segments.length; i++) namedFolders.add(segments.slice(0, i).join('/'));
-          }
-        }
         const after = await treeOf(vault);
         const isFolder = (p: string) => before.get(p) === 'dir' || after.get(p) === 'dir';
+        // Only what this run's report names is excused (`rollback-explained.ts`).
+        const reported = explainedByReport(failures, vault, isFolder);
         // Adopt keeps its snapshot only when a restore from it, or its folder
         // record, failed (#246, #258).
         const keptSnapshot = failures.some((f) => /^(restore|readdir) failed|^folder record unreadable/.test(f.reason));
         const allowed = (p: string) =>
-          named.has(p) ||
-          (namedFolders.has(p) && isFolder(p)) ||
+          reported(p) ||
           row.pipeline.exceptions.some((e) => e.prefix.test(p) && (row.pipeline.name !== 'adopt' || keptSnapshot));
         const unexplained = differences(before, after).filter((p) => !allowed(p));
 
@@ -448,9 +540,9 @@ describe('rollback contract (#267)', () => {
               d.leaves.every((p) => unexplained.includes(p)),
           );
           if (defect) {
-            const seen = knownDefectsSeen.get(defect.issue) ?? new Set<string>();
+            const seen = knownDefectsSeen.get(defectKey(defect)) ?? new Set<string>();
             for (const p of unexplained) seen.add(p);
-            knownDefectsSeen.set(defect.issue, seen);
+            knownDefectsSeen.set(defectKey(defect), seen);
             return;
           }
         }
@@ -468,13 +560,17 @@ describe('rollback contract (#267)', () => {
     expect([...restoreFaultsFired].sort()).toEqual(PIPELINES.map((p) => p.name).sort());
   });
 
+  it('corrupted a folder record in update and adopt (#292)', () => {
+    expect([...trackerCorrupted].sort()).toEqual(['adopt', 'update']);
+  });
+
   it('still meets every known defect it allows', () => {
-    expect([...knownDefectsSeen.keys()].sort()).toEqual(KNOWN_DEFECTS.map((d) => d.issue).sort());
+    expect([...knownDefectsSeen.keys()].sort()).toEqual(KNOWN_DEFECTS.map(defectKey).sort());
   });
 
   it('allows no path a known defect does not leave', () => {
     for (const defect of KNOWN_DEFECTS) {
-      expect([...(knownDefectsSeen.get(defect.issue) ?? [])].sort(), defect.issue).toEqual([...defect.leaves].sort());
+      expect([...(knownDefectsSeen.get(defectKey(defect)) ?? [])].sort(), defectKey(defect)).toEqual([...defect.leaves].sort());
     }
   });
 });
@@ -484,9 +580,9 @@ describe('rollback contract (#267)', () => {
 // ---------------------------------------------------------------------------
 
 /** The `fsp` methods the injector wraps (`tests/helpers/fault-fs.ts`). */
-const WRAPPED = ['writeFile', 'copyFile', 'cp', 'rename', 'mkdir', 'rm', 'unlink', 'rmdir'];
-/** The `fsp` methods that only read, and so need no fault. */
-const READ_ONLY = ['readFile', 'readdir', 'lstat', 'stat', 'access', 'readlink', 'realpath'];
+const WRAPPED = ['writeFile', 'copyFile', 'cp', 'rename', 'mkdir', 'rm', 'unlink', 'rmdir', 'readFile', 'readdir', 'lstat', 'stat'];
+/** The `fsp` methods that only read and that no rollback row fails. */
+const READ_ONLY = ['access', 'readlink', 'realpath'];
 
 /**
  * Files in the write paths' import closure allowed to use the filesystem in a
