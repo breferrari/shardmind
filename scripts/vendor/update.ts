@@ -8,6 +8,7 @@
  * See IMPLEMENTATION §4.27.
  */
 
+import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -17,6 +18,33 @@ import { threeWayMerge } from '../../source/core/differ.js';
 import { isEnoent } from '../../source/runtime/errno.js';
 import { headerFor, readKitFile, readRecord, stripHeader, tagFor, toLf, writeRecord, type VendorRecord } from './record.js';
 import { networkSource, type UpstreamSource } from './upstream.js';
+
+/** What a conflicted run left for a person, so `--resolved` can check it was finished. */
+export const PENDING_FILE = 'VENDOR.pending.json';
+
+interface Pending {
+  version: string;
+  /** The recorded commit the run merged from. */
+  from: string;
+  /** The commit of the version it merged onto. */
+  commit: string;
+  /** Each conflicted file and the sha256 of the text written, markers included. */
+  conflicted: Record<string, string>;
+}
+
+const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+
+async function readPending(kitDir: string): Promise<Pending | null> {
+  try {
+    return JSON.parse(await fsp.readFile(path.join(kitDir, PENDING_FILE), 'utf-8')) as Pending;
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw err;
+  }
+}
+
+/** A line the merge engine writes to open or close a conflict, whatever its label. */
+const MARKER = /^(<{7}|>{7}) /m;
 
 export interface UpdateConflict {
   file: string;
@@ -107,6 +135,13 @@ export async function updateKit(opts: UpdateOptions): Promise<UpdateResult> {
   const source = opts.source ?? networkSource;
   const record = await readRecord(opts.kitDir);
   const files = Object.keys(record.files).sort();
+  const pending = await readPending(opts.kitDir);
+  if (pending) {
+    throw new Error(
+      `${record.kit} has an unfinished update to ${pending.version}; resolve its conflicts and run ` +
+        `vendor:update -- ${record.kit} ${pending.version} --resolved`,
+    );
+  }
   const vcs = opts.commit ? gitFor(opts.kitDir, opts.commit.author) : null;
 
   // Every header is checked before anything is written.
@@ -174,6 +209,12 @@ export async function updateKit(opts: UpdateOptions): Promise<UpdateResult> {
       // the version it describes, and so do the headers, so vendor:check still
       // reads the kit; once the markers are resolved, `--resolved` finishes it.
       await write(final, record);
+      const conflicted: Record<string, string> = {};
+      for (const c of result.conflicts) {
+        if (c.reason === 'conflicting changes') conflicted[c.file] = hash(headerFor(record, c.file) + final.get(c.file)!);
+      }
+      const left: Pending = { version: opts.version, from: record.commit, commit, conflicted };
+      await fsp.writeFile(path.join(opts.kitDir, PENDING_FILE), `${JSON.stringify(left, null, 2)}\n`, 'utf-8');
       return result;
     }
 
@@ -205,27 +246,50 @@ export async function updateKit(opts: UpdateOptions): Promise<UpdateResult> {
   }
 }
 
-const MARKER = /^(<<<<<<< shardmind|>>>>>>> \S+@\S+)$/m;
-
 /**
  * Finishes an update a person resolved (`--resolved`): each file as it stands
  * is the result, so the record advances to `version` with `modified` measured
  * against the new upstream. A re-run of `updateKit` cannot do this, since a
  * resolution that keeps ShardMind's line conflicts with the old base again.
+ *
+ * Nothing is written unless the kit is whole: no marker left in any of its
+ * files, and every file the conflicted run left is changed since. The record
+ * never claims a version over a half-merged kit.
  */
 export async function finishKit(opts: { kitDir: string; version: string; source?: UpstreamSource }): Promise<void> {
   const source = opts.source ?? networkSource;
   const record = await readRecord(opts.kitDir);
   const files = Object.keys(record.files).sort();
-  const resolved = new Map<string, string>();
-  for (const file of files) {
-    const text = stripHeader(await readKitFile(opts.kitDir, record, file), record, file);
-    if (MARKER.test(text)) throw new Error(`${record.kit}/${file} still holds a conflict marker; resolve it first`);
-    resolved.set(file, text);
+  const pending = await readPending(opts.kitDir);
+  if (!pending) throw new Error(`${record.kit} has no conflicted update to finish (no ${PENDING_FILE})`);
+  if (pending.version !== opts.version || pending.from !== record.commit) {
+    throw new Error(
+      `${record.kit}'s unfinished update is to ${pending.version} from ${pending.from.slice(0, 7)}, ` +
+        `not to ${opts.version} from ${record.commit.slice(0, 7)}`,
+    );
   }
 
+  const marked: string[] = [];
+  for (const file of await filesUnder(opts.kitDir)) {
+    if (MARKER.test(toLf(await fsp.readFile(path.join(opts.kitDir, file), 'utf-8')))) marked.push(file);
+  }
+  if (marked.length > 0) {
+    throw new Error(`${record.kit} still holds conflict markers in: ${marked.join(', ')}; resolve them first`);
+  }
+  const untouched: string[] = [];
+  for (const [file, written] of Object.entries(pending.conflicted).sort(([a], [b]) => a.localeCompare(b))) {
+    if (!(file in record.files)) continue; // dropped from the kit by the person: nothing to finish
+    if (hash(await readKitFile(opts.kitDir, record, file)) === written) untouched.push(file);
+  }
+  if (untouched.length > 0) {
+    throw new Error(`${record.kit}: these conflicted files are unchanged since the update: ${untouched.join(', ')}`);
+  }
+
+  const resolved = new Map<string, string>();
+  for (const file of files) resolved.set(file, stripHeader(await readKitFile(opts.kitDir, record, file), record, file));
+
   const tag = tagFor(record, opts.version);
-  const commit = await source.commitForTag(record.repository, tag);
+  const commit = pending.commit;
   const tarball = await source.versionInfo(record.package, opts.version);
   const tree = await source.checkout(record.repository, commit);
   try {
@@ -243,6 +307,7 @@ export async function finishKit(opts: { kitDir: string; version: string; source?
     }
     for (const [file, text] of resolved) await fsp.writeFile(path.join(opts.kitDir, file), headerFor(next, file) + text);
     await writeRecord(opts.kitDir, next);
+    await fsp.rm(path.join(opts.kitDir, PENDING_FILE));
   } finally {
     await tree.cleanup();
   }

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { updateKit } from '../../scripts/vendor/update.js';
 import { headerFor, readRecord } from '../../scripts/vendor/record.js';
-import { finishKit, main } from '../../scripts/vendor/update.js';
+import { finishKit, main, PENDING_FILE } from '../../scripts/vendor/update.js';
 import { makeVendorFixture, UPSTREAM, V1_COMMIT, V2_COMMIT } from '../helpers/vendor-fixture.js';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -75,16 +75,59 @@ describe('vendor:update (#280)', () => {
     expect(await fsp.readFile(path.join(kitDir, 'c.ts'), 'utf-8')).toBe(
       headerFor(record, 'c.ts') + 'export const c = 99; // ShardMind, over 2\n',
     );
+    await expect(fsp.access(path.join(kitDir, PENDING_FILE))).rejects.toThrow();
   });
 
-  it('--resolved refuses a file that still holds a marker, and one upstream removed', async () => {
+  it('refuses a plain update while a conflicted one is unfinished', async () => {
     const { kitDir, source } = await fixture(['b.ts', 'c.ts']);
     await updateKit({ kitDir, version: '2.0.0', source });
-    const before = await fsp.readFile(path.join(kitDir, 'VENDOR.json'), 'utf-8');
-    await expect(finishKit({ kitDir, version: '2.0.0', source })).rejects.toThrow('demo-kit/c.ts still holds a conflict marker');
-    expect(await fsp.readFile(path.join(kitDir, 'VENDOR.json'), 'utf-8')).toBe(before);
+    await expect(updateKit({ kitDir, version: '2.0.0', source })).rejects.toThrow(/unfinished update to 2\.0\.0.*--resolved/);
+  });
 
+  it('--resolved refuses while any file in the kit holds a marker, and lists every one', async () => {
+    const { kitDir, source } = await fixture(['a.ts', 'c.ts']);
+    await updateKit({ kitDir, version: '2.0.0', source });
+    // A marker in a file that is no vendored file at all still counts.
+    await fsp.writeFile(path.join(kitDir, 'notes.md'), 'x\n<<<<<<< mine\ny\n=======\nz\n>>>>>>> theirs\n');
+    const before = await fsp.readFile(path.join(kitDir, 'VENDOR.json'), 'utf-8');
+    await expect(finishKit({ kitDir, version: '2.0.0', source })).rejects.toThrow(
+      'demo-kit still holds conflict markers in: c.ts, notes.md; resolve them first',
+    );
+    expect(await fsp.readFile(path.join(kitDir, 'VENDOR.json'), 'utf-8')).toBe(before);
+  });
+
+  it('--resolved refuses a conflicted file that is unchanged since the update, and lists every one', async () => {
+    const { kitDir, source } = await fixture(['b.ts', 'c.ts']);
+    await updateKit({ kitDir, version: '2.0.0', source });
+    // The run also names b.ts as conflicted, as it stands now: nobody touched it.
+    const pendingPath = path.join(kitDir, PENDING_FILE);
+    const pending = JSON.parse(await fsp.readFile(pendingPath, 'utf-8'));
+    const { createHash } = await import('node:crypto');
+    pending.conflicted['b.ts'] = createHash('sha256').update(await fsp.readFile(path.join(kitDir, 'b.ts'), 'utf-8')).digest('hex');
+    await fsp.writeFile(pendingPath, JSON.stringify(pending));
+    const old = await readRecord(kitDir);
+    await fsp.writeFile(path.join(kitDir, 'c.ts'), headerFor(old, 'c.ts') + 'export const c = 99; // resolved\n');
+
+    const before = await fsp.readFile(path.join(kitDir, 'VENDOR.json'), 'utf-8');
+    await expect(finishKit({ kitDir, version: '2.0.0', source })).rejects.toThrow(
+      'demo-kit: these conflicted files are unchanged since the update: b.ts',
+    );
+    expect(await fsp.readFile(path.join(kitDir, 'VENDOR.json'), 'utf-8')).toBe(before);
+  });
+
+  it('--resolved refuses with no unfinished update, or one to another version', async () => {
+    const { kitDir, source } = await fixture(['b.ts', 'c.ts']);
+    await expect(finishKit({ kitDir, version: '2.0.0', source })).rejects.toThrow(/no conflicted update to finish/);
+    await updateKit({ kitDir, version: '2.0.0', source });
+    const old = await readRecord(kitDir);
+    await fsp.writeFile(path.join(kitDir, 'c.ts'), headerFor(old, 'c.ts') + 'export const c = 99; // resolved\n');
+    await expect(finishKit({ kitDir, version: '3.0.0', source })).rejects.toThrow(/unfinished update is to 2\.0\.0/);
+    expect((await readRecord(kitDir)).version).toBe('1.0.0');
+  });
+
+  it('--resolved refuses a file upstream removed', async () => {
     const removed = await fixture(['b.ts', 'd.ts']);
+    await updateKit({ kitDir: removed.kitDir, version: '2.0.0', source: removed.source });
     await expect(finishKit({ kitDir: removed.kitDir, version: '2.0.0', source: removed.source })).rejects.toThrow(/lib\/d\.ts is gone in 2\.0\.0/);
     expect((await readRecord(removed.kitDir)).version).toBe('1.0.0');
   });
