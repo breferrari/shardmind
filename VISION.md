@@ -120,7 +120,7 @@ The `shardmind/runtime` module is a separately bundled export (~30KB) with zero 
 - A hosted registry with accounts and publishing workflows (reaffirmed 2026-10-05, #89: the git-based registry index is the discovery path)
 - First-class support for non-Obsidian markdown tools (Logseq, Notion, etc.)
 - A plugin system within ShardMind itself (shards ARE the extension mechanism)
-- Template inheritance across shards (composition is deferred; each shard is self-contained in v0.1)
+- Template inheritance across shards (composition was declined on 2026-10-05, #81; each shard is self-contained)
 - AI-powered migration that reads note content to classify it (that's `/vault-upgrade` in obsidian-mind, not ShardMind's job — ShardMind is a package manager, not an AI)
 
 This list is a scope guardrail, not permanent.

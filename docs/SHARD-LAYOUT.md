@@ -428,7 +428,7 @@ A renamed file is planned at its new path as the old one would have been at the 
 
 ## Out of scope — deferred to v0.2
 
-Criterion: **obsidian-mind v6 does not need these to install, configure, or upgrade cleanly.** Each is a clean additive extension — deferring doesn't force retroactive design changes.
+Criterion: **obsidian-mind v6 does not need these to install, configure, or upgrade cleanly.** Each is a clean additive extension — deferring doesn't force retroactive design changes. Most of the original v0.2 deferrals were declined on 2026-10-05 and are listed under **Declined** below; the table keeps what is still deferred.
 
 Nothing from the original v0.2 list is still deferred: `.shardmindignore` negation was built (#87), and the rest was declined on 2026-10-05, below.
 

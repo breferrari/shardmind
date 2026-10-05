@@ -1279,7 +1279,7 @@ In the ownership model, SOUL is a **modified** file from the moment the user fil
 
 **For v0.1**: ship as empty template with section headers and instructions (Option B).
 
-**For v0.2**: add `guided_files` to `shard-schema.yaml` — a third install phase after values and module review:
+**The declined design**: `guided_files` in `shard-schema.yaml` — a third install phase after values and module review:
 
 ```yaml
 guided_files:
@@ -1318,7 +1318,7 @@ guided_files:
 >
 > For v0.1: different purposes are different shards. obsidian-mind is the engineering shard. Creator-builder is a separate shard sharing core templates. Research wiki is its own shard.
 >
-> For v0.2: modules gain a `structure` field with purpose-driven variants. Design doc: the reshape decision record IS the spec for this feature.
+> The declined design: modules gain a `structure` field with purpose-driven variants. Design doc: the reshape decision record IS the spec for this feature.
 
 ---
 

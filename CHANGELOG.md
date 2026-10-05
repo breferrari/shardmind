@@ -22,7 +22,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Docs (eleven proposals declined — #199, #81, #86, #79, #80, #82, #83, #84, #39, #89, #91)
 
-- **The README now says how to stop using shardmind on a vault:** delete `.shardmind/` and `shard-values.yaml`. Eleven proposals with no request behind them are declined, each with its reason in `docs/SHARD-LAYOUT.md` §Out of scope (a `--skip-hooks` flag, several shards per vault, `rendered_files`, guided files, structural variants, dependency fetching, `eject`, `init`, named registries, a hosted registry, team management). Each can reopen if its reason stops holding.
+- **The README now says how to stop using shardmind on a vault:** delete `.shardmind/` and `shard-values.yaml`. Eleven proposals with no request behind them are declined, each with its reason in `docs/SHARD-LAYOUT.md` §Out of scope (and the hosted registry, already a VISION non-goal, reaffirmed there). Each can reopen if its reason stops holding.
 
 ### Internal (the coverage report counts the spawned CLI — #293)
 
