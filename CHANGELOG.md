@@ -18,7 +18,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Internal (CI ready for a merge queue)
 
-- **CI runs on the merge queue, and reports one check with a fixed name, `ci-passed`, for main's ruleset to require.** It passes only when every OS and Node job passed. The jobs it covers are named after their matrix values, so a new Node version or OS no longer renames the check a merge waits on.
+- **CI reports one check with a fixed name, `ci-passed`, which main's branch protection requires.** It passes only when every OS and Node job passed. The jobs it covers are named after their matrix values, so a new Node version or OS no longer renames the check a merge waits on. CI also listens for merge-queue runs, which GitHub offers only to organisation-owned repos.
 
 ### Internal (the coverage report counts the spawned CLI — #293)
 
