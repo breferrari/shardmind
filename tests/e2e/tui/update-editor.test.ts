@@ -26,6 +26,7 @@ import { spawnCliPty, ENTER, ARROW_DOWN, CTRL_C, PTY_VIEWPORT_ROWS } from './hel
 import { noPty } from './helpers/pty-gates.js';
 import { buildMutatedShard } from './helpers/build-fixture-shard.js';
 import { tick } from '../../component/helpers.js';
+import { treeOf } from '../../helpers/vault-tree.js';
 
 const SLUG = 'acme/editor-handoff';
 const REF = `github:${SLUG}`;
@@ -211,6 +212,62 @@ describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)'
       } finally {
         await handle.dispose();
       }
+    } finally {
+      if (vault) await vault.cleanup();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  // The read the handoff stopped is started again (#282): in raw mode a
+  // Ctrl+C reaches shardmind as a byte on that read, so it must still cancel.
+  it('a Ctrl+C at the prompt after the editor rolls back and exits 130', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-editor-after-'));
+    let vault: Vault | null = null;
+    try {
+      // Fails at once, so the edit is cancelled and the same prompt returns.
+      const editor = path.join(tmpDir, 'editor.cjs');
+      await fs.writeFile(editor, 'process.exit(1);\n');
+
+      stub.setVersion(SLUG, '0.1.0', await buildConflictTarball('0.1.0', tmpDir, false));
+      stub.setLatest(SLUG, '0.1.0');
+      vault = await createInstalledVault({ stub, shardRef: REF, values: DEFAULT_VALUES, prefix: 'l2-editor-after' });
+      for (const rel of ['Home.md', 'brain/North Star.md', '.claude/settings.json']) {
+        await vault.writeFile(rel, `${await vault.readFile(rel)}\nUser bottom edit.\n`);
+      }
+      stub.setVersion(SLUG, '0.2.0', await buildConflictTarball('0.2.0', tmpDir, true));
+      stub.setLatest(SLUG, '0.2.0');
+      const before = await treeOf(vault.root);
+
+      const handle = await spawnCliPty(['update'], {
+        timeoutMs: 60_000,
+        cwd: vault.root,
+        env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '' },
+        rows: PTY_VIEWPORT_ROWS,
+      });
+      try {
+        await handle.waitForScreen((s) => /\(1 of 3\)/.test(s) && /Open in editor/.test(s), {
+          timeoutMs: 30_000,
+          description: 'first conflict with Open in editor',
+        });
+        for (let i = 0; i < 3; i++) {
+          handle.write(ARROW_DOWN);
+          await tick(80);
+        }
+        handle.write(ENTER);
+        await handle.waitForScreen((s) => /\(1 of 3\)/.test(s) && /exited with code 1/.test(s.replace(/\s+/g, ' ')), {
+          timeoutMs: 30_000,
+          description: 'back at the first conflict after the failed editor',
+        });
+        await tick(200);
+        handle.write(CTRL_C);
+        expect((await handle.waitForExit()).exitCode).toBe(130);
+      } finally {
+        await handle.dispose();
+      }
+      // The vault is as before, but for the 24 h version cache written before any prompt.
+      const after = await treeOf(vault.root);
+      after.delete('.shardmind/update-check.json');
+      expect(after).toEqual(before);
     } finally {
       if (vault) await vault.cleanup();
       await fs.rm(tmpDir, { recursive: true, force: true });
