@@ -8,6 +8,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Internal (the rollback's own failures are tested — #292)
+
+- **The rollback contract now also fails the rollback itself.** It fails each file it removes and each folder it reads, one at a time, and corrupts its record of the folders it created. Only what the run reports may be left changed. This found two defects, #294 and #295.
+- **An update given a conflict with no decision now stops with an error naming the file, instead of silently keeping your copy.** No real run can do this; it guards against a bug in shardmind itself.
+
 ### Fixed (exit after Open in editor in Windows Terminal — #282)
 
 - **`shardmind update` now ends after an Open in editor on Windows.** The update finished and drew its summary, but the process never exited in a Windows terminal, so the prompt didn't come back. Handing the terminal to the editor now stops shardmind's own read of the keyboard as well as leaving raw mode, and starts the read again afterwards.

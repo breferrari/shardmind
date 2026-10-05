@@ -75,3 +75,44 @@ describe('injectFaults beforeWrite', () => {
     expect(seen).toEqual([2]);
   });
 });
+
+describe('injectFaults in the rollback (#292)', () => {
+  it('fails the nth remove or read made after the main fault, and counts them apart', async () => {
+    const dir = await tempRoot();
+    const a = path.join(dir, 'a.txt');
+    const b = path.join(dir, 'b.txt');
+    await fs.writeFile(a, 'a');
+    await fs.writeFile(b, 'b');
+    const fault = injectFaults({ fail: { kind: 'write', nth: 1 }, inRollback: { kind: 'remove', nth: 2 } });
+    uninstall = fault.uninstall;
+
+    // Before the main fault, removes are not the rollback's: none fails.
+    await expect(fs.writeFile(path.join(dir, 'c.txt'), 'c')).rejects.toThrow(/injected EIO at write #1/);
+    await fs.rm(a);
+    await expect(fs.rm(b)).rejects.toThrow(/injected EIO at remove #2/);
+    expect(fault.fired.rollback).toBe(true);
+    expect(fault.afterFail.remove).toBe(2);
+    expect(fault.counts.remove).toBe(2);
+  });
+
+  it('never fails a rollback call when the main fault did not fire', async () => {
+    const dir = await tempRoot();
+    const file = path.join(dir, 'a.txt');
+    await fs.writeFile(file, 'a');
+    const fault = injectFaults({ fail: { kind: 'write', nth: 5 }, inRollback: { kind: 'read', nth: 1 } });
+    uninstall = fault.uninstall;
+    expect(await fs.readFile(file, 'utf-8')).toBe('a');
+    expect(fault.fired.rollback).toBe(false);
+    expect(fault.counts.read).toBe(1);
+    expect(fault.afterFail.read).toBe(0);
+  });
+
+  it('runs onFail just before the main fault throws', async () => {
+    const dir = await tempRoot();
+    const order: string[] = [];
+    const fault = injectFaults({ fail: { kind: 'mkdir', nth: 1 }, onFail: () => void order.push('onFail') });
+    uninstall = fault.uninstall;
+    await fs.mkdir(path.join(dir, 'x')).catch(() => order.push('threw'));
+    expect(order).toEqual(['onFail', 'threw']);
+  });
+});

@@ -525,9 +525,9 @@ The run writes this as its one JSON failure document and exits 1, instead of wri
 
 ### `UPDATE_WRITE_FAILED`
 
-**Meaning:** A write during the update executor failed (mkdir + writeFile on a planned output path). Typically filesystem-level (permissions, disk-full, antivirus lock). When the rollback that follows could not restore every file, the update fails with `ROLLBACK_INCOMPLETE` instead, naming this code in its message (#247). Also thrown before any write when the run's snapshot folder under `.shardmind/backups/` cannot be created: the folder isn't writable, or a thousand `update-<timestamp>` names are already taken (#248). Nothing was snapshotted or written then, and no folder made on the way is left (#269); clean up old `update-*` folders or fix the permissions and retry.
+**Meaning:** A write during the update executor failed (mkdir + writeFile on a planned output path). Typically filesystem-level (permissions, disk-full, antivirus lock). When the rollback that follows could not restore every file, the update fails with `ROLLBACK_INCOMPLETE` instead, naming this code in its message (#247). Also thrown before any write when the run's snapshot folder under `.shardmind/backups/` cannot be created: the folder isn't writable, or a thousand `update-<timestamp>` names are already taken (#248). Nothing was snapshotted or written then, and no folder made on the way is left (#269); clean up old `update-*` folders or fix the permissions and retry. Also thrown, before anything is snapshotted or written, as the `Missing update resolution for <path>` invariant assertion when a conflict reaches the executor without a decision (#292).
 
-**Remedy:** Check filesystem permissions on the vault directory and the mentioned path; retry. A rollback that could not restore everything is `ROLLBACK_INCOMPLETE`.
+**Remedy:** Check filesystem permissions on the vault directory and the mentioned path; retry. A rollback that could not restore everything is `ROLLBACK_INCOMPLETE`. For the missing-resolution case, that's a state-machine bug — open an issue.
 
 ### `MIGRATION_INVALID_VERSION`
 

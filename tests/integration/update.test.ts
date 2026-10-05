@@ -447,6 +447,31 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     expect(plan.pendingConflicts.length).toBe(1);
     expect(plan.pendingConflicts[0]!.path).toBe('Home.md');
 
+    // A conflict nobody decided is a caller bug: refused before any snapshot
+    // or write, naming the path, never silently kept (#292).
+    const homeBefore = await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8');
+    const stateBefore = await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8');
+    const undecided = runUpdate({
+      vaultRoot: vault,
+      plan,
+      conflictResolutions: {},
+      currentState: state,
+      newManifest,
+      newSchema,
+      newValues: oldValues,
+      newSelections: selections,
+      resolved: { ...RESOLVED, version: newManifest.version },
+      tarballSha256: 'sha-0.2.0',
+      newTempDir: newShard,
+    });
+    await expect(undecided).rejects.toMatchObject({
+      code: 'UPDATE_WRITE_FAILED',
+      message: 'Missing update resolution for Home.md',
+    });
+    expect(await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe(homeBefore);
+    expect(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')).toBe(stateBefore);
+    await expect(fsp.access(path.join(vault, '.shardmind', 'backups'))).rejects.toThrow();
+
     // Resolve by keeping the user's copy.
     const result = await runUpdate({
       vaultRoot: vault,
