@@ -11,13 +11,14 @@
  * Windows with a faked TTY.
  */
 
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, inject } from 'vitest';
 import { createGitHubStub, type GitHubStub } from '../helpers/github-stub.js';
 import { buildTarballFixtures, cleanupTarballFixtures, type TarballFixtures } from '../helpers/tarball.js';
 import { ensureBuilt } from '../helpers/build-once.js';
 import { spawnCli } from '../helpers/spawn-cli.js';
 import { createInstalledVault, cleanupAllVaults, stripShardmindMetadata, type Vault } from '../helpers/vault.js';
 import { spawnCliPty } from './helpers/pty-cli.js';
+import { stripConptyFraming, stripConptyWraps } from './helpers/conpty-framing.js';
 import { createBrokenDist } from '../helpers/broken-dist.js';
 import { spawnSync } from 'node:child_process';
 
@@ -25,6 +26,14 @@ const SLUG = 'acme/demo';
 const REF = `github:${SLUG}`;
 const VALUES = { user_name: 'Alice', org_name: 'Acme Labs', vault_purpose: 'engineering', qmd_enabled: true };
 const ESC = '\x1b';
+/**
+ * Wider than any line these runs print. ConPTY re-renders a line longer than
+ * the terminal once the output scrolls, breaking it with a cursor move
+ * (`\x1b[<row>;<cols>H`, #174). That is the terminal's wrapping, not the
+ * CLI's output, and allowing cursor moves would hide the #198 bug, so the
+ * terminal is made wide enough that nothing wraps.
+ */
+const COLS = 500;
 
 let stub: GitHubStub;
 let fixtures: TarballFixtures;
@@ -46,15 +55,27 @@ export function maskPlanHashes(text: string): string {
   return text.replace(/"(shardHash|userHash)": "[0-9a-f]{64}"/g, '"$1": "<hash>"');
 }
 
+/**
+ * A terminal capture as the child wrote it. A POSIX PTY passes the bytes
+ * through; Windows ConPTY wraps them in its own framing, which is stripped
+ * exactly (helpers/conpty-framing.ts, #174) and nothing else, so any other
+ * escape byte still fails. The line discipline's CRLF is the one other
+ * normalisation.
+ */
+function fromTerminal(raw: string): string {
+  const own = inject('ptyCapabilities').verbatim ? raw : stripConptyFraming(raw, process.execPath);
+  return own.replace(/\r\n/g, '\n');
+}
+
 /** The same run, piped and in a terminal, with plan hashes masked. */
 async function bothWays(cwd: string, args: string[]): Promise<{ piped: string; terminal: string }> {
   const env = { SHARDMIND_GITHUB_API_BASE: stub.url, SHARDMIND_NO_UPDATE_CHECK: '1' };
   const maskHashes = maskPlanHashes;
   const piped = await spawnCli(args, { cwd, env });
-  const handle = await spawnCliPty(args, { cwd, env: { ...env, TERM: 'xterm-256color' } });
+  const handle = await spawnCliPty(args, { cwd, cols: COLS, env: { ...env, TERM: 'xterm-256color' } });
   try {
     await handle.waitForExit();
-    return { piped: maskHashes(piped.stdout), terminal: maskHashes(handle.raw().replace(/\r\n/g, '\n')) };
+    return { piped: maskHashes(piped.stdout), terminal: maskHashes(fromTerminal(handle.raw())) };
   } finally {
     handle.dispose();
   }
@@ -79,7 +100,7 @@ describe('maskPlanHashes', () => {
   });
 });
 
-describe.skipIf(process.platform === 'win32')('--json in a real terminal (#198)', () => {
+describe.skipIf(!inject('ptyCapabilities').works)('--json in a real terminal (#198)', () => {
   beforeAll(async () => {
     await ensureBuilt();
     fixtures = await buildTarballFixtures();
@@ -125,6 +146,30 @@ describe.skipIf(process.platform === 'win32')('--json in a real terminal (#198)'
     expect(terminal).toBe(piped);
   }, 90_000);
 
+  // The runs above use a terminal wider than any line. This one keeps the
+  // 80x24 default, so lines overflow and ConPTY rewraps them (#174): its exact
+  // wrap sequence for this size is undone, and anything else still fails.
+  it('adopt --dry-run --json --yes in an 80x24 terminal is byte-identical once ConPTY wraps are undone', async () => {
+    const vault = await installed('json-pty-narrow');
+    await stripShardmindMetadata(vault);
+    const args = ['adopt', REF, '--dry-run', '--json', '--yes'];
+    const env = { SHARDMIND_GITHUB_API_BASE: stub.url, SHARDMIND_NO_UPDATE_CHECK: '1' };
+    const piped = await spawnCli(args, { cwd: vault.root, env });
+    const handle = await spawnCliPty(args, { cwd: vault.root, cols: 80, rows: 24, env: { ...env, TERM: 'xterm-256color' } });
+    try {
+      await handle.waitForExit();
+      const raw = handle.raw();
+      const own = inject('ptyCapabilities').verbatim ? raw : stripConptyWraps(stripConptyFraming(raw, process.execPath), 24, 80);
+      const terminal = maskPlanHashes(own.replace(/\r\n/g, '\n'));
+      // Lines did overflow: the plan's hashes are wider than the terminal.
+      expect(piped.stdout.split('\n').some((line) => line.length > 80)).toBe(true);
+      expect(terminal).not.toContain(ESC);
+      expect(terminal).toBe(maskPlanHashes(piped.stdout));
+    } finally {
+      handle.dispose();
+    }
+  }, 90_000);
+
   // A throw that escapes every command still answers a --json caller with one
   // failure document, in a terminal as piped (#225).
   it('a crash outside every command under --json is byte-identical to the piped run', async () => {
@@ -139,14 +184,24 @@ describe.skipIf(process.platform === 'win32')('--json in a real terminal (#198)'
         encoding: 'utf-8',
         timeout: 60_000,
       });
-      const handle = await spawnCliPty(args, { cwd: dist.root, cli: dist.cli, env: { ...env, TERM: 'xterm-256color' } });
+      const handle = await spawnCliPty(args, { cwd: dist.root, cli: dist.cli, cols: COLS, env: { ...env, TERM: 'xterm-256color' } });
       try {
         await handle.waitForExit();
-        const terminal = handle.raw().replace(/\r\n/g, '\n');
-        expect(terminal).not.toContain(ESC);
-        // A terminal shows stderr too: the document, then the plain-text report.
-        expect(terminal).toBe(piped.stdout + piped.stderr);
+        const terminal = fromTerminal(handle.raw());
         expect(JSON.parse(piped.stdout)).toMatchObject({ ok: false, command: 'update', error: { code: null } });
+        if (inject('ptyCapabilities').verbatim) {
+          expect(terminal).not.toContain(ESC);
+          // A terminal shows stderr too: the document, then the plain-text report.
+          expect(terminal).toBe(piped.stdout + piped.stderr);
+        } else {
+          // ConPTY repaints the stderr report that follows the document
+          // (it hides the cursor and turns its blank lines into absolute
+          // cursor moves), so only the document, which a --json caller
+          // reads, can be held to byte identity there (#174).
+          const document = terminal.slice(0, piped.stdout.length);
+          expect(document).toBe(piped.stdout);
+          expect(document).not.toContain(ESC);
+        }
       } finally {
         handle.dispose();
       }

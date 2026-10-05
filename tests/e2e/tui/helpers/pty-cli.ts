@@ -20,17 +20,16 @@
  * `dist/` is built once per run by the vitest global setup; `spawnCliPty`
  * calls `ensureBuilt()` to check it exists before the first spawn.
  *
- * Windows: not supported in this layer. node-pty's ConPTY backend has
- * different semantics than POSIX pty (TerminateProcess vs SIGINT,
- * different alt-screen behavior), and the in-tree SIGINT bridge
- * (`source/core/cancellation.ts`) targets the non-TTY pipe path. Tests
- * `it.skipIf(process.platform === 'win32')` per scenario; tracking
- * follow-up via #174. Importing this module on Windows is allowed (the
- * file parses) but `spawnCliPty` throws — guarding the call site with
- * the skip prevents the throw.
+ * Windows runs under ConPTY (#174). What differs is decided by the PTY's
+ * probed capabilities (helpers/pty-capability.ts), not by the platform:
+ * without named signals a Ctrl+C is the \x03 byte and a kill closes the
+ * console; without verbatim bytes a test strips ConPTY's framing
+ * (helpers/conpty-framing.ts).
  */
 
 import * as nodePty from 'node-pty';
+import { inject } from 'vitest';
+import { PTY_CAPABILITIES_KEY } from './pty-capability.js';
 import type { IPty } from 'node-pty';
 import { chmodSync, readdirSync, statSync } from 'node:fs';
 import { constants as osConstants } from 'node:os';
@@ -114,6 +113,22 @@ function fixNodePtyPrebuildPerms(): void {
 // fix. Vitest may import this file in any worker order; idempotency
 // guards above keep it safe.
 fixNodePtyPrebuildPerms();
+
+/**
+ * Signal the child the way the PTY backend allows. A POSIX PTY delivers a
+ * named signal. node-pty's Windows (ConPTY) backend accepts none ("Signals
+ * not supported on windows"): there a Ctrl+C is the  byte typed into the
+ * terminal, which ConPTY turns into CTRL_C_EVENT and Node into 'SIGINT', and
+ * any other signal is a plain kill. Chosen by what the backend accepts, not
+ * by platform (#174).
+ */
+function signalPty(pty: IPty, signal: 'SIGINT' | 'SIGKILL'): void {
+  // Probed by the global setup: the backend's kill() may throw from a
+  // deferred call where no try/catch here could see it.
+  if (inject(PTY_CAPABILITIES_KEY).signals) pty.kill(signal);
+  else if (signal === 'SIGINT') pty.write('');
+  else pty.kill();
+}
 
 // ───── Spawn options ─────────────────────────────────────────────────
 
@@ -233,11 +248,6 @@ export async function spawnCliPty(
   args: string[],
   opts: SpawnCliPtyOptions,
 ): Promise<PtyHandle> {
-  if (process.platform === 'win32') {
-    throw new Error(
-      'spawnCliPty is not supported on Windows — Layer 2 scenarios skip via it.skipIf. See #174.',
-    );
-  }
 
   // `ensureBuilt` checks that the global setup built dist/. Skip it when
   // the caller is using a node-args override — those harness tests don't
@@ -382,10 +392,7 @@ export async function spawnCliPty(
   };
 
   const sigint = (): void => {
-    // node-pty exposes a `kill(signal)` that delivers via the kernel,
-    // matching what a real terminal sends on Ctrl+C. The string form
-    // is required by node-pty's typings.
-    pty.kill('SIGINT');
+    signalPty(pty, 'SIGINT');
   };
 
   type ExitResult = { exitCode: number | null; signal: string | null; timedOut: boolean };
@@ -411,7 +418,7 @@ export async function spawnCliPty(
     if (winner === 'timeout') {
       // Force-kill so vitest workers don't hang on a stuck child.
       try {
-        pty.kill('SIGKILL');
+        signalPty(pty, 'SIGKILL');
       } catch {
         // Already dead.
       }
@@ -438,7 +445,7 @@ export async function spawnCliPty(
   const kill = (): void => {
     if (exitInfo !== null) return;
     try {
-      pty.kill('SIGKILL');
+      signalPty(pty, 'SIGKILL');
     } catch {
       // Already dead.
     }

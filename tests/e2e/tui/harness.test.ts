@@ -14,7 +14,7 @@
  * that Layer 2 doesn't run there. Tracking via #174.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, inject } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { constants as osConstants } from 'node:os';
@@ -34,7 +34,8 @@ import {
   FIXTURE_TMP_PREFIX,
 } from './helpers/build-fixture-shard.js';
 
-const skipOnWindows = process.platform === 'win32';
+// Probed by the global setup (#174), not assumed from the platform.
+const noPty = !inject('ptyCapabilities').works;
 
 /**
  * Poll `process.kill(pid, 0)` until the kernel reports the process as
@@ -65,7 +66,7 @@ async function waitForReaped(pid: number, timeoutMs: number): Promise<boolean> {
   return false;
 }
 
-describe.skipIf(skipOnWindows)('Layer 2 harness — virtual screen', () => {
+describe.skipIf(noPty)('Layer 2 harness — virtual screen', () => {
   it('renders plain text into the visible viewport', async () => {
     const screen = createVirtualScreen({ cols: 20, rows: 3 });
     await screen.feed('hello world');
@@ -153,7 +154,7 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — virtual screen', () => {
   });
 });
 
-describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
+describe.skipIf(noPty)('Layer 2 harness — PTY spawn', () => {
   it('spawns the CLI inside a PTY and reads --version through the screen', async () => {
     const handle = await spawnCliPty(['--version'], {
       cwd: os.tmpdir(),
@@ -301,23 +302,29 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
 
       const result = await handle.waitForExit();
       expect(result.timedOut).toBe(true);
-      expect(result.signal).toBe('SIGKILL');
+      // A backend with signals reports the SIGKILL; ConPTY has none and
+      // reports the exit code its kill produced (#174).
+      if (inject('ptyCapabilities').signals) expect(result.signal).toBe('SIGKILL');
+      else expect(result.exitCode).not.toBeNull();
 
       // The load-bearing assertion: the child must actually be reaped.
       // Retry briefly because POSIX makes no hard guarantee about how
       // quickly the kernel reflects a SIGKILL'd process as ESRCH after
       // `pty.kill` returns. The 200ms grace inside `waitForExit`
       // already gave the kernel time to do this; this loop is a final
-      // 500ms safety belt for very contended runners.
-      const reaped = await waitForReaped(handle.pid, 500);
+      // 500ms safety belt for very contended runners. Without signals
+      // (ConPTY, #174) the kill closes the console and the child ends on
+      // the close event, which takes longer than a SIGKILL.
+      const reapWindowMs = inject('ptyCapabilities').signals ? 500 : 5_000;
+      const reaped = await waitForReaped(handle.pid, reapWindowMs);
       expect(
         reaped,
-        `child pid ${handle.pid} still alive ${500}ms after waitForExit returned timedOut — force-kill did not land`,
+        `child pid ${handle.pid} still alive ${reapWindowMs}ms after waitForExit returned timedOut — force-kill did not land`,
       ).toBe(true);
     } finally {
       await handle.dispose();
     }
-  }, 10_000);
+  }, 15_000);
 
   it('PtyHandle.dispose() handles concurrent calls on a live wedged child', async () => {
     // Defense-in-depth over the sequential idempotency tests above.
@@ -363,7 +370,7 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — PTY spawn', () => {
   }, 10_000);
 });
 
-describe.skipIf(skipOnWindows)('Layer 2 harness — signal mapping', () => {
+describe.skipIf(noPty)('Layer 2 harness — signal mapping', () => {
   it('signalNumberToName maps known POSIX signals back to their names', () => {
     // The mapping is a reverse lookup over `os.constants.signals`.
     // Pin the three signals every Layer 2 scenario actually depends
@@ -395,7 +402,7 @@ describe.skipIf(skipOnWindows)('Layer 2 harness — signal mapping', () => {
   });
 });
 
-describe.skipIf(skipOnWindows)('Layer 2 harness — fixture builders', () => {
+describe.skipIf(noPty)('Layer 2 harness — fixture builders', () => {
   it('buildHookFixtureShard honors name + namespace overrides', async () => {
     // Hook scenarios assert against the Summary frame, which prints
     // `<namespace>/<name>@<version>`. Without per-fixture identity,

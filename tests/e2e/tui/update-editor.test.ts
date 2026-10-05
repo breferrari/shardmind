@@ -13,7 +13,7 @@
  * Skipped on Windows: PTY semantics + cancellation bridge mismatch (#174).
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -30,7 +30,14 @@ const REF = `github:${SLUG}`;
 const DEFAULT_VALUES = { user_name: 'Alice', org_name: 'Acme Labs', vault_purpose: 'engineering', qmd_enabled: true };
 
 let stub: GitHubStub;
-const skipOnWindows = process.platform === 'win32';
+// Probed by the global setup (#174), not assumed from the platform.
+const noPty = !inject('ptyCapabilities').works;
+// Expected failures under ConPTY (#282): these flows draw their last frame but
+// do not exit there. `it.fails` turns red the moment #282 is fixed, so the
+// marker cannot outlive the bug. The exit wait is shortened meanwhile.
+const conptyHang = !inject('ptyCapabilities').verbatim;
+const itUntil282 = conptyHang ? it.fails : it;
+const EXIT_WAIT_MS = conptyHang ? 20_000 : 60_000;
 
 /** As in update-conflicts.test.ts: only v0.2.0 appends, so each user edit at the bottom conflicts. */
 async function buildConflictTarball(version: string, outDir: string, append: boolean): Promise<string> {
@@ -55,7 +62,7 @@ async function buildConflictTarball(version: string, outDir: string, append: boo
   });
 }
 
-describe.skipIf(skipOnWindows)('update — Open in editor under a real terminal (#50)', () => {
+describe.skipIf(noPty)('update — Open in editor under a real terminal (#50)', () => {
   beforeAll(async () => {
     await ensureBuilt();
     stub = await createGitHubStub({ shards: { [SLUG]: { versions: {} as Record<string, string>, latest: '0.1.0' } } });
@@ -65,7 +72,7 @@ describe.skipIf(skipOnWindows)('update — Open in editor under a real terminal 
     await stub?.close();
   });
 
-  it('leaves raw mode for the editor and takes it back for the next prompt', async () => {
+  itUntil282('leaves raw mode for the editor and takes it back for the next prompt', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-editor-'));
     let vault: Vault | null = null;
     let edited: string | undefined;
@@ -94,6 +101,7 @@ describe.skipIf(skipOnWindows)('update — Open in editor under a real terminal 
       stub.setLatest(SLUG, '0.2.0');
 
       const handle = await spawnCliPty(['update'], {
+        timeoutMs: EXIT_WAIT_MS,
         cwd: vault.root,
         env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '', L2_STTY_OUT: sttyOut },
         rows: PTY_VIEWPORT_ROWS,
@@ -149,7 +157,7 @@ describe.skipIf(skipOnWindows)('update — Open in editor under a real terminal 
     }
   }, 180_000);
 
-  it('a Ctrl+C while the editor has the terminal cancels the edit, not the update', async () => {
+  itUntil282('a Ctrl+C while the editor has the terminal cancels the edit, not the update', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-editor-int-'));
     let vault: Vault | null = null;
     try {
@@ -167,6 +175,7 @@ describe.skipIf(skipOnWindows)('update — Open in editor under a real terminal 
       stub.setLatest(SLUG, '0.2.0');
 
       const handle = await spawnCliPty(['update'], {
+        timeoutMs: EXIT_WAIT_MS,
         cwd: vault.root,
         env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '' },
         rows: PTY_VIEWPORT_ROWS,
