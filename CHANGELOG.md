@@ -22,7 +22,7 @@ Minor release.
 - **Node 22 or later** is required, as in 0.1.x.
 - **Ink 8 and React 19.3.** shardmind's dependencies move to Ink 8, React 19.3 and chalk 6. This matters only if something installs shardmind's dependency tree alongside its own React: it needs React 19.3 or later. `shardmind/runtime`, which hook scripts import, uses neither React nor Ink and is unaffected.
 - **No more Pastel or `@inkjs/ui`.** shardmind carries its own copies of both. Nothing that imported them through shardmind can keep doing so.
-- **Installing by bare name** (`shardmind install obsidian-mind`) needs **0.2.0 or later**. The registry index is repo-only: each name maps to the GitHub repo that serves it (#29). shardmind 0.1.x reads the old format and fails on the new one. `github:owner/repo` works in every version.
+- **Installing by bare name** (`shardmind install breferrari/obsidian-mind`) needs **0.2.0 or later**. The registry index is repo-only: each name maps to the GitHub repo that serves it (#29). shardmind 0.1.x reads the old format and fails on the new one. `github:owner/repo` works in every version.
 
 ### Changed (the registry index format is fixed — #29)
 
