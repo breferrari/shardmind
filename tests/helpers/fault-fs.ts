@@ -40,7 +40,11 @@ export interface FaultPlan {
    * snapshot (#292).
    */
   inRollback?: { kind: 'remove' | 'read'; nth: number };
-  /** Run just before `fail` throws, with the run's state as it is then (#292). */
+  /**
+   * Run just before `fail` throws, with the run's state as it is then (#292).
+   * It runs before the fault counts as fired, so an `fsp` call it makes is
+   * counted as the run's, not the rollback's: use sync `fs` in it.
+   */
   onFail?: () => void | Promise<void>;
 }
 

@@ -208,7 +208,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // refuse it before anything is snapshotted or written, and never choose
   // for the user. Adopt's executor has the same guard.
   for (const action of plan.actions) {
-    if (action.kind === 'conflict' && conflictResolutions[action.path] === undefined) {
+    if (action.kind === 'conflict' && !Object.hasOwn(conflictResolutions, action.path)) {
       throw new ShardMindError(
         `Missing update resolution for ${action.path}`,
         'UPDATE_WRITE_FAILED',
