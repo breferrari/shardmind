@@ -36,7 +36,7 @@ import {
   removedFilesNeedingDecision,
   renderNewShard,
 } from '../../source/core/update-planner.js';
-import { runUpdate, rollbackUpdate } from '../../source/core/update-executor.js';
+import { runUpdate } from '../../source/core/update-executor.js';
 import { runPostUpdateHook } from '../../source/core/hook.js';
 import {
   defaultModuleSelections,
@@ -154,7 +154,10 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     return { state, oldValues, newManifest, newSchema };
   }
 
-  it('a full disk shows the disk-full hint, with the path and the errno kept (#313)', async () => {
+  it.each([
+    ['Home.md', /Home\.md/],
+    ['shard-values.yaml', /shard-values\.yaml/],
+  ] as const)('a full disk writing %s shows the disk-full hint, with the path and the errno kept (#313, #301)', async (target, named) => {
     const { state, oldValues, newManifest, newSchema } = await setUpUpdate({
       bumpTo: '0.2.0',
       newHomeTemplate: '# Home v2 {{ user_name }}\n',
@@ -172,7 +175,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       },
       removedFileDecisions: {},
     });
-    const home = path.join(vault, 'Home.md');
+    const home = path.join(vault, target);
     const realWrite = fsp.writeFile;
     const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
       if (file === home) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC', path: home });
@@ -194,7 +197,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     spy.mockRestore();
     const { shown, errnos } = asShown(err);
     expect(shown).toMatchObject({ kind: 'known', code: 'UPDATE_WRITE_FAILED' });
-    expect(shown.message).toMatch(/Home\.md/);
+    expect(shown.message).toMatch(named);
     expect(shown.kind === 'known' ? shown.hint : '').toMatch(/The disk is full/);
     expect(errnos).toContain('ENOSPC');
   });
@@ -948,27 +951,6 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       writeSpy.mockRestore();
       copySpy.mockRestore();
     }
-  });
-
-  it('rollbackUpdate reports a snapshot folder it could not read instead of throwing (#247)', async () => {
-    const backupDir = path.join(vault, '.shardmind', 'backups', 'update-isolated');
-    const brain = path.join(backupDir, 'files', 'brain');
-    await fsp.mkdir(brain, { recursive: true });
-    await fsp.writeFile(path.join(backupDir, 'files', 'Home.md'), 'home\n', 'utf-8');
-    await fsp.writeFile(path.join(brain, 'a.md'), 'a\n', 'utf-8');
-    const realReaddir = fsp.readdir;
-    const spy = vi.spyOn(fsp, 'readdir').mockImplementation((async (dir: string, opts: unknown) => {
-      if (dir === brain) throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
-      return (realReaddir as (d: string, o: unknown) => Promise<unknown>)(dir, opts);
-    }) as typeof fsp.readdir);
-    try {
-      const failures = await rollbackUpdate(vault, backupDir, []);
-      expect(failures).toContainEqual({ path: 'brain', reason: 'readdir failed: simulated EACCES', backup: brain });
-    } finally {
-      spy.mockRestore();
-    }
-    // The readable part is still restored.
-    expect(await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('home\n');
   });
 
   it('preexisting add-collision + accept_new writes shard bytes and adopts as managed', async () => {

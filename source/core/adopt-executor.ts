@@ -257,13 +257,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
   // differing file kept as the user's, and a match, are never written.
   const tx = dryRun
     ? null
-    : await beginTransaction(vaultRoot, {
-        kind: 'adopt',
-        now,
-        signal,
-        keepAfterRollback: 'on-restore-failure',
-        noPriorInstall: true,
-      });
+    : await beginTransaction(vaultRoot, { kind: 'adopt', now, signal, noPriorInstall: true });
 
   const fileStates: Record<string, FileState> = {};
   const summary: AdoptSummary = {

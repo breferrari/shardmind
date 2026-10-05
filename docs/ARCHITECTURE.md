@@ -905,7 +905,7 @@ When the new version adds a path where you already have an untracked file of you
 
 A binary file (a NUL byte in its first 8 KB) never reaches the line merge: its prompt reads "Can't merge this file line by line (binary, or not UTF-8) — yours N bytes, shard M bytes. Choose a whole version." and **Accept new** copies the shard's bytes exactly (#63; IMPLEMENTATION §4.11).
 
-After resolution: the executor snapshots every path it will touch to `.shardmind/backups/update-<timestamp>/`, applies writes and deletes in two passes (writes first so a delete can't clobber a new file at the same path), re-caches the manifest + schema + templates, writes new `state.json`, then runs the non-fatal post-update hook. Any failure between snapshot and state-write walks the snapshot back and leaves the vault indistinguishable from pre-update.
+After resolution: the executor snapshots each path to `.shardmind/backups/update-<timestamp>/` just before it touches it, applies writes and deletes in two passes (writes first so a delete can't clobber a new file at the same path), re-caches the manifest + schema + templates, writes new `state.json`, then runs the non-fatal post-update hook. Any failure between snapshot and state-write walks the snapshot back and leaves the vault indistinguishable from pre-update.
 
 The final summary names what the update replaced, because a count alone cannot tell "rewritten with the shard's new version" from "left byte-identical" (#153):
 

@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { beginTransaction } from '../../source/core/vault-transaction.js';
+import { renameCaseInPlace } from '../../source/core/rename-migrations.js';
 
 let vault: string;
 
@@ -23,7 +24,9 @@ afterEach(async () => {
 });
 
 const begin = (signal?: AbortSignal) =>
-  beginTransaction(vault, { kind: 'adopt', keepAfterRollback: 'on-restore-failure', noPriorInstall: true, signal });
+  beginTransaction(vault, { kind: 'adopt', noPriorInstall: true, signal });
+/** As update begins one: an install before it, the snapshot always kept. */
+const beginUpdate = () => beginTransaction(vault, { kind: 'update', noPriorInstall: false });
 const read = (rel: string) => fsp.readFile(path.join(vault, rel), 'utf-8');
 const exists = (abs: string) => fsp.access(abs).then(() => true, () => false);
 
@@ -141,5 +144,134 @@ describe('vault transaction (#301)', () => {
       }),
     ).rejects.toMatchObject({ code: 'CANCELLED' });
     expect(order).toEqual(['before']);
+  });
+});
+
+describe('vault transaction over a prior install (update, #301)', () => {
+  const engine = (rel: string) => path.join(vault, '.shardmind', rel);
+  async function installed(): Promise<void> {
+    await fsp.mkdir(engine('templates/brain'), { recursive: true });
+    await fsp.writeFile(engine('state.json'), '{"v":1}');
+    await fsp.writeFile(engine('shard.yaml'), 'version: 0.1.0\n');
+    await fsp.writeFile(engine('shard-schema.yaml'), 'schema: 1\n');
+    await fsp.writeFile(engine('templates/Home.md'), 'old home\n');
+    await fsp.writeFile(engine('templates/brain/a.md'), 'old a\n');
+    await fsp.writeFile(path.join(vault, 'shard-values.yaml'), 'user_name: Alice\n');
+  }
+  const tree = (dir: string) => fsp.readdir(dir, { recursive: true }).then((n) => n.map(String).sort());
+
+  it('restores the engine cache, and the template cache exactly (#264)', async () => {
+    await installed();
+    const before = await tree(engine('templates'));
+    const tx = await beginUpdate();
+    await fsp.writeFile(engine('state.json'), '{"v":2}');
+    await fsp.writeFile(path.join(vault, 'shard-values.yaml'), 'user_name: Bob\n');
+    await fsp.writeFile(engine('templates/Added.md'), 'new\n');
+    await fsp.rm(engine('templates/brain/a.md'));
+    expect(await tx.rollback()).toEqual([]);
+    expect(await fsp.readFile(engine('state.json'), 'utf-8')).toBe('{"v":1}');
+    expect(await read('shard-values.yaml')).toBe('user_name: Alice\n');
+    expect(await tree(engine('templates'))).toEqual(before);
+    // Update keeps its snapshot: the summary points at it.
+    expect(await exists(tx.dir)).toBe(true);
+  });
+
+  it('removes a template cache there was none of before (#264)', async () => {
+    await installed();
+    await fsp.rm(engine('templates'), { recursive: true });
+    const tx = await beginUpdate();
+    await fsp.mkdir(engine('templates'));
+    await fsp.writeFile(engine('templates/New.md'), 'new\n');
+    expect(await tx.rollback()).toEqual([]);
+    expect(await exists(engine('templates'))).toBe(false);
+  });
+
+  it('copies the cache over when the marker is missing, a snapshot cut short (#264)', async () => {
+    await installed();
+    const tx = await beginUpdate();
+    await fsp.rm(path.join(tx.dir, 'templates-snapshot.json'));
+    await fsp.writeFile(engine('templates/Added.md'), 'new\n');
+    expect(await tx.rollback()).toEqual([]);
+    expect(await exists(engine('templates/Added.md'))).toBe(true);
+  });
+
+  it.each([
+    ['a folder', (marker: string) => fsp.mkdir(marker)],
+    ['not JSON', (marker: string) => fsp.writeFile(marker, '{"existed": tr')],
+    ['not { existed: boolean }', (marker: string) => fsp.writeFile(marker, '{"existed": "yes"}')],
+  ])('names the template cache when its marker is %s (#294)', async (_name, make) => {
+    await installed();
+    const tx = await beginUpdate();
+    const marker = path.join(tx.dir, 'templates-snapshot.json');
+    await fsp.rm(marker);
+    await make(marker);
+    expect(await tx.rollback()).toEqual([
+      {
+        path: '.shardmind/templates',
+        reason: expect.stringMatching(/^templates marker unreadable: /),
+        backup: path.join(tx.dir, 'cache', '.shardmind', 'templates'),
+      },
+    ]);
+  });
+
+  it('can run twice with the same result', async () => {
+    await installed();
+    await fsp.writeFile(path.join(vault, 'note.md'), 'original\n');
+    const tx = await beginUpdate();
+    await tx.recordWrite('note.md');
+    await fsp.writeFile(path.join(vault, 'note.md'), 'mid-update\n');
+    expect(await tx.rollback()).toEqual([]);
+    expect(await tx.rollback()).toEqual([]);
+    expect(await read('note.md')).toBe('original\n');
+  });
+
+  it('a move: the old file snapshotted, the new path introduced (#178)', async () => {
+    await installed();
+    await fsp.writeFile(path.join(vault, 'Old.md'), 'mine\n');
+    const tx = await beginUpdate();
+    await tx.recordMove('Old.md', 'sub/New.md');
+    expect(tx.introduced).toEqual(['sub/New.md']);
+    await fsp.mkdir(path.join(vault, 'sub'));
+    await fsp.rename(path.join(vault, 'Old.md'), path.join(vault, 'sub', 'New.md'));
+    expect(await tx.rollback()).toEqual([]);
+    expect(await read('Old.md')).toBe('mine\n');
+    expect(await exists(path.join(vault, 'sub'))).toBe(false);
+  });
+
+  it('a case-only move of one file is snapshotted once, and rolls back to the old spelling (#169)', async () => {
+    await installed();
+    await fsp.writeFile(path.join(vault, 'Note.md'), 'mine\n');
+    const caseFolding = await exists(path.join(vault, 'note.md'));
+    const tx = await beginUpdate();
+    await tx.recordMove('Note.md', 'note.md');
+    expect(tx.introduced).toEqual(['note.md']);
+    expect(await fsp.readdir(path.join(tx.dir, 'files'))).toEqual(['Note.md']);
+    await fsp.rename(path.join(vault, 'Note.md'), path.join(vault, 'note.md'));
+    await fsp.writeFile(path.join(vault, 'note.md'), 'new render\n');
+    expect(await tx.rollback()).toEqual([]);
+    const names = await fsp.readdir(vault);
+    expect(names).toContain('Note.md');
+    if (caseFolding) expect(names).not.toContain('note.md');
+    expect(await read('Note.md')).toBe('mine\n');
+  });
+
+  it('recordFolder: a folder a case rename creates goes on rollback (#195)', async () => {
+    await installed();
+    const tx = await beginUpdate();
+    await tx.recordFolder('New/Deep');
+    await fsp.mkdir(path.join(vault, 'New', 'Deep'), { recursive: true });
+    expect(await tx.rollback()).toEqual([]);
+    expect(await exists(path.join(vault, 'New'))).toBe(false);
+  });
+
+  it('undoes a journaled case hop (#169)', async () => {
+    await installed();
+    await fsp.mkdir(path.join(vault, 'Brain'));
+    await fsp.writeFile(path.join(vault, 'Brain', 'a.md'), 'a\n');
+    const caseFolding = await exists(path.join(vault, 'brain'));
+    const tx = await beginUpdate();
+    if (caseFolding) expect(await renameCaseInPlace(vault, 'Brain', 'brain', null, tx.journal)).toBe(true);
+    expect(await tx.rollback()).toEqual([]);
+    expect(await fsp.readdir(vault)).toContain('Brain');
   });
 });
