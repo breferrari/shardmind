@@ -1244,8 +1244,12 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     await vault.cleanup();
 
     // Negative branches — flip exactly one value at a time. Each flip must make
-    // the engine run personalize (its ctx dump appears). The five flips are
-    // independent (each gets its own vault) so they run in parallel.
+    // the engine run personalize (its ctx dump appears). The flips run one at
+    // a time (#288): five hooked installs at once on a 4-core Windows runner
+    // took 15–26 s each on CI, the five slowest spawns of the whole suite, and
+    // past spawnCli's 45 s kill under the suite's other load. One at a time they
+    // take 5–7 s there, so the five together cost about what the concurrent
+    // batch did.
     const flips: Array<[string, Record<string, unknown>]> = [
       ['user_name (string default "")', { ...DEFAULT_VALUES, user_name: 'Alice' }],
       ['qmd_enabled (boolean default false)', { ...DEFAULT_VALUES, qmd_enabled: true }],
@@ -1253,26 +1257,27 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
       ['org_name (string default "Independent")', { ...DEFAULT_VALUES, org_name: 'Acme' }],
       ['vault_purpose (select default engineering)', { ...DEFAULT_VALUES, vault_purpose: 'research' }],
     ];
-    await Promise.all(
-      flips.map(async ([label, values]) => {
-        const v = await createEmptyVault(`obs-mind-flip-${label.split(' ')[0]}`);
-        try {
-          const valuesPath = await writeValuesFile(v, values);
-          const result = await spawnCli(
-            ['install', SHARD_REF, '--yes', '--values', valuesPath],
-            { cwd: v.root, env: envWithStub() },
-          );
-          expect(result.exitCode, `flip ${label} install failed`).toBe(0);
-          expect(
-            await v.exists('.hook-ctx-personalize.json'),
-            `personalize should run when ${label} diverges`,
-          ).toBe(true);
-        } finally {
-          await v.cleanup();
-        }
-      }),
-    );
-  }, 240_000);
+    for (const [label, values] of flips) {
+      const v = await createEmptyVault(`obs-mind-flip-${label.split(' ')[0]}`);
+      try {
+        const valuesPath = await writeValuesFile(v, values);
+        const result = await spawnCli(
+          ['install', SHARD_REF, '--yes', '--values', valuesPath],
+          { cwd: v.root, env: envWithStub() },
+        );
+        expect(result.exitCode, `flip ${label} install failed`).toBe(0);
+        expect(
+          await v.exists('.hook-ctx-personalize.json'),
+          `personalize should run when ${label} diverges`,
+        ).toBe(true);
+      } finally {
+        await v.cleanup();
+      }
+    }
+    // Budget from CI (#288): the positive install plus the five flips, one at a
+    // time, took 36 s on windows-latest/22 and 30 s on /24, 18 s at most on
+    // Ubuntu and 12 s on macOS. 120 s is about 3x the slowest.
+  }, 120_000);
 
   it.runIf(process.platform === 'darwin')(
     'install + verifyInvariant1 produces no false positives on case-insensitive macOS APFS/HFS+',
