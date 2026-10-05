@@ -54,6 +54,12 @@ describe('release.yml (#108)', () => {
     expect(check!.steps.some((s) => s.uses?.startsWith('actions/upload-artifact@'))).toBe(true);
   });
 
+  it("bases a stable release's notes on the previous stable tag, a prerelease's on any tag", () => {
+    const script = runs(githubRelease!);
+    expect(script).toContain('EXCLUDE=$([ "$PRERELEASE" = true ] || echo "--exclude=v*-*")');
+    expect(script).toContain('git describe --tags --abbrev=0 $EXCLUDE "${GITHUB_REF_NAME}^"');
+  });
+
   it('marks a prerelease as such and never makes it latest', () => {
     const release = githubRelease!.steps.find((s) => s.uses?.startsWith('softprops/action-gh-release@'));
     expect(release?.with?.['prerelease']).toBe('${{ needs.check.outputs.prerelease }}');

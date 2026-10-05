@@ -52,11 +52,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Commits since the previous tag reachable from this one. Sorting all
+      # Commits since the previous tag reachable from this one: any tag for a
+      # prerelease, the previous stable tag for a stable release (so v0.2.0
+      # lists everything since v0.1.x, not since its last beta). Sorting all
       # tags by version would put v0.2.0-beta.1 after v0.2.0.
       - name: Generate changelog from commits
+        env:
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          EXCLUDE=$([ "$PRERELEASE" = true ] || echo "--exclude=v*-*")
+          PREV_TAG=$(git describe --tags --abbrev=0 $EXCLUDE "${GITHUB_REF_NAME}^" 2>/dev/null || git rev-list --max-parents=0 HEAD)
           echo "## Changes" > /tmp/changelog.md
           echo "" >> /tmp/changelog.md
           git log "${PREV_TAG}..${GITHUB_REF_NAME}" --pretty=format:"- %s" --no-merges >> /tmp/changelog.md
