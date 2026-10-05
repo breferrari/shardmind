@@ -42,26 +42,21 @@ import {
   stillFiles,
   type Collision,
 } from '../../core/install-planner.js';
-import {
-  backupCollisions,
-  discardSetAside,
-  runInstall,
-  rollbackInstall,
-  type BackupRecord,
-} from '../../core/install-executor.js';
+import { installRolledBack, runInstallTransaction, type BackupRecord } from '../../core/install-executor.js';
 import { assertSafeVaultPaths } from '../../core/vault-path-guard.js';
 import { toPosix } from '../../core/fs-utils.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
-import { attemptRollback, rollbackDetail, withRollbackFailures, type RollbackFailure } from '../../core/rollback-report.js';
+import { rollbackDetail } from '../../core/rollback-report.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
 import {
   appendHookOutput,
   useSigintRollback,
   isCancelledRun,
-  openRun,
+  newRunAbort,
   stopRun,
-  type OpenRun,
+  trackRun,
+  type RunInFlight,
 } from './shared.js';
 
 import type { WizardResult } from '../../components/InstallWizard.js';
@@ -92,7 +87,7 @@ export type Phase =
   | { kind: 'gate'; state: ShardState; ctx: PreparedContext }
   | { kind: 'wizard'; ctx: PreparedContext }
   | { kind: 'collision'; collisions: Collision[]; untouched: Collision[]; stale: StaleFiles; result: WizardResult; ctx: PreparedContext }
-  | { kind: 'installing'; total: number; current: number; label: string; history: string[]; ctx: PreparedContext; result: WizardResult; backups: BackupRecord[] }
+  | { kind: 'installing'; total: number; current: number; label: string; history: string[]; ctx: PreparedContext; result: WizardResult }
   | RunningHookPhase // a lifecycle hook (bootstrap / personalize / legacy
       // post-install) is streaming output. We are already past the
       // point-of-no-return (state.json written); a Ctrl+C here kills the child
@@ -105,14 +100,14 @@ export type Phase =
 
 /** Where an install's collisions went before it wrote (#55). */
 interface PlacedCollisions {
-  /** Kept as `<path>.shardmind-backup-<timestamp>` and reported. */
-  backups: BackupRecord[];
+  /** What the transaction moves out of the way, in order (#300). */
+  moveAside: Collision[];
+  /** The moves kept as `<path>.shardmind-backup-<timestamp>` and reported; the rest is set aside. */
+  keep: Set<string>;
+  /** A reinstall's old `.shardmind/`, set aside with the rest. */
+  oldStatePath: string | undefined;
   /** Replaced with no backup and holding the user's own content; reported. */
   replaced: string[];
-  /** Moved aside to restore on failure, deleted once the install succeeds. */
-  setAside: BackupRecord[];
-  /** The record in `setAside` for a reinstall's old `.shardmind/`. */
-  oldState?: BackupRecord;
   /** Files the previous install wrote and this one no longer plans, untouched: removed (#228). */
   removed: string[];
   /** The same, edited by the user: kept where they are, no longer tracked (#228). */
@@ -179,20 +174,13 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
 
-  // Refs tracked during runInstall so a SIGINT handler can roll back
-  // any files written so far and restore any backups created during
-  // collision handling.
-  const writtenPathsRef = useRef<string[]>([]);
-  // Folders the install created, so a rollback leaves the user's own (#215).
-  const createdDirsRef = useRef<string[]>([]);
-  const backupsRef = useRef<BackupRecord[]>([]);
   // The external-tools check's summary lines (#138).
   const externalToolsRef = useRef<string[]>([]);
-  // The install in flight, from the first move aside to state.json, which a
-  // Ctrl+C stops and waits for (#249). Its abort stops the set-aside loop
-  // before its next move (#55) and runInstall before its next write; the
-  // install's own rollback then runs once and settles `done`.
-  const runRef = useRef<OpenRun | null>(null);
+  // The install in flight, from the first move aside to the discard after
+  // state.json, which a Ctrl+C stops and waits for (#249). Its abort stops
+  // the transaction before its next move or write; the transaction's own
+  // rollback then runs once (#300).
+  const runRef = useRef<RunInFlight | null>(null);
   // AbortController that owns the currently-executing post-install hook.
   // Null when no hook is in flight. Ctrl+C in the running-hook phase
   // aborts the subprocess but does NOT roll back the install (we're
@@ -227,15 +215,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     [exit, releaseLock],
   );
 
-  // If a render is in progress when the user hits Ctrl+C, roll back
-  // partial writes and restore backups before exiting. `cleanup` drops
-  // the shard tempdir regardless of phase — without it, cancelling at
-  // the wizard or collision screens leaks the extracted shard on disk.
-  // One rollback for both failure paths, a Ctrl+C and an error before the
-  // install commits: every path written so far, then everything moved aside.
-  const rollbackPartialInstall = () =>
-    rollbackInstall(vaultRoot, writtenPathsRef.current, backupsRef.current, createdDirsRef.current);
-
+  // A Ctrl+C while the install runs stops it and waits for its own
+  // rollback (#249, #300). `cleanup` drops the shard tempdir regardless of
+  // phase — without it, cancelling at the wizard or collision screens
+  // leaks the extracted shard on disk.
   useSigintRollback({
     isActive: () => !dryRun && runRef.current !== null,
     rollback: () => stopRun(runRef.current),
@@ -432,30 +415,17 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     [nonInteractive, isRawModeSupported, valuesFile, runNonInteractive],
   );
 
-  // Settle the run once (later calls do nothing) and stop tracking it.
-  // `finished` once state.json is written: nothing is rolled back after that.
-  const endRun = (run: OpenRun | null, failures: readonly RollbackFailure[], finished = false) => {
-    if (!run) return;
-    run.settle({ finished, failures });
-    if (runRef.current === run) runRef.current = null;
-  };
-
+  /**
+   * Run the install transaction (#300): the executor moves the collisions
+   * aside, writes the vault and, until state.json is written, rolls itself
+   * back on a failure or a Ctrl+C, as update's and adopt's do. The machine
+   * tracks the run for the Ctrl+C handler and renders.
+   */
   const executeInstall = useCallback(
-    async (
-      ctx: PreparedContext,
-      result: WizardResult,
-      placed: PlacedCollisions,
-      run: OpenRun | null,
-    ) => {
-      const { backups, replaced, setAside, oldState, removed, keptStale } = placed;
+    async (ctx: PreparedContext, result: WizardResult, placed: PlacedCollisions) => {
+      const { moveAside, keep, oldStatePath, replaced, removed, keptStale } = placed;
       const start = Date.now();
       const history: string[] = [];
-
-      // What a failure restores: everything moved aside. Registered for the
-      // SIGINT handler too.
-      backupsRef.current = [...backups, ...setAside];
-      writtenPathsRef.current = [];
-      createdDirsRef.current = [];
 
       setPhase({
         kind: 'installing',
@@ -465,15 +435,11 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         history,
         ctx,
         result,
-        backups,
       });
 
-      // Once state.json is written the install stands: a later failure is
-      // reported, never rolled back, or it would take the new install with it
-      // after the old one is gone.
-      let committed = false;
       try {
-        const runResult = await runInstall({
+        const abort = newRunAbort();
+        const run = runInstallTransaction({
           vaultRoot,
           manifest: ctx.manifest,
           schema: ctx.schema,
@@ -483,13 +449,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           values: result.values,
           selections: result.selections,
           dryRun,
-          signal: run?.abort.signal,
-          onFileWritten: (outputPath) => {
-            writtenPathsRef.current.push(outputPath);
-          },
-          onDirCreated: (dir) => {
-            createdDirsRef.current.push(dir);
-          },
+          signal: abort.signal,
+          moveAside,
+          keep,
+          oldStatePath,
           onProgress: (ev) => {
             if (ev.kind === 'start') {
               setPhase((prev) =>
@@ -516,25 +479,20 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
             }
           },
         });
+        runRef.current = trackRun(abort, run);
+        const runResult = await run;
 
-        // State.json is now on disk — we're past the point-of-no-return.
-        // End the run BEFORE firing the hook so a SIGINT during hook
-        // execution can't walk the install back. The only remaining work
-        // (hook subprocess) is non-fatal per spec §9.3.
-        endRun(run, [], true);
-        committed = true;
-        backupsRef.current = backups;
+        // State.json is on disk and the set-aside discarded: past the
+        // point-of-no-return. Drop the run BEFORE firing the hook so a
+        // SIGINT during hook execution can't walk the install back. The
+        // only remaining work (hook subprocess) is non-fatal per spec §9.3.
+        runRef.current = null;
 
-        // What was set aside only to be restored on failure goes now: a
-        // replaced file and an old install's state leave no backup (#55).
-        // The old state's own backups (update and adopt snapshots) move into
-        // the new one first; they can be the only copy of a file.
-        const left = await discardSetAside(setAside, oldState, vaultRoot);
         // A stale file whose set-aside copy could not be deleted is still in
         // the vault under its backup name: listed as such, never as removed.
-        const leftPaths = new Set(left.map((r) => toPosix(vaultRoot, r.originalPath)));
+        const leftPaths = new Set(runResult.left.map((r) => toPosix(vaultRoot, r.originalPath)));
         const removedNow = removed.filter((rel) => !leftPaths.has(rel));
-        const leftBackups = left.filter((r) => r !== oldState);
+        const leftBackups = runResult.left.filter((r) => r.originalPath !== oldStatePath);
 
         // The hook orchestrator owns slot selection (bootstrap → personalize,
         // legacy post-install once), per-slot context, write-boundary checks,
@@ -578,7 +536,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           vaultRoot,
           fileCount: runResult.fileCount,
           durationMs: Date.now() - start,
-          backups: [...backups, ...leftBackups],
+          backups: [...runResult.backups, ...leftBackups],
           replaced,
           removed: dryRun ? removed : removedNow,
           keptStale,
@@ -587,18 +545,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           externalTools: externalToolsRef.current,
         });
       } catch (err) {
-        const rollBack = !dryRun && !committed;
-        if (rollBack) {
-          // The only rollback: a Ctrl+C meanwhile waits for it through
-          // `done` (#249). Rolls back every path `runInstall` reported
-          // through `onFileWritten` (#207): its own return value never
-          // arrives when it throws.
-          const failures = await attemptRollback(rollbackPartialInstall);
-          endRun(run, failures);
-          // A backup left unrestored is never reported as rolled back (#247).
-          err = withRollbackFailures(err, failures);
-        }
-        endRun(run, []);
+        runRef.current = null;
         if (isCancelledRun(err)) {
           // The Ctrl+C handler reports any rollback failure and exits 130.
           finish({ kind: 'cancelled', reason: 'Cancelled with Ctrl+C.' });
@@ -607,7 +554,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         finish({
           kind: 'error',
           error: err as Error,
-          detail: rollBack
+          // Only when the transaction rolled back: a failed move puts itself
+          // back, and a failure after state.json rolls nothing back.
+          detail: installRolledBack(err)
             ? rollbackDetail(err, 'Rolled back partial install (including any pre-install backups).')
             : undefined,
         });
@@ -617,15 +566,15 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   );
 
   /**
-   * Move each colliding path out of the way and install. `own` holds the
-   * user's content: `backup` keeps it as `<path>.shardmind-backup-<timestamp>`;
+   * Decide what moves out of the way, then install. `own` holds the user's
+   * content: `backup` keeps it as `<path>.shardmind-backup-<timestamp>`;
    * `overwrite` (the Overwrite choice, or `--force`, #55) sets it aside,
    * restores it if the install fails, and deletes it once the new state is
    * written. A reinstall's old `.shardmind/`, `shard-values.yaml` and
    * untouched files are always set aside that way. A directory at a planned
    * file path moves too, so `writeFile` doesn't hit EISDIR; a symlink
-   * moves, not its target. Each move is registered as it happens, so a
-   * Ctrl+C mid-way puts them back. A dry run moves nothing.
+   * moves, not its target. The moves themselves, and putting them back,
+   * are the transaction's (#300). A dry run moves nothing.
    */
   const placeCollisions = useCallback(
     async (
@@ -647,65 +596,17 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       // Only files still there are reported as kept: a folder at the path,
       // or a file deleted meanwhile, is not one the user edited.
       const keptStale = await stillFiles(vaultRoot, [...stale.own, ...staleNow.own]);
-      if (dryRun) {
-        await executeInstall(ctx, result, { backups: [], replaced, setAside: [], removed, keptStale }, null);
-        return;
-      }
-      const oldInstall = ctx.previous
+      const oldInstall = ctx.previous && !dryRun
         ? await detectCollisions(vaultRoot, [SHARDMIND_DIR, VALUES_FILE])
         : [];
-      // Registered move by move in the array the rollback walks. The run
-      // starts before the first move, so a Ctrl+C stops the loop before its
-      // next one (#55) and waits for the rollback below (#249).
-      const moved: BackupRecord[] = [];
-      writtenPathsRef.current = [];
-      createdDirsRef.current = [];
-      backupsRef.current = moved;
-      const run = openRun();
-      runRef.current = run;
-      // Every path out of here settles the run, or a Ctrl+C would wait for
-      // it forever: the explicit settles win, this one catches the rest.
-      try {
-        try {
-          await backupCollisions(
-            [...oldInstall, ...recheck.untouched, ...staleNow.untouched, ...ownNow],
-            undefined,
-            (record) => {
-              moved.push(record);
-            },
-            () => run.abort.signal.aborted,
-          );
-        } catch (err) {
-          // backupCollisions put its moves back; there is nothing to roll back.
-          backupsRef.current = [];
-          endRun(run, []);
-          throw err;
-        }
-        if (run.abort.signal.aborted) {
-          // Stopped mid-way: put back what was moved. Before the first move
-          // there is nothing to undo, and a rollback would delete the old
-          // `.shardmind/`.
-          endRun(run, moved.length > 0 ? await attemptRollback(rollbackPartialInstall) : []);
-          return;
-        }
-        const kept = new Set(policy === 'backup' ? ownNow.map((c) => c.absolutePath) : []);
-        const oldStatePath = oldInstall.find((c) => c.outputPath === SHARDMIND_DIR)?.absolutePath;
-        await executeInstall(
-          ctx,
-          result,
-          {
-            backups: moved.filter((m) => kept.has(m.originalPath)),
-            replaced,
-            setAside: moved.filter((m) => !kept.has(m.originalPath)),
-            oldState: moved.find((m) => m.originalPath === oldStatePath),
-            removed,
-            keptStale,
-          },
-          run,
-        );
-      } finally {
-        endRun(run, []);
-      }
+      await executeInstall(ctx, result, {
+        moveAside: dryRun ? [] : [...oldInstall, ...recheck.untouched, ...staleNow.untouched, ...ownNow],
+        keep: new Set(policy === 'backup' ? ownNow.map((c) => c.absolutePath) : []),
+        oldStatePath: oldInstall.find((c) => c.outputPath === SHARDMIND_DIR)?.absolutePath,
+        replaced,
+        removed,
+        keptStale,
+      });
     },
     [dryRun, vaultRoot, executeInstall],
   );

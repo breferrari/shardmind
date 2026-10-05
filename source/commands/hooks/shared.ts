@@ -188,12 +188,6 @@ export interface RunEnd {
   readonly failures: readonly RollbackFailure[];
 }
 
-/** A run whose rollback the caller performs (install): settle `done` once it is over. */
-export interface OpenRun extends RunInFlight {
-  /** The first call wins; later ones do nothing. */
-  readonly settle: (end: RunEnd) => void;
-}
-
 /**
  * The abort for a new run. Already aborted when a Ctrl+C was handled before
  * the run started: the handler found no run to stop then, so the run stops
@@ -205,7 +199,7 @@ export function newRunAbort(): AbortController {
   return abort;
 }
 
-/** Track a run whose own catch rolls back (update, adopt): `done` follows it. */
+/** Track a run whose own catch rolls back (install, update, adopt): `done` follows it. */
 export function trackRun(abort: AbortController, run: Promise<unknown>): RunInFlight {
   return {
     abort,
@@ -214,15 +208,6 @@ export function trackRun(abort: AbortController, run: Promise<unknown>): RunInFl
       (err: unknown) => ({ finished: false, failures: rollbackFailuresOf(err) }),
     ),
   };
-}
-
-/** A run whose rollback the caller performs (install). */
-export function openRun(): OpenRun {
-  let settle!: (end: RunEnd) => void;
-  const done = new Promise<RunEnd>((resolve) => {
-    settle = resolve;
-  });
-  return { abort: newRunAbort(), done, settle };
 }
 
 /** The Ctrl+C rollback: stop the run in flight and wait for it and its rollback. */
