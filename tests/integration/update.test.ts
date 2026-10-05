@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { asShown } from '../helpers/index.js';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -152,6 +153,51 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     const newSchema = await parseSchema(path.join(newShard, '.shardmind', 'shard-schema.yaml'));
     return { state, oldValues, newManifest, newSchema };
   }
+
+  it('a full disk shows the disk-full hint, with the path and the errno kept (#313)', async () => {
+    const { state, oldValues, newManifest, newSchema } = await setUpUpdate({
+      bumpTo: '0.2.0',
+      newHomeTemplate: '# Home v2 {{ user_name }}\n',
+    });
+    const migration = applyMigrations(oldValues, state.version, newManifest.version, newSchema.migrations);
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift: await detectDrift(vault, state) },
+      values: { old: oldValues, new: migration.values },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: buildRenderContext(newManifest, migration.values, selections),
+      },
+      removedFileDecisions: {},
+    });
+    const home = path.join(vault, 'Home.md');
+    const realWrite = fsp.writeFile;
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (file === home) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC', path: home });
+      return realWrite(file, data, opts);
+    });
+    const err = await runUpdate({
+      vaultRoot: vault,
+      plan,
+      conflictResolutions: {},
+      currentState: state,
+      newManifest,
+      newSchema,
+      newValues: migration.values,
+      newSelections: selections,
+      resolved: { ...RESOLVED, version: newManifest.version },
+      tarballSha256: 'sha-0.2.0',
+      newTempDir: newShard,
+    }).catch((e: unknown) => e);
+    spy.mockRestore();
+    const { shown, errnos } = asShown(err);
+    expect(shown).toMatchObject({ kind: 'known', code: 'UPDATE_WRITE_FAILED' });
+    expect(shown.message).toMatch(/Home\.md/);
+    expect(shown.kind === 'known' ? shown.hint : '').toMatch(/The disk is full/);
+    expect(errnos).toContain('ENOSPC');
+  });
 
   it('an update aborted mid-run stops writing, rolls back and throws CANCELLED (#249)', async () => {
     const { state, oldValues, newManifest, newSchema } = await setUpUpdate({

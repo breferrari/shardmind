@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { asShown } from '../helpers/index.js';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -754,6 +755,24 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     }
     expect(await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('second\n');
     expect(await fsp.readFile(path.join(first, 'files', 'Home.md'), 'utf-8')).toBe('first\n');
+  });
+
+  it('a full disk shows the disk-full hint, with the path and the errno kept (#313)', async () => {
+    await fsp.writeFile(path.join(vault, 'Home.md'), 'my own home\n', 'utf-8');
+    const home = path.join(vault, 'Home.md');
+    const realWrite = fsp.writeFile;
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (file === home) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC', path: home });
+      return realWrite(file, data, opts);
+    });
+    const err = await adopt(vault, { 'Home.md': 'use_shard' }).catch((e: unknown) => e);
+    spy.mockRestore();
+    const { shown, errnos } = asShown(err);
+    expect(shown).toMatchObject({ kind: 'known', code: 'ADOPT_WRITE_FAILED' });
+    expect(shown.message).toMatch(/Home\.md/);
+    expect(shown.kind === 'known' ? shown.hint : '').toMatch(/The disk is full/);
+    expect(errnos).toContain('ENOSPC');
+    expect(await fsp.readFile(home, 'utf-8')).toBe('my own home\n');
   });
 
   it('an adopt aborted mid-run stops writing, rolls back and throws CANCELLED (#249)', async () => {

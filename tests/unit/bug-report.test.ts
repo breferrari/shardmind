@@ -12,6 +12,7 @@ import {
   describeError,
   formatErrorPlain,
   installCrashHandlers,
+  wrapWriteError,
 } from '../../source/core/bug-report.js';
 import { ShardMindError } from '../../source/runtime/types.js';
 
@@ -35,6 +36,28 @@ describe('bugReportUrl (#225)', () => {
   it('fits one 80-column line, so Ink never breaks it, even for a long version', () => {
     expect(bugReportUrl('10.20.30').length).toBeLessThanOrEqual(80);
     expect(bugReportUrl(undefined).length).toBeLessThanOrEqual(80);
+  });
+});
+
+describe('wrapWriteError (#313)', () => {
+  const errno = (code: string) => Object.assign(new Error(`${code}: simulated`), { code });
+
+  it("keeps an environmental errno's hint, the message and the cause", () => {
+    const cause = errno('ENOSPC');
+    const err = wrapWriteError('UPDATE_WRITE_FAILED', 'Could not write Home.md during update', cause);
+    expect(err).toMatchObject({ code: 'UPDATE_WRITE_FAILED', message: 'Could not write Home.md during update', cause });
+    expect(err.hint).toMatch(/The disk is full/);
+    expect(describeError(err, '1.0.0')).toMatchObject({ kind: 'known', hint: expect.stringMatching(/The disk is full/) });
+  });
+
+  it.each(['EACCES', 'EPERM', 'EBUSY', 'EROFS'])('gives %s its own hint', (code) => {
+    const err = wrapWriteError('ADOPT_WRITE_FAILED', 'Could not write x', errno(code));
+    expect(err.hint).not.toMatch(/simulated/);
+  });
+
+  it('keeps the raw message as the hint for any other error', () => {
+    expect(wrapWriteError('ADOPT_WRITE_FAILED', 'Could not write x', errno('EIO')).hint).toBe('EIO: simulated');
+    expect(wrapWriteError('ADOPT_WRITE_FAILED', 'Could not write x', 'plain').hint).toBe('plain');
   });
 });
 

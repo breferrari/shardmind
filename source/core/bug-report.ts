@@ -18,7 +18,7 @@
  */
 
 import path from 'node:path';
-import { ShardMindError } from '../runtime/types.js';
+import { ShardMindError, type ErrorCode } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
 
 const NEW_ISSUE_URL = 'https://github.com/breferrari/shardmind/issues/new';
@@ -37,6 +37,23 @@ const ENVIRONMENT_HINTS: Readonly<Record<string, string>> = {
   EMFILE: 'Too many files are open at once. Close other programs or raise the open-file limit (`ulimit -n`), then run the command again.',
   ENOENT: 'A file in your vault went missing while shardmind ran (moved, deleted, or still syncing). Run the command again.',
 };
+
+/** The per-code hint for an environmental errno (a full disk, a locked file, #225), or undefined. */
+export function environmentHint(err: unknown): string | undefined {
+  const code = errnoCode(err);
+  return code !== undefined && Object.hasOwn(ENVIRONMENT_HINTS, code) ? ENVIRONMENT_HINTS[code] : undefined;
+}
+
+/**
+ * A command's filesystem failure as a known error (#313). The error view
+ * shows a `ShardMindError` with its own hint, so an environmental errno keeps
+ * its per-code hint ("The disk is full…"); otherwise the hint is `fallback`,
+ * or the raw message. The original error is the `cause`.
+ */
+export function wrapWriteError(code: ErrorCode, message: string, err: unknown, fallback?: string): ShardMindError {
+  const hint = environmentHint(err) ?? fallback ?? (err instanceof Error ? err.message : String(err));
+  return Object.assign(new ShardMindError(message, code, hint), { cause: err });
+}
 
 export type ErrorDescription =
   | { kind: 'known'; message: string; code: string; hint: string | null }

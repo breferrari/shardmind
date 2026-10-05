@@ -63,6 +63,7 @@ import {
   recordCreatedFolders,
   rollbackCreatedFolders,
 } from './created-folders.js';
+import { wrapWriteError } from './bug-report.js';
 
 /** Cap on parallel snapshot copies — same budget update-executor uses. */
 const SNAPSHOT_CONCURRENCY = 16;
@@ -645,11 +646,7 @@ async function writeVaultFileBuffer(
     await fsp.mkdir(path.dirname(abs), { recursive: true });
     await fsp.writeFile(abs, content);
   } catch (err) {
-    throw new ShardMindError(
-      `Could not write ${outputPath} during adopt`,
-      'ADOPT_WRITE_FAILED',
-      err instanceof Error ? err.message : String(err),
-    );
+    throw wrapWriteError('ADOPT_WRITE_FAILED', `Could not write ${outputPath} during adopt`, err);
   }
 }
 
@@ -675,11 +672,7 @@ async function writeValuesFile(
         'A shard-values.yaml file appeared at the vault root between the pre-adopt guard and the engine write. Move it aside and re-run adopt.',
       );
     }
-    throw new ShardMindError(
-      `Could not write ${VALUES_FILE} during adopt`,
-      'ADOPT_WRITE_FAILED',
-      err instanceof Error ? err.message : String(err),
-    );
+    throw wrapWriteError('ADOPT_WRITE_FAILED', `Could not write ${VALUES_FILE} during adopt`, err);
   }
 }
 
