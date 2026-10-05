@@ -9,7 +9,8 @@
   "exports": {
     ".": "./dist/cli.js",
     "./runtime": "./dist/runtime/index.js",
-    "./internal/hook-runner": "./dist/internal/hook-runner.js"
+    "./internal/hook-runner": "./dist/internal/hook-runner.js",
+    "./internal/self-update-refresh": "./dist/internal/self-update-refresh.js"
   },
   "files": [
     "dist"
