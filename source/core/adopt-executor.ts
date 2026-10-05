@@ -8,12 +8,11 @@
  * existing typed errors so the install/update/adopt error contracts stay
  * symmetric.
  *
- * For every `differs-use-shard` decision we'd overwrite a user file, the
- * pre-existing bytes are first snapshot-copied to `.shardmind/backups/
- * adopt-<ts>/files/<path>`. If anything between snapshot and final
- * `state.json` write fails, `rollbackAdopt` walks the snapshot back so
- * the user's vault ends up byte-identical to its pre-adopt state. Mirrors
- * `update-executor.ts`'s rollback pattern.
+ * Every write and move goes through the run's vault transaction
+ * (`vault-transaction.ts`, #301): just before it, the user's file is
+ * copied to `.shardmind/backups/adopt-<ts>/files/<path>`, or the path is
+ * marked introduced. If anything before the final `state.json` write
+ * fails, the transaction's rollback puts the vault back as it was.
  *
  * Spec: `docs/SHARD-LAYOUT.md §Adopt semantics`. The four classification
  * buckets (`matches`, `differs`, `shard-only`, plus the implicit
@@ -36,12 +35,12 @@ import type {
   ModuleSelections,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { errnoCode, isEnoent } from '../runtime/errno.js';
+import { errnoCode } from '../runtime/errno.js';
 import {
   STATE_FILE,
   VALUES_FILE,
 } from '../runtime/vault-paths.js';
-import { mapConcurrent, pathExists, toPosix } from './fs-utils.js';
+import { pathExists } from './fs-utils.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { throwIfCancelled } from './run-cancel.js';
 import { assertRenameTargetFree, moveToFreePath } from './rename-migrations.js';
@@ -52,21 +51,11 @@ import {
   cacheManifest,
   writeState,
   STATE_SCHEMA_VERSION,
-  removeEngineWrites,
-  createBackupDir,
 } from './state.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
-import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
-import {
-  createdFoldersRecord,
-  missingFolders,
-  recordCreatedFolders,
-  rollbackCreatedFolders,
-} from './created-folders.js';
+import { attemptRollback, withRollbackFailures } from './rollback-report.js';
+import { beginTransaction } from './vault-transaction.js';
 import { wrapWriteError } from './bug-report.js';
-
-/** Cap on parallel snapshot copies — same budget update-executor uses. */
-const SNAPSHOT_CONCURRENCY = 16;
 
 /**
  * One decision per `differs` entry. The diff UI returns this shape; the
@@ -199,19 +188,19 @@ export async function assertAdoptable(vaultRoot: string): Promise<void> {
 /**
  * Apply an `AdoptPlan` to the user's vault.
  *
- * Order of operations (any failure between snapshot and the final
- * `writeState` triggers `rollbackAdopt`):
+ * Order of operations (any failure before the final `writeState` runs
+ * the transaction's rollback):
  *
  *   1. Pre-flight guards — `assertAdoptable`.
- *   2. Snapshot every `differs-use-shard` path's existing user content
- *      to `.shardmind/backups/adopt-<ts>/files/<path>`. Surface the
- *      backup dir to the caller via `onBackupReady` BEFORE any write.
+ *   2. Begin the transaction. Surface its backup dir to the caller via
+ *      `onBackupReady` BEFORE any write; each write below records itself
+ *      first (`recordWrite`).
  *   3. Apply per-classification:
  *        - `matches`        → record managed FileState; no disk write.
  *        - `shard-only`     → write rendered/copied bytes; record
- *                             managed FileState. Track in `addedPaths`
- *                             so SIGINT rollback can erase only what
- *                             this run introduced.
+ *                             managed FileState. The path is
+ *                             introduced, so a rollback erases only
+ *                             what this run wrote.
  *        - `differs` + `keep_mine`  → record `ownership: 'modified'`
  *                             with `rendered_hash = shardHash`. No write.
  *        - `differs` + `merged`     → write the union bytes; record
@@ -219,8 +208,8 @@ export async function assertAdoptable(vaultRoot: string): Promise<void> {
  *                             `rendered_hash = shardHash`.
  *        - `differs` + `use_shard`  → overwrite user file with shard
  *                             bytes; record `ownership: 'managed'`.
- *   4. `initShardDir`, `cacheTemplates`, `cacheManifest`,
- *      `writeValuesFile`, `writeState` — engine metadata.
+ *   4. `commitEngineMetadata`: `initShardDir`, `cacheTemplates`,
+ *      `cacheManifest`, `writeValuesFile`, then `writeState` last.
  *
  * Returns `state` + a per-bucket summary the UI / hook layer consume.
  */
@@ -264,8 +253,17 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     plan.matches.length + plan.shardOnly.length + plan.differs.length;
   onProgress?.({ kind: 'start', total: totalActions });
 
-  const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now, 'adopt');
-  const addedPaths: string[] = [];
+  // The run's snapshot, introduced paths and created folders (#301). A
+  // differing file kept as the user's, and a match, are never written.
+  const tx = dryRun
+    ? null
+    : await beginTransaction(vaultRoot, {
+        kind: 'adopt',
+        now,
+        signal,
+        keepAfterRollback: 'on-restore-failure',
+        noPriorInstall: true,
+      });
 
   const fileStates: Record<string, FileState> = {};
   const summary: AdoptSummary = {
@@ -277,28 +275,16 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     totalManaged: 0,
     renamedFiles: [],
   };
-  // The folders this adopt records for its rollback, kept here too, so an
-  // unusable record on disk still undoes them (#295).
-  let createdFolders: string[] | undefined;
-
   try {
-    if (!dryRun) {
-      await snapshotForRollback(vaultRoot, plan, resolutions, moves, backupDir!);
-      // The folders this adopt will create, so its rollback removes them and
-      // no other (#258).
-      createdFolders = await missingFolders(vaultRoot, [
-        ...plan.shardOnly.map((c) => c.path),
-        // A differing file kept as the user's is never written.
-        ...plan.differs.filter((c) => resolutions[c.path] !== 'keep_mine').map((c) => c.path),
-        ...moves.map((move) => move.to),
-      ]);
-      await recordCreatedFolders(backupDir!, createdFolders);
-      onBackupReady?.(backupDir!);
+    if (tx) {
+      onBackupReady?.(tx.dir);
       // A move's new path is introduced by this run, whether it is written or
-      // the old file moves there: registered before any write, so a failure or
-      // Ctrl+C removes it and the snapshot puts the old file back (#179).
+      // the old file moves there, and its old path is snapshotted: both
+      // recorded before any write, so a failure or Ctrl+C removes the new
+      // path and puts the old file back (#179).
       for (const move of moves) {
-        addedPaths.push(move.to);
+        await tx.recordWrite(move.to);
+        await tx.recordWrite(move.from);
         onFileTouched?.(move.to, true);
       }
     }
@@ -331,10 +317,9 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         action: 'shard-only',
       });
       if (c.kind !== 'shard-only') continue; // type narrow
-      if (!dryRun) {
-        throwIfCancelled(signal);
+      if (tx) {
+        await tx.recordWrite(c.path);
         await writeVaultFileBuffer(vaultRoot, c.path, c.shardContent);
-        addedPaths.push(c.path);
       }
       fileStates[c.path] = buildFileState(c, c.shardHash, 'managed');
       // `introduced` reflects whether this run actually created the file
@@ -385,7 +370,8 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         onFileTouched?.(c.path, false);
         summary.adoptedMine.push(c.path);
       } else if (resolution === 'use_shard') {
-        if (!dryRun) {
+        if (tx) {
+          await tx.recordWrite(c.path);
           await writeVaultFileBuffer(vaultRoot, c.path, c.shardContent);
         }
         onFileTouched?.(c.path, false);
@@ -397,7 +383,8 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         // the shard bytes (see above) — exactly like
         // a kept-but-edited managed file. A future `update` three-way-merges
         // it against the cached shard template, which is the proper base.
-        if (!dryRun) {
+        if (tx) {
+          await tx.recordWrite(c.path);
           await writeVaultFileBuffer(vaultRoot, c.path, resolution.content);
         }
         onFileTouched?.(c.path, false);
@@ -407,8 +394,10 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
 
     // Finish each move once its new path holds what was decided (#179).
     for (const move of moves) {
-      if (!dryRun) throwIfCancelled(signal);
-      if (!dryRun) await completeMove(vaultRoot, move, resolutions[move.to], addedPaths);
+      if (tx) {
+        throwIfCancelled(signal);
+        await completeMove(vaultRoot, move, resolutions[move.to], tx.introduced);
+      }
       summary.renamedFiles.push({ from: move.from, to: move.to });
     }
 
@@ -431,27 +420,27 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
       resolvedSha: resolved.ref?.commit,
     };
 
-    if (!dryRun) {
-      throwIfCancelled(signal);
-      await initShardDir(vaultRoot);
-      await cacheTemplates(vaultRoot, tempDir);
-      await cacheManifest(vaultRoot, manifest, schema, tempDir);
-      await writeValuesFile(vaultRoot, values);
-      // Recorded only once written: the exclusive write fails on a values
-      // file the user put there mid-adopt, which the rollback must keep.
-      addedPaths.push(VALUES_FILE);
-      onFileTouched?.(VALUES_FILE, true);
-      // state.json commits the adopt: the last point a Ctrl+C can stop it.
-      throwIfCancelled(signal);
-      await writeState(vaultRoot, state);
+    if (tx) {
+      await tx.commitEngineMetadata({
+        beforeState: async () => {
+          await initShardDir(vaultRoot);
+          await cacheTemplates(vaultRoot, tempDir);
+          await cacheManifest(vaultRoot, manifest, schema, tempDir);
+          await writeValuesFile(vaultRoot, values);
+          // Recorded only once written: the exclusive write fails on a values
+          // file the user put there mid-adopt, which the rollback must keep.
+          tx.introduced.push(VALUES_FILE);
+          onFileTouched?.(VALUES_FILE, true);
+        },
+        state: () => writeState(vaultRoot, state),
+      });
     }
 
-    return { state, summary, backupDir };
+    return { state, summary, backupDir: tx?.dir ?? null };
   } catch (err) {
-    if (!dryRun && backupDir) {
+    if (tx) {
       // A file left unrestored is never reported as rolled back (#247).
-      const failures = await attemptRollback(() => rollbackAdopt(vaultRoot, backupDir, addedPaths, createdFolders));
-      throw withRollbackFailures(err, failures);
+      throw withRollbackFailures(err, await attemptRollback(() => tx.rollback()));
     }
     throw err;
   }
@@ -481,14 +470,19 @@ async function completeMove(
   vaultRoot: string,
   move: PlannedMove,
   resolution: AdoptResolution | undefined,
-  addedPaths: string[],
+  introduced: string[],
 ): Promise<void> {
-  if (!move.matched && overwritesUserFile(resolution)) {
-    await fsp.rm(path.join(vaultRoot, move.from), { force: true });
-    return;
+  try {
+    if (!move.matched && overwritesUserFile(resolution)) {
+      await fsp.rm(path.join(vaultRoot, move.from), { force: true });
+      return;
+    }
+    // Checked before any write; something may still arrive meanwhile.
+    await moveToFreePath(vaultRoot, move.from, move.to, introduced, 'adopt');
+  } catch (err) {
+    // A refusal from the move keeps its own code; an errno keeps its hint (#225).
+    throw wrapWriteError('ADOPT_WRITE_FAILED', `Could not move ${move.from} to ${move.to} during adopt`, err);
   }
-  // Checked before any write; something may still arrive meanwhile.
-  await moveToFreePath(vaultRoot, move.from, move.to, addedPaths, 'adopt');
 }
 
 function buildFileState(
@@ -502,138 +496,6 @@ function buildFileState(
     ownership,
     ...(c.iteratorKey ? { iterator_key: c.iteratorKey } : {}),
   };
-}
-
-/**
- * Snapshot every path the apply phase will overwrite — `differs + use_shard`
- * and `differs + merged` (auto-merge) both replace existing user bytes.
- * `matches` writes nothing, `differs + keep_mine` writes nothing, and
- * `shard-only` writes to a path that doesn't exist yet (rollback erases via
- * `addedPaths` instead).
- *
- * Tolerates ENOENT defensively: a `differs-use-shard` path whose user
- * file vanished between plan-time and execute-time is unusual but not
- * fatal — the snapshot just captures nothing and the apply phase still
- * writes the shard bytes.
- */
-async function snapshotForRollback(
-  vaultRoot: string,
-  plan: AdoptPlan,
-  resolutions: AdoptResolutions,
-  moves: readonly PlannedMove[],
-  backupDir: string,
-): Promise<void> {
-  const filesBackupDir = path.join(backupDir, 'files');
-  await fsp.mkdir(filesBackupDir, { recursive: true });
-
-  const toSnapshot = [
-    ...plan.differs.filter((c) => overwritesUserFile(resolutions[c.path])).map((c) => c.path),
-    // A moved file leaves its old path (#179).
-    ...moves.map((m) => m.from),
-  ];
-
-  await mapConcurrent(toSnapshot, SNAPSHOT_CONCURRENCY, async (rel) => {
-    const src = path.join(vaultRoot, rel);
-    const dst = path.join(filesBackupDir, rel);
-    try {
-      await fsp.mkdir(path.dirname(dst), { recursive: true });
-      await fsp.copyFile(src, dst);
-    } catch (err) {
-      if (!isEnoent(err)) throw err;
-    }
-  });
-}
-
-/**
- * Restore from an adopt snapshot. Best-effort: per-file failures are
- * collected and returned so the command layer can surface them rather
- * than silently swallowing — telling the user "rolled back" while bytes
- * remain stale is worse than telling them "rollback partially failed,
- * here's what's still wrong".
- */
-export async function rollbackAdopt(
-  vaultRoot: string,
-  backupDir: string,
-  addedPaths: string[],
-  /** The folders the run recorded, for an unusable record on disk (#295). */
-  createdFolders?: readonly string[],
-): Promise<RollbackFailure[]> {
-  const failures: RollbackFailure[] = [];
-
-  // Erase newly-introduced files first so a restore can't spuriously
-  // succeed by landing on top of a brand-new file we wrote.
-  for (const rel of addedPaths) {
-    try {
-      await fsp.rm(path.join(vaultRoot, rel), { force: true });
-    } catch (err) {
-      failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
-    }
-  }
-
-  // Restore each snapshotted file. The snapshot tree mirrors the vault
-  // shape, so a recursive walk + per-file copy is enough. Skip the
-  // existence pre-check and let the first `readdir` ENOENT-tolerate —
-  // if the snapshot dir is missing (e.g. failure before snapshotForRollback
-  // finished), the walk is a no-op rather than a TOCTOU race against a
-  // stat that lies the moment we read it.
-  const filesDir = path.join(backupDir, 'files');
-  const stack: string[] = [filesDir];
-  while (stack.length > 0) {
-    const dir = stack.pop()!;
-    let entries;
-    try {
-      entries = await fsp.readdir(dir, { withFileTypes: true });
-    } catch (err) {
-      // ENOENT on the root is the "no snapshot" case — silent skip;
-      // ENOENT on a subdir is a vanished mid-walk dir — also tolerable.
-      // Anything else (EACCES, EBUSY, …) is a real failure.
-      if (isEnoent(err)) continue;
-      failures.push({ path: path.relative(filesDir, dir) || '.', reason: `readdir failed: ${reasonOf(err)}`, backup: dir });
-      continue;
-    }
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(full);
-        continue;
-      }
-      const rel = path.relative(filesDir, full);
-      const dst = path.join(vaultRoot, rel);
-      try {
-        await fsp.mkdir(path.dirname(dst), { recursive: true });
-        await fsp.copyFile(full, dst);
-      } catch (err) {
-        // The snapshot is kept when a restore fails, so `full` is still there.
-        failures.push({ path: rel, reason: `restore failed: ${reasonOf(err)}`, backup: full });
-      }
-    }
-  }
-
-  // The folders the adopt created, once empty again (#258). Read before the
-  // snapshot holding the record goes.
-  failures.push(
-    ...(await rollbackCreatedFolders(vaultRoot, backupDir, toPosix(vaultRoot, createdFoldersRecord(backupDir)), createdFolders)),
-  );
-
-  // Remove what the adopt wrote under `.shardmind/` (state.json, the cached
-  // manifest and schema, the templates cache, this run's snapshot) and
-  // nothing else: `assertAdoptable` allows a `.shardmind/` without
-  // state.json, which may hold the vault owner's own files (`boundary-ignore`,
-  // #190, #243). The folder itself goes only if that leaves it empty. The
-  // snapshot is kept when any part of the restore failed (a file, or a
-  // folder it could not read): it then holds the only copy of those files.
-  // `shard-values.yaml` is in `addedPaths` once the adopt has written it,
-  // and was removed with them above. The snapshot is kept, too, when its
-  // folder record could not be read: it is the only list of those folders.
-  const restoreFailed = failures.some((f) => /^(restore|readdir) failed|^folder record unreadable/.test(f.reason));
-  for (const failure of await removeEngineWrites(vaultRoot, {
-    snapshotDir: restoreFailed ? null : backupDir,
-    removeEmptyDir: true,
-  })) {
-    failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
-  }
-
-  return failures;
 }
 
 async function writeVaultFileBuffer(

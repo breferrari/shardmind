@@ -48,9 +48,11 @@ export function environmentHint(err: unknown): string | undefined {
  * A command's filesystem failure as a known error (#313). The error view
  * shows a `ShardMindError` with its own hint, so an environmental errno keeps
  * its per-code hint ("The disk is full…"); otherwise the hint is `fallback`,
- * or the raw message. The original error is the `cause`.
+ * or the raw message. The original error is the `cause`. A `ShardMindError`
+ * is already known, so it passes through with its own code and hint.
  */
 export function wrapWriteError(code: ErrorCode, message: string, err: unknown, fallback?: string): ShardMindError {
+  if (err instanceof ShardMindError) return err;
   const hint = environmentHint(err) ?? fallback ?? (err instanceof Error ? err.message : String(err));
   return Object.assign(new ShardMindError(message, code, hint), { cause: err });
 }

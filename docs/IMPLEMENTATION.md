@@ -182,7 +182,7 @@ graph TD
     H["hooks (orchestrator)<br/>bootstrap → personalize (non-fatal)<br/>newFiles = summary.installedFresh"] --> I
     I["summary — AdoptSummary<br/>Counts: matched-auto / kept-mine / use-shard / merged / fresh<br/>+ hook output"]
 
-    G -->|Any failure| R["rollbackAdopt<br/>Restore snapshot + erase added paths<br/>+ remove the engine's .shardmind/ entries + shard-values.yaml"]
+    G -->|Any failure| R["Transaction rollback (§4.28)<br/>Restore snapshot + erase added paths<br/>+ remove the engine's .shardmind/ entries + shard-values.yaml"]
 
     style A fill:#e94560,stroke:#e94560,color:#fff
     style F3 fill:#e94560,stroke:#e94560,color:#fff
@@ -1515,22 +1515,20 @@ runAdopt(opts: {
 }>;
 
 assertAdoptable(vaultRoot: string): Promise<void>;
-rollbackAdopt(vaultRoot: string, backupDir: string, addedPaths: string[])
-  : Promise<AdoptRollbackFailure[]>;
 ```
 
 **Algorithm**:
 1. `assertAdoptable` runs first. `.shardmind/state.json` present → `ADOPT_EXISTING_INSTALL`. `shard-values.yaml` present without state.json → `VALUES_FILE_COLLISION` (existing code; partial-adoption inconsistent state). Both fire before any disk mutation.
 2. Create `backupDir = .shardmind/backups/adopt-<ISO-timestamp>[-N]/` (its copies go under `files/`) with `createBackupDir(vaultRoot, now, 'adopt')` (`state.ts`), the allocator update uses (§4.12 step 1): a millisecond timestamp and an exclusive `mkdir`, so two adopts started in the same instant never share a snapshot folder (#248). After 1000 taken names it throws `ADOPT_WRITE_FAILED`. When it fails, it first removes the folders it made on the way (`.shardmind/`, `backups/`) while they are empty: it runs before the rollback exists (#269).
-3. `snapshotForRollback`: copy every `differs+use_shard` user file into the backup tree under `mapConcurrent(SNAPSHOT_CONCURRENCY = 16)`. Tolerate ENOENT (defensive — user file vanished between plan and execute). Report the backup dir to the caller via `onBackupReady` *before* any vault write. The rollback itself is `runAdopt`'s own, in its catch; a Ctrl+C stops the run and waits for it (#249).
+3. `beginTransaction(vaultRoot, { kind: 'adopt', keepAfterRollback: 'on-restore-failure', noPriorInstall: true })` (§4.28). Report the backup dir to the caller via `onBackupReady` *before* any vault write. Every write and move in step 4 and the renames below calls `recordWrite` first, which snapshots the user's file or marks the path introduced. The rollback itself is `runAdopt`'s own, in its catch; a Ctrl+C stops the run and waits for it (#249).
 4. Apply per classification (writes pass; deletes are not part of adopt by design — user-only files are never enumerated):
    - `matches` → record managed FileState; no disk write. `onFileTouched(path, false)`.
-   - `shard-only` → `writeFile(buffer)`; record managed FileState; track in `addedPaths`. `onFileTouched(path, true)`.
+   - `shard-only` → `writeFile(buffer)`; record managed FileState; the path is introduced (`recordWrite`). `onFileTouched(path, true)`.
    - `differs+keep_mine` → record `ownership: 'modified'` with `rendered_hash = shardHash`. No write. Recording the user's hash would make the next update's drift read their bytes as engine-owned and overwrite them (#150); the shard's hash makes them an edit, three-way merged against the adopt-time cache.
    - `differs+merged` → `writeFile(union bytes)`; record `rendered_hash = shardHash`, for the same reason, with `ownership: 'modified'` — or `'managed'` when the union is byte-identical to the shard's bytes (it holds no user line).
    - `differs+use_shard` → `writeFile(shardContent)`; record `ownership: 'managed'` with `rendered_hash = shardHash`.
-5. `initShardDir`, `cacheTemplates(tempDir)`, `cacheManifest(manifest, schema)`, `writeValuesFile(values, { flag: 'wx' })`, `writeState(state)`. The `wx` flag is a belt-and-braces second defense against a values file appearing between guard and write.
-6. Any throw between (3) and (5) lands in the catch and runs `rollbackAdopt(vaultRoot, backupDir!, addedPaths)`. Best-effort; when it returns failures, the catch throws `ROLLBACK_INCOMPLETE` naming each one and its snapshot copy (§4.11b, #247).
+5. `commitEngineMetadata`: `initShardDir`, `cacheTemplates(tempDir)`, `cacheManifest(manifest, schema)`, `writeValuesFile(values, { flag: 'wx' })`, then `writeState(state)` last. The `wx` flag is a belt-and-braces second defense against a values file appearing between guard and write.
+6. Any throw between (3) and (5) lands in the catch and runs the transaction's `rollback()` (§4.28). Best-effort; when it returns failures, the catch throws `ROLLBACK_INCOMPLETE` naming each one and its snapshot copy (§4.11b, #247).
 
 **FileState shape**:
 ```typescript
@@ -1542,11 +1540,7 @@ buildFileState(c, hash, ownership) = {
 }
 ```
 
-**Rollback**: `rollbackAdopt(vaultRoot, backupDir, addedPaths)`:
-1. Erase every path in `addedPaths` first (so a snapshot copy can't spuriously land on top of a brand-new file we wrote).
-2. Walk `backupDir/files/` recursively; for each entry, `fsp.copyFile` back to the matching vault path.
-2a. Remove the folders the adopt created, once empty (`readCreatedFolders` + `removeCreatedFolders`, #258). `runAdopt` records them in `<backupDir>/folders.json` after the snapshot and before its first write: the folders on the way to every `shard-only`, `differs` and move target path that do not exist (`missingFolders`, ENOENT only). A folder that existed, or that holds the user's files, stays. When the record cannot be read or is not a list of folders, the rollback uses the list the run recorded, which it still holds in memory (#295), so the run's folders go just the same. Only a rollback with no such list (one that did not record it) reports the record as a rollback failure.
-3. `removeEngineWrites` (`state.ts`, shared with `rollbackInstall`): remove what the adopt wrote under `.shardmind/` (`state.json`, `shard.yaml`, `shard-schema.yaml`, `templates/`, this run's snapshot), then `backups/` and `.shardmind/` only if they are empty. A `.shardmind/` without `state.json` passes `assertAdoptable` and can hold the vault owner's own files (`boundary-ignore`, #190), so it is never removed wholesale (#243). `shard-values.yaml` is in `addedPaths` only once the adopt has written it (step 1 removes it), so a values file the user put there mid-adopt is kept. The snapshot is kept, not removed, when a restore from it failed: it then holds the only copy of those files. Per-step failures are collected and returned (not thrown) so the command layer can surface partial-rollback state to the user.
+**Rollback**: the transaction's (§4.28 step 5). What adopt adds: `shard-values.yaml` joins `introduced` only once the adopt has written it, so a values file the user put there mid-adopt is kept; a `.shardmind/` without `state.json` passes `assertAdoptable` and can hold the vault owner's own files (`boundary-ignore`, #190), so it is never removed wholesale (#243).
 
 **Error modes**:
 - `ADOPT_EXISTING_INSTALL` — pre-flight guard.
@@ -1557,7 +1551,7 @@ buildFileState(c, hash, ownership) = {
 **Dependencies**: `core/state` (initShardDir, cacheTemplates, cacheManifest, writeState), `core/install-planner` (hashValues), `core/fs-utils` (mapConcurrent, pathExists), `runtime/errno`, `runtime/vault-paths`.
 
 
-**Renames (#179)**: before any write, each `movedFrom` classification's new path must still be free (`isFree`, as for update; refused with `ADOPT_WRITE_FAILED` otherwise), its old path is snapshotted, and its new path joins `addedPaths`. After the classification is applied: a `matches` or `keep_mine` moves the old file to the new path; `use_shard` or a merge, which wrote the new path, deletes the old one. `summary.renamedFiles` lists `{ from, to }`.
+**Renames (#179)**: before any write, each `movedFrom` classification's new path must still be free (`isFree`, as for update; refused with `ADOPT_WRITE_FAILED` otherwise), both paths go through `recordWrite`, so the old file is snapshotted and the new path is introduced. After the classification is applied: a `matches` or `keep_mine` moves the old file to the new path; `use_shard` or a merge, which wrote the new path, deletes the old one. `summary.renamedFiles` lists `{ from, to }`.
 ### 4.19 `self-update-check.ts`
 
 **Purpose**: 24-hour cached "is there a newer shardmind on npm?" lookup. Sibling of §4.15 (`update-check.ts`) — same hardening posture, different subject. §4.15 answers "newer SHARD on GitHub?" and writes a vault-local cache; §4.19 answers "newer ENGINE on npm?" and writes a user-level cache because the engine is global, not per-vault. Powers the cross-cutting `<SelfUpdateBanner>` rendered above every top-level command's UI.
@@ -1933,6 +1927,44 @@ The record advances (`version`, `tag`, `commit`, `tarball`, each `modified`) onl
 - `--commit`.
 
 Upstream access goes through an `UpstreamSource` (npm metadata, tag → commit, repository at a commit), so tests use fixture upstreams on disk and never the network.
+
+### 4.28 `vault-transaction.ts`
+
+One vault transaction for the commands that write a vault (#301). A run snapshots each file just before it writes, removes or moves onto it, not up front, so the snapshot holds exactly what the run touched. Adopt runs on it; update and install move onto it next (#301), each with its own retention and engine-metadata rules. Pure of Ink.
+
+```typescript
+interface TransactionOptions {
+  kind: 'update' | 'adopt';      // createBackupDir's kinds
+  now?: Date;
+  signal?: AbortSignal;
+  keepAfterRollback: 'always' | 'on-restore-failure';
+  noPriorInstall: boolean;
+}
+interface VaultTransaction {
+  readonly dir: string;            // the snapshot folder
+  readonly introduced: string[];   // paths a rollback removes
+  recordWrite(rel: string): Promise<void>;
+  commitEngineMetadata(steps: { beforeState: () => Promise<void>; state: () => Promise<void> }): Promise<void>;
+  rollback(): Promise<RollbackFailure[]>;
+}
+beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction>
+```
+
+1. **Begin.** `createBackupDir(vaultRoot, now, kind)` (`state.ts`, §4.12 step 1) makes `.shardmind/backups/<kind>-<stamp>[-N]/`. The caller reports `dir` (`onBackupReady`) before its first write.
+2. **`recordWrite(rel)`**, before every write, removal or move onto a vault path. A cancel check runs before it and after it: the record's own writes are writes, so a Ctrl+C during them stops the run before the caller's write (#249). Once per path:
+   - The folders the write will create (`missingFolders`) are added to the run's list, kept in memory and written to `<dir>/folders.json` (#258).
+   - An existing regular file is copied to `<dir>/files/<rel>`.
+   - A path that does not exist (`ENOENT` at the `lstat` or the copy) is added to `introduced`.
+   - Anything else at the path, such as the user's folder, is neither: the caller's write fails on it, and the rollback leaves it alone.
+3. **`introduced`** is the caller's too: a helper that renames through a temporary adds it and takes back a path it did not get, and a file written with an exclusive flag (`shard-values.yaml`) is added once written, so a rollback never removes a file that appeared meanwhile (#243).
+4. **`commitEngineMetadata`**: a cancel check, `beforeState()` (the `.shardmind/` caches and the values file), a cancel check, then `state()`. `state.json` is written last: a run with `state.json` written has committed.
+5. **`rollback()`** never throws. What it could not undo comes back as `RollbackFailure[]`, which the caller turns into `ROLLBACK_INCOMPLETE` (§4.11b, #247). In order:
+   1. Remove every `introduced` path, so a snapshot copy is never restored on top of a file the run wrote (`unlink failed:`).
+   2. `restoreTree(<dir>/files, vaultRoot)`: copy each snapshot file back (`restore failed:`, `readdir failed:`).
+   3. `rollbackCreatedFolders`: remove the recorded folders once empty, deepest first. When `folders.json` cannot be read, the in-memory list is used (#295).
+   4. With `noPriorInstall`, `removeEngineWrites` (`state.ts`) removes what the run wrote under `.shardmind/`, and `backups/` and `.shardmind/` only if empty (#243). The snapshot folder is removed too, unless `keepAfterRollback` is `always`, or it is `on-restore-failure` and a failure names its `backup` in the snapshot (a file restore, or a read of the snapshot, failed): the snapshot then holds the only copy (#246).
+
+**Retention per kind**: adopt keeps the snapshot only on a failed restore (`on-restore-failure`, `noPriorInstall: true`).
 
 ## 5. Runtime Module: `shardmind/runtime`
 

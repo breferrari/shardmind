@@ -50,6 +50,11 @@ describe('wrapWriteError (#313)', () => {
     expect(describeError(err, '1.0.0')).toMatchObject({ kind: 'known', hint: expect.stringMatching(/The disk is full/) });
   });
 
+  it('passes a ShardMindError through with its own code and hint (#301)', () => {
+    const refusal = new ShardMindError('shard-values.yaml appeared mid-adopt', 'VALUES_FILE_COLLISION', 'Move it aside.');
+    expect(wrapWriteError('ADOPT_WRITE_FAILED', 'Could not move x', refusal)).toBe(refusal);
+  });
+
   it.each(['EACCES', 'EPERM', 'EBUSY', 'EROFS'])('gives %s its own hint', (code) => {
     const err = wrapWriteError('ADOPT_WRITE_FAILED', 'Could not write x', errno(code));
     expect(err.hint).not.toMatch(/simulated/);

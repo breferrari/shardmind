@@ -23,6 +23,7 @@ import { runAdopt, type AdoptResolution } from '../../source/core/adopt-executor
 import { renamesBetween } from '../../source/core/rename-migrations.js';
 import { sha256 } from '../../source/core/fs-utils.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
+import { asShown } from '../helpers/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MINIMAL_SHARD = path.resolve(__dirname, '../../examples/minimal-shard');
@@ -274,6 +275,68 @@ describe('adopt --from-version applies rename migrations (#179)', () => {
     });
     await expect(adopt(v2, '0.1.0')).rejects.toThrow(/disk full/);
     vi.restoreAllMocks();
+    expect(await read(COPY)).toBe('My edit.\n');
+    expect(await exists('AGENTS.md')).toBe(false);
+  });
+
+  // On a case-folding filesystem the path guard refuses the new spelling
+  // before any write (#163); elsewhere the new spelling is a new path. Either
+  // way the file ends where it was.
+  it('a failed adopt leaves a case-only renamed file under its old spelling (#301)', async () => {
+    await cloneOfV1();
+    await write(COPY, 'My edit.\n');
+    const dir = path.join(root, 'shard-case');
+    await fsp.cp(MINIMAL_SHARD, dir, { recursive: true });
+    const manifestPath = path.join(dir, '.shardmind', 'shard.yaml');
+    const manifest = (await fsp.readFile(manifestPath, 'utf-8')).replace(/^version: .+$/m, 'version: 0.2.0');
+    await fsp.writeFile(
+      manifestPath,
+      `${manifest}\nmigrations:\n  - from: "0.1.0"\n    to: "0.2.0"\n    renames:\n      "${COPY}": "claude.md"\n`,
+      'utf-8',
+    );
+    await fsp.rename(path.join(dir, COPY), path.join(dir, 'claude.md'));
+    const realWrite = fsp.writeFile;
+    vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (String(file).endsWith('state.json')) throw new Error('disk full');
+      return realWrite(file, data, opts as Parameters<typeof realWrite>[2]);
+    });
+    await expect(adopt(dir, '0.1.0')).rejects.toThrow(/disk full|case-mismatch/);
+    vi.restoreAllMocks();
+    const names = await fsp.readdir(vault);
+    expect(names).toContain(COPY);
+    expect(names).not.toContain('claude.md');
+    expect(await read(COPY)).toBe('My edit.\n');
+  });
+
+  it.each([
+    ['moving the file to its new path', 'keep_mine', 'rename'],
+    ['removing the old file', 'use_shard', 'rm'],
+  ] as const)('a full disk while %s fails as ADOPT_WRITE_FAILED with the disk hint, and rolls back (#301)', async (_, resolution, op) => {
+    await cloneOfV1();
+    await write(COPY, 'My edit.\n');
+    const v2 = await shardV2();
+    const oldAbs = path.join(vault, COPY);
+    const enospc = () => Object.assign(new Error(`ENOSPC: no space left on device, ${op} '${oldAbs}'`), { code: 'ENOSPC', path: oldAbs });
+    if (op === 'rename') {
+      const real = fsp.rename;
+      vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+        if (from === oldAbs) throw enospc();
+        return real(from, to);
+      });
+    } else {
+      const real = fsp.rm;
+      vi.spyOn(fsp, 'rm').mockImplementation(async (target, opts) => {
+        if (target === oldAbs) throw enospc();
+        return real(target, opts);
+      });
+    }
+    const err = await adopt(v2, '0.1.0', () => resolution).catch((e: unknown) => e);
+    vi.restoreAllMocks();
+    const { shown, errnos } = asShown(err);
+    expect(shown).toMatchObject({ kind: 'known', code: 'ADOPT_WRITE_FAILED' });
+    expect(shown.message).toContain(COPY);
+    expect(shown.kind === 'known' ? shown.hint : '').toMatch(/The disk is full/);
+    expect(errnos).toContain('ENOSPC');
     expect(await read(COPY)).toBe('My edit.\n');
     expect(await exists('AGENTS.md')).toBe(false);
   });

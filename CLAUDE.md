@@ -215,6 +215,7 @@ shardmind/
 │   │   ├── editor.ts                  # Open in editor: $VISUAL/$EDITOR, temp copy, raw-mode handoff (#50)
 │   │   ├── created-folders.ts         # The folders a run created, removed by its rollback (#258)
 │   │   ├── external-tools.ts          # Check external_tools against their ranges; no-shell probe (#138)
+│   │   ├── vault-transaction.ts       # One vault transaction: snapshot before each write, rollback, state.json last (#301)
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   ├── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
@@ -406,6 +407,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `vault-lock.ts` | §4.25 | One run per vault: `<vault>/.shardmind.lock` (wx), `VAULT_LOCKED`, stale same-host takeover, release + exit backstop (#253) |
 | `created-folders.ts` | §4.11b, §4.12 (4a), §4.18 | The folders a run created, for install / update / adopt rollbacks (#258) |
 | `external-tools.ts` | §4.26 | Check a shard's `external_tools` against their version ranges before install / adopt / update write (`EXTERNAL_TOOL_UNMET`); the probe runs without a shell (#138) |
+| `vault-transaction.ts` | §4.28 | One vault transaction for adopt (update and install next): `recordWrite` snapshots a file just before its write, `commitEngineMetadata` writes `state.json` last, `rollback` never throws (#301) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.

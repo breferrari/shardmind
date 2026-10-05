@@ -36,7 +36,6 @@ import {
 } from '../../source/core/adopt-planner.js';
 import {
   runAdopt,
-  rollbackAdopt,
   type AdoptResolutions,
 } from '../../source/core/adopt-executor.js';
 import { runInstall } from '../../source/core/install-executor.js';
@@ -492,10 +491,15 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
       values: values as Record<string, unknown>,
       selections,
     });
-    // A folder at a later shard-only path makes the adopt fail after Home.md
-    // was overwritten with the shard's version.
-    const blocker = adoptPlan.shardOnly[1]!.path;
-    await fsp.mkdir(path.join(vault, blocker, 'x'), { recursive: true });
+    // The values file's write fails, after Home.md was overwritten with the
+    // shard's version (a file is snapshotted only when it is about to be
+    // written, #301).
+    const valuesAbs = path.join(vault, 'shard-values.yaml');
+    const realWrite = fsp.writeFile;
+    const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (file === valuesAbs) throw Object.assign(new Error('simulated EIO'), { code: 'EIO' });
+      return realWrite(file, data, opts);
+    });
 
     // The restore of Home.md from the snapshot fails.
     const homeAbs = path.join(vault, 'Home.md');
@@ -531,6 +535,7 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
       expect(await fsp.readFile(backup, 'utf-8')).toBe(myHome);
     } finally {
       copySpy.mockRestore();
+      writeSpy.mockRestore();
     }
   });
 
@@ -640,72 +645,6 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     await expect(fsp.access(path.join(vault, 'shard-values.yaml'))).rejects.toThrow();
     // No shard-only file was actually written.
     await expect(fsp.access(path.join(vault, 'CLAUDE.md'))).rejects.toThrow();
-  });
-
-  it('rollbackAdopt restores snapshotted files even after partial cleanup', async () => {
-    // Direct test of the rollback function — separate from runAdopt's
-    // catch-and-rollback path so per-file failure semantics can be
-    // pinned without faking executor errors.
-    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
-    const filesDir = path.join(backupDir, 'files');
-    await fsp.mkdir(filesDir, { recursive: true });
-    await fsp.writeFile(path.join(vault, 'CLAUDE.md'), 'overwritten\n', 'utf-8');
-    await fsp.writeFile(path.join(filesDir, 'CLAUDE.md'), 'pristine\n', 'utf-8');
-    await fsp.writeFile(path.join(vault, 'shard-only.md'), 'fresh write\n', 'utf-8');
-
-    const failures = await rollbackAdopt(vault, backupDir, ['shard-only.md']);
-    expect(failures).toEqual([]);
-
-    // Snapshot was restored over the overwrite.
-    const claudeAfter = await fsp.readFile(path.join(vault, 'CLAUDE.md'), 'utf-8');
-    expect(claudeAfter).toBe('pristine\n');
-
-    // Newly-introduced shard-only file was erased.
-    await expect(fsp.access(path.join(vault, 'shard-only.md'))).rejects.toThrow();
-
-    // `.shardmind/` cleanup ran regardless of whether any engine writes
-    // had landed.
-    await expect(fsp.access(path.join(vault, '.shardmind'))).rejects.toThrow();
-  });
-
-  it("rollbackAdopt keeps a shard-values.yaml the adopt never wrote (#243)", async () => {
-    // The user's own values file, not in addedPaths: the adopt failed
-    // before (or at) its exclusive write, so the file is theirs.
-    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
-    await fsp.mkdir(path.join(backupDir, 'files'), { recursive: true });
-    await fsp.writeFile(path.join(vault, 'shard-values.yaml'), 'user_name: mine\n', 'utf-8');
-    expect(await rollbackAdopt(vault, backupDir, [])).toEqual([]);
-    expect(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')).toBe('user_name: mine\n');
-  });
-
-  it('rollbackAdopt keeps the snapshot when restoring from it failed (#243)', async () => {
-    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
-    await fsp.mkdir(path.join(backupDir, 'files'), { recursive: true });
-    await fsp.writeFile(path.join(backupDir, 'files', 'Notes.md'), 'the only copy\n', 'utf-8');
-    // A folder where the file must be restored: the copy fails.
-    await fsp.mkdir(path.join(vault, 'Notes.md', 'blocker'), { recursive: true });
-    const failures = await rollbackAdopt(vault, backupDir, []);
-    expect(failures.some((f) => f.reason.startsWith('restore failed'))).toBe(true);
-    expect(await fsp.readFile(path.join(backupDir, 'files', 'Notes.md'), 'utf-8')).toBe('the only copy\n');
-  });
-
-  it('rollbackAdopt keeps the snapshot when a folder in it could not be read (#247)', async () => {
-    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
-    const notes = path.join(backupDir, 'files', 'notes');
-    await fsp.mkdir(notes, { recursive: true });
-    await fsp.writeFile(path.join(notes, 'a.md'), 'the only copy\n', 'utf-8');
-    const realReaddir = fsp.readdir;
-    const spy = vi.spyOn(fsp, 'readdir').mockImplementation((async (dir: string, opts: unknown) => {
-      if (dir === notes) throw Object.assign(new Error('simulated EMFILE'), { code: 'EMFILE' });
-      return (realReaddir as (d: string, o: unknown) => Promise<unknown>)(dir, opts);
-    }) as typeof fsp.readdir);
-    try {
-      const failures = await rollbackAdopt(vault, backupDir, []);
-      expect(failures).toContainEqual({ path: 'notes', reason: 'readdir failed: simulated EMFILE', backup: notes });
-    } finally {
-      spy.mockRestore();
-    }
-    expect(await fsp.readFile(path.join(notes, 'a.md'), 'utf-8')).toBe('the only copy\n');
   });
 
   it('two adopts started at the same instant snapshot to two folders (#248)', async () => {
@@ -945,17 +884,6 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     expect((await fsp.readdir(vault)).sort()).toEqual(['.claude', 'brain']);
     expect(await fsp.readdir(path.join(vault, '.claude'))).toEqual(['mine.md']);
     expect(await fsp.readdir(path.join(vault, 'brain'))).toEqual([]);
-  });
-
-  it('rollbackAdopt keeps the snapshot when its folder record cannot be read, and names the record (#258)', async () => {
-    const backupDir = path.join(vault, '.shardmind', 'backups', 'adopt-isolated');
-    await fsp.mkdir(path.join(backupDir, 'files'), { recursive: true });
-    await fsp.writeFile(path.join(backupDir, 'folders.json'), '{truncated');
-    const failures = await rollbackAdopt(vault, backupDir, []);
-    expect(failures).toContainEqual(
-      expect.objectContaining({ path: '.shardmind/backups/adopt-isolated/folders.json' }),
-    );
-    expect(await fsp.readFile(path.join(backupDir, 'folders.json'), 'utf-8')).toBe('{truncated');
   });
 
   it('runAdopt with a zero-classification plan still writes engine metadata', async () => {

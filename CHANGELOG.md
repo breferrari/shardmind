@@ -18,6 +18,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **In the module review, keys that arrive together now act in order.** A fast typist, a remote shell that batches keystrokes, a key repeat or a paste can deliver several keys at once. An arrow then a space used to toggle the row the cursor was leaving, two spaces toggled only once, and a space then Enter lost the Enter. Each key now acts on what the previous one left.
 - **A pasted answer with a line break submits it.** Pasting `REINSTALL` plus Enter at the reinstall prompt, or any text plus Enter in a text prompt, used to put the line break into the text instead of submitting.
 
+### Changed (adopt runs on one vault transaction — #301)
+
+- **A failed adopt that moved a renamed file now names the cause.** When `adopt --from-version` could not move a file to its new path, or remove its old one, because the disk was full or a file was locked, the error showed the raw system error. It now says which file it could not move, with the same hint as any other failed write.
+- Internal: adopt snapshots each of your files just before it writes, moves or removes it, instead of all of them up front, and its rollback is the shared vault transaction (`vault-transaction.ts`) that update and install move onto next. The rollback contract passes unchanged.
+
 ## [0.2.0] - 2026-10-05
 
 Minor release.
