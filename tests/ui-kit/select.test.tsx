@@ -113,6 +113,15 @@ describe('ui-kit Select', () => {
     expect(onChange.mock.calls).toEqual([['b']]);
   });
 
+  it('selects on an Enter that arrives inside a run of plain keys (#317)', async () => {
+    const onChange = vi.fn();
+    const { stdin } = render(<Select options={OPTIONS} onChange={onChange} />);
+    await tick();
+    stdin.write('x' + ENTER);
+    await tick();
+    expect(onChange.mock.calls).toEqual([['a']]);
+  });
+
   it('ignores keys while disabled', async () => {
     const onChange = vi.fn();
     const { stdin } = render(<Select options={OPTIONS} isDisabled onChange={onChange} />);

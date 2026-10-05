@@ -1,6 +1,7 @@
 /*
  * From @inkjs/ui@2.0.0 (https://github.com/vadimdemedes/ink-ui at 14b1145da0123a48cfc2f0ec9ff33dff0633f464), components/select/use-select.ts.
  * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
+ * Modified by Brenno Ferrari: an Enter inside a run of plain keys selects too (ShardMind #317).
  */
 
 import {useInput} from 'ink';
@@ -22,7 +23,7 @@ export type UseSelectProps = {
 
 export const useSelect = ({isDisabled = false, state}: UseSelectProps) => {
 	useInput(
-		(_input, key) => {
+		(input, key) => {
 			if (key.downArrow) {
 				state.focusNextOption();
 			}
@@ -31,7 +32,9 @@ export const useSelect = ({isDisabled = false, state}: UseSelectProps) => {
 				state.focusPreviousOption();
 			}
 
-			if (key.return) {
+			// An Enter inside a run of plain keys is not reported as `key.return`
+			// (ShardMind fix, #317).
+			if (key.return || /[\r\n]/.test(input)) {
 				state.selectFocusedOption();
 			}
 		},

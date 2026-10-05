@@ -225,6 +225,50 @@ describe('ScrollableMultiSelect — selection', () => {
   });
 });
 
+describe('ScrollableMultiSelect — keys in one input chunk (#317)', () => {
+  // A terminal that coalesces keystrokes, a paste or a key repeat delivers
+  // several keys in one chunk: each must see what the previous one left.
+  it('an arrow and a space in one write toggle the row the cursor moved to', async () => {
+    const onChange = vi.fn();
+    const { stdin } = await mount(<ScrollableMultiSelect options={opts(4)} visibleOptionCount={4} onChange={onChange} />);
+    stdin.write(ARROW_DOWN + SPACE);
+    await tick(30);
+    expect(onChange.mock.calls).toEqual([[['v1']]]);
+  });
+
+  it('two spaces in one write toggle the row on and off again', async () => {
+    const onChange = vi.fn();
+    const { stdin } = await mount(<ScrollableMultiSelect options={opts(3)} visibleOptionCount={3} onChange={onChange} />);
+    stdin.write(SPACE + SPACE);
+    await tick(30);
+    expect(onChange.mock.calls).toEqual([[['v0']], [[]]]);
+  });
+
+  it('a space and Enter in one write submit the toggled selection', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(<ScrollableMultiSelect options={opts(3)} visibleOptionCount={3} onSubmit={onSubmit} />);
+    stdin.write(ARROW_DOWN + ARROW_DOWN + SPACE + ENTER);
+    await tick(30);
+    expect(onSubmit.mock.calls).toEqual([[['v2']]]);
+  });
+
+  it('a CR LF in one write submits once', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(<ScrollableMultiSelect options={opts(2)} visibleOptionCount={2} onSubmit={onSubmit} />);
+    stdin.write(SPACE + '\r\n');
+    await tick(30);
+    expect(onSubmit.mock.calls).toEqual([[['v0']]]);
+  });
+
+  it('arrows past the window in one write scroll it to the cursor', async () => {
+    const { stdin, lastFrame } = await mount(<ScrollableMultiSelect options={opts(6)} visibleOptionCount={2} />);
+    stdin.write(ARROW_DOWN + ARROW_DOWN + ARROW_DOWN);
+    await tick(30);
+    expect(lastFrame()).toMatch(/opt-3/);
+    expect(lastFrame()).not.toMatch(/opt-0/);
+  });
+});
+
 describe('ScrollableMultiSelect — rerender (production shape)', () => {
   it('parent rerender shrinks options below stale focusedIndex: SPACE toggles the clamped row', async () => {
     // Regression for the Copilot review on PR #124: focusedIndex was

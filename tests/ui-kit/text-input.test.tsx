@@ -104,6 +104,15 @@ describe('ui-kit TextInput', () => {
     expect(changes).toEqual(['a', 'ab', 'abc']);
   });
 
+  it('submits text typed in the same input chunk as Enter, as a paste delivers it (#317)', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = render(<TextInput onSubmit={onSubmit} />);
+    await tick();
+    stdin.write('REINSTALL' + ENTER);
+    await tick();
+    expect(onSubmit).toHaveBeenCalledWith('REINSTALL');
+  });
+
   it('shows the placeholder while empty', () => {
     const { lastFrame } = render(<TextInput placeholder="REINSTALL" />);
     expect(lastFrame()).toContain('EINSTALL');
