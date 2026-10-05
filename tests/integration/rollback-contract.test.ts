@@ -40,19 +40,13 @@ import {
   planOutputs,
   detectCollisions,
 } from '../../source/core/install-planner.js';
-import {
-  runInstall,
-  runInstallTransaction,
-  rollbackInstall,
-  backupCollisions,
-  type BackupRecord,
-} from '../../source/core/install-executor.js';
+import { runInstall, runInstallTransaction } from '../../source/core/install-executor.js';
 import { planUpdate, mergeModuleSelections } from '../../source/core/update-planner.js';
 import { runUpdate } from '../../source/core/update-executor.js';
 import { classifyAdoption } from '../../source/core/adopt-planner.js';
 import { runAdopt } from '../../source/core/adopt-executor.js';
 import { buildRenderContext } from '../../source/core/renderer.js';
-import { attemptRollback, rollbackFailuresOf, withRollbackFailures } from '../../source/core/rollback-report.js';
+import { rollbackFailuresOf } from '../../source/core/rollback-report.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
 import { injectFaults, type FaultKind, type FaultPlan } from '../helpers/fault-fs.js';
 import { treeOf } from '../helpers/vault-tree.js';
@@ -92,8 +86,6 @@ interface Exception {
 
 interface Pipeline {
   name: 'install' | 'update' | 'adopt';
-  /** The rows' name: two runs of one pipeline (#311) are told apart by it. */
-  label: string;
   /** Builds the vault (and anything else the run needs) in `work`; returns the run. */
   setUp: (work: string) => Promise<{ vault: string; run: (signal: AbortSignal) => Promise<void> }>;
   exceptions: Exception[];
@@ -107,52 +99,13 @@ async function loadMinimal(shardDir = MINIMAL_SHARD) {
   return { manifest, schema, selections, values };
 }
 
-/** A fresh install into a vault with the user's own files, one in the way (backed up, #55). */
+/**
+ * A fresh install into a vault with the user's own files, one in the way
+ * (backed up, #55), through `runInstallTransaction` as the machine runs it
+ * since #300 (#311).
+ */
 const install: Pipeline = {
   name: 'install',
-  label: 'install (composed)',
-  async setUp(work) {
-    const vault = path.join(work, 'vault');
-    await fsp.mkdir(path.join(vault, 'notes'), { recursive: true });
-    await fsp.writeFile(path.join(vault, 'Home.md'), 'my own home\n');
-    await fsp.writeFile(path.join(vault, 'notes', 'mine.md'), 'my note\n');
-    const { manifest, schema, selections, values } = await loadMinimal();
-    const { outputs } = await planOutputs(schema, MINIMAL_SHARD, selections, values);
-    const collisions = await detectCollisions(vault, outputs.map((o) => o.outputPath));
-    const run = async (signal: AbortSignal) => {
-      // As use-install-machine runs it: move collisions aside, install, and on
-      // a throw roll back every path reported so far (#207, #215).
-      const backups: BackupRecord[] = [];
-      const written: string[] = [];
-      const dirs: string[] = [];
-      try {
-        await backupCollisions(collisions, undefined, (record) => backups.push(record));
-        await runInstall({
-          vaultRoot: vault,
-          manifest,
-          schema,
-          tempDir: MINIMAL_SHARD,
-          resolved: RESOLVED,
-          tarballSha256: 'sha-0.1.0',
-          values,
-          selections,
-          signal,
-          onFileWritten: (rel) => written.push(rel),
-          onDirCreated: (dir) => dirs.push(dir),
-        });
-      } catch (err) {
-        throw withRollbackFailures(err, await attemptRollback(() => rollbackInstall(vault, written, backups, dirs)));
-      }
-    };
-    return { vault, run };
-  },
-  exceptions: [],
-};
-
-/** The same install through `runInstallTransaction`, as the machine runs it since #300 (#311). */
-const installTransaction: Pipeline = {
-  name: 'install',
-  label: 'install (transaction)',
   async setUp(work) {
     const vault = path.join(work, 'vault');
     await fsp.mkdir(path.join(vault, 'notes'), { recursive: true });
@@ -185,7 +138,6 @@ const installTransaction: Pipeline = {
 /** An installed vault and a release that changes Home.md, adds a file in new folders and drops CLAUDE.md. */
 const update: Pipeline = {
   name: 'update',
-  label: 'update',
   async setUp(work) {
     const vault = path.join(work, 'vault');
     const newShard = path.join(work, 'shard-0.2.0');
@@ -254,7 +206,6 @@ const update: Pipeline = {
 /** A vault with the user's Home.md, taken from the shard, and the shard's other files new. */
 const adopt: Pipeline = {
   name: 'adopt',
-  label: 'adopt',
   async setUp(work) {
     const vault = path.join(work, 'vault');
     await fsp.mkdir(vault, { recursive: true });
@@ -287,7 +238,7 @@ const adopt: Pipeline = {
   ],
 };
 
-const PIPELINES = [install, installTransaction, update, adopt];
+const PIPELINES = [install, update, adopt];
 
 // ---------------------------------------------------------------------------
 // Rows
@@ -323,7 +274,7 @@ const defectKey = (d: KnownDefect) => `${d.issue} ${d.pipeline} ${d.fault}`;
 /** Per entry, the paths a row passed on it with. */
 const knownDefectsSeen = new Map<string, Set<string>>();
 /** Pipelines with a row whose restore fault actually fired. */
-const restoreFaultsFired = new Set<string>();
+const restoreFaultsFired = new Set<Pipeline['name']>();
 
 async function freshWork(): Promise<string> {
   return fsp.mkdtemp(path.join(os.tmpdir(), 'rollback-contract-'));
@@ -395,18 +346,18 @@ for (const pipeline of PIPELINES) {
   const counts = await countCalls(pipeline);
   for (const kind of ['write', 'rename', 'mkdir'] as const) {
     for (let nth = 1; nth <= counts[kind]; nth++) {
-      rows.push({ id: `${pipeline.label}: fail ${kind} #${nth}`, pipeline, fault: kind, plan: () => ({ fail: { kind, nth } }) });
+      rows.push({ id: `${pipeline.name}: fail ${kind} #${nth}`, pipeline, fault: kind, plan: () => ({ fail: { kind, nth } }) });
     }
   }
   for (let nth = 1; nth <= counts.write; nth++) {
     rows.push({
-      id: `${pipeline.label}: fail write #${nth}, then the first restore`,
+      id: `${pipeline.name}: fail write #${nth}, then the first restore`,
       pipeline,
       fault: 'restore',
       plan: () => ({ fail: { kind: 'write', nth }, failRestore: { nth: 1 } }),
     });
     rows.push({
-      id: `${pipeline.label}: Ctrl+C at write #${nth}`,
+      id: `${pipeline.name}: Ctrl+C at write #${nth}`,
       pipeline,
       fault: 'ctrl-c',
       plan: (abort) => ({ beforeWrite: { nth, hook: () => abort.abort() } }),
@@ -419,7 +370,7 @@ for (const pipeline of PIPELINES) {
   for (const kind of ['remove', 'read'] as const) {
     for (let nth = 1; nth <= rollback[kind]; nth++) {
       rows.push({
-        id: `${pipeline.label}: fail write #${last}, then rollback ${kind} #${nth}`,
+        id: `${pipeline.name}: fail write #${last}, then rollback ${kind} #${nth}`,
         pipeline,
         fault: `rollback-${kind}`,
         plan: () => ({ fail: { kind: 'write', nth: last }, inRollback: { kind, nth } }),
@@ -430,7 +381,7 @@ for (const pipeline of PIPELINES) {
   // one in their snapshot folder; install tracks its folders in memory.
   if (pipeline.name !== 'install') {
     rows.push({
-      id: `${pipeline.label}: fail write #${last} with an unreadable folder record`,
+      id: `${pipeline.name}: fail write #${last} with an unreadable folder record`,
       pipeline,
       fault: 'tracker',
       plan: () => ({ fail: { kind: 'write', nth: last } }),
@@ -512,7 +463,7 @@ describe('rollback contract (#267)', () => {
         if (row.fault === 'rollback-remove' || row.fault === 'rollback-read') {
           expect(injector.fired.rollback, 'rollback fault fired').toBe(true);
         }
-        if (injector.fired.restore) restoreFaultsFired.add(row.pipeline.label);
+        if (injector.fired.restore) restoreFaultsFired.add(row.pipeline.name);
 
         if (row.fault === 'ctrl-c') {
           // A Ctrl+C stops the vault writes before the rollback (#249): none
@@ -585,7 +536,7 @@ describe('rollback contract (#267)', () => {
   // defect still shows up (or its fix has landed and its entry must go), and
   // no entry lists a path its defect does not leave.
   it('failed a restore in every pipeline', () => {
-    expect([...restoreFaultsFired].sort()).toEqual(PIPELINES.map((p) => p.label).sort());
+    expect([...restoreFaultsFired].sort()).toEqual(PIPELINES.map((p) => p.name).sort());
   });
 
   it('corrupted a folder record in update and adopt (#292)', () => {
