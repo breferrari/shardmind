@@ -24,7 +24,7 @@ Thrown by `source/core/registry.ts`.
 
 **Typical cause:** Typo in the namespace or name, or the shard hasn't been registered yet.
 
-**Remedy:** Check spelling, or install via direct mode: `shardmind install github:owner/repo`.
+**Remedy:** Check spelling, or run the command the hint gives, which takes the shard straight from GitHub: `shardmind install github:owner/repo`.
 
 ### `VERSION_NOT_FOUND`
 
@@ -57,7 +57,7 @@ Thrown by `source/core/registry.ts`.
 
 **Typical cause:** Offline, DNS failure, GitHub status issue, or the registry index JSON is malformed.
 
-**Remedy:** Check your connection; retry. If persistent, use direct mode (`github:owner/repo`) to bypass the registry.
+**Remedy:** Check your connection; retry. If the registry index is what failed, run the command the hint gives: the same shard straight from GitHub, `shardmind install github:owner/repo`.
 
 ### `REGISTRY_RATE_LIMITED`
 

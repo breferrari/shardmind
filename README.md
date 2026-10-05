@@ -164,7 +164,7 @@ On `update` and `adopt`, `--json` currently requires `--dry-run` and refuses oth
 ### Shard references
 
 ```
-breferrari/obsidian-mind                  # Registry, latest stable      (registry index lands in 0.1.x — see Status)
+breferrari/obsidian-mind                  # Registry, latest stable      (index not published yet: the error prints the github: command)
 breferrari/obsidian-mind@6.0.0            # Registry, exact version
 github:breferrari/obsidian-mind           # Direct GitHub, latest stable release
 github:breferrari/obsidian-mind@6.0.0     # Direct GitHub, exact tag

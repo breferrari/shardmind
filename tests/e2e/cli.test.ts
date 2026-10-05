@@ -2115,3 +2115,41 @@ describe('shardmind — state.json written by an older shardmind (#40)', () => {
     expect(state.files['Home.md']?.ownership).toBe('modified');
   });
 });
+
+// #200: a bare owner/repo goes through the registry index. When the index
+// cannot resolve it, the error names the exact github: command for the
+// command that was run, and nothing is installed from GitHub on its own.
+describe('a bare owner/repo the registry cannot resolve (#200)', () => {
+  let vault: Vault | null = null;
+  afterEach(async () => {
+    await vault?.cleanup();
+    vault = null;
+  });
+
+  const missingIndex = (): Record<string, string> => envWithStub({ SHARDMIND_REGISTRY_INDEX_URL: `${stub.url}/no-registry/index.json` });
+
+  it('install prints the github: install command and writes nothing', async () => {
+    vault = await createEmptyVault('bare-ref-install');
+    // The stub is the suite's: count only this run's requests, for a slug no other test uses.
+    const before = stub.requestedPaths().length;
+    const result = await spawnCli(['install', 'nobody/bare-ref', '--defaults'], { cwd: vault.root, env: missingIndex() });
+    expect(result.exitCode).toBe(1);
+    const out = (result.stdout + result.stderr).replace(/\s+/g, ' ');
+    expect(out).toContain('Run shardmind install github:nobody/bare-ref to take it straight from GitHub.');
+    expect(await vault.exists('.shardmind')).toBe(false);
+    // No fallback: the index was asked, GitHub's API never.
+    const during = stub.requestedPaths().slice(before);
+    expect(during).toContain('/no-registry/index.json');
+    expect(during.some((p) => p.startsWith('/repos/'))).toBe(false);
+  });
+
+  it('adopt --dry-run --json carries the github: adopt command, version included', async () => {
+    vault = await createEmptyVault('bare-ref-adopt');
+    const result = await spawnCli(['adopt', 'nobody/bare-ref@1.2.0', '--yes', '--dry-run', '--json'], { cwd: vault.root, env: missingIndex() });
+    expect(result.exitCode).toBe(1);
+    const doc = JSON.parse(result.stdout) as { ok: boolean; error: { code: string; hint?: string } };
+    expect(doc.ok).toBe(false);
+    expect(doc.error.code).toBe('REGISTRY_NETWORK');
+    expect(doc.error.hint).toBe('Run shardmind adopt github:nobody/bare-ref@1.2.0 to take it straight from GitHub.');
+  });
+});

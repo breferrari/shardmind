@@ -1026,4 +1026,76 @@ describe('registry.resolve', () => {
       expect(seen[0]).toBe('https://stub.example.invalid/index.json');
     });
   });
+
+  // #200: a bare owner/repo the registry cannot resolve names the exact
+  // command that works, for the command the user ran, and never falls back.
+  describe('bare-ref hint (#200)', () => {
+    /** A fetch that answers the index URL with `index` and records every request. */
+    function indexOnly(index: () => Response | Promise<Response>): string[] {
+      const seen: string[] = [];
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        seen.push(u);
+        if (u === REGISTRY_URL) return index();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+      return seen;
+    }
+
+    const RUN = 'Run shardmind install github:breferrari/obsidian-mind to take it straight from GitHub.';
+
+    it.each([
+      ['answers 404', () => new Response('Not Found', { status: 404 })],
+      ['answers 500', () => new Response('boom', { status: 500 })],
+      ['is not JSON', () => new Response('<html>', { status: 200 })],
+      ['has no shards map', () => indexResponse({ shards: null })],
+      ['has shards as an array', () => indexResponse({ shards: [] })],
+      [
+        'cannot be reached',
+        () => {
+          throw new TypeError('fetch failed');
+        },
+      ],
+    ])('names the github: install command when the index %s', async (_label, answer) => {
+      const seen = indexOnly(answer);
+      await expect(resolve('breferrari/obsidian-mind')).rejects.toMatchObject({ code: 'REGISTRY_NETWORK', hint: RUN });
+      // No fallback: nothing but the index was asked.
+      expect(seen).toEqual([REGISTRY_URL]);
+    });
+
+    it('names it when the index does not list the shard, keeping SHARD_NOT_FOUND', async () => {
+      const seen = indexOnly(() => indexResponse({ shards: {} }));
+      await expect(resolve('breferrari/obsidian-mind')).rejects.toMatchObject({
+        code: 'SHARD_NOT_FOUND',
+        message: "Shard 'breferrari/obsidian-mind' not found in the registry",
+        hint: `Check the spelling. ${RUN}`,
+      });
+      expect(seen).toEqual([REGISTRY_URL]);
+    });
+
+    it('carries the version into the command', async () => {
+      indexOnly(() => new Response('Not Found', { status: 404 }));
+      await expect(resolve('breferrari/obsidian-mind@3.5.0')).rejects.toMatchObject({
+        hint: 'Run shardmind install github:breferrari/obsidian-mind@3.5.0 to take it straight from GitHub.',
+      });
+    });
+
+    it.each(['adopt', 'validate'] as const)('names the %s command for its caller', async (command) => {
+      indexOnly(() => new Response('Not Found', { status: 404 }));
+      await expect(resolve('breferrari/obsidian-mind', { command })).rejects.toMatchObject({
+        hint: `Run shardmind ${command} github:breferrari/obsidian-mind to take it straight from GitHub.`,
+      });
+    });
+
+    it('says why in the message', async () => {
+      indexOnly(() => new Response('Not Found', { status: 404 }));
+      await expect(resolve('breferrari/obsidian-mind')).rejects.toMatchObject({
+        message: 'Could not fetch the shard registry index: HTTP 404',
+      });
+      indexOnly(() => new Response('<html>', { status: 200 }));
+      await expect(resolve('breferrari/obsidian-mind')).rejects.toMatchObject({
+        message: expect.stringMatching(/^The shard registry index is corrupt: /),
+      });
+    });
+  });
 });

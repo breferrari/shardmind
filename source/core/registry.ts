@@ -146,9 +146,23 @@ export async function fetchLatestVersion(
   });
 }
 
+/** The commands that take a shard ref from the user, named in the bare-ref hint. */
+export type RefCommand = 'install' | 'adopt' | 'validate';
+
+/**
+ * The hint for a bare `owner/repo` the registry cannot resolve (#200): the
+ * exact command that takes the same shard straight from GitHub. There is no
+ * fallback to it: a bare ref never resolves through GitHub without the
+ * prefix, so a later registry entry can never change what it meant.
+ */
+function directCommandHint(command: RefCommand, parsed: ParsedRef): string {
+  const version = parsed.version === null ? '' : `@${parsed.version}`;
+  return `Run shardmind ${command} github:${parsed.namespace}/${parsed.name}${version} to take it straight from GitHub.`;
+}
+
 export async function resolve(
   shardRef: string,
-  options: { includePrerelease?: boolean } = {},
+  options: { includePrerelease?: boolean; command?: RefCommand } = {},
 ): Promise<ResolvedShard> {
   const parsed = parseRef(shardRef);
 
@@ -182,16 +196,13 @@ export async function resolve(
         includePrerelease: options.includePrerelease ?? false,
       }));
   } else {
-    const index = await fetchRegistryIndex();
+    const direct = directCommandHint(options.command ?? 'install', parsed);
+    const index = await fetchRegistryIndex(direct);
     const key = `${parsed.namespace}/${parsed.name}`;
     const entry = index.shards[key];
 
     if (!entry) {
-      throw new ShardMindError(
-        `Shard '${key}' not found`,
-        'SHARD_NOT_FOUND',
-        'Check spelling or use github:owner/repo for direct install.',
-      );
+      throw new ShardMindError(`Shard '${key}' not found in the registry`, 'SHARD_NOT_FOUND', `Check the spelling. ${direct}`);
     }
 
     if (parsed.version && !entry.versions.includes(parsed.version)) {
@@ -300,26 +311,23 @@ function parseRef(shardRef: string): ParsedRef {
   };
 }
 
-async function fetchRegistryIndex(): Promise<RegistryIndex> {
-  const response = await safeFetch(getRegistryIndexUrl());
+/**
+ * The registry index. Every failure is `REGISTRY_NETWORK` with `directHint`,
+ * the command that takes the shard straight from GitHub, and the reason in
+ * the message.
+ */
+async function fetchRegistryIndex(directHint: string): Promise<RegistryIndex> {
+  const fail = (reason: string): ShardMindError => new ShardMindError(reason, 'REGISTRY_NETWORK', directHint);
+  const why = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-  if (!response.ok) {
-    throw new ShardMindError(
-      `Could not fetch shard registry: HTTP ${response.status}`,
-      'REGISTRY_NETWORK',
-      'The registry index is unavailable. Try again later or use github:owner/repo for direct install.',
-    );
-  }
+  const response = await safeFetch(getRegistryIndexUrl(), undefined, directHint);
+  if (!response.ok) throw fail(`Could not fetch the shard registry index: HTTP ${response.status}`);
 
   let body: string;
   try {
     body = await response.text();
   } catch (err) {
-    throw new ShardMindError(
-      'Failed to read registry response',
-      'REGISTRY_NETWORK',
-      err instanceof Error ? err.message : String(err),
-    );
+    throw fail(`Could not read the shard registry index: ${why(err)}`);
   }
 
   try {
@@ -335,11 +343,7 @@ async function fetchRegistryIndex(): Promise<RegistryIndex> {
     }
     return parsed;
   } catch (err) {
-    throw new ShardMindError(
-      'Registry index is corrupt',
-      'REGISTRY_NETWORK',
-      err instanceof Error ? err.message : String(err),
-    );
+    throw fail(`The shard registry index is corrupt: ${why(err)}`);
   }
 }
 
@@ -613,14 +617,15 @@ function rateLimitError(): ShardMindError {
   );
 }
 
-async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+/** `fetch`, with a network failure as `REGISTRY_NETWORK`; its hint is `hint`, or the failure's own message. */
+async function safeFetch(url: string, init?: RequestInit, hint?: string): Promise<Response> {
   try {
     return await fetch(url, init);
   } catch (err) {
     throw new ShardMindError(
       `Could not reach ${new URL(url).host}`,
       'REGISTRY_NETWORK',
-      err instanceof Error ? err.message : String(err),
+      hint ?? (err instanceof Error ? err.message : String(err)),
     );
   }
 }

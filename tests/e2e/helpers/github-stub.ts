@@ -116,6 +116,8 @@ export interface GitHubStub {
    * signal at exactly that point instead of guessing startup time (#57).
    */
   waitForTarballRequest: () => Promise<void>;
+  /** Every path requested so far, in order: for a test that must prove a request was never made (#200). */
+  requestedPaths: () => readonly string[];
   /** Shut down the server. Always call in `afterEach` / `afterAll`. */
   close: () => Promise<void>;
 }
@@ -153,9 +155,11 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
   // the client has already destroyed.
   const pendingTimers = new Set<NodeJS.Timeout>();
 
+  const requested: string[] = [];
   const server = http.createServer((req, res) => {
     const method = req.method ?? 'GET';
     const pathname = req.url ?? '/';
+    requested.push(pathname);
 
     try {
       const releasesMatch = RELEASES_LIST_RE.exec(pathname);
@@ -263,6 +267,7 @@ export async function createGitHubStub(options: GitHubStubOptions): Promise<GitH
 
   return {
     url,
+    requestedPaths: () => [...requested],
     setLatest: (slug, version) => {
       const spec = shards.get(slug.toLowerCase());
       if (!spec) throw new Error(`setLatest: unknown shard ${slug}`);

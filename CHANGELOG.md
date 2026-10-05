@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (a bare owner/repo names the command that works — #200)
+
+- **`shardmind install owner/repo` without `github:` now tells you the exact command to run.** A bare name goes through the shard registry, which is not published yet, so it fails. The error used to say to "use github:owner/repo"; it now prints `Run shardmind install github:owner/repo to take it straight from GitHub.`, with your version if you gave one, and with `adopt` or `validate` when that is what you ran. A bare name still never installs from GitHub on its own.
+
 ### Docs (from an obsidian-mind fork to your own shard — #90)
 
 - **A guide for turning an obsidian-mind fork into an installable shard.** [`docs/FORK-TO-SHARD.md`](docs/FORK-TO-SHARD.md) covers: giving the fork its own name and version, choosing the install questions, keeping or dropping the hooks, checking it with `shardmind validate`, releasing it, and keeping up with obsidian-mind. Users then install it with `shardmind install github:<you>/<your-fork>`.
