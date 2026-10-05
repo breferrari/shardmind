@@ -1,7 +1,7 @@
 /*
  * From @inkjs/ui@2.0.0 (https://github.com/vadimdemedes/ink-ui at 14b1145da0123a48cfc2f0ec9ff33dff0633f464), components/text-input/use-text-input.ts.
  * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
- * Modified by Brenno Ferrari: cursor and placeholder as Ink Text segments instead of chalk strings.
+ * Modified by Brenno Ferrari: cursor and placeholder as Ink Text segments instead of chalk strings; an Enter inside a run of typed or pasted text submits at that line break (ShardMind #317).
  */
 
 import {useMemo} from 'react';
@@ -120,6 +120,24 @@ export const useTextInput = ({
 
 			if (key.return) {
 				state.submit();
+				return;
+			}
+
+			// A run of typed or pasted text arrives as one input, and an Enter
+			// inside it is not reported as `key.return` (ShardMind fix, #317):
+			// insert each line and submit at each line break, in order.
+			if (/[\r\n]/.test(input)) {
+				const lines = input.split(/\r\n|\r|\n/);
+				for (const [index, line] of lines.entries()) {
+					if (line) {
+						state.insert(line);
+					}
+
+					if (index < lines.length - 1) {
+						state.submit();
+					}
+				}
+
 				return;
 			}
 

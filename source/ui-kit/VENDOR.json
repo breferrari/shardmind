@@ -121,12 +121,12 @@
       "upstream": "components/text-input/theme.ts"
     },
     "components/text-input/use-text-input-state.ts": {
-      "change": "onChange fires once per change of the text (vadimdemedes/ink-ui#26); dead previousValue removed.",
+      "change": "onChange fires once per change of the text (vadimdemedes/ink-ui#26); onSubmit fires from the reducer's value, so text in the same input chunk as Enter counts (ShardMind #317); dead previousValue removed.",
       "modified": true,
       "upstream": "components/text-input/use-text-input-state.ts"
     },
     "components/text-input/use-text-input.ts": {
-      "change": "cursor and placeholder as Ink Text segments instead of chalk strings.",
+      "change": "cursor and placeholder as Ink Text segments instead of chalk strings; an Enter inside a run of typed or pasted text submits at that line break (ShardMind #317).",
       "modified": true,
       "upstream": "components/text-input/use-text-input.ts"
     },

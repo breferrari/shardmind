@@ -1,7 +1,7 @@
 /*
  * From @inkjs/ui@2.0.0 (https://github.com/vadimdemedes/ink-ui at 14b1145da0123a48cfc2f0ec9ff33dff0633f464), components/text-input/use-text-input-state.ts.
  * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
- * Modified by Brenno Ferrari: onChange fires once per change of the text (vadimdemedes/ink-ui#26); dead previousValue removed.
+ * Modified by Brenno Ferrari: onChange fires once per change of the text (vadimdemedes/ink-ui#26); onSubmit fires from the reducer's value, so text in the same input chunk as Enter counts (ShardMind #317); dead previousValue removed.
  */
 
 import {useReducer, useCallback, useEffect, useRef, type Reducer, useMemo} from 'react';
@@ -9,13 +9,16 @@ import {useReducer, useCallback, useEffect, useRef, type Reducer, useMemo} from 
 type State = {
 	value: string;
 	cursorOffset: number;
+	/** How many times Enter submitted; `onSubmit` fires when it changes (ShardMind fix). */
+	submissions: number;
 };
 
 type Action =
 	| MoveCursorLeftAction
 	| MoveCursorRightAction
 	| InsertAction
-	| DeleteAction;
+	| DeleteAction
+	| SubmitAction;
 
 type MoveCursorLeftAction = {
 	type: 'move-cursor-left';
@@ -32,6 +35,10 @@ type InsertAction = {
 
 type DeleteAction = {
 	type: 'delete';
+};
+
+type SubmitAction = {
+	type: 'submit';
 };
 
 const reducer: Reducer<State, Action> = (state, action) => {
@@ -71,6 +78,10 @@ const reducer: Reducer<State, Action> = (state, action) => {
 					state.value.slice(newCursorOffset + 1),
 				cursorOffset: newCursorOffset,
 			};
+		}
+
+		case 'submit': {
+			return {...state, submissions: state.submissions + 1};
 		}
 	}
 };
@@ -138,6 +149,7 @@ export const useTextInputState = ({
 	const [state, dispatch] = useReducer(reducer, {
 		value: defaultValue,
 		cursorOffset: defaultValue.length,
+		submissions: 0,
 	});
 
 	const suggestion = useMemo(() => {
@@ -175,15 +187,31 @@ export const useTextInputState = ({
 		});
 	}, []);
 
+	// onSubmit fires from the reducer's value, not this render's closure
+	// (ShardMind fix, #317): text typed or pasted in the same input chunk as
+	// Enter reaches the reducer before React re-renders, so the closure's
+	// value would be the one from before it.
 	const submit = useCallback(() => {
-		if (suggestion) {
-			insert(suggestion);
-			onSubmit?.(state.value + suggestion);
+		dispatch({type: 'submit'});
+	}, []);
+
+	const onSubmitRef = useRef(onSubmit);
+	onSubmitRef.current = onSubmit;
+	useEffect(() => {
+		if (state.submissions === 0) {
 			return;
 		}
 
-		onSubmit?.(state.value);
-	}, [state.value, suggestion, insert, onSubmit]);
+		if (suggestion) {
+			insert(suggestion);
+			onSubmitRef.current?.(state.value + suggestion);
+			return;
+		}
+
+		onSubmitRef.current?.(state.value);
+		// Only a new submission fires; a value or suggestion change does not.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [state.submissions]);
 
 	// Notify once per change of the text (ShardMind fix, the approach of
 	// vadimdemedes/ink-ui#27). Upstream compared `previousValue !== value`,
