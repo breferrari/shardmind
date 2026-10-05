@@ -208,8 +208,10 @@ export async function assertAdoptable(vaultRoot: string): Promise<void> {
  *                             `rendered_hash = shardHash`.
  *        - `differs` + `use_shard`  → overwrite user file with shard
  *                             bytes; record `ownership: 'managed'`.
- *   4. `commitEngineMetadata`: `initShardDir`, `cacheTemplates`,
- *      `cacheManifest`, `writeValuesFile`, then `writeState` last.
+ *   4. `commitEngineMetadata`: the engine entries already there set
+ *      aside, `initShardDir`, `cacheTemplates`, `cacheManifest`,
+ *      `writeValuesFile`, then `writeState` last; then `commit` discards
+ *      what was set aside.
  *
  * Returns `state` + a per-bucket summary the UI / hook layer consume.
  */
@@ -428,6 +430,9 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         },
         state: () => writeState(vaultRoot, state),
       });
+      // Committed: the engine entries a clone of the shard repo carried,
+      // set aside by the commit, go. Never throws, so nothing rolls back.
+      await tx.commit();
     }
 
     return { state, summary, backupDir: tx?.dir ?? null };

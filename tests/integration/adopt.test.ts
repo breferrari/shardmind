@@ -539,6 +539,96 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     }
   });
 
+  it.each([
+    // Before the engine writes start: a shard-only file's write fails.
+    ['before the engine writes', 'Home.md'],
+    // After the cached manifest and schema were overwritten: state.json's write fails.
+    ['after the engine cache was rewritten', 'state.json'],
+  ] as const)(
+    "a failed adopt into a clone of the shard repo keeps the clone's own .shardmind/ files, %s (#301)",
+    async (_when, failing) => {
+      const { manifest, schema } = await loadShard();
+      const selections = defaultModuleSelections(schema);
+      const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+      // A clone of the shard repo carries the shard's sidecar, with no state.json.
+      const sidecar = path.join(vault, '.shardmind');
+      await fsp.mkdir(sidecar, { recursive: true });
+      await fsp.writeFile(path.join(sidecar, 'shard.yaml'), 'the clone\'s own shard.yaml\n');
+      await fsp.writeFile(path.join(sidecar, 'shard-schema.yaml'), 'the clone\'s own schema\n');
+      const adoptPlan = await classifyAdoption({
+        vaultRoot: vault,
+        schema,
+        manifest,
+        tempDir: MINIMAL_SHARD,
+        values: values as Record<string, unknown>,
+        selections,
+      });
+      const target = path.join(vault, failing === 'Home.md' ? 'Home.md' : path.join('.shardmind', 'state.json'));
+      const realWrite = fsp.writeFile;
+      const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+        if (file === target || (failing === 'state.json' && String(file).startsWith(`${target}.`))) {
+          throw Object.assign(new Error('simulated EIO'), { code: 'EIO' });
+        }
+        return realWrite(file, data, opts);
+      });
+      try {
+        await expect(
+          runAdopt({
+            vaultRoot: vault,
+            manifest,
+            schema,
+            tempDir: MINIMAL_SHARD,
+            resolved: RESOLVED,
+            tarballSha256: 'deadbeef',
+            values: values as Record<string, unknown>,
+            selections,
+            plan: adoptPlan,
+            resolutions: {},
+          }),
+        ).rejects.toThrow();
+      } finally {
+        writeSpy.mockRestore();
+      }
+      expect(await fsp.readFile(path.join(sidecar, 'shard.yaml'), 'utf-8')).toBe("the clone's own shard.yaml\n");
+      expect(await fsp.readFile(path.join(sidecar, 'shard-schema.yaml'), 'utf-8')).toBe("the clone's own schema\n");
+      expect((await fsp.readdir(sidecar)).sort()).toEqual(['shard-schema.yaml', 'shard.yaml']);
+    },
+  );
+
+  it("a successful adopt into a clone of the shard repo leaves no backup of the clone's .shardmind/ files (#301)", async () => {
+    const { manifest, schema } = await loadShard();
+    const selections = defaultModuleSelections(schema);
+    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+    const sidecar = path.join(vault, '.shardmind');
+    await fsp.mkdir(sidecar, { recursive: true });
+    await fsp.writeFile(path.join(sidecar, 'shard.yaml'), "the clone's own shard.yaml\n");
+    await fsp.writeFile(path.join(sidecar, 'boundary-ignore'), 'mine\n');
+    const adoptPlan = await classifyAdoption({
+      vaultRoot: vault,
+      schema,
+      manifest,
+      tempDir: MINIMAL_SHARD,
+      values: values as Record<string, unknown>,
+      selections,
+    });
+    await runAdopt({
+      vaultRoot: vault,
+      manifest,
+      schema,
+      tempDir: MINIMAL_SHARD,
+      resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
+      values: values as Record<string, unknown>,
+      selections,
+      plan: adoptPlan,
+      resolutions: {},
+    });
+    const names = await fsp.readdir(sidecar);
+    expect(names.filter((n) => n.includes('shardmind-backup'))).toEqual([]);
+    expect(names).toEqual(expect.arrayContaining(['state.json', 'shard.yaml', 'boundary-ignore']));
+    expect(await fsp.readFile(path.join(sidecar, 'boundary-ignore'), 'utf-8')).toBe('mine\n');
+  });
+
   it('rejects symlinks in the shard source via the walk', async () => {
     // Build a tiny shard tree with a symlink under it. Reuses the same
     // walk symlink rejection path the install pipeline does.
