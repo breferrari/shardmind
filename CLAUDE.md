@@ -104,7 +104,7 @@ Every PR for a v6 issue must demonstrate in its description:
 | **zod-validation-error** | The cli-kit's message for an invalid argument or option |
 | **Ink** | React terminal renderer. Prompts and status widgets come from `source/ui-kit/`, vendored from `@inkjs/ui` 2.0.0 (#43, #273) |
 | **React** | Required peer dep for Ink |
-| **chalk** | The colour decision Ink already makes; read `chalk.level`, don't re-derive it. Same range as Ink's (^5), one deduped copy (#37) |
+| **chalk** | The colour decision Ink already makes; read `chalk.level`, don't re-derive it. Same range as Ink's (^6, Ink 8), one deduped copy (#37, #270) |
 | **Nunjucks** | Template engine (`{{ }}` syntax). Config: `autoescape: false` |
 | **yaml** (eemeli/yaml) | YAML parsing. TypeScript-typed, comment-preserving |
 | **tar** (node-tar) | Tarball download + extraction |

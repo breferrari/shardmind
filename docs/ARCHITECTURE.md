@@ -1048,7 +1048,7 @@ The update-check cache (`.shardmind/update-check.json`, 24h TTL) is stable-only.
 | **zod-validation-error** | The cli-kit's message for an invalid argument or option |
 | **ink** | React renderer for terminal (Yoga flexbox) |
 | **`source/ui-kit/`** | Components vendored from `@inkjs/ui` 2.0.0: Select, TextInput, Alert, Badge, ProgressBar, Spinner, StatusMessage (#43, #273) |
-| **chalk** | The colour decision Ink already makes; read it (`chalk.level`), don't re-derive it. Pinned to Ink's range (^5) so the tree keeps one deduped copy (#37) |
+| **chalk** | The colour decision Ink already makes; read it (`chalk.level`), don't re-derive it. Pinned to Ink's range (^6, Ink 8) so the tree keeps one deduped copy (#37, #270) |
 | **react** | Required peer dependency |
 
 ### 11.2 Core Layer
@@ -1098,7 +1098,7 @@ The update-check cache (`.shardmind/update-check.json`, 24h TTL) is stable-only.
 - **Provenance.** The upstream MIT `LICENSE` and a provenance header (upstream `@inkjs/ui` 2.0.0, commit `14b1145`) live in the folder, so they move with it.
 - **History.** Upstream went in byte-for-byte in one commit; each fix is its own commit naming the upstream issue, so ShardMind's patches read as a diff from upstream.
 
-`MultiSelect` is no longer used (`ScrollableMultiSelect`, #100). Ink 8.0.0 (2026-10-03) is a separate decision (#270).
+`MultiSelect` is no longer used (`ScrollableMultiSelect`, #100). Ink 8.0.0 (2026-10-03) was a separate decision (#270), taken once #277 had cleared the tree.
 
 **Decision (2026-10-05, #273): vendor the rest and drop `@inkjs/ui`.** `Alert`, `Badge`, `ProgressBar`, `Spinner` and `StatusMessage` moved into the ui-kit under the same rules, and `@inkjs/ui` left `package.json`. Pastel 4.0.1 still depends on it to draw its argument errors, so it stays in the lockfile through Pastel. An npm `overrides` entry would not help: it applies only to the root project's install, and a user's `npm i -g shardmind` resolves Pastel's dependencies itself. Pastel is vendored too (#277, below), and Ink 8 (#270) waits for it. It depends on `chalk ^5`, so while it was installed Ink 8's `chalk ^6` could not be the only chalk, and #37 needs one chalk deciding the colour level. `figures` glyphs come from `ui-kit/lib/figures.ts`, and `Spinner`'s `dots` frames from `ui-kit/lib/spinners.ts`, inlined from `cli-spinners`. `Spinner`'s `type` is a union, `'dots'` only for now, so adding a frame set later is a non-breaking widening. The MIT notices of `figures`, `is-unicode-supported` and `cli-spinners` (one copyright holder) are in `ui-kit/LICENSE-sindresorhus`. The boundary test fails on any `@inkjs/ui` import in `source/` or `tests/`.
 
