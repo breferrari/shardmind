@@ -266,12 +266,24 @@ describe('global setup', () => {
     };
   }
 
+  // A stand-in for the PTY probe: these cases never spawn a terminal.
+  const CAPS = { works: true, verbatim: false, signals: false };
+  const probe = async () => CAPS;
+
   it('provides null to the workers when the build succeeds', async () => {
     const project = fakeProject();
 
-    await createSetup(async () => null)(project);
+    await createSetup(async () => null, probe)(project);
 
     expect(project.provided.get('distBuildError')).toBeNull();
+  });
+
+  it('provides the probed PTY capabilities, for the Layer 2 gates (#174)', async () => {
+    const project = fakeProject();
+
+    await createSetup(async () => null, probe)(project);
+
+    expect(project.provided.get('ptyCapabilities')).toEqual(CAPS);
   });
 
   it('provides the failure instead of throwing when the build fails, and warns', async () => {
@@ -279,7 +291,7 @@ describe('global setup', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     try {
-      await createSetup(async () => 'boom')(project);
+      await createSetup(async () => 'boom', probe)(project);
 
       expect(project.provided.get('distBuildError')).toBe('boom');
       // A run that spawns nothing still says dist/ is broken.
@@ -294,7 +306,7 @@ describe('global setup', () => {
     const results = [null, 'type error after an edit'];
     let builds = 0;
 
-    await createSetup(async () => results[builds++] ?? null)(project);
+    await createSetup(async () => results[builds++] ?? null, probe)(project);
     await project.rerun();
 
     expect(builds).toBe(2);
