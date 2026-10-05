@@ -22,7 +22,7 @@ import type {
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { attemptRollback, withRollbackFailures } from './rollback-report.js';
-import { beginTransaction, type VaultTransaction } from './vault-transaction.js';
+import { beginTransaction, type SnapshotTransaction } from './vault-transaction.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { throwIfCancelled } from './run-cancel.js';
@@ -380,7 +380,7 @@ interface ApplyContext {
   nextFiles: Record<string, FileState>;
   summary: UpdateSummary;
   /** The run's transaction; null in a dry run, which writes nothing. */
-  tx: VaultTransaction | null;
+  tx: SnapshotTransaction | null;
   adoptPreexisting: boolean;
   onProgress: ((event: UpdateProgressEvent) => void) | undefined;
   onFileTouched?: (outputPath: string, introduced: boolean) => void;
@@ -392,7 +392,7 @@ interface DeleteContext {
   vaultRoot: string;
   nextFiles: Record<string, FileState>;
   summary: UpdateSummary;
-  tx: VaultTransaction | null;
+  tx: SnapshotTransaction | null;
   onProgress: ((event: UpdateProgressEvent) => void) | undefined;
   index: number;
   total: number;
@@ -623,7 +623,7 @@ async function completeRename(
     nextFiles: Record<string, FileState>;
     summary: UpdateSummary;
     /** The run's transaction; null in a dry run. */
-    tx: VaultTransaction | null;
+    tx: SnapshotTransaction | null;
     /** The paths the write pass wrote. */
     written: ReadonlySet<string>;
   },
@@ -688,7 +688,7 @@ async function removeVaultFile(vaultRoot: string, rel: string): Promise<void> {
 }
 
 /** A folder renamed in place by case (#195); an errno keeps its hint (#225). */
-async function renameFolderCase(vaultRoot: string, move: { from: string; to: string }, tx: VaultTransaction): Promise<boolean> {
+async function renameFolderCase(vaultRoot: string, move: { from: string; to: string }, tx: SnapshotTransaction): Promise<boolean> {
   try {
     return await renameCaseInPlace(vaultRoot, move.from, move.to, null, tx.journal);
   } catch (err) {

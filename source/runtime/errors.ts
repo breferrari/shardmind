@@ -114,6 +114,9 @@ export type ErrorCode =
   | 'ADOPT_FROM_VERSION_INVALID'
   | 'ADOPT_NON_INTERACTIVE_WITHOUT_VALUES'
   | 'ADOPT_WRITE_FAILED'
+
+  // Install
+  | 'INSTALL_WRITE_FAILED'
   | 'MIGRATION_INVALID_VERSION'
   // Reserved for the v0.2 sandboxed-transform path: currently migrator.ts
   // swallows `type_changed` transform exceptions and records a warning

@@ -1,52 +1,75 @@
 /**
  * One vault transaction for the commands that write a vault (#301).
  *
- * A run begins a transaction, which makes its snapshot folder
- * (`.shardmind/backups/<kind>-<stamp>`). Before each write, removal or move
- * of a vault path it calls `recordWrite`: an existing file is copied into
- * the snapshot once, a new path is marked as introduced, and the folders the
- * write will create are added to the run's folder record. `.shardmind/`'s
- * own files go through `commitEngineMetadata`, which writes `state.json`
- * last: the commit point. On a failure or a Ctrl+C before it, `rollback`
- * undoes the run's in-place case renames, removes what it introduced,
- * copies the snapshot back (with the engine cache, for a run over a prior
- * install), removes the folders it created and, for a run with no install
- * before it, what it wrote under `.shardmind/`. It never throws: what it
- * could not undo is returned (#247).
+ * A run begins a transaction; update and adopt get a snapshot folder
+ * (`.shardmind/backups/<kind>-<stamp>`), install keeps its record in memory.
+ * Before each write, removal or move of a vault path the run calls
+ * `recordWrite`: an existing file is copied into the snapshot once (install
+ * refuses one, as it appeared after planning), a new path is marked as
+ * introduced, and the folders the write will create are added to the run's
+ * folder record. Install moves its collisions aside with `recordSetAside`.
+ * `.shardmind/`'s own files go through `commitEngineMetadata`, which writes
+ * `state.json` last: the commit point. On a failure or a Ctrl+C before it,
+ * `rollback` undoes the run's in-place case renames, removes what it
+ * introduced, copies the snapshot back (with the engine cache, for a run
+ * over a prior install), removes the engine entries it wrote and the folders
+ * it created, and moves the set-aside paths back. It never throws: what it
+ * could not undo is returned (#247). After the commit, `commit` discards
+ * what was set aside.
  *
- * Adopt and update run on it; install follows (#301).
  * Spec: docs/IMPLEMENTATION.md §4.28.
  */
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { createBackupDir, removeEngineWrites } from './state.js';
-import { missingFolders, recordCreatedFolders, rollbackCreatedFolders, createdFoldersRecord } from './created-folders.js';
+import { createBackupDir, removeEngineWrites, ENGINE_INSTALL_WRITES } from './state.js';
+import {
+  missingFolders,
+  recordCreatedFolders,
+  removeCreatedFolders,
+  rollbackCreatedFolders,
+  createdFoldersRecord,
+} from './created-folders.js';
 import { restoreDirExactly, restoreTree } from './restore-tree.js';
 import { caseJournal, sameFile, undoCaseHops, type CaseJournal } from './rename-migrations.js';
 import { throwIfCancelled } from './run-cancel.js';
-import { settleAll, toPosix } from './fs-utils.js';
+import { pathExists, removePath, settleAll, toPosix } from './fs-utils.js';
 import { isEnoent } from '../runtime/errno.js';
-import { CACHED_MANIFEST, CACHED_SCHEMA, CACHED_TEMPLATES, STATE_FILE, VALUES_FILE } from '../runtime/vault-paths.js';
+import { ShardMindError } from '../runtime/types.js';
+import { ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
+import {
+  CACHED_MANIFEST,
+  CACHED_SCHEMA,
+  CACHED_TEMPLATES,
+  SHARDMIND_DIR,
+  STATE_FILE,
+  VALUES_FILE,
+} from '../runtime/vault-paths.js';
 import { reasonOf, type RollbackFailure } from './rollback-report.js';
 
 export interface TransactionOptions {
-  kind: Parameters<typeof createBackupDir>[2];
+  kind: 'install' | 'update' | 'adopt';
   now?: Date;
   signal?: AbortSignal;
   /**
-   * No install before this run (adopt): a rollback also removes what it
-   * wrote under `.shardmind/`, the snapshot included unless it holds the
-   * only copy of a file (#243, #246). Otherwise (update) the engine cache is
-   * snapshotted when the run begins and restored by its rollback, and the
-   * snapshot is kept: the update summary points at it.
+   * No install before this run (install, adopt): a rollback also removes the
+   * engine entries it wrote under `.shardmind/`, and adopt's snapshot unless
+   * it holds the only copy of a file (#243, #246). Otherwise (update) the
+   * engine cache is snapshotted when the run begins and restored by its
+   * rollback, and the snapshot is kept: the update summary points at it.
    */
   noPriorInstall: boolean;
 }
 
+/** A path moved out of the way under a backup name (absolute paths). */
+export interface BackupRecord {
+  originalPath: string;
+  backupPath: string;
+}
+
 export interface VaultTransaction {
-  /** The run's snapshot folder. */
-  readonly dir: string;
+  /** The run's snapshot folder; install has none (§4.28 step 1). */
+  readonly dir: string | null;
   /**
    * The paths this run introduced, removed by a rollback. The rename helpers
    * add their temporaries here and take back a path they did not get; a
@@ -54,8 +77,8 @@ export interface VaultTransaction {
    * rollback never removes one that appeared meanwhile.
    */
   readonly introduced: string[];
-  /** Every in-place case hop, journaled before its first rename (#169, #195). */
-  readonly journal: CaseJournal;
+  /** Every in-place case hop, journaled before its first rename (#169, #195); install has none. */
+  readonly journal: CaseJournal | null;
   /** Before writing, removing or moving onto `rel` (vault-relative, POSIX). */
   recordWrite(rel: string): Promise<void>;
   /**
@@ -66,32 +89,62 @@ export interface VaultTransaction {
   recordMove(from: string, to: string): Promise<void>;
   /** Before a folder is renamed in place by case: the folders it creates (#195). */
   recordFolder(rel: string): Promise<void>;
+  /**
+   * Move `abs` (a file or folder) out of the way under a backup name (#55).
+   * `keep`: a backup the user is told about; otherwise it is set aside,
+   * restored by a rollback and discarded by `commit`.
+   */
+  recordSetAside(abs: string, keep: boolean): Promise<BackupRecord>;
   /** The engine's own writes; `state.json` last, after the last cancel check. */
   commitEngineMetadata(steps: { beforeState: () => Promise<void>; state: () => Promise<void> }): Promise<void>;
   /** Undo the run; never throws. */
   rollback(): Promise<RollbackFailure[]>;
+  /**
+   * After `state.json`: discard what was set aside, a reinstall's old
+   * `.shardmind/` (`oldStatePath`) handing its backups and the owner's own
+   * entries to the new one first (#55, #237). Never throws.
+   */
+  commit(opts?: { oldStatePath?: string }): Promise<{ kept: BackupRecord[]; left: BackupRecord[] }>;
+}
+
+/** Update's and adopt's transaction: a snapshot folder and a case-hop journal. */
+export interface SnapshotTransaction extends VaultTransaction {
+  readonly dir: string;
+  readonly journal: CaseJournal;
 }
 
 /** Records whether `.shardmind/templates/` existed when the snapshot was taken (#264). */
 const TEMPLATES_SNAPSHOT_MARKER = 'templates-snapshot.json';
 
+export function beginTransaction(
+  vaultRoot: string,
+  opts: TransactionOptions & { kind: 'update' | 'adopt' },
+): Promise<SnapshotTransaction>;
+export function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction>;
 export async function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction> {
-  const dir = await createBackupDir(vaultRoot, opts.now ?? new Date(), opts.kind);
-  const filesDir = path.join(dir, 'files');
-  const cacheDir = path.join(dir, 'cache');
-  if (!opts.noPriorInstall) await snapshotEngineCache(vaultRoot, dir);
+  const now = opts.now ?? new Date();
+  // Install keeps its record in memory: nothing reads one after a crash, and
+  // on a reinstall the folder would sit in the `.shardmind/` that restoring
+  // the old one replaces whole (§4.28 step 1).
+  const dir = opts.kind === 'install' ? null : await createBackupDir(vaultRoot, now, opts.kind);
+  if (dir !== null && !opts.noPriorInstall) await snapshotEngineCache(vaultRoot, dir);
+  const filesDir = dir === null ? null : path.join(dir, 'files');
+  const stamp = now.toISOString().replace(/:/g, '-').replace(/\..+$/, '');
   const snapshotted = new Set<string>();
   const introduced: string[] = [];
   // Also kept here, so an unusable record on disk still undoes them (#295).
   const createdFolders: string[] = [];
-  // One answer per folder for the whole run, as install's (#258).
+  // One answer per folder for the whole run (#258).
   const seen = new Map<string, boolean>();
+  const setAside: Array<BackupRecord & { keep: boolean }> = [];
+  // Engine entries are the rollback's to remove only once their commit began.
+  let engineStarted = false;
 
   async function recordFolders(paths: readonly string[], folders: readonly string[] = []): Promise<void> {
     const missing = await missingFolders(vaultRoot, paths, { folders, seen });
     if (missing.length === 0) return;
     createdFolders.push(...missing);
-    await recordCreatedFolders(dir, createdFolders);
+    if (dir !== null) await recordCreatedFolders(dir, createdFolders);
   }
 
   async function record(rel: string): Promise<void> {
@@ -109,6 +162,15 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
     // A folder at the path is the user's: the write fails on it, and the
     // rollback leaves it alone. Only a file is copied.
     if (!stat.isFile()) return;
+    if (filesDir === null) {
+      // Install moved every path it planned to replace out of the way; one
+      // here now appeared after planning, and overwriting it would lose it.
+      throw new ShardMindError(
+        `${rel} appeared after the install was planned`,
+        'INSTALL_WRITE_FAILED',
+        'A file was created at a path the install writes, after it was planned. Nothing was overwritten. Run shardmind install again to plan around it.',
+      );
+    }
     const copy = path.join(filesDir, rel);
     await fsp.mkdir(path.dirname(copy), { recursive: true });
     try {
@@ -121,19 +183,42 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
     }
   }
 
+  async function moveAside(abs: string, keep: boolean): Promise<BackupRecord> {
+    let backupPath: string;
+    try {
+      backupPath = await uniqueBackupPath(abs, stamp);
+      await fsp.rename(abs, backupPath);
+    } catch (err) {
+      if (err instanceof ShardMindError) throw err;
+      // The earlier moves are the rollback's to put back.
+      throw Object.assign(
+        new ShardMindError(
+          `Could not move ${abs} aside`,
+          'BACKUP_FAILED',
+          `${reasonOf(err)}. Check permissions on the path and retry.`,
+        ),
+        { cause: err },
+      );
+    }
+    const moved = { originalPath: abs, backupPath, keep };
+    setAside.push(moved);
+    return { originalPath: abs, backupPath };
+  }
+
   // Checked on both sides of each record: the record's own writes (the
-  // folder record, the snapshot copy) are writes too, so a Ctrl+C during
-  // them stops the run before the caller's write starts (#249).
-  async function guarded(step: () => Promise<void>): Promise<void> {
+  // folder record, the snapshot copy, a move aside) are writes too, so a
+  // Ctrl+C during them stops the run before the caller's write starts (#249).
+  async function guarded<T>(step: () => Promise<T>): Promise<T> {
     throwIfCancelled(opts.signal);
-    await step();
+    const result = await step();
     throwIfCancelled(opts.signal);
+    return result;
   }
 
   return {
     dir,
     introduced,
-    journal: caseJournal(dir),
+    journal: dir === null ? null : caseJournal(dir),
 
     recordWrite: (rel) => guarded(() => record(rel)),
     recordMove: (from, to) =>
@@ -151,8 +236,20 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
         await record(to);
       }),
     recordFolder: (rel) => guarded(() => recordFolders([], [rel])),
+    recordSetAside: (abs, keep) => guarded(() => moveAside(abs, keep)),
+
     async commitEngineMetadata(steps) {
       throwIfCancelled(opts.signal);
+      if (opts.noPriorInstall) {
+        // The engine entries already here are not the run's: a clone of the
+        // shard repo carries the shard's own `shard.yaml` and schema. Set
+        // aside, they come back on a rollback and go on commit (#301).
+        for (const rel of ENGINE_INSTALL_WRITES) {
+          const abs = path.join(vaultRoot, rel);
+          if (await pathExists(abs)) await moveAside(abs, false);
+        }
+      }
+      engineStarted = true;
       await steps.beforeState();
       // state.json commits the run: the last point a Ctrl+C can stop it.
       throwIfCancelled(opts.signal);
@@ -162,31 +259,174 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
     async rollback() {
       // Old spellings first (#169, #195). Either order with the restore gives
       // the same tree on a case-folding filesystem; undo-first reads plainer.
-      const failures: RollbackFailure[] = [...(await undoCaseHops(vaultRoot, dir))];
+      const failures: RollbackFailure[] = dir === null ? [] : [...(await undoCaseHops(vaultRoot, dir))];
       // Introduced paths next, so a restore never lands on a file this run made.
       for (const rel of introduced) {
+        const abs = path.join(vaultRoot, rel);
         try {
-          await fsp.rm(path.join(vaultRoot, rel), { force: true });
+          await fsp.rm(abs, { force: true });
         } catch (err) {
-          failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
+          // A folder there is the user's, made during the run: left.
+          const isFolder = await fsp.lstat(abs).then((st) => st.isDirectory(), () => false);
+          if (!isFolder) failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
         }
       }
-      await restoreTree(filesDir, vaultRoot, failures);
-      if (!opts.noPriorInstall) await restoreEngineCache(vaultRoot, dir, cacheDir, failures);
+      if (dir !== null && filesDir !== null) {
+        await restoreTree(filesDir, vaultRoot, failures);
+        if (!opts.noPriorInstall) await restoreEngineCache(vaultRoot, dir, path.join(dir, 'cache'), failures);
+      }
+      // The engine entries at their paths are the run's once their commit
+      // began: the others were set aside, and come back below.
+      if (opts.noPriorInstall && engineStarted) {
+        for (const failure of await removeEngineWrites(vaultRoot, { removeEmptyDir: false })) {
+          failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
+        }
+      }
       failures.push(
-        ...(await rollbackCreatedFolders(vaultRoot, dir, toPosix(vaultRoot, createdFoldersRecord(dir)), createdFolders)),
+        ...(dir === null
+          ? await removeCreatedFolders(vaultRoot, createdFolders)
+          : await rollbackCreatedFolders(vaultRoot, dir, toPosix(vaultRoot, createdFoldersRecord(dir)), createdFolders)),
       );
+      // Last, newest first, so each lands on a path the steps above freed.
+      for (const moved of [...setAside].reverse()) {
+        try {
+          await removePath(moved.originalPath);
+          await fsp.rename(moved.backupPath, moved.originalPath);
+        } catch (err) {
+          failures.push({
+            path: toPosix(vaultRoot, moved.originalPath),
+            reason: `restore failed: ${reasonOf(err)}`,
+            backup: moved.backupPath,
+          });
+        }
+      }
       if (opts.noPriorInstall) {
         // The snapshot goes with the rest, unless it holds the only copy of
-        // a file: a failure that names its backup there (restore-tree.ts).
-        const keep = failures.some((f) => f.backup !== undefined);
-        for (const failure of await removeEngineWrites(vaultRoot, { snapshotDir: keep ? null : dir, removeEmptyDir: true })) {
+        // a file: a failure that names a backup inside it (restore-tree.ts).
+        const inSnapshot = (backup: string | undefined) =>
+          dir !== null && backup !== undefined && !path.relative(dir, backup).startsWith('..');
+        const keep = failures.some((f) => inSnapshot(f.backup));
+        for (const failure of await removeEngineWrites(vaultRoot, {
+          entries: false,
+          snapshotDir: dir === null || keep ? null : dir,
+          removeEmptyDir: true,
+        })) {
           failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
         }
       }
       return failures;
     },
+
+    async commit({ oldStatePath } = {}) {
+      const kept = setAside.filter((m) => m.keep).map(({ originalPath, backupPath }) => ({ originalPath, backupPath }));
+      const left = await discardSetAside(
+        setAside.filter((m) => !m.keep),
+        oldStatePath,
+        vaultRoot,
+      );
+      return { kept, left };
+    },
   };
+}
+
+async function uniqueBackupPath(absolutePath: string, stamp: string): Promise<string> {
+  const base = `${absolutePath}.shardmind-backup-${stamp}`;
+  if (!(await pathExists(base))) return base;
+  for (let i = 1; i < 1000; i++) {
+    const candidate = `${base}.${i}`;
+    if (!(await pathExists(candidate))) return candidate;
+  }
+  throw new ShardMindError(
+    `Could not find a unique backup name for ${absolutePath}`,
+    'BACKUP_FAILED',
+    'Too many existing backups with the same timestamp — clean up old .shardmind-backup-* files and retry.',
+  );
+}
+
+/**
+ * Delete what a run set aside only to restore on failure, once it has
+ * committed (#55). A reinstall's old `.shardmind/` (`oldStatePath`) first
+ * hands its `backups/` and the vault owner's own entries (#237) to the new
+ * one; if that fails it stays set aside, so nothing is lost. Best effort:
+ * it never throws, because the run it follows is already committed. What it
+ * could not remove is still there under its backup name, and is returned so
+ * the summary lists it rather than calling it removed (#228).
+ */
+export async function discardSetAside(
+  setAside: readonly BackupRecord[],
+  oldStatePath: string | undefined,
+  vaultRoot: string,
+): Promise<BackupRecord[]> {
+  const left: BackupRecord[] = [];
+  for (const { originalPath, backupPath } of setAside) {
+    const record = { originalPath, backupPath };
+    if (originalPath === oldStatePath) {
+      try {
+        await carryOverBackups(backupPath, vaultRoot);
+        await carryOverUserEntries(backupPath, vaultRoot);
+      } catch {
+        left.push(record);
+        continue;
+      }
+    }
+    try {
+      await removePath(backupPath);
+    } catch {
+      left.push(record);
+    }
+  }
+  return left;
+}
+
+/**
+ * Move the vault owner's own entries (everything not in
+ * `ENGINE_SHARDMIND_ENTRIES`) from a reinstall's old `.shardmind/` into the
+ * new one, so a reinstall keeps them (#237). An entry whose name the new
+ * folder already has moves under `<name>-<n>`, as `carryOverBackups` does,
+ * so nothing is dropped when the old folder is deleted.
+ */
+export async function carryOverUserEntries(oldStateDir: string, vaultRoot: string): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(oldStateDir);
+  } catch (err) {
+    if (isEnoent(err)) return;
+    throw err;
+  }
+  const own = entries.filter((entry) => !ENGINE_SHARDMIND_ENTRIES.has(entry.toLowerCase()));
+  if (own.length === 0) return;
+  const to = path.join(vaultRoot, SHARDMIND_DIR);
+  await fsp.mkdir(to, { recursive: true });
+  for (const entry of own) {
+    let target = path.join(to, entry);
+    for (let n = 1; await pathExists(target); n++) target = path.join(to, `${entry}-${n}`);
+    await fsp.rename(path.join(oldStateDir, entry), target);
+  }
+}
+
+/**
+ * Move the `backups/` of an old `.shardmind/` that a reinstall set aside
+ * into the new one, before the old one is deleted (#55). An update's or
+ * an adopt's snapshot can be the only copy of the user's earlier files.
+ * Entries already in the new `backups/` are kept; an old entry whose
+ * name is taken moves under `<name>-<n>`, so nothing is dropped.
+ */
+export async function carryOverBackups(oldStateDir: string, vaultRoot: string): Promise<void> {
+  const from = path.join(oldStateDir, 'backups');
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(from);
+  } catch (err) {
+    if (isEnoent(err)) return;
+    throw err;
+  }
+  const to = path.join(vaultRoot, SHARDMIND_DIR, 'backups');
+  await fsp.mkdir(to, { recursive: true });
+  for (const entry of entries) {
+    let target = path.join(to, entry);
+    for (let n = 1; await pathExists(target); n++) target = path.join(to, `${entry}-${n}`);
+    await fsp.rename(path.join(from, entry), target);
+  }
 }
 
 /**
