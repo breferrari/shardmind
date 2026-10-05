@@ -481,7 +481,6 @@ async function completeMove(
     await moveToFreePath(vaultRoot, move.from, move.to, introduced, 'adopt');
   } catch (err) {
     // A refusal from the move keeps its own code; an errno keeps its hint (#225).
-    if (err instanceof ShardMindError) throw err;
     throw wrapWriteError('ADOPT_WRITE_FAILED', `Could not move ${move.from} to ${move.to} during adopt`, err);
   }
 }
