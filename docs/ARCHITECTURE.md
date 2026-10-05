@@ -1269,7 +1269,9 @@ No perf/. No org/. No incidents/. Different commands, agents, CLAUDE.md. Same Sh
 
 ---
 
-## 15. SOUL — Guided File Creation (v0.2)
+## 15. SOUL — Guided File Creation (declined 2026-10-05, #79)
+
+> Declined: guided creation is the shard's product feature (its agent walks the user through it), not the engine's. The design below is kept for a reopen; see [`SHARD-LAYOUT.md` §Out of scope](SHARD-LAYOUT.md#out-of-scope--deferred-to-v02).
 
 SOUL.md is a new pattern: **guided creation**. The template provides structure (section headers, instructions). The user provides content (biography, personality, anti-patterns). A rendered-but-empty template is worthless — the value comes entirely from the user's input.
 
@@ -1277,7 +1279,7 @@ In the ownership model, SOUL is a **modified** file from the moment the user fil
 
 **For v0.1**: ship as empty template with section headers and instructions (Option B).
 
-**For v0.2**: add `guided_files` to `shard-schema.yaml` — a third install phase after values and module review:
+**The declined design**: `guided_files` in `shard-schema.yaml` — a third install phase after values and module review:
 
 ```yaml
 guided_files:
@@ -1307,14 +1309,16 @@ guided_files:
 
 ---
 
-## 16. Structural Variants (v0.2 — Flagged)
+## 16. Structural Variants (declined 2026-10-05, #80)
+
+> Declined: different purposes are different shards, and modules cover optional parts. Kept for a reopen; see [`SHARD-LAYOUT.md` §Out of scope](SHARD-LAYOUT.md#out-of-scope--deferred-to-v02).
 
 > [!warning] Deferred — flag for future
 > The Vigil Mind Reshape revealed that different purposes need different folder structures (not just different modules). Engineers use `work/active/`, creators use `projects/<name>/`, researchers use `raw/` + `wiki/`. This isn't adding/removing a module — it's changing how a core module is organized.
 >
 > For v0.1: different purposes are different shards. obsidian-mind is the engineering shard. Creator-builder is a separate shard sharing core templates. Research wiki is its own shard.
 >
-> For v0.2: modules gain a `structure` field with purpose-driven variants. Design doc: the reshape decision record IS the spec for this feature.
+> The declined design: modules gain a `structure` field with purpose-driven variants. Design doc: the reshape decision record IS the spec for this feature.
 
 ---
 
@@ -1869,6 +1873,8 @@ staying hermetic. No test reaches the public internet.
 ---
 
 ## 21. Deferred (v0.2+)
+
+**Declined on 2026-10-05:** every row below: dependency fetching (#82), eject (#83), shard composition (#81), structural variants (#80), SOUL guided creation (#79) and `shardmind init` (#84). The reasons are in [`SHARD-LAYOUT.md` §Out of scope](SHARD-LAYOUT.md#out-of-scope--deferred-to-v02). The design hints stay here for a reopen.
 
 | Item | Why Deferred | Design Hint |
 |------|-------------|-------------|

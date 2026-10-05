@@ -153,7 +153,7 @@ Each authoring and CLI proposal is built, or declined with a reason that survive
 | ✅ | Let the update prompt track a kept add-collision file per file | [#165](https://github.com/breferrari/shardmind/issues/165) |
 | ✅ | Merge files with many repeated lines in less than cubic time | [#170](https://github.com/breferrari/shardmind/issues/170) |
 | ✅ | Write --json output without terminal control codes in a TTY | [#198](https://github.com/breferrari/shardmind/issues/198) |
-| ⬜ | Decide whether adopt gets --skip-hooks | [#199](https://github.com/breferrari/shardmind/issues/199) |
+| ✅ | Decide whether adopt gets --skip-hooks (declined) | [#199](https://github.com/breferrari/shardmind/issues/199) |
 | ⬜ | Decide what a bare owner/repo install does while shardmind/registry is empty | [#200](https://github.com/breferrari/shardmind/issues/200) |
 | ⬜ | Decide who keeps .shardmind/logs/ out of a vault's git history | [#201](https://github.com/breferrari/shardmind/issues/201) |
 | ✅ | Show a stack trace and a report link for an unexpected error | [#225](https://github.com/breferrari/shardmind/issues/225) |
@@ -189,8 +189,8 @@ A second shard exists, and the features that wait on one are built or declined. 
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | v0.2: Shard composition (multi-shard per vault) | [#81](https://github.com/breferrari/shardmind/issues/81) |
-| ⬜ | v0.2: rendered_files opt-in for Nunjucks at vault-visible paths | [#86](https://github.com/breferrari/shardmind/issues/86) |
+| ✅ | v0.2: Shard composition (multi-shard per vault) (declined) | [#81](https://github.com/breferrari/shardmind/issues/81) |
+| ✅ | v0.2: rendered_files opt-in for Nunjucks at vault-visible paths (declined) | [#86](https://github.com/breferrari/shardmind/issues/86) |
 
 ## Phase 10 — v0.2 contract
 
@@ -200,11 +200,11 @@ Each v0.2 contract extension is built, or declined in the spec's out-of-scope li
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | v0.2: Guided file creation (guided_files schema + third install phase) | [#79](https://github.com/breferrari/shardmind/issues/79) |
-| ⬜ | v0.2: Structural variants (modules.structure + vault_purpose) | [#80](https://github.com/breferrari/shardmind/issues/80) |
-| ⬜ | v0.2: Dependency fetching (recursive + lock file) | [#82](https://github.com/breferrari/shardmind/issues/82) |
-| ⬜ | v0.2: shardmind eject command | [#83](https://github.com/breferrari/shardmind/issues/83) |
-| ⬜ | v0.2: shardmind init command for shard authors | [#84](https://github.com/breferrari/shardmind/issues/84) |
+| ✅ | v0.2: Guided file creation (guided_files schema + third install phase) (declined) | [#79](https://github.com/breferrari/shardmind/issues/79) |
+| ✅ | v0.2: Structural variants (modules.structure + vault_purpose) (declined) | [#80](https://github.com/breferrari/shardmind/issues/80) |
+| ✅ | v0.2: Dependency fetching (recursive + lock file) (declined) | [#82](https://github.com/breferrari/shardmind/issues/82) |
+| ✅ | v0.2: shardmind eject command (declined) | [#83](https://github.com/breferrari/shardmind/issues/83) |
+| ✅ | v0.2: shardmind init command for shard authors (declined) | [#84](https://github.com/breferrari/shardmind/issues/84) |
 | ✅ | v0.2: .shardmindignore negation (!pattern) support | [#87](https://github.com/breferrari/shardmind/issues/87) |
 
 ## Phase 11 — v1.0 ecosystem
@@ -216,10 +216,10 @@ Each ecosystem item is built, or declined with the evidence on the issue. Each p
 | | Task | Issue |
 |---|---|---|
 | ⬜ | Finalize shardmind/registry index.json schema | [#29](https://github.com/breferrari/shardmind/issues/29) |
-| ⬜ | Alternate registry configurability (GHE, private, custom URL) | [#39](https://github.com/breferrari/shardmind/issues/39) |
-| ⬜ | v1.0: Hosted registry (shardmind.dev) + shard discovery + search | [#89](https://github.com/breferrari/shardmind/issues/89) |
+| ✅ | Alternate registry configurability (GHE, private, custom URL) (env var documented; config file declined) | [#39](https://github.com/breferrari/shardmind/issues/39) |
+| ✅ | v1.0: Hosted registry (shardmind.dev) + shard discovery + search (declined) | [#89](https://github.com/breferrari/shardmind/issues/89) |
 | ⬜ | v1.0: Community — validation CI + shard listing + fork-to-shard guide | [#90](https://github.com/breferrari/shardmind/issues/90) |
-| ⬜ | v1.0: Teams — managed vault templates + shared values + admin controls | [#91](https://github.com/breferrari/shardmind/issues/91) |
+| ✅ | v1.0: Teams — managed vault templates + shared values + admin controls (declined) | [#91](https://github.com/breferrari/shardmind/issues/91) |
 
 ## Phase 12 — one vault transaction
 
@@ -481,25 +481,25 @@ Not blockers for engine use, but needed before the registry-mode flow (`shardmin
 
 ### v0.2.0 — Composition & Polish (Q2–Q3 2026)
 
-Deferred from v0.1 per [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-scope--deferred-to-v02) + [`VISION.md §Current Priorities`](VISION.md). Build only after v0.1 is stable and adoption signals are real. Each feature has an umbrella issue tracking its sub-tasks.
+Deferred from v0.1 per [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-scope--deferred-to-v02) + [`VISION.md §Current Priorities`](VISION.md). Most of it was declined on 2026-10-05 (struck through below); what remains is built only after v0.1 is stable and adoption signals are real. Each feature has an umbrella issue tracking its sub-tasks.
 
 #### Core features
 
 Ordered by cost ascending. Sizes are rough — small (≤1 PR), medium (2–4 PRs), large (5+ PRs touching multiple subsystems), anchor (multi-month, rideable releases on top).
 
 - [x] **small** — Engine version-compatibility check on install ([#121](https://github.com/breferrari/shardmind/issues/121)). Landed in the v0.1.x #102 release window (`requires.shardmind` + `SHARDMIND_VERSION_MISMATCH`, enforced on install/update/adopt).
-- [ ] **small** — `shardmind eject` command ([#83](https://github.com/breferrari/shardmind/issues/83))
-- [ ] **medium** — `shardmind init` command for shard authors ([#84](https://github.com/breferrari/shardmind/issues/84))
-- [ ] **medium** — Guided file creation (`guided_files` schema + third install phase) ([#79](https://github.com/breferrari/shardmind/issues/79))
-- [ ] **medium** — Structural variants (`modules.structure` + `vault_purpose`) ([#80](https://github.com/breferrari/shardmind/issues/80))
-- [ ] **large** — Dependency fetching (recursive + lock file) ([#82](https://github.com/breferrari/shardmind/issues/82))
-- [ ] **anchor** — Shard composition (multi-shard per vault) ([#81](https://github.com/breferrari/shardmind/issues/81)). Touches state, planner, executor, conflicts, runtime, hooks. Plan the v0.2 release schedule around this; smaller items ride alongside.
+- [x] **small** — ~~`shardmind eject` command~~ declined ([#83](https://github.com/breferrari/shardmind/issues/83))
+- [x] **medium** — ~~`shardmind init` command for shard authors~~ declined ([#84](https://github.com/breferrari/shardmind/issues/84))
+- [x] **medium** — ~~Guided file creation (`guided_files` schema + third install phase)~~ declined ([#79](https://github.com/breferrari/shardmind/issues/79))
+- [x] **medium** — ~~Structural variants (`modules.structure` + `vault_purpose`)~~ declined ([#80](https://github.com/breferrari/shardmind/issues/80))
+- [x] **large** — ~~Dependency fetching (recursive + lock file)~~ declined ([#82](https://github.com/breferrari/shardmind/issues/82))
+- [x] **anchor** — ~~Shard composition (multi-shard per vault)~~ declined ([#81](https://github.com/breferrari/shardmind/issues/81)). Touches state, planner, executor, conflicts, runtime, hooks. Plan the v0.2 release schedule around this; smaller items ride alongside.
 
 #### Layout / contract extensions (deferred from v0.1)
 
 Tracked in [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-scope--deferred-to-v02).
 
-- [ ] `rendered_files` opt-in (Nunjucks at vault-visible paths) ([#86](https://github.com/breferrari/shardmind/issues/86))
+- [x] ~~`rendered_files` opt-in (Nunjucks at vault-visible paths)~~ declined ([#86](https://github.com/breferrari/shardmind/issues/86))
 - [x] `.shardmindignore` negation (`!pattern`) ([#87](https://github.com/breferrari/shardmind/issues/87))
 - [x] Rename migrations + `shardmind adopt --from-version` — **must ship before any obsidian-mind release that introduces path renames** ([#88](https://github.com/breferrari/shardmind/issues/88))
 
@@ -512,7 +512,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 - [x] Pre-install template syntax lint ([#35](https://github.com/breferrari/shardmind/issues/35))
 - [x] ~~Debug logging (`SHARDMIND_DEBUG` env var)~~ declined ([#36](https://github.com/breferrari/shardmind/issues/36))
 - [ ] `NO_COLOR` / `FORCE_COLOR` respect across Ink components ([#37](https://github.com/breferrari/shardmind/issues/37))
-- [ ] Alternate registry configurability (GHE, private, custom URL) ([#39](https://github.com/breferrari/shardmind/issues/39))
+- [x] Alternate registry configurability: `SHARDMIND_REGISTRY_INDEX_URL` documented, ~~named registries~~ declined ([#39](https://github.com/breferrari/shardmind/issues/39))
 - [x] Encode state-schema migration rules (uses v0.1 framework) ([#40](https://github.com/breferrari/shardmind/issues/40))
 - [x] Re-evaluate `@inkjs/ui` dependency: `Select` and `TextInput` vendored ([#43](https://github.com/breferrari/shardmind/issues/43))
 - [x] Drop `LineInterner` workaround once `node-diff3` releases the prototype-lookup fix ([#49](https://github.com/breferrari/shardmind/issues/49))
@@ -538,24 +538,18 @@ Only after the engine is proven, the flagship shard is stable, and community sha
 
 #### Registry (hosted) ([#89](https://github.com/breferrari/shardmind/issues/89))
 
-- [ ] Hosted registry (shardmind.dev) with shard discovery and search
-- [ ] Shard metadata indexing from GitHub repos
-- [ ] Version history and changelog display
-- [ ] `shardmind search` command
+- [x] ~~Hosted registry (shardmind.dev) with shard discovery and search, metadata indexing, version history, `shardmind search`~~ declined 2026-10-05: a VISION non-goal; the git-based registry index is the discovery path
 
 #### Community ([#90](https://github.com/breferrari/shardmind/issues/90))
 
 - [x] Shard authoring guide ([`docs/AUTHORING.md`](docs/AUTHORING.md), shipped in v0.1 polish pass)
-- [ ] Shard validation CI (GitHub Action for shard authors)
-- [ ] Community shard listing
+- [x] ~~Shard validation CI (GitHub Action for shard authors)~~ declined: `npx shardmind validate --json` is the CI step
+- [x] ~~Community shard listing~~ declined: the registry index is the listing
 - [ ] Fork-to-shard conversion guide (for obsidian-mind fork authors)
 
 #### Teams (if demand signals appear) ([#91](https://github.com/breferrari/shardmind/issues/91))
 
-- [ ] Managed vault templates for organizations
-- [ ] Shared values with org-level defaults
-- [ ] Admin controls for module enforcement
-- [ ] Team sync for `brain/` namespaces
+- [x] ~~Managed templates, org-level defaults, admin controls, team sync~~ declined 2026-10-05 until a team asks
 
 ### Closed and not named above
 

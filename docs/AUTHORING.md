@@ -107,7 +107,7 @@ hooks:
 | `requires.node` | no | Semver range. Applied when hooks run. |
 | `requires.shardmind` | no | Semver range the running engine must satisfy. **Enforced** — install/update/adopt refuse with `SHARDMIND_VERSION_MISMATCH` before any vault write when the engine is older. Absent → no check. Declare it once your shard depends on an engine feature (e.g. the post-#102 hook lifecycle). See §6. |
 | `external_tools` | no | Command-line tools the shard needs, each with a version range. Checked before install, adopt and update write anything; a required one that is unmet refuses with `EXTERNAL_TOOL_UNMET`. See [Declaring the command-line tools your shard needs](#declaring-the-command-line-tools-your-shard-needs). |
-| `dependencies` | no | Array of `{ name, namespace, version }`. Vendored in v0.1 (pre-install manually); auto-fetched in v0.2+. |
+| `dependencies` | no | Array of `{ name, namespace, version }`. Vendored: the shard ships what it needs. The engine does not fetch them (declined 2026-10-05, #82). |
 | `hooks.bootstrap` | no | Path string, or `{ script, fingerprint? }`. Unmanaged-path setup. Runs on install/adopt + on update when `fingerprint` changes. See §6. |
 | `hooks.personalize` | no | Path relative to shard root. Managed-file edits. Runs on install/adopt only; skipped when values are defaults. See §6. |
 | `hooks.post-update` | no | Path relative to shard root. Additive managed-file edits on update (`ctx.newFiles`). See §6. |
@@ -251,7 +251,7 @@ Default rules:
 - A top-level `default` may be a literal array or a computed `{{ … }}` expression (see Computed defaults below).
 - `min` / `max` bound the selected count, and **the default must satisfy them** — a `min: 1` multiselect must default to at least one selection (a `--defaults` install must produce a valid vault, so an out-of-range default is rejected at parse). `min` cannot exceed the number of options. (Computed defaults resolve at install time, so their length isn't checked at parse.)
 
-Templates read the result with Nunjucks membership: `{% if 'codex' in values.agents %}…{% endif %}`. (Gating *which modules install* on a multiselect value is a separate feature — [#80](https://github.com/breferrari/shardmind/issues/80), v0.2.)
+Templates read the result with Nunjucks membership: `{% if 'codex' in values.agents %}…{% endif %}`. (Gating *which modules install* on a multiselect value is not supported; structural variants were declined, [#80](https://github.com/breferrari/shardmind/issues/80). Use modules for optional parts.)
 
 **Reserved names** (cannot be used as value keys — they shadow the render context):
 `shard`, `install_date`, `year`, `included_modules`, `values`. Using any of these throws `SCHEMA_RESERVED_NAME` at install.
