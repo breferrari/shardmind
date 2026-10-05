@@ -32,7 +32,7 @@ const REPO_ROOT = path.resolve(__dirname, '../../..');
 /**
  * Every file the spawned CLI loads, relative to the repo root: the entry, the
  * Pastel command files it routes to, the runtime hook scripts import, and the
- * hook-runner it spawns. One per entry in tsup.config.ts.
+ * hook-runner and self-update refresh child it spawns. One per entry in tsup.config.ts.
  */
 export const DIST_ARTIFACTS: readonly string[] = [
   'dist/cli.js',
@@ -44,6 +44,7 @@ export const DIST_ARTIFACTS: readonly string[] = [
   'dist/commands/_app.js',
   'dist/runtime/index.js',
   'dist/internal/hook-runner.js',
+  'dist/internal/self-update-refresh.js',
 ];
 
 export const DIST_CLI = path.join(REPO_ROOT, 'dist', 'cli.js');
