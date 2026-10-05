@@ -1563,6 +1563,23 @@ The directory is created on first successful fetch. Writes are atomic (`writeFil
 - `SHARDMIND_SELF_UPDATE_CACHE_DIR` — redirect cache writes in tests.
 - `SHARDMIND_NO_UPDATE_CHECK`, `CI`, `--no-update-check` flag, non-TTY stdout — checked by the CONSUMER hook (`source/commands/hooks/use-self-update-check.ts`), not this module. The module is the engine; the suppression UX is the hook.
 
+**Never wait for npm: read the cache, refresh detached (#285).** A command must not stall on the network, and status, which agents call often, is usually done before npm answers. Before #285 the hook fetched in-process and the unmount aborted the fetch, so status never showed the banner. Only a successful fetch writes the cache, so every later run raced the same way. The pattern is update-notifier's, and it is one path for every command that renders the banner. No network call happens in the CLI process:
+
+```typescript
+readSelfUpdateCache(opts: { currentVersion: string; cacheDir?: string; ttlMs?: number; now?: number }):
+  Promise<{ fresh: true; outdated: boolean; latest: string } | { fresh: false } | null>;  // steps 1-3, no network
+
+spawnSelfUpdateRefresh(opts: { currentVersion: string; cacheDir?: string; spawn?: typeof spawn }): boolean;
+```
+
+1. After first paint, the consumer hook (`useSelfUpdateCheck`) calls `readSelfUpdateCache`. A fresh answer sets the banner when `outdated`. Once the read is done the hook reports `cacheRead`; a suppressed check reports it at once.
+2. A stale or missing cache calls `spawnSelfUpdateRefresh`. That spawns `dist/internal/self-update-refresh.js` (resolved like the hook-runner, §4.16) with `detached: true`, `stdio: 'ignore'` and `windowsHide: true`, then `unref()`s it, so the command never waits for it. The child runs `checkSelfUpdate` (steps 4-6), which writes the cache atomically, and exits. A hard exit at `REFRESH_HARD_CAP_MS` (4.5 s) means no child outlives about 5 s. The run that spawned it shows no banner; the next run reads the fresh cache. A first-ever run therefore never shows one.
+3. Only one refresh runs at a time. Before it spawns, `spawnSelfUpdateRefresh` creates `self-update.refreshing` in the cache dir with `wx`. While that marker is younger than `REFRESH_MARKER_TTL_MS` (10 s), it spawns nothing. The child removes the marker when it ends, and a marker older than the TTL (from a killed child) is replaced. A spawn that fails removes the marker and returns `false`. Nothing is thrown, because the notifier must never crash a command.
+4. A suppressed check (`--no-update-check`, `SHARDMIND_NO_UPDATE_CHECK`, `CI`, non-TTY, `--json`) reads nothing and spawns nothing.
+5. Status holds its exit until `cacheRead`. That is a local read, so a fresh cached banner always renders on status, and status never waits for the network. Install, update and adopt run long enough that the read is done first.
+
+The first frame stays banner-free, because the read starts after first paint.
+
 **Internal error code**: `SELF_UPDATE_CHECK_FAILED` is fired from `fetchLatestWithTimeout` on timeout / HTTP error and swallowed by the public entrypoint, so it never crosses the boundary. The typed registry rule (§7) binds new codes to declaration regardless.
 
 **Dependencies**: `runtime/types` (ShardMindError), `runtime/errno` (errnoCode), `semver`. No GitHub registry imports — this module deliberately stays separate from §4.15 so the npm vs GitHub split is structural, not just a convention.

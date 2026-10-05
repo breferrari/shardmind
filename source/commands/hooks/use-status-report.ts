@@ -33,6 +33,8 @@ export interface UseStatusReportInput {
   skipUpdateCheck?: boolean;
   /** Lift the report's list caps (`--json` lists every file, #139). */
   uncapped?: boolean;
+  /** Don't exit yet, even on a terminal phase (the self-update cache read, #285). */
+  holdExit?: boolean;
 }
 
 export type StatusPhase =
@@ -47,9 +49,21 @@ export interface UseStatusReportOutput {
 }
 
 export function useStatusReport(input: UseStatusReportInput): UseStatusReportOutput {
-  const { vaultRoot, verbose, skipUpdateCheck, uncapped } = input;
+  const { vaultRoot, verbose, skipUpdateCheck, uncapped, holdExit = false } = input;
   const { exit } = useApp();
   const [phase, setPhase] = useState<StatusPhase>({ kind: 'booting' });
+  const terminal = phase.kind !== 'booting' && phase.kind !== 'loading';
+
+  // Exit once the phase is terminal and nothing holds it. Deferred so Ink
+  // has a chance to render the final frame before stdout is torn down —
+  // same pattern as the install / update commands. The cleanup clears the
+  // timer, so an unmount (Ctrl-C) between the phase and the 50 ms fire
+  // never calls `exit()` on a torn-down Ink app.
+  useEffect(() => {
+    if (!terminal || holdExit) return;
+    const handle = setTimeout(() => exit(), 50);
+    return () => clearTimeout(handle);
+  }, [terminal, holdExit, exit]);
 
   useEffect(() => {
     let disposed = false;
@@ -57,14 +71,6 @@ export function useStatusReport(input: UseStatusReportInput): UseStatusReportOut
     const finish = (next: StatusPhase) => {
       if (disposed) return;
       setPhase(next);
-      // Defer exit so Ink has a chance to render the final frame before
-      // stdout is torn down — same pattern as the install / update commands.
-      // The disposed check inside the timeout callback is load-bearing:
-      // Ctrl-C between setPhase and the 50 ms fire would otherwise call
-      // `exit()` on a torn-down Ink app.
-      setTimeout(() => {
-        if (!disposed) exit();
-      }, 50);
     };
 
     (async () => {

@@ -44,9 +44,13 @@
  * §4.15 (update-check); see §4.19 for this module.
  */
 
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn as nodeSpawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import semver from 'semver';
 import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
@@ -80,6 +84,12 @@ export const FETCH_TIMEOUT_MS = 3000;
 /** Node's `setTimeout` delay ceiling (2^31−1 ms); larger values overflow to ~1ms. */
 const TIMER_MAX_MS = 2_147_483_647;
 export const NPM_REGISTRY_URL = 'https://registry.npmjs.org/shardmind/latest';
+/** Present while a detached refresh runs, so a second command spawns none (#285). */
+export const REFRESH_MARKER_FILENAME = 'self-update.refreshing';
+/** A marker younger than this is a live refresh; older is a killed child's, and replaced. */
+export const REFRESH_MARKER_TTL_MS = 10_000;
+/** The refresh child exits by then whatever npm does, so none outlives about 5 s. */
+export const REFRESH_HARD_CAP_MS = 4_500;
 const CACHE_SCHEMA_VERSION = 1 as const;
 const SHARDMIND_DIRNAME = 'shardmind';
 
@@ -284,12 +294,9 @@ export async function checkSelfUpdate(
     signal,
   } = opts;
 
-  if (!semver.valid(currentVersion)) return null;
-
-  const cached = await readCache(cacheDir);
-  if (cached && isFresh(cached, now, ttlMs)) {
-    return compare(currentVersion, cached.latest_version);
-  }
+  const read = await readSelfUpdateCache({ currentVersion, cacheDir, ttlMs, now });
+  if (read === null) return null;
+  if (read.fresh) return { outdated: read.outdated, latest: read.latest };
 
   let latest: string | null;
   try {
@@ -307,6 +314,126 @@ export async function checkSelfUpdate(
   });
 
   return compare(currentVersion, latest);
+}
+
+export type SelfUpdateCacheRead =
+  | { fresh: true; outdated: boolean; latest: string }
+  | { fresh: false };
+
+/**
+ * The cache alone, never the network (#285): steps 1-3 of §4.19. `null`
+ * when `currentVersion` is no semver; `{ fresh: false }` when the cache
+ * is missing, unusable or older than the TTL, which is the caller's cue
+ * to start a detached refresh.
+ */
+export async function readSelfUpdateCache(opts: {
+  currentVersion: string;
+  cacheDir?: string;
+  ttlMs?: number;
+  now?: number;
+}): Promise<SelfUpdateCacheRead | null> {
+  const { currentVersion, cacheDir = getSelfUpdateCacheDir(), ttlMs = TTL_MS, now = Date.now() } = opts;
+  if (!semver.valid(currentVersion)) return null;
+  const cached = await readCache(cacheDir);
+  if (cached && isFresh(cached, now, ttlMs)) {
+    return { fresh: true, ...compare(currentVersion, cached.latest_version) };
+  }
+  return { fresh: false };
+}
+
+/**
+ * The refresh child's argv after `process.execPath`, resolved like the
+ * hook-runner (§4.16): the built entry through the package's own exports,
+ * else the source file under tsx (a vitest run before a build). `null`
+ * when neither is there.
+ */
+function refreshRunnerArgs(): string[] | null {
+  const require_ = createRequire(import.meta.url);
+  try {
+    const built = require_.resolve('shardmind/internal/self-update-refresh');
+    if (fs.existsSync(built)) return [built];
+  } catch {
+    // Fall through to the source entry.
+  }
+  const source = fileURLToPath(new URL('../internal/self-update-refresh.ts', import.meta.url));
+  if (!fs.existsSync(source)) return null;
+  try {
+    return ['--import', pathToFileURL(require_.resolve('tsx')).href, source];
+  } catch {
+    return null;
+  }
+}
+
+/** Take the refresh marker with `wx`; replace one older than its TTL. False when a live refresh holds it. */
+function claimRefreshMarker(marker: string, now: number): boolean {
+  try {
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+  } catch {
+    return false;
+  }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      fs.closeSync(fs.openSync(marker, 'wx'));
+      return true;
+    } catch (err) {
+      if (errnoCode(err) !== 'EEXIST') return false;
+    }
+    let age: number;
+    try {
+      age = now - fs.statSync(marker).mtimeMs;
+    } catch {
+      continue; // it ended between the open and the stat: try again
+    }
+    // A just-written marker can read a few ms in the future (filesystem
+    // timestamps vs. Date.now()); only a marker past its TTL either way is stale.
+    if (Math.abs(age) < REFRESH_MARKER_TTL_MS) return false;
+    try {
+      fs.rmSync(marker, { force: true });
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/** Remove the refresh marker; nothing to do when it is already gone. */
+export function releaseRefreshMarker(cacheDir: string): void {
+  try {
+    fs.rmSync(path.join(cacheDir, REFRESH_MARKER_FILENAME), { force: true });
+  } catch {
+    // a marker left behind expires with its TTL
+  }
+}
+
+/**
+ * Start the detached refresh child (#285, §4.19): it runs `checkSelfUpdate`,
+ * which writes the cache, and the command that spawned it never waits for it.
+ * Synchronous, and never throws: true when a child was started, false when a
+ * live refresh already holds the marker or the spawn failed.
+ */
+export function spawnSelfUpdateRefresh(opts: {
+  currentVersion: string;
+  cacheDir?: string;
+  spawn?: typeof nodeSpawn;
+  now?: number;
+}): boolean {
+  const cacheDir = opts.cacheDir ?? getSelfUpdateCacheDir();
+  if (!claimRefreshMarker(path.join(cacheDir, REFRESH_MARKER_FILENAME), opts.now ?? Date.now())) return false;
+  try {
+    const runner = refreshRunnerArgs();
+    if (!runner) throw new Error('self-update refresh entry not found');
+    const child = (opts.spawn ?? nodeSpawn)(process.execPath, [...runner, opts.currentVersion, cacheDir], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.on('error', () => releaseRefreshMarker(cacheDir));
+    child.unref();
+    return true;
+  } catch {
+    releaseRefreshMarker(cacheDir);
+    return false;
+  }
 }
 
 /**

@@ -49,4 +49,14 @@ export default defineConfig([
     dts: false,
     target: 'node18',
   },
+  // Internal self-update refresh — the detached child core/self-update-check.ts's
+  // spawnSelfUpdateRefresh() starts when the npm cache is stale (#285). Mapped
+  // as `./internal/self-update-refresh` and bundled standalone, like the
+  // hook-runner above.
+  {
+    entry: { 'internal/self-update-refresh': 'source/internal/self-update-refresh.ts' },
+    format: ['esm'],
+    dts: false,
+    target: 'node18',
+  },
 ]);

@@ -90,7 +90,7 @@ export default function Adopt({ args, options }: Props) {
 
   // The banner is chrome; suppress it under --json so stdout is exactly one
   // JSON document.
-  const banner = useSelfUpdateBanner({ updateCheck: updateCheck && !json });
+  const { banner } = useSelfUpdateBanner({ updateCheck: updateCheck && !json });
 
   // A --json run must answer with a document on failure too, not a rendered
   // error box (which returns null here) and certainly not a stack trace. The

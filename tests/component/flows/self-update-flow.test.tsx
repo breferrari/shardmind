@@ -8,6 +8,12 @@
  * paths (--no-update-check flag, SHARDMIND_NO_UPDATE_CHECK env, CI
  * env, non-TTY stdout).
  *
+ * Since #285 a command never calls npm: it reads the 24h cache, shows
+ * the banner from a fresh entry, and starts a detached refresh child
+ * when the entry is stale or missing. So the banner tests seed the
+ * cache (deterministic, no race with the command's exit), and the
+ * refresh tests wait for the child's own cache write.
+ *
  * The harness inverts default suppression: `setupFlowSuite` sets
  * `SHARDMIND_NO_UPDATE_CHECK=1` so existing flow files don't race a
  * live npm fetch. This file's tests delete that var per-test and
@@ -23,6 +29,7 @@
 import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import { cleanup } from 'ink-testing-library';
 import http from 'node:http';
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -38,6 +45,7 @@ import {
   DEFAULT_VALUES,
 } from './helpers.js';
 import { waitFor, tick } from '../helpers.js';
+import { CACHE_FILENAME, REFRESH_MARKER_FILENAME } from '../../../source/core/self-update-check.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
 
 // Read the package's actual version once. This is what the bundled
@@ -57,8 +65,12 @@ const NEWER_VERSION = '99.0.0'; // semver-greater than any plausible CLI version
 
 interface NpmStub {
   url: string;
+  /** Requests served so far: only a refresh child ever calls npm (#285). */
+  hits(): number;
   setVersion(v: string): void;
   setStatus(s: number): void;
+  /** Hold each answer this long, so a refresh child stays alive. */
+  setDelay(ms: number): void;
   reset(): void;
   close(): Promise<void>;
 }
@@ -66,7 +78,11 @@ interface NpmStub {
 async function createNpmStub(): Promise<NpmStub> {
   let version = NEWER_VERSION;
   let status = 200;
-  const server = http.createServer((_req, res) => {
+  let delay = 0;
+  let hits = 0;
+  const server = http.createServer(async (_req, res) => {
+    hits++;
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     if (status === 200) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ version }));
@@ -82,6 +98,10 @@ async function createNpmStub(): Promise<NpmStub> {
   const port = typeof addr === 'object' && addr ? addr.port : 0;
   return {
     url: `http://127.0.0.1:${port}/shardmind/latest`,
+    hits: () => hits,
+    setDelay: (ms) => {
+      delay = ms;
+    },
     setVersion: (v) => {
       version = v;
     },
@@ -91,6 +111,8 @@ async function createNpmStub(): Promise<NpmStub> {
     reset: () => {
       version = NEWER_VERSION;
       status = 200;
+      delay = 0;
+      hits = 0;
     },
     close: () =>
       new Promise<void>((resolve) => {
@@ -180,10 +202,31 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
     return cacheDir;
   }
 
+  /** A fresh cache entry, as a refresh child would have written it. */
+  async function seedCache(cacheDir: string, latest: string): Promise<void> {
+    await fsp.mkdir(cacheDir, { recursive: true });
+    await fsp.writeFile(
+      path.join(cacheDir, CACHE_FILENAME),
+      JSON.stringify({ schema_version: 1, checked_at: new Date().toISOString(), latest_version: latest }),
+    );
+  }
+
+  /** Wait until `predicate` holds, polling; the refresh child is another process. */
+  async function until(predicate: () => boolean, timeoutMs: number, what: string): Promise<void> {
+    const start = Date.now();
+    while (!predicate()) {
+      if (Date.now() - start > timeoutMs) throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
+      await tick(50);
+    }
+  }
+
+  /** The refresh child has ended: its marker is gone (it removes it on every path). */
+  const refreshDone = (cacheDir: string) => !fs.existsSync(path.join(cacheDir, REFRESH_MARKER_FILENAME));
+
   // ───── 1. --no-update-check flag suppresses the banner (status command) ─────
 
   it('1. --no-update-check flag suppresses the banner on status', async () => {
-    enableBanner();
+    const cacheDir = enableBanner();
     // Even with FORCE_TTY + a working stub, the flag must dominate.
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
@@ -212,6 +255,9 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
       const frame = r.lastFrame() ?? '';
       expect(frame).not.toContain(`shardmind ${NEWER_VERSION}`);
       expect(frame).not.toContain('npm install -g shardmind@latest');
+      // Suppressed: no refresh child, so no marker, no cache and no npm call (#285).
+      expect(fs.existsSync(cacheDir)).toBe(false);
+      expect(npmStub.hits()).toBe(0);
     } finally {
       if (vault) await vault.cleanup();
     }
@@ -220,7 +266,7 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
   // ───── 2. SHARDMIND_NO_UPDATE_CHECK env suppresses ─────
 
   it('2. SHARDMIND_NO_UPDATE_CHECK env suppresses the banner on status', async () => {
-    enableBanner();
+    const cacheDir = enableBanner();
     process.env['SHARDMIND_NO_UPDATE_CHECK'] = '1';
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
@@ -242,6 +288,8 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
       await tick(150);
       const frame = r.lastFrame() ?? '';
       expect(frame).not.toContain(`shardmind ${NEWER_VERSION}`);
+      expect(fs.existsSync(cacheDir)).toBe(false);
+      expect(npmStub.hits()).toBe(0);
     } finally {
       if (vault) await vault.cleanup();
     }
@@ -250,7 +298,7 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
   // ───── 3. CI env suppresses ─────
 
   it('3. CI env suppresses the banner on status', async () => {
-    enableBanner();
+    const cacheDir = enableBanner();
     process.env['CI'] = '1';
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
@@ -272,15 +320,18 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
       await tick(150);
       const frame = r.lastFrame() ?? '';
       expect(frame).not.toContain(`shardmind ${NEWER_VERSION}`);
+      expect(fs.existsSync(cacheDir)).toBe(false);
+      expect(npmStub.hits()).toBe(0);
     } finally {
       if (vault) await vault.cleanup();
     }
   }, 60_000);
 
-  // ───── 4. Banner renders above status when allowed ─────
+  // ───── 4. Banner renders above status from a fresh cache ─────
 
-  it('4. banner renders above StatusView when force-TTY + outdated', async () => {
-    enableBanner();
+  it('4. banner renders above StatusView from a fresh cache, with no npm call', async () => {
+    const cacheDir = enableBanner();
+    await seedCache(cacheDir, NEWER_VERSION);
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
     stub.setLatest(SHARD_SLUG, '0.1.0');
@@ -293,8 +344,8 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
         prefix: 's113-4-render-status',
       });
       const r = mountStatus({ vaultRoot: vault.root });
-      // Wait for the banner string to land. The status report rendering
-      // and the self-update fetch race; both complete inside seconds.
+      // Status holds its exit for the local cache read (#285), so the
+      // banner always lands before the command ends: no race with npm.
       const frame = await waitFor(
         r.lastFrame,
         (f) =>
@@ -310,6 +361,9 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
         frame.indexOf('shardmind/minimal'),
       );
       expect(frame).toContain(`(you have ${CURRENT_VERSION})`);
+      // A fresh cache needs no refresh: no child, no npm call.
+      expect(npmStub.hits()).toBe(0);
+      expect(fs.existsSync(path.join(cacheDir, REFRESH_MARKER_FILENAME))).toBe(false);
     } finally {
       if (vault) await vault.cleanup();
     }
@@ -317,8 +371,9 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
 
   // ───── 5. Banner renders above install's wizard ─────
 
-  it('5. banner renders above InstallWizard header when force-TTY + outdated', async () => {
-    enableBanner();
+  it('5. banner renders above InstallWizard header from a fresh cache', async () => {
+    const cacheDir = enableBanner();
+    await seedCache(cacheDir, NEWER_VERSION);
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
     const vault = await fsp.mkdtemp(
@@ -329,11 +384,9 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
         shardRef: SHARD_REF,
         vaultRoot: vault,
       });
-      // The banner appears as soon as the npm stub answers; the wizard
-      // header appears once the install pipeline finishes resolving +
-      // downloading + parsing the shard. Both must coexist in some
-      // frame. Wait for the wizard header (slower path) — by then the
-      // banner is guaranteed to have landed.
+      // The banner appears once the cache is read; the wizard header once
+      // the install pipeline has resolved, downloaded and parsed the shard.
+      // The install waits for input, so both coexist in a frame.
       const frame = await waitFor(
         r.lastFrame,
         (f) =>
@@ -353,9 +406,9 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
 
   // ───── 6. Banner suppressed when current === latest ─────
 
-  it('6. banner suppressed when current === latest (npm stub returns same version)', async () => {
-    enableBanner();
-    npmStub.setVersion(CURRENT_VERSION);
+  it('6. banner suppressed when the cache says current === latest', async () => {
+    const cacheDir = enableBanner();
+    await seedCache(cacheDir, CURRENT_VERSION);
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
     stub.setLatest(SHARD_SLUG, '0.1.0');
@@ -368,17 +421,15 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
         prefix: 's113-6-equal',
       });
       const r = mountStatus({ vaultRoot: vault.root });
-      await waitFor(
+      const frame = await waitFor(
         r.lastFrame,
         (f) => /shardmind\/minimal/.test(f) && /managed file/.test(f),
         15_000,
       );
-      // Settle window: even if the stub answers fast, banner must
-      // never render because semver.lt(current, current) is false.
-      await tick(200);
-      const frame = r.lastFrame() ?? '';
+      // semver.lt(current, current) is false: no banner, and no refresh.
       expect(frame).not.toContain(`shardmind ${CURRENT_VERSION} available`);
       expect(frame).not.toContain('npm install -g shardmind@latest');
+      expect(npmStub.hits()).toBe(0);
     } finally {
       if (vault) await vault.cleanup();
     }
@@ -386,8 +437,9 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
 
   // ───── 7. First frame is banner-less (zero observable latency) ─────
 
-  it('7. first rendered frame never contains the banner — banner is async', async () => {
-    enableBanner();
+  it('7. first rendered frame never contains the banner — the cache read is async', async () => {
+    const cacheDir = enableBanner();
+    await seedCache(cacheDir, NEWER_VERSION);
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
     stub.setLatest(SHARD_SLUG, '0.1.0');
@@ -402,11 +454,11 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
       const r = mountStatus({ vaultRoot: vault.root });
       // Sample the very first synchronous frame. The banner can't be
       // here because `useEffect` fires after the first commit and the
-      // hook additionally defers the fetch by `setTimeout(0)`.
+      // hook additionally defers the cache read by `setTimeout(0)`.
       const firstFrame = r.lastFrame() ?? '';
       expect(firstFrame).not.toContain(`shardmind ${NEWER_VERSION}`);
       expect(firstFrame).not.toContain('npm install -g shardmind@latest');
-      // Then the banner should arrive in a later frame.
+      // Then the banner arrives in a later frame.
       await waitFor(
         r.lastFrame,
         (f) => f.includes(`shardmind ${NEWER_VERSION}`),
@@ -417,10 +469,12 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
     }
   }, 60_000);
 
-  // ───── 8. Lifecycle: unmount mid-fetch — no banner, no crash ─────
+  // ───── 8. Stale cache: a detached child refreshes it for the next run ─────
 
-  it('8. unmount before npm stub responds — no banner ever rendered, cleanup runs', async () => {
-    enableBanner();
+  it('8. a stale cache starts one refresh child that writes the cache; the next run shows the banner', async () => {
+    const cacheDir = enableBanner();
+    // Keep the child alive past both mounts, so the second finds its marker.
+    npmStub.setDelay(1_500);
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
     stub.setLatest(SHARD_SLUG, '0.1.0');
@@ -430,33 +484,50 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
         stub,
         shardRef: SHARD_REF,
         values: DEFAULT_VALUES,
-        prefix: 's113-8b-unmount',
+        prefix: 's113-8-refresh',
       });
-      const r = mountStatus({ vaultRoot: vault.root });
-      // Unmount before the hook's setTimeout(0) had a chance to fire
-      // the npm fetch. The cleanup function on the useEffect must run
-      // (clearTimeout + dispose=true) so any in-flight or pending fetch
-      // result is dropped on the floor — no setState on a torn-down tree.
-      r.unmount();
-      // Settle window: even after the npm stub had time to respond, the
-      // React tree is gone, the frame is empty (ink-testing-library
-      // clears to a single newline on unmount), and no framework-level
-      // errors were thrown by the cleanup path. Crucially, the banner
-      // text never appears — the disposed flag suppressed the setInfo
-      // call that would otherwise have followed the resolved fetch.
-      await tick(150);
-      const frame = r.lastFrame() ?? '';
-      expect(frame).not.toContain(`shardmind ${NEWER_VERSION}`);
-      expect(frame).not.toContain('npm install -g shardmind@latest');
+      // This run finds no cache: no banner, and it ends without waiting for npm.
+      const first = mountStatus({ vaultRoot: vault.root });
+      const firstFrame = await waitFor(
+        first.lastFrame,
+        (f) => /shardmind\/minimal/.test(f) && /managed file/.test(f),
+        15_000,
+      );
+      expect(firstFrame).not.toContain(`shardmind ${NEWER_VERSION}`);
+      await until(() => fs.existsSync(path.join(cacheDir, REFRESH_MARKER_FILENAME)), 5_000, 'the refresh marker');
+      cleanup();
+
+      // A second run while the child is live starts no second child.
+      const second = mountStatus({ vaultRoot: vault.root });
+      await waitFor(second.lastFrame, (f) => /shardmind\/minimal/.test(f), 15_000);
+      cleanup();
+
+      // The child writes the cache and removes its marker, inside its 4.5 s cap.
+      await until(() => refreshDone(cacheDir), 10_000, 'the refresh child to end');
+      expect(npmStub.hits()).toBe(1);
+      const cached = JSON.parse(await fsp.readFile(path.join(cacheDir, CACHE_FILENAME), 'utf-8')) as {
+        latest_version: string;
+      };
+      expect(cached.latest_version).toBe(NEWER_VERSION);
+
+      // The next run reads it and shows the banner, with no npm call of its own.
+      const third = mountStatus({ vaultRoot: vault.root });
+      await waitFor(
+        third.lastFrame,
+        (f) => f.includes(`shardmind ${NEWER_VERSION}`) && /shardmind\/minimal/.test(f),
+        15_000,
+      );
+      expect(npmStub.hits()).toBe(1);
     } finally {
+      await until(() => refreshDone(cacheDir), 10_000, 'the refresh child to end').catch(() => {});
       if (vault) await vault.cleanup();
     }
   }, 60_000);
 
   // ───── 9. Banner suppressed when npm stub returns 5xx (offline-ish) ─────
 
-  it('9. banner suppressed when npm registry is offline (5xx response)', async () => {
-    enableBanner();
+  it('9. npm offline (5xx): the refresh writes nothing and no banner ever renders', async () => {
+    const cacheDir = enableBanner();
     npmStub.setStatus(503);
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
@@ -469,23 +540,18 @@ describe('self-update notifier — Layer 1 flow tests (#113)', () => {
         values: DEFAULT_VALUES,
         prefix: 's113-8-503',
       });
-      // Use status to give the self-update fetch time to attempt + fail
-      // before the command exits. Capture the frame from waitFor's
-      // return value rather than re-reading lastFrame() afterwards: the
-      // status command calls `exit()` ~50ms after the ready render and
-      // testing-library's buffer clears on exit (same caveat as
-      // status-flow.test.tsx scenarios 24-25).
       const r = mountStatus({ vaultRoot: vault.root });
       const frame = await waitFor(
         r.lastFrame,
         (f) => /shardmind\/minimal/.test(f) && /managed file/.test(f),
         15_000,
       );
-      // Banner must not appear when the npm registry returns 5xx.
-      // checkSelfUpdate collapses 503 → null → no setState → banner stays null.
       expect(frame).not.toContain(`shardmind ${NEWER_VERSION}`);
-      expect(frame).not.toContain('npm install -g shardmind@latest');
+      // The child asked npm, got a 503, wrote no cache and removed its marker.
+      await until(() => npmStub.hits() === 1 && refreshDone(cacheDir), 10_000, 'the refresh child to end');
+      expect(fs.existsSync(path.join(cacheDir, CACHE_FILENAME))).toBe(false);
     } finally {
+      await until(() => refreshDone(cacheDir), 10_000, 'the refresh child to end').catch(() => {});
       if (vault) await vault.cleanup();
     }
   }, 60_000);

@@ -8,6 +8,12 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (the update banner on `shardmind` status, and no command waits for npm — #285)
+
+- **`shardmind` (status) now shows the "newer shardmind available" banner.** Status usually finished before npm answered, and exiting cut the lookup off, so the banner almost never showed and the answer was never saved for next time.
+- **No command calls npm itself any more.** Each command reads the day-old answer from its cache. When that answer is missing or stale, a background process refreshes it for the next run, so the first run after a new release shows no banner and the next one does.
+- **No command waits on a slow or offline network.** Status waits only for its local cache read.
+
 ### Internal (real-terminal tests on Windows — #174)
 
 - **The Layer 2 real-terminal tests run on Windows**, under ConPTY, gated on capabilities the test setup probes rather than on the platform. ConPTY's own framing is stripped against an exact allow-list, so the `--json` terminal checks still hold the CLI to byte identity there. They found #282: the diff-prompt flows do not exit under ConPTY.

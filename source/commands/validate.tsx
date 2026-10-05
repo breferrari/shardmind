@@ -39,7 +39,7 @@ export default function Validate({ args, options }: Props) {
   const [target = '.'] = args;
   const { values: valuesFile, verbose, updateCheck } = options;
   const { exit } = useApp();
-  const banner = useSelfUpdateBanner({ updateCheck });
+  const { banner } = useSelfUpdateBanner({ updateCheck });
   const [phase, setPhase] = useState<Phase>({ kind: 'checking' });
   // A downloaded shard's cleanup, registered before the fetch so a Ctrl+C
   // mid-download removes the temp dir before exiting 130 (#57).

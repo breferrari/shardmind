@@ -26,11 +26,15 @@ import { resolvePkgVersion } from './cli-version.js';
 
 const cliVersion = resolvePkgVersion(import.meta.url);
 
-/** `updateCheck` is the command's `--no-update-check` option (false when passed). */
-export function useSelfUpdateBanner(opts: { updateCheck: boolean }): ReactNode {
-  const { info } = useSelfUpdateCheck({
+/**
+ * `updateCheck` is the command's `--no-update-check` option (false when passed).
+ * `cacheRead` is true once the local cache read is done, or at once when the
+ * check is suppressed; status holds its exit for it (#285).
+ */
+export function useSelfUpdateBanner(opts: { updateCheck: boolean }): { banner: ReactNode; cacheRead: boolean } {
+  const { info, cacheRead } = useSelfUpdateCheck({
     updateCheck: opts.updateCheck,
     currentVersion: cliVersion,
   });
-  return <SelfUpdateBanner info={info} />;
+  return { banner: <SelfUpdateBanner info={info} />, cacheRead };
 }
