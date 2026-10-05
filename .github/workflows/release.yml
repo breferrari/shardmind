@@ -21,6 +21,7 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
       dist_tag: ${{ steps.meta.outputs.dist_tag }}
+      tarball: ${{ steps.pack.outputs.tarball }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,11 +38,12 @@ jobs:
       - run: npm run build
       # The tarball the later jobs ship. Packed from this tested build, so
       # npm publish uploads exactly what was checked; no rebuild.
-      - run: npm pack --ignore-scripts
+      - id: pack
+        run: echo "tarball=$(npm pack --ignore-scripts | tail -n 1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: package
-          path: shardmind-${{ steps.meta.outputs.version }}.tgz
+          path: ${{ steps.pack.outputs.tarball }}
           if-no-files-found: error
 
   github-release:
@@ -87,4 +89,7 @@ jobs:
           name: package
       # npm 11 refuses a prerelease without --tag; a stable version goes to
       # latest. Re-running this job alone publishes the same tarball.
-      - run: npm publish "shardmind-${{ needs.check.outputs.version }}.tgz" --provenance --access public --tag "${{ needs.check.outputs.dist_tag }}"
+      - env:
+          TARBALL: ${{ needs.check.outputs.tarball }}
+          DIST_TAG: ${{ needs.check.outputs.dist_tag }}
+        run: npm publish "$TARBALL" --provenance --access public --tag "$DIST_TAG"

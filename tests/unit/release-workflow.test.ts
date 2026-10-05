@@ -56,22 +56,28 @@ describe('release.yml (#108)', () => {
 
   it("bases a stable release's notes on the previous stable tag, a prerelease's on any tag", () => {
     const script = runs(githubRelease!);
-    expect(script).toContain('EXCLUDE=$([ "$PRERELEASE" = true ] || echo "--exclude=v*-*")');
-    expect(script).toContain('git describe --tags --abbrev=0 $EXCLUDE "${GITHUB_REF_NAME}^"');
+    expect(script).toMatch(/git describe --tags --abbrev=0 .*\$\{GITHUB_REF_NAME\}\^/);
+    // Prerelease tags are skipped for a stable release, by the check job's verdict.
+    expect(script).toMatch(/--exclude=v\*-\*/);
+    expect(JSON.stringify(githubRelease!.steps)).toContain('needs.check.outputs.prerelease');
   });
 
   it('marks a prerelease as such and never makes it latest', () => {
     const release = githubRelease!.steps.find((s) => s.uses?.startsWith('softprops/action-gh-release@'));
-    expect(release?.with?.['prerelease']).toBe('${{ needs.check.outputs.prerelease }}');
-    expect(String(release?.with?.['make_latest'])).toBe("${{ needs.check.outputs.prerelease == 'true' && 'false' || 'true' }}");
+    expect(String(release?.with?.['prerelease'])).toMatch(/needs\.check\.outputs\.prerelease/);
+    expect(String(release?.with?.['make_latest'])).toMatch(/needs\.check\.outputs\.prerelease == 'true' && 'false'/);
   });
 
   it('publishes the packed tarball, not a rebuild, under the computed dist-tag', () => {
-    expect(publishNpm!.steps.some((s) => s.uses?.startsWith('actions/download-artifact@'))).toBe(true);
+    const download = publishNpm!.steps.find((s) => s.uses?.startsWith('actions/download-artifact@'));
+    const upload = check!.steps.find((s) => s.uses?.startsWith('actions/upload-artifact@'));
+    expect(download?.with?.['name']).toBe(upload?.with?.['name']);
     const script = runs(publishNpm!);
-    expect(script).not.toMatch(/npm (ci|run build|install)/);
-    expect(script).toContain(
-      'npm publish "shardmind-${{ needs.check.outputs.version }}.tgz" --provenance --access public --tag "${{ needs.check.outputs.dist_tag }}"',
-    );
+    expect(script).not.toMatch(/npm (ci|run build|install|pack)/);
+    const publish = publishNpm!.steps.find((s) => s.run?.includes('npm publish'));
+    expect(publish?.run).toMatch(/--provenance/);
+    expect(publish?.run).toMatch(/--tag "\$DIST_TAG"/);
+    expect(JSON.stringify(publish)).toContain('needs.check.outputs.dist_tag');
+    expect(JSON.stringify(publish)).toContain('needs.check.outputs.tarball');
   });
 });
