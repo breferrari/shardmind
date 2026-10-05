@@ -8,7 +8,7 @@
  *  - Pairing: clone-only, install-only, static byte mismatch, Tier 1
  *    leak, `.shardmindignore` leak, `.njk → stripped` mapping, engine-
  *    metadata exclusion, multi-divergence aggregation.
- *  - Filter delegation: empty / comment-only / negation-pattern
+ *  - Filter delegation: empty / comment-only / negation-pattern (applied, #87)
  *    `.shardmindignore` flow through `loadShardmindignore` exactly as
  *    the engine sees them.
  *  - Robustness: post-walk vanish (TOCTOU) routes to `missingFromInstall`,
@@ -326,17 +326,20 @@ describe('verifyInvariant1 — engine-metadata + .njk semantics', () => {
 });
 
 describe('verifyInvariant1 — `.shardmindignore` parser delegation', () => {
-  it('propagates SHARDMINDIGNORE_NEGATION_UNSUPPORTED when clone declares a `!pattern`', async () => {
-    // The helper uses the same `loadShardmindignore` the engine uses;
-    // negation rejection therefore fires from a single source of truth.
-    // A regression that bypassed the parser (e.g. raw `ignore().add()`)
-    // would silently accept negation here and diverge from the engine.
+  it('applies a clone\'s `!pattern` as the engine does, re-including what it names (#87)', async () => {
+    // The helper uses the same `loadShardmindignore` the engine uses, so a
+    // re-included file is expected in the install and an excluded one is not.
     const pair = await makePair('negation');
     try {
       await writeFile(pair.cloneDir, '.shardmindignore', '*.gif\n!keep.gif\n');
-      await expect(verifyInvariant1(pair)).rejects.toThrow(
-        /negation patterns/,
-      );
+      await writeFile(pair.cloneDir, 'keep.gif', 'gif');
+      await writeFile(pair.cloneDir, 'drop.gif', 'gif');
+      await writeFile(pair.installDir, '.shardmindignore', '*.gif\n!keep.gif\n');
+      await writeFile(pair.installDir, 'keep.gif', 'gif');
+      const report = await verifyInvariant1(pair);
+      expect(report.missingFromInstall).toEqual([]);
+      expect(report.extrasInInstall).toEqual([]);
+      expect(report.staticByteMismatches).toEqual([]);
     } finally {
       await pair.cleanup();
     }

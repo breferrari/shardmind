@@ -59,7 +59,6 @@ export type ErrorCode =
 
   // .shardmindignore parser
   | 'SHARDMINDIGNORE_READ_FAILED'
-  | 'SHARDMINDIGNORE_NEGATION_UNSUPPORTED'
 
   // Registry / download
   | 'SHARD_NOT_FOUND'

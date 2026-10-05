@@ -459,7 +459,7 @@ async function loadIgnoreSafe(vaultRoot: string): Promise<IgnoreFilter> {
   try {
     return await loadShardmindignore(vaultRoot);
   } catch {
-    // A vault `.shardmindignore` with unsupported negation (or an I/O error)
+    // A vault `.shardmindignore` that cannot be read (an I/O error)
     // must not break a courtesy boundary check — fall back to no filtering.
     return parseShardmindignore('');
   }
