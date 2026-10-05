@@ -28,9 +28,9 @@ Thrown by `source/core/registry.ts`.
 
 ### `VERSION_NOT_FOUND`
 
-**Meaning:** The version you asked for isn't available. For registry mode, the version isn't in the `versions[]` array. For direct mode, the git tag `v<version>` doesn't exist on the repo (HEAD on the tarball URL returns 404).
+**Meaning:** The version you asked for isn't available: the git tag `v<version>` doesn't exist on the shard's repo (HEAD on the tarball URL returns 404). A bare `owner/repo` and `github:owner/repo` fail alike, because the registry only names the repo and versions are its releases.
 
-**Remedy:** Pick an available version (the error message lists them for registry mode), or omit `@version` to use the latest. On `shardmind update`, pin a known-good tag with `--release <version>`.
+**Remedy:** Pick a version the repo has released, or omit `@version` to use the latest. On `shardmind update`, pin a known-good tag with `--release <version>`.
 
 ### `NO_RELEASES_PUBLISHED`
 
@@ -58,6 +58,14 @@ Thrown by `source/core/registry.ts`.
 **Typical cause:** Offline, DNS failure, GitHub status issue, or the registry index JSON is malformed.
 
 **Remedy:** Check your connection; retry. If the registry index is what failed, run the command the hint gives: the same shard straight from GitHub, `shardmind install github:owner/repo`.
+
+### `REGISTRY_INDEX_UNSUPPORTED`
+
+**Meaning:** The registry index is in a newer format (`schema_version`) than this shardmind reads.
+
+**Typical cause:** The registry moved to a new index format after this shardmind was released.
+
+**Remedy:** Update shardmind: `npm install -g shardmind@latest`. Or run the command the hint gives, which takes the shard straight from GitHub and does not read the index: `shardmind install github:owner/repo`.
 
 ### `REGISTRY_RATE_LIMITED`
 
