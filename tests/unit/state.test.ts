@@ -506,6 +506,27 @@ describe('core/state', () => {
       expect(result.state.files['gone.md']!.rendered_hash).toBe(priorHash);
     });
 
+    it('reports a managed file that turned unreadable after the snapshot via `failed`, and keeps its prior hash (#292)', async () => {
+      const priorHash = await writeManagedFile('locked.md', 'orig');
+      const state = makeShardState({
+        files: { 'locked.md': makeFileState({ rendered_hash: priorHash }) },
+      });
+      const baseline = await snapshotTrackedHashes(vault, state);
+      // A hook leaves something that cannot be read as a file (not missing):
+      // a folder in its place, EISDIR on every platform.
+      await fsp.rm(path.join(vault, 'locked.md'));
+      await fsp.mkdir(path.join(vault, 'locked.md'));
+
+      const result = await rehashManagedFiles(vault, state, baseline);
+      expect(result.failed.map((f) => f.path)).toEqual(['locked.md']);
+      expect(result.missing).toEqual([]);
+      expect(result.changed).toEqual([]);
+      expect(result.state.files['locked.md']!.rendered_hash).toBe(priorHash);
+      // The next baseline marks it unreadable, so a later rehash cannot
+      // credit whatever lands there to a hook.
+      expect(result.current.get('locked.md')).toBe('');
+    });
+
     it('does not report a file that was already missing before the hook phase', async () => {
       const state = makeShardState({
         files: { 'gone.md': makeFileState({ rendered_hash: sha256('orig') }) },
