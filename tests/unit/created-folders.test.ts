@@ -106,6 +106,35 @@ describe('created folders (#258)', () => {
     expect(failures[0]!.path).toBe('.shardmind/backups/adopt-1/folders.json');
     expect(failures[0]!.reason).toMatch(/^folder record unreadable: /);
   });
+
+  it.each([
+    ['not JSON', '{not json'],
+    ['not a list of folders', '{"not": "a list"}'],
+  ])('rollbackCreatedFolders falls back to the list the run recorded when the record is %s (#295)', async (_name, text) => {
+    const backup = path.join(vault, 'backup');
+    await fsp.mkdir(backup);
+    await fsp.writeFile(path.join(backup, 'folders.json'), text);
+    await fsp.mkdir(path.join(vault, 'Fresh', 'Deep'), { recursive: true });
+    await fsp.mkdir(path.join(vault, 'mine'));
+    await fsp.writeFile(path.join(vault, 'mine', 'note.md'), 'mine');
+
+    const failures = await rollbackCreatedFolders(vault, backup, 'backup/folders.json', ['Fresh', 'Fresh/Deep']);
+    expect(failures).toEqual([]);
+    // The run's folders go; the user's folder, never in the list, stays.
+    await expect(fsp.access(path.join(vault, 'Fresh'))).rejects.toThrow();
+    expect(await fsp.readFile(path.join(vault, 'mine', 'note.md'), 'utf-8')).toBe('mine');
+  });
+
+  it('rollbackCreatedFolders still reads a usable record over the list it was given', async () => {
+    const backup = path.join(vault, 'backup');
+    await fsp.mkdir(backup);
+    await recordCreatedFolders(backup, ['Recorded']);
+    await fsp.mkdir(path.join(vault, 'Recorded'));
+    await fsp.mkdir(path.join(vault, 'Given'));
+    expect(await rollbackCreatedFolders(vault, backup, 'backup/folders.json', ['Given'])).toEqual([]);
+    await expect(fsp.access(path.join(vault, 'Recorded'))).rejects.toThrow();
+    await fsp.access(path.join(vault, 'Given'));
+  });
 });
 
 // On a case-folding filesystem a folder under another spelling exists.
