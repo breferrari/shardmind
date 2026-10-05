@@ -121,7 +121,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ✅ | Stop mapConcurrent's other tasks before it rejects | [#274](https://github.com/breferrari/shardmind/issues/274) |
 | ✅ | Exit after a diff prompt under Windows ConPTY | [#282](https://github.com/breferrari/shardmind/issues/282) |
 | ✅ | Report an update rollback that cannot read its templates marker | [#294](https://github.com/breferrari/shardmind/issues/294) |
-| ⬜ | Remove the run's folders when its created-folders record is unusable | [#295](https://github.com/breferrari/shardmind/issues/295) |
+| ✅ | Remove the run's folders when its created-folders record is unusable | [#295](https://github.com/breferrari/shardmind/issues/295) |
 
 ## Phase 6 — docs match the code
 
