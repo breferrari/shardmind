@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Internal (real-terminal tests on Windows — #174)
+
+- **The Layer 2 real-terminal tests run on Windows**, under ConPTY, gated on capabilities the test setup probes rather than on the platform. ConPTY's own framing is stripped against an exact allow-list, so the `--json` terminal checks still hold the CLI to byte identity there. They found #282: the diff-prompt flows do not exit under ConPTY.
+
 ### Internal (track the vendored kits against their upstream — #280)
 
 - **`npm run vendor:check` and `npm run vendor:update -- <kit> <version>`.** Each vendored kit (`source/*-kit`) carries a `VENDOR.json` that records its upstream package, version, commit and file map.
