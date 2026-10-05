@@ -233,7 +233,7 @@ Install, update and adopt share one write transaction and run without the UI lay
 | | Task | Issue |
 |---|---|---|
 | ✅ | Move install's rollback into its executor | [#300](https://github.com/breferrari/shardmind/issues/300) |
-| ⬜ | Drive the rollback contract's install pipeline through runInstallTransaction | [#311](https://github.com/breferrari/shardmind/issues/311) |
+| ✅ | Drive the rollback contract's install pipeline through runInstallTransaction | [#311](https://github.com/breferrari/shardmind/issues/311) |
 | ⬜ | Run install, update and adopt through one vault transaction module | [#301](https://github.com/breferrari/shardmind/issues/301) |
 | ⬜ | Run each command as a UI-free flow the Ink machine adapts | [#302](https://github.com/breferrari/shardmind/issues/302) |
 | ⬜ | Give process control a single owner | [#303](https://github.com/breferrari/shardmind/issues/303) |

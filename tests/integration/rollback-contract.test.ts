@@ -40,18 +40,13 @@ import {
   planOutputs,
   detectCollisions,
 } from '../../source/core/install-planner.js';
-import {
-  runInstall,
-  rollbackInstall,
-  backupCollisions,
-  type BackupRecord,
-} from '../../source/core/install-executor.js';
+import { runInstall, runInstallTransaction } from '../../source/core/install-executor.js';
 import { planUpdate, mergeModuleSelections } from '../../source/core/update-planner.js';
 import { runUpdate } from '../../source/core/update-executor.js';
 import { classifyAdoption } from '../../source/core/adopt-planner.js';
 import { runAdopt } from '../../source/core/adopt-executor.js';
 import { buildRenderContext } from '../../source/core/renderer.js';
-import { attemptRollback, rollbackFailuresOf, withRollbackFailures } from '../../source/core/rollback-report.js';
+import { rollbackFailuresOf } from '../../source/core/rollback-report.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
 import { injectFaults, type FaultKind, type FaultPlan } from '../helpers/fault-fs.js';
 import { treeOf } from '../helpers/vault-tree.js';
@@ -104,7 +99,11 @@ async function loadMinimal(shardDir = MINIMAL_SHARD) {
   return { manifest, schema, selections, values };
 }
 
-/** A fresh install into a vault with the user's own files, one in the way (backed up, #55). */
+/**
+ * A fresh install into a vault with the user's own files, one in the way
+ * (backed up, #55), through `runInstallTransaction` as the machine runs it
+ * since #300 (#311).
+ */
 const install: Pipeline = {
   name: 'install',
   async setUp(work) {
@@ -116,29 +115,20 @@ const install: Pipeline = {
     const { outputs } = await planOutputs(schema, MINIMAL_SHARD, selections, values);
     const collisions = await detectCollisions(vault, outputs.map((o) => o.outputPath));
     const run = async (signal: AbortSignal) => {
-      // As use-install-machine runs it: move collisions aside, install, and on
-      // a throw roll back every path reported so far (#207, #215).
-      const backups: BackupRecord[] = [];
-      const written: string[] = [];
-      const dirs: string[] = [];
-      try {
-        await backupCollisions(collisions, undefined, (record) => backups.push(record));
-        await runInstall({
-          vaultRoot: vault,
-          manifest,
-          schema,
-          tempDir: MINIMAL_SHARD,
-          resolved: RESOLVED,
-          tarballSha256: 'sha-0.1.0',
-          values,
-          selections,
-          signal,
-          onFileWritten: (rel) => written.push(rel),
-          onDirCreated: (dir) => dirs.push(dir),
-        });
-      } catch (err) {
-        throw withRollbackFailures(err, await attemptRollback(() => rollbackInstall(vault, written, backups, dirs)));
-      }
+      // Every collision is kept as a backup (#55), as in the composed run.
+      await runInstallTransaction({
+        vaultRoot: vault,
+        manifest,
+        schema,
+        tempDir: MINIMAL_SHARD,
+        resolved: RESOLVED,
+        tarballSha256: 'sha-0.1.0',
+        values,
+        selections,
+        signal,
+        moveAside: collisions,
+        keep: new Set(collisions.map((c) => c.absolutePath)),
+      });
     };
     return { vault, run };
   },
