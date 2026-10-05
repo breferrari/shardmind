@@ -83,6 +83,38 @@ describe('resolveModules — v6 shard-root walker', () => {
     }
   });
 
+  it('installs a re-included file and nothing under an excluded folder (#87)', async () => {
+    const tmpShard = await makeTempShard('modules-ignore-negation');
+    try {
+      await fs.writeFile(
+        path.join(tmpShard, '.shardmindignore'),
+        '*.gif\n!onboarding.gif\nassets/*\n!assets/keep.md\nlocked/\n!locked/keep.md\n',
+      );
+      await fs.writeFile(path.join(tmpShard, 'banner.gif'), 'gif');
+      await fs.writeFile(path.join(tmpShard, 'onboarding.gif'), 'gif');
+      await fs.mkdir(path.join(tmpShard, 'assets'));
+      await fs.writeFile(path.join(tmpShard, 'assets', 'keep.md'), 'keep');
+      await fs.writeFile(path.join(tmpShard, 'assets', 'drop.md'), 'drop');
+      await fs.mkdir(path.join(tmpShard, 'locked'));
+      await fs.writeFile(path.join(tmpShard, 'locked', 'keep.md'), 'keep');
+
+      const result = await resolveModules(EMPTY_SCHEMA, {}, tmpShard);
+      const allOutput = [
+        ...result.render.map((f) => f.outputPath),
+        ...result.copy.map((f) => f.outputPath),
+        ...result.skip.map((f) => f.outputPath),
+      ];
+      expect(allOutput).toContain('onboarding.gif');
+      expect(allOutput).not.toContain('banner.gif');
+      expect(allOutput).toContain('assets/keep.md');
+      expect(allOutput).not.toContain('assets/drop.md');
+      // As in git: a file under an excluded folder cannot be re-included.
+      expect(allOutput).not.toContain('locked/keep.md');
+    } finally {
+      await fs.rm(tmpShard, { recursive: true, force: true });
+    }
+  });
+
   it('rejects symlinks anywhere in the shard source', async () => {
     const tmpShard = await makeTempShard('modules-symlink');
     try {

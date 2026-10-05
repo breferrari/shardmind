@@ -102,7 +102,7 @@ my-shard/                             ← git repo root; also opens cleanly as a
 │       ├── personalize.ts            ← optional, non-fatal; managed-file edits
 │       └── post-update.ts            ← optional, non-fatal; additive managed edits on update
 │
-├── .shardmindignore                  ← repo root; gitignore-spec globs (negation deferred to v0.2)
+├── .shardmindignore                  ← repo root; gitignore-spec globs, negation included (#87)
 │
 ├── <vault content at native paths>   ← brain/, work/, Home.md, perf/, bases/, etc.
 │
@@ -169,7 +169,7 @@ Everything else at the shard root installs: vault content, agent manuals and dot
 
 ### Tier 3 — author-controlled via `.shardmindignore`
 
-Glob-only in v0.1 (negation deferred to [#87](https://github.com/breferrari/shardmind/issues/87)). Typical obsidian-mind-shaped exclusions:
+gitignore semantics, negation included ([#87](https://github.com/breferrari/shardmind/issues/87)): a later `!pattern` re-includes what an earlier pattern excluded, and, as in git, a file cannot be re-included when a folder above it is excluded (`assets/` then `!assets/keep.md` keeps nothing; write `assets/*` then `!assets/keep.md`). Typical obsidian-mind-shaped exclusions:
 
 ```gitignore
 # Repo-meta — meaningful on GitHub, noise in a vault

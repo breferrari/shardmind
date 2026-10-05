@@ -537,7 +537,6 @@ bases/incidents.base.njk             → bases/incidents.base (rendered; module 
 **Errors**:
 - `WALK_SYMLINK_REJECTED` — entry `<relPath>` is a symbolic link.
 - `WALK_INVALID_ENTRY` — entry `<relPath>` is neither file nor directory.
-- `SHARDMINDIGNORE_NEGATION_UNSUPPORTED` (from §4.5b) — author wrote `!negation` patterns; deferred to v0.2 #87.
 - `SHARDMINDIGNORE_READ_FAILED` (from §4.5b) — IO error reading `.shardmindignore` other than ENOENT.
 
 **Shared with `state.ts:cacheTemplates`**: the walker is exported so the merge-base cache mirrors the install set (same Tier 1 + ignore + symlink filter applied to both sides).
@@ -589,18 +588,13 @@ export function parseShardmindignore(source: string): IgnoreFilter;
 **Algorithm**:
 1. `loadShardmindignore`: read `<rootDir>/.shardmindignore` as utf-8. ENOENT → return `EMPTY_FILTER`. Other IO errors → throw `SHARDMINDIGNORE_READ_FAILED`.
 2. `parseShardmindignore`:
-   a. Split on `\r?\n`. For each line, strip whitespace; skip blanks and `#`-comments.
-   b. If a non-comment line starts with `!` → record line number for the negation-rejection error.
-   c. If any negations were recorded → throw `SHARDMINDIGNORE_NEGATION_UNSUPPORTED` listing every line. Negation deferred to v0.2 ([#87](https://github.com/breferrari/shardmind/issues/87)).
-   d. Pass the full source to `ignore().add(source)` — the `ignore` package does the real glob compilation.
+   a. Pass the full source to `ignore().add(source)`. The `ignore` package implements gitignore semantics: blanks and `#`-comments are skipped, later patterns override earlier ones, and `!pattern` re-includes a path an earlier pattern excluded (#87). As in git, a path stays excluded when a folder above it is excluded: the walker never enters an ignored folder (§4.5), and `ignore` reports its contents ignored too, so the two agree.
 3. `IgnoreFilter.ignores(relPosixPath, isDir)`: append `/` to the path when `isDir && !endsWith('/')` so dir-only patterns (`build/`) match correctly, then delegate to the `ignore` package.
 
 **Notes**:
-- Gitignore-spec escape semantics work: `\!literal-bang.md` is preserved by `trim()` (the backslash isn't stripped), so the negation pre-pass correctly recognizes only bare-bang lines.
-- The pre-pass + `ignore().add()` does a double scan of the source string. Acceptable cost (sources are typically <1KB) for clear error reporting.
+- Gitignore-spec escape semantics work: `\!literal-bang.md` matches a file named `!literal-bang.md`, not a negation.
 
 **Errors**:
-- `SHARDMINDIGNORE_NEGATION_UNSUPPORTED` — message lists every offending line; hint points at #87.
 - `SHARDMINDIGNORE_READ_FAILED` — non-ENOENT IO error; hint references the file path.
 
 **Dependencies**: `node:fs/promises`, `node:path`, `ignore` (npm), `runtime/types`, `runtime/errno`.
@@ -944,7 +938,7 @@ hashValues(values: Record<string, unknown>): string;   // sha256 hex
 - `COMPUTED_DEFAULT_FAILED`: the Nunjucks expression threw (hint carries the Nunjucks message).
 - `COMPUTED_DEFAULT_INVALID`: the rendered string does not coerce to the value's `type`.
 - `COLLISION_CHECK_FAILED`: `stat` failed with anything other than `ENOENT` (`EACCES`, `EPERM`, …).
-- From `planOutputs` → `resolveModules`: `WALK_SYMLINK_REJECTED`, `WALK_INVALID_ENTRY`, `SHARDMINDIGNORE_NEGATION_UNSUPPORTED`, `SHARDMINDIGNORE_READ_FAILED` (§4.5, §4.5b).
+- From `planOutputs` → `resolveModules`: `WALK_SYMLINK_REJECTED`, `WALK_INVALID_ENTRY`, `SHARDMINDIGNORE_READ_FAILED` (§4.5, §4.5b).
 - `splitByOwnContent` never throws for an unreadable file; it classifies it as `own`.
 
 **Dependencies**: `nunjucks`, `core/schema` (`isComputedDefault`), `core/modules` (`resolveModules`), `core/fs-utils` (`sha256`, `mapConcurrent`), `runtime/errno` (`isEnoent`), `runtime/types` (`ShardMindError`, `assertNever`). `hashValues` is also imported by the install, update and adopt executors.

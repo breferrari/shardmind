@@ -8,6 +8,14 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (`!pattern` in `.shardmindignore` — #87)
+
+- **A shard's `.shardmindignore` can re-include a file that a broader pattern excludes.** For example, `*.gif` followed by `!onboarding.gif` installs only `onboarding.gif`. It works as in `.gitignore`:
+  - A later line overrides an earlier one.
+  - A file can't be re-included when a folder above it is excluded: write `assets/*` then `!assets/keep.md`, not `assets/`.
+  - A vault's `.shardmind/boundary-ignore` takes the same patterns.
+  - Ignore files without `!` work as before. Install no longer refuses a shard whose ignore file uses `!`.
+
 ### Internal (CI ready for a merge queue)
 
 - **CI runs on the merge queue, and reports one check with a fixed name, `ci-passed`, for main's ruleset to require.** It passes only when every OS and Node job passed. The jobs it covers are named after their matrix values, so a new Node version or OS no longer renames the check a merge waits on.

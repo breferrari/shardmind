@@ -205,7 +205,7 @@ Each v0.2 contract extension is built, or declined in the spec's out-of-scope li
 | ⬜ | v0.2: Dependency fetching (recursive + lock file) | [#82](https://github.com/breferrari/shardmind/issues/82) |
 | ⬜ | v0.2: shardmind eject command | [#83](https://github.com/breferrari/shardmind/issues/83) |
 | ⬜ | v0.2: shardmind init command for shard authors | [#84](https://github.com/breferrari/shardmind/issues/84) |
-| ⬜ | v0.2: .shardmindignore negation (!pattern) support | [#87](https://github.com/breferrari/shardmind/issues/87) |
+| ✅ | v0.2: .shardmindignore negation (!pattern) support | [#87](https://github.com/breferrari/shardmind/issues/87) |
 
 ## Phase 11 — v1.0 ecosystem
 
@@ -500,7 +500,7 @@ Ordered by cost ascending. Sizes are rough — small (≤1 PR), medium (2–4 PR
 Tracked in [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-scope--deferred-to-v02).
 
 - [ ] `rendered_files` opt-in (Nunjucks at vault-visible paths) ([#86](https://github.com/breferrari/shardmind/issues/86))
-- [ ] `.shardmindignore` negation (`!pattern`) ([#87](https://github.com/breferrari/shardmind/issues/87))
+- [x] `.shardmindignore` negation (`!pattern`) ([#87](https://github.com/breferrari/shardmind/issues/87))
 - [x] Rename migrations + `shardmind adopt --from-version` — **must ship before any obsidian-mind release that introduces path renames** ([#88](https://github.com/breferrari/shardmind/issues/88))
 
 #### Engine polish (from v0.1 review)
