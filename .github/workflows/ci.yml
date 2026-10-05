@@ -1,10 +1,11 @@
 name: CI
 
 on:
+  # A patch release branch (release/0.2.x) gets the same checks as main.
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
   # For a merge queue. GitHub offers queues only on organisation-owned
   # repos, so this is inert here; it stays so CI is ready if that changes.
   merge_group:
