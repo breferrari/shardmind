@@ -53,9 +53,11 @@ type Props = {
 
 export default function Index({ options }: Props) {
   const { verbose, updateCheck, json } = options;
-  const { phase } = useStatusReport({ vaultRoot: process.cwd(), verbose, uncapped: json });
   // Chrome is suppressed under --json so stdout is exactly one JSON document.
-  const banner = useSelfUpdateBanner({ updateCheck: updateCheck && !json });
+  const { banner, cacheRead } = useSelfUpdateBanner({ updateCheck: updateCheck && !json });
+  // Status is done before npm could answer, so it never waits for npm; it
+  // holds its exit only for the local cache read, so a cached banner renders (#285).
+  const { phase } = useStatusReport({ vaultRoot: process.cwd(), verbose, uncapped: json, holdExit: !cacheRead });
 
   // Under --json the document goes straight to stdout once the report
   // settles; an Ink frame would wrap it at the terminal width. The human

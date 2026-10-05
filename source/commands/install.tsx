@@ -59,7 +59,7 @@ export default function Install({ args, options }: Props) {
     vaultRoot: process.cwd(),
   });
 
-  const banner = useSelfUpdateBanner({ updateCheck });
+  const { banner } = useSelfUpdateBanner({ updateCheck });
 
   // Exhaustive switch: adding a new Phase variant without a case here
   // is a compile error, not a silent render-nothing bug.

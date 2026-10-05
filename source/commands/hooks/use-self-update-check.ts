@@ -1,14 +1,16 @@
 /**
  * Self-update notifier hook.
  *
- * Fires `checkSelfUpdate` after first paint so the banner is never on
- * the hot path of any command. The result lands in component state on
- * the next render; the first frame the user sees is therefore guaranteed
- * to be banner-less, matching the issue's "zero observable latency"
- * acceptance criterion.
+ * Reads the 24h npm cache after first paint, and never calls npm itself
+ * (#285): a fresh outdated answer becomes the banner on the next render,
+ * and a stale or missing cache starts a detached refresh child
+ * (`spawnSelfUpdateRefresh`) that writes the cache for the next run. The
+ * first frame the user sees is therefore banner-less, and no command waits
+ * on the network. `cacheRead` tells status when it may exit: once the local
+ * read is done, so a cached banner always renders on the fast command.
  *
- * Sources of suppression (any one returns `info: null` without firing
- * the network call):
+ * Sources of suppression (any one returns `info: null` without reading
+ * the cache or starting a refresh):
  *   1. `updateCheck === false` — the `--no-update-check` flag.
  *   2. `process.env.SHARDMIND_NO_UPDATE_CHECK` non-empty.
  *   3. `process.env.CI` non-empty — standard CI-runner heuristic.
@@ -21,23 +23,18 @@
  *      production with a hidden flag.
  *
  * Invalid `currentVersion` (not a valid semver) is NOT pre-filtered
- * here; `checkSelfUpdate` returns `null` on its own and the banner
- * stays suppressed. Mentioning it in the suppression list above would
- * misrepresent where the short-circuit lives.
+ * here; `readSelfUpdateCache` returns `null` on its own, so the banner
+ * stays suppressed and no refresh starts.
  *
- * The `disposed` flag and the AbortController together mirror the
- * cleanup pattern in `use-status-report.ts`: if the parent unmounts
- * before the fetch resolves, the disposed flag suppresses any
- * post-resolution `setState`, AND the controller aborts the in-flight
- * `fetch` so the socket closes promptly instead of dangling until the
- * 3-second timeout. Better to miss the banner than to keep network
- * handles alive past the command's lifetime.
+ * The `disposed` flag keeps an unmounted command from setting state. A
+ * refresh child already started is detached and unref'd, and it outlives
+ * the command by design (at most about 5 s, §4.19).
  *
  * Spec: ROADMAP §0.1.x Foundation #113.
  */
 
 import { useEffect, useState } from 'react';
-import { checkSelfUpdate } from '../../core/self-update-check.js';
+import { readSelfUpdateCache, spawnSelfUpdateRefresh } from '../../core/self-update-check.js';
 
 export interface UseSelfUpdateCheckInput {
   /** The command's `updateCheck` option: `false` when `--no-update-check` was passed. */
@@ -53,6 +50,8 @@ export interface SelfUpdateBannerInfo {
 
 export interface UseSelfUpdateCheckOutput {
   info: SelfUpdateBannerInfo | null;
+  /** The cache read is done (at once when suppressed): status may exit. */
+  cacheRead: boolean;
 }
 
 /**
@@ -81,29 +80,33 @@ export function useSelfUpdateCheck(
 ): UseSelfUpdateCheckOutput {
   const { updateCheck, currentVersion } = input;
   const [info, setInfo] = useState<SelfUpdateBannerInfo | null>(null);
+  const [cacheRead, setCacheRead] = useState(() => isSuppressed(updateCheck));
 
   useEffect(() => {
-    if (isSuppressed(updateCheck)) return;
+    if (isSuppressed(updateCheck)) {
+      setCacheRead(true);
+      return;
+    }
 
     let disposed = false;
-    const controller = new AbortController();
-    // Defer the check past first paint so the banner cannot block the
-    // initial render even if `checkSelfUpdate` resolves synchronously
-    // (e.g., a fresh in-memory cache hit in tests).
+    // Defer past first paint so the banner never lands in the first frame,
+    // even when the cache read resolves at once.
     const handle = setTimeout(() => {
       void (async () => {
         try {
-          const result = await checkSelfUpdate({
-            currentVersion,
-            signal: controller.signal,
-          });
-          if (disposed) return;
-          if (result && result.outdated) {
-            setInfo({ current: currentVersion, latest: result.latest });
+          const read = await readSelfUpdateCache({ currentVersion });
+          if (read && !read.fresh) {
+            // Detached and unref'd: the command never waits for npm, and the
+            // child's cache write is for the next run (#285).
+            spawnSelfUpdateRefresh({ currentVersion });
+          } else if (read?.outdated && !disposed) {
+            setInfo({ current: currentVersion, latest: read.latest });
           }
         } catch {
-          // checkSelfUpdate already swallows; this catch is defensive
-          // against a future change. Banner stays suppressed silently.
+          // readSelfUpdateCache swallows; this catch is defensive against a
+          // future change. The banner stays suppressed silently.
+        } finally {
+          if (!disposed) setCacheRead(true);
         }
       })();
     }, 0);
@@ -111,15 +114,10 @@ export function useSelfUpdateCheck(
     return () => {
       disposed = true;
       clearTimeout(handle);
-      // Abort the in-flight fetch so an unmounted command doesn't keep
-      // a TCP connection open until the 3s timeout expires.
-      controller.abort();
     };
     // currentVersion and updateCheck are stable per command instance;
-    // the dep array is here for lint cleanliness. Closure isolation
-    // means a hypothetical re-run still won't leak: the previous run's
-    // `disposed` and `controller` are captured locally.
+    // the dep array is here for lint cleanliness.
   }, [updateCheck, currentVersion]);
 
-  return { info };
+  return { info, cacheRead };
 }
