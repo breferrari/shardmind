@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Docs (from an obsidian-mind fork to your own shard — #90)
+
+- **A guide for turning an obsidian-mind fork into an installable shard.** [`docs/FORK-TO-SHARD.md`](docs/FORK-TO-SHARD.md) covers: giving the fork its own name and version, choosing the install questions, keeping or dropping the hooks, checking it with `shardmind validate`, releasing it, and keeping up with obsidian-mind. Users then install it with `shardmind install github:<you>/<your-fork>`.
+
 ### Added (`!pattern` in `.shardmindignore` — #87)
 
 - **A shard's `.shardmindignore` can re-include a file that a broader pattern excludes.** For example, `*.gif` followed by `!onboarding.gif` installs only `onboarding.gif`. It works as in `.gitignore`:

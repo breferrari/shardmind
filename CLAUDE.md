@@ -276,6 +276,7 @@ shardmind/
 │   ├── IMPLEMENTATION.md              # The how exactly (10 sections)
 │   ├── SHARD-LAYOUT.md                # v6 shard-layout contract — Invariants 1/2/3/4, file disposition tiers, engine change scope
 │   ├── AUTHORING.md                   # Shard author guide — schema, modules, hooks, dotfolder convention
+│   ├── FORK-TO-SHARD.md               # From an obsidian-mind fork to your own installable shard (#90)
 │   ├── ERRORS.md                      # Typed error code registry — codes, messages, hints, remediation
 │   ├── OPERATIONS.md                  # Deployment notes — air-gapped install, GitHub endpoints, registry config
 │   └── COMPONENTS.md                  # Iterated UI patterns (A/B), useOncePerKey hook, testing convention for state-machine-iterated prompts
