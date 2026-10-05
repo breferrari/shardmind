@@ -252,6 +252,7 @@ Shard authors choose which agents to support. A shard can ship `CLAUDE.md` only,
 | Document | What |
 |----------|------|
 | [`docs/AUTHORING.md`](docs/AUTHORING.md) | **Start here.** Every file and concept a shard author needs. |
+| [`docs/FORK-TO-SHARD.md`](docs/FORK-TO-SHARD.md) | Turn an obsidian-mind fork into your own installable shard. |
 | [`schemas/shard.schema.json`](schemas/shard.schema.json) | JSON Schema for `shard.yaml` — drop into VS Code for autocomplete + validation. |
 | [`schemas/shard-schema.schema.json`](schemas/shard-schema.schema.json) | JSON Schema for `shard-schema.yaml`. |
 | [`examples/minimal-shard/`](examples/minimal-shard/) | Minimal reference shard — 4 values, 2 modules, signals. |

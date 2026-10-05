@@ -1,6 +1,6 @@
 # Authoring a ShardMind shard
 
-This guide walks through every file and concept a shard author needs. Read [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) first if you want the "why"; this document covers the "how".
+This guide walks through every file and concept a shard author needs. Starting from a fork of obsidian-mind? [`FORK-TO-SHARD.md`](FORK-TO-SHARD.md) is the short path. Read [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) first if you want the "why"; this document covers the "how".
 
 ## 1. What is a shard
 
@@ -581,3 +581,4 @@ See [`docs/ERRORS.md`](ERRORS.md) for the full catalog. The authoring-side ones 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — why the engine is shaped this way
 - [`docs/IMPLEMENTATION.md`](IMPLEMENTATION.md) — module-level specs
 - [`examples/minimal-shard/`](../examples/minimal-shard/) — a working shard to crib from
+- [`docs/FORK-TO-SHARD.md`](FORK-TO-SHARD.md) — from an obsidian-mind fork to your own shard

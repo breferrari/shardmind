@@ -218,7 +218,7 @@ Each ecosystem item is built, or declined with the evidence on the issue. Each p
 | ⬜ | Finalize shardmind/registry index.json schema | [#29](https://github.com/breferrari/shardmind/issues/29) |
 | ✅ | Alternate registry configurability (GHE, private, custom URL) (env var documented; config file declined) | [#39](https://github.com/breferrari/shardmind/issues/39) |
 | ✅ | v1.0: Hosted registry (shardmind.dev) + shard discovery + search (declined) | [#89](https://github.com/breferrari/shardmind/issues/89) |
-| ⬜ | v1.0: Community — validation CI + shard listing + fork-to-shard guide | [#90](https://github.com/breferrari/shardmind/issues/90) |
+| ✅ | v1.0: Community — fork-to-shard guide (validation CI and listing declined) | [#90](https://github.com/breferrari/shardmind/issues/90) |
 | ✅ | v1.0: Teams — managed vault templates + shared values + admin controls (declined) | [#91](https://github.com/breferrari/shardmind/issues/91) |
 
 ## Phase 12 — one vault transaction
@@ -545,7 +545,7 @@ Only after the engine is proven, the flagship shard is stable, and community sha
 - [x] Shard authoring guide ([`docs/AUTHORING.md`](docs/AUTHORING.md), shipped in v0.1 polish pass)
 - [x] ~~Shard validation CI (GitHub Action for shard authors)~~ declined: `npx shardmind validate --json` is the CI step
 - [x] ~~Community shard listing~~ declined: the registry index is the listing
-- [ ] Fork-to-shard conversion guide (for obsidian-mind fork authors)
+- [x] Fork-to-shard conversion guide (for obsidian-mind fork authors): [`docs/FORK-TO-SHARD.md`](docs/FORK-TO-SHARD.md)
 
 #### Teams (if demand signals appear) ([#91](https://github.com/breferrari/shardmind/issues/91))
 
