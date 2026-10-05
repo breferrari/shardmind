@@ -1682,9 +1682,9 @@ staying hermetic. No test reaches the public internet.
   escape byte fails, so a new ConPTY sequence shows up as a change to the
   list. The `--json` checks use a 500-column terminal so nothing wraps
   (allowing cursor moves would hide #198's bug), with one 80x24 case that
-  undoes ConPTY's exact wrap. Four diff-prompt scenarios do not exit under
-  ConPTY (#282) and are expected failures there (`it.fails`), so they
-  turn red when it is fixed. Helpers: `tests/e2e/tui/helpers/pty-cli.ts` (typed
+  undoes ConPTY's exact wrap. The Open in editor scenarios exit under
+  ConPTY since the handoff stops the stdin read, not only raw mode (#282,
+  IMPLEMENTATION §4.24). Helpers: `tests/e2e/tui/helpers/pty-cli.ts` (typed
   PTY wrapper with `write` / `waitForScreen` / `sigint` / `kill`),
   `virtual-screen.ts` (xterm-headless feeder + serializer),
   `build-fixture-shard.ts` (custom-shard tarball builder for hook
