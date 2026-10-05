@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (exit after Open in editor in Windows Terminal — #282)
+
+- **`shardmind update` now ends after an Open in editor on Windows.** The update finished and drew its summary, but the process never exited in a Windows terminal, so the prompt didn't come back. Handing the terminal to the editor now stops shardmind's own read of the keyboard as well as leaving raw mode, and starts the read again afterwards.
+
 ### Internal (no Windows timeout in the Invariant 2 contract test — #288)
 
 - **The Invariant 2 mixed-defaults contract test runs its five installs one at a time.** Run five at once on a 4-core Windows CI runner, they were the slowest CLI runs in the suite, and one now and then hit the 45 s kill. The test's budget is now set from the time measured on CI.
