@@ -1155,6 +1155,30 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     expect(await fsp.readdir(cacheDir, { recursive: true })).toEqual(before);
   });
 
+  it.each([
+    ['unreadable (a folder where the marker should be)', async (marker: string) => fsp.mkdir(marker)],
+    ['not JSON', async (marker: string) => fsp.writeFile(marker, '{"existed": tr')],
+    ['not { existed: boolean }', async (marker: string) => fsp.writeFile(marker, '{"existed": "yes"}')],
+  ])('a rollback whose templates marker is %s reports the template cache, not a silent copy-over (#294)', async (_name, make) => {
+    await install();
+    const cacheDir = path.join(vault, '.shardmind', 'templates');
+    const before = await fsp.readdir(cacheDir, { recursive: true });
+    const backupDir = path.join(root, 'bad-marker-backup');
+    await fsp.mkdir(path.join(backupDir, 'cache'), { recursive: true });
+    await make(path.join(backupDir, 'templates-snapshot.json'));
+    const { rollbackUpdate } = await import('../../source/core/update-executor.js');
+    const failures = await rollbackUpdate(vault, backupDir, []);
+    expect(failures).toEqual([
+      {
+        path: '.shardmind/templates',
+        reason: expect.stringMatching(/^templates marker unreadable: /),
+        backup: path.join(backupDir, 'cache', '.shardmind', 'templates'),
+      },
+    ]);
+    // The copy-over restore still ran (nothing to copy here): the live cache is untouched.
+    expect(await fsp.readdir(cacheDir, { recursive: true })).toEqual(before);
+  });
+
   it('a pristine copy-origin file is still overwritten silently when its source changes', async () => {
     await install();
     const { plan } = await update(await shardAt('0.2.0', { [COPY]: (s) => s.replace(COPY_LINE, 'New upstream line.') }));

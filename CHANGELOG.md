@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (a failed update reports a template cache it could not restore — #294)
+
+- **An update that rolls back without being able to read its own record of the template cache now says so.** It used to restore the cache by copying over it and report nothing, leaving templates from the new version behind for the next update to merge against. Now the update ends with "Rollback incomplete", naming `.shardmind/templates` and the backup to restore it from.
+
 ### Internal (the rollback's own failures are tested — #292)
 
 - **The rollback contract now also fails the rollback itself.** It fails each file it removes and each folder it reads, one at a time, and corrupts its record of the folders it created. Only what the run reports may be left changed. This found two defects, #294 and #295.
