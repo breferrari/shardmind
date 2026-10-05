@@ -60,7 +60,7 @@ export async function validateShard(
     );
   }
 
-  const resolved = await resolveRef(target);
+  const resolved = await resolveRef(target, { command: 'validate' });
   // A shard whose manifest or schema cannot be loaded fails in the download
   // itself (DOWNLOAD_MISSING_*), as for install: reported as ok: false.
   const shard = await downloadShard(resolved.tarballUrl, opts.onTempDir);

@@ -256,7 +256,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         await assertAdoptable(vaultRoot);
 
         setPhase({ kind: 'loading', message: `Resolving ${shardRef}…` });
-        const resolved = await resolveRef(shardRef);
+        const resolved = await resolveRef(shardRef, { command: 'adopt' });
 
         setPhase({
           kind: 'loading',
