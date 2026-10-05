@@ -176,6 +176,8 @@ The release pipeline, dependencies and test harness are settled: built, or decli
 | ✅ | Track and update the vendored kits against their upstream releases | [#280](https://github.com/breferrari/shardmind/issues/280) |
 | ✅ | Upgrade to Ink 8 with React 19.3 and chalk 6 | [#270](https://github.com/breferrari/shardmind/issues/270) |
 | ✅ | Vendor Pastel and drop @inkjs/ui from the dependency tree | [#277](https://github.com/breferrari/shardmind/issues/277) |
+| ⬜ | Reach the unexercised rollback failure arms | [#292](https://github.com/breferrari/shardmind/issues/292) |
+| ⬜ | Make the coverage run report reliably and include subprocess coverage | [#293](https://github.com/breferrari/shardmind/issues/293) |
 
 ## Phase 9 — the second shard
 
