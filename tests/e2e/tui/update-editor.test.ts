@@ -57,6 +57,41 @@ async function buildConflictTarball(version: string, outDir: string, append: boo
   });
 }
 
+/** How long a run gets to exit once its last frame is drawn. */
+const EXIT_WAIT_MS = 60_000;
+
+/** A vault on 0.1.0 with a bottom edit in each file 0.2.0 appends to, and 0.2.0 published: three conflicts. */
+async function conflictingVault(tmpDir: string, prefix: string): Promise<Vault> {
+  stub.setVersion(SLUG, '0.1.0', await buildConflictTarball('0.1.0', tmpDir, false));
+  stub.setLatest(SLUG, '0.1.0');
+  const vault = await createInstalledVault({ stub, shardRef: REF, values: DEFAULT_VALUES, prefix });
+  for (const rel of ['Home.md', 'brain/North Star.md', '.claude/settings.json']) {
+    await vault.writeFile(rel, `${await vault.readFile(rel)}\nUser bottom edit.\n`);
+  }
+  stub.setVersion(SLUG, '0.2.0', await buildConflictTarball('0.2.0', tmpDir, true));
+  stub.setLatest(SLUG, '0.2.0');
+  return vault;
+}
+
+/** `shardmind update` in `vault`, with the node script `editor` as $VISUAL. */
+function spawnUpdate(vault: Vault, editor: string, env: Record<string, string> = {}): ReturnType<typeof spawnCliPty> {
+  return spawnCliPty(['update'], {
+    timeoutMs: EXIT_WAIT_MS,
+    cwd: vault.root,
+    env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '', ...env },
+    rows: PTY_VIEWPORT_ROWS,
+  });
+}
+
+/** Open in editor is the conflict prompt's fourth option. */
+async function chooseOpenInEditor(handle: Awaited<ReturnType<typeof spawnCliPty>>): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    handle.write(ARROW_DOWN);
+    await tick(80);
+  }
+  handle.write(ENTER);
+}
+
 describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)', () => {
   beforeAll(async () => {
     await ensureBuilt();
@@ -86,21 +121,9 @@ describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)'
         ].join('\n'),
       );
 
-      stub.setVersion(SLUG, '0.1.0', await buildConflictTarball('0.1.0', tmpDir, false));
-      stub.setLatest(SLUG, '0.1.0');
-      vault = await createInstalledVault({ stub, shardRef: REF, values: DEFAULT_VALUES, prefix: 'l2-editor' });
-      for (const rel of ['Home.md', 'brain/North Star.md', '.claude/settings.json']) {
-        await vault.writeFile(rel, `${await vault.readFile(rel)}\nUser bottom edit.\n`);
-      }
-      stub.setVersion(SLUG, '0.2.0', await buildConflictTarball('0.2.0', tmpDir, true));
-      stub.setLatest(SLUG, '0.2.0');
+      vault = await conflictingVault(tmpDir, 'l2-editor');
 
-      const handle = await spawnCliPty(['update'], {
-        timeoutMs: 60_000,
-        cwd: vault.root,
-        env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '', L2_STTY_OUT: sttyOut },
-        rows: PTY_VIEWPORT_ROWS,
-      });
+      const handle = await spawnUpdate(vault, editor, { L2_STTY_OUT: sttyOut });
       try {
         // 1 of 3: Open in editor is the fourth option. Which file comes first
         // follows the filesystem's directory order, so read it off the screen.
@@ -109,11 +132,7 @@ describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)'
           description: 'first conflict with Open in editor',
         });
         edited = /Conflict in (.+?) \(1 of 3\)/.exec(first)?.[1];
-        for (let i = 0; i < 3; i++) {
-          handle.write(ARROW_DOWN);
-          await tick(80);
-        }
-        handle.write(ENTER);
+        await chooseOpenInEditor(handle);
 
         // 2 of 3: a lone arrow moves the highlight, so raw mode is back.
         await handle.waitForScreen((s) => /\(2 of 3\)/.test(s), { timeoutMs: 30_000, description: 'second conflict' });
@@ -160,31 +179,15 @@ describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)'
       const editor = path.join(tmpDir, 'editor.cjs');
       await fs.writeFile(editor, "setTimeout(() => {}, 60000);\n");
 
-      stub.setVersion(SLUG, '0.1.0', await buildConflictTarball('0.1.0', tmpDir, false));
-      stub.setLatest(SLUG, '0.1.0');
-      vault = await createInstalledVault({ stub, shardRef: REF, values: DEFAULT_VALUES, prefix: 'l2-editor-int' });
-      for (const rel of ['Home.md', 'brain/North Star.md', '.claude/settings.json']) {
-        await vault.writeFile(rel, `${await vault.readFile(rel)}\nUser bottom edit.\n`);
-      }
-      stub.setVersion(SLUG, '0.2.0', await buildConflictTarball('0.2.0', tmpDir, true));
-      stub.setLatest(SLUG, '0.2.0');
+      vault = await conflictingVault(tmpDir, 'l2-editor-int');
 
-      const handle = await spawnCliPty(['update'], {
-        timeoutMs: 60_000,
-        cwd: vault.root,
-        env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '' },
-        rows: PTY_VIEWPORT_ROWS,
-      });
+      const handle = await spawnUpdate(vault, editor);
       try {
         await handle.waitForScreen((s) => /\(1 of 3\)/.test(s) && /Open in editor/.test(s), {
           timeoutMs: 30_000,
           description: 'first conflict with Open in editor',
         });
-        for (let i = 0; i < 3; i++) {
-          handle.write(ARROW_DOWN);
-          await tick(80);
-        }
-        handle.write(ENTER);
+        await chooseOpenInEditor(handle);
         // The editor is running with the terminal cooked: Ctrl+C is a signal
         // to the whole foreground group, shardmind included.
         await tick(1500);
@@ -228,32 +231,16 @@ describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)'
       const editor = path.join(tmpDir, 'editor.cjs');
       await fs.writeFile(editor, 'process.exit(1);\n');
 
-      stub.setVersion(SLUG, '0.1.0', await buildConflictTarball('0.1.0', tmpDir, false));
-      stub.setLatest(SLUG, '0.1.0');
-      vault = await createInstalledVault({ stub, shardRef: REF, values: DEFAULT_VALUES, prefix: 'l2-editor-after' });
-      for (const rel of ['Home.md', 'brain/North Star.md', '.claude/settings.json']) {
-        await vault.writeFile(rel, `${await vault.readFile(rel)}\nUser bottom edit.\n`);
-      }
-      stub.setVersion(SLUG, '0.2.0', await buildConflictTarball('0.2.0', tmpDir, true));
-      stub.setLatest(SLUG, '0.2.0');
+      vault = await conflictingVault(tmpDir, 'l2-editor-after');
       const before = await treeOf(vault.root);
 
-      const handle = await spawnCliPty(['update'], {
-        timeoutMs: 60_000,
-        cwd: vault.root,
-        env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '' },
-        rows: PTY_VIEWPORT_ROWS,
-      });
+      const handle = await spawnUpdate(vault, editor);
       try {
         await handle.waitForScreen((s) => /\(1 of 3\)/.test(s) && /Open in editor/.test(s), {
           timeoutMs: 30_000,
           description: 'first conflict with Open in editor',
         });
-        for (let i = 0; i < 3; i++) {
-          handle.write(ARROW_DOWN);
-          await tick(80);
-        }
-        handle.write(ENTER);
+        await chooseOpenInEditor(handle);
         await handle.waitForScreen((s) => /\(1 of 3\)/.test(s) && /exited with code 1/.test(s.replace(/\s+/g, ' ')), {
           timeoutMs: 30_000,
           description: 'back at the first conflict after the failed editor',
