@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { useRef, useState } from 'react';
+import { Box, Text, useInput, type Key } from 'ink';
 
 export interface ScrollableMultiSelectOption {
   label: string;
@@ -38,56 +38,69 @@ export default function ScrollableMultiSelect({
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [selected, setSelected] = useState<string[]>(() => [...new Set(defaultValue ?? [])]);
+  // What the key handler reads and writes. Ink runs every key of one input
+  // chunk (a paste, a key repeat, a terminal that coalesces keystrokes)
+  // before React re-renders, so state read from the render closure would be
+  // the state from before the chunk: an arrow then a space would toggle the
+  // row the cursor left (#317). Each key updates these first, then the
+  // render state.
+  const focusRef = useRef(focusedIndex);
+  const offsetRef = useRef(scrollOffset);
+  const selectedRef = useRef(selected);
 
-  useInput(
-    (input, key) => {
-      if (options.length === 0) {
-        if (key.return) onSubmit?.(selected);
+  const handleKey = (input: string, key: Key): void => {
+      // A run of plain keys (spaces, Enter) arrives as one input, and an
+      // Enter in it is not reported as `key.return` (#317): one at a time.
+      if (input.length > 1) {
+        for (const ch of input) handleKey(ch, ch === '\r' || ch === '\n' ? { ...key, return: true } : key);
         return;
       }
-      // Re-clamp focusedIndex against the current options length. A
-      // parent rerender that shrinks `options` can leave the stored
-      // index past the end; without this, SPACE would read
-      // `options[stale]` (undefined) and silently no-op even though
-      // the rendered focus marker (which uses the same clamp at render
-      // time) pointed at a valid row.
-      const cur = Math.min(Math.max(0, focusedIndex), options.length - 1);
+      if (options.length === 0) {
+        if (key.return) onSubmit?.(selectedRef.current);
+        return;
+      }
+      // Re-clamp the focus against the current options length. A parent
+      // rerender that shrinks `options` can leave the stored index past the
+      // end; without this, SPACE would read `options[stale]` (undefined) and
+      // silently no-op even though the rendered focus marker (which uses
+      // the same clamp at render time) pointed at a valid row.
+      const cur = Math.min(Math.max(0, focusRef.current), options.length - 1);
+      const focus = (index: number, offset: number) => {
+        focusRef.current = index;
+        offsetRef.current = offset;
+        setFocusedIndex(index);
+        setScrollOffset(offset);
+      };
 
       if (key.downArrow) {
         const next = Math.min(cur + 1, options.length - 1);
         if (next === cur) return;
-        setFocusedIndex(next);
-        if (next >= scrollOffset + visibleCount) {
-          setScrollOffset(next - visibleCount + 1);
-        }
+        focus(next, next >= offsetRef.current + visibleCount ? next - visibleCount + 1 : offsetRef.current);
         return;
       }
       if (key.upArrow) {
         const prev = Math.max(cur - 1, 0);
         if (prev === cur) return;
-        setFocusedIndex(prev);
-        if (prev < scrollOffset) {
-          setScrollOffset(prev);
-        }
+        focus(prev, prev < offsetRef.current ? prev : offsetRef.current);
         return;
       }
       if (input === ' ') {
         const focused = options[cur];
         if (!focused) return;
-        const has = selected.includes(focused.value);
-        const next = has
-          ? selected.filter((v) => v !== focused.value)
-          : [...selected, focused.value];
+        const now = selectedRef.current;
+        const next = now.includes(focused.value)
+          ? now.filter((v) => v !== focused.value)
+          : [...now, focused.value];
+        selectedRef.current = next;
         setSelected(next);
         onChange?.(next);
         return;
       }
       if (key.return) {
-        onSubmit?.(selected);
+        onSubmit?.(selectedRef.current);
       }
-    },
-    { isActive: !isDisabled },
-  );
+  };
+  useInput(handleKey, { isActive: !isDisabled });
 
   // Re-clamp at render so an external `options` shrink between renders
   // can't desync stored state from what the user sees.
