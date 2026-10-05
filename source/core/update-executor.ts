@@ -232,6 +232,9 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // In-place case renames (#169, #195), journaled so any rollback undoes them.
   const journal = backupDir === null ? undefined : caseJournal(backupDir);
   const folderMoves = folderChangesOf(touched.caseRenames);
+  // The folders this run records for its rollback, kept here too, so an
+  // unusable record on disk still undoes them (#295).
+  let createdFolders: string[] | undefined;
 
   try {
     if (!dryRun) {
@@ -239,12 +242,10 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       // The folders on the way to every touched path that do not exist, and
       // every new spelling of a folder renamed by case, so a rollback
       // removes the ones the run created (#195, #258).
-      await recordCreatedFolders(
-        backupDir!,
-        await missingFolders(vaultRoot, [...touched.writes, ...touched.deletes], {
-          folders: folderMoves.map((move) => move.to),
-        }),
-      );
+      createdFolders = await missingFolders(vaultRoot, [...touched.writes, ...touched.deletes], {
+        folders: folderMoves.map((move) => move.to),
+      });
+      await recordCreatedFolders(backupDir!, createdFolders);
       // Report the backup dir to the caller before any writes happen,
       // once it holds the restore data. Progress only: the rollback is
       // this run's own catch (#249).
@@ -401,7 +402,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   } catch (err) {
     if (!dryRun && backupDir) {
       // A file left unrestored is never reported as rolled back (#247).
-      const failures = await attemptRollback(() => rollbackUpdate(vaultRoot, backupDir, addedPaths));
+      const failures = await attemptRollback(() => rollbackUpdate(vaultRoot, backupDir, addedPaths, createdFolders));
       throw withRollbackFailures(err, failures);
     }
     throw err;
@@ -831,6 +832,8 @@ export async function rollbackUpdate(
   vaultRoot: string,
   backupDir: string,
   addedPaths: string[],
+  /** The folders the run recorded, for an unusable record on disk (#295). */
+  createdFolders?: readonly string[],
 ): Promise<RollbackFailure[]> {
   const failures: RollbackFailure[] = [];
 
@@ -885,7 +888,7 @@ export async function rollbackUpdate(
   // Folders the run created (a new file's folder, a rename's new folder on a
   // case-sensitive filesystem, #195), once nothing is left in them (#258).
   failures.push(
-    ...(await rollbackCreatedFolders(vaultRoot, backupDir, toPosix(vaultRoot, createdFoldersRecord(backupDir)))),
+    ...(await rollbackCreatedFolders(vaultRoot, backupDir, toPosix(vaultRoot, createdFoldersRecord(backupDir)), createdFolders)),
   );
 
   return failures;

@@ -278,12 +278,7 @@ interface KnownDefect {
   leaves: string[];
 }
 
-const KNOWN_DEFECTS: KnownDefect[] = [
-  { issue: '#295', pipeline: 'update', fault: 'rollback-read', leaves: ['Fresh', 'Fresh/Deep'] },
-  { issue: '#295', pipeline: 'update', fault: 'tracker', leaves: ['Fresh', 'Fresh/Deep'] },
-  { issue: '#295', pipeline: 'adopt', fault: 'rollback-read', leaves: ['.claude', '.claude/commands', 'brain'] },
-  { issue: '#295', pipeline: 'adopt', fault: 'tracker', leaves: ['.claude', '.claude/commands', 'brain'] },
-];
+const KNOWN_DEFECTS: KnownDefect[] = [];
 /** One key per entry: an issue can leave different paths in different rows. */
 const defectKey = (d: KnownDefect) => `${d.issue} ${d.pipeline} ${d.fault}`;
 /** Per entry, the paths a row passed on it with. */

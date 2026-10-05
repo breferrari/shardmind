@@ -276,21 +276,22 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     totalManaged: 0,
     renamedFiles: [],
   };
+  // The folders this adopt records for its rollback, kept here too, so an
+  // unusable record on disk still undoes them (#295).
+  let createdFolders: string[] | undefined;
 
   try {
     if (!dryRun) {
       await snapshotForRollback(vaultRoot, plan, resolutions, moves, backupDir!);
       // The folders this adopt will create, so its rollback removes them and
       // no other (#258).
-      await recordCreatedFolders(
-        backupDir!,
-        await missingFolders(vaultRoot, [
-          ...plan.shardOnly.map((c) => c.path),
-          // A differing file kept as the user's is never written.
-          ...plan.differs.filter((c) => resolutions[c.path] !== 'keep_mine').map((c) => c.path),
-          ...moves.map((move) => move.to),
-        ]),
-      );
+      createdFolders = await missingFolders(vaultRoot, [
+        ...plan.shardOnly.map((c) => c.path),
+        // A differing file kept as the user's is never written.
+        ...plan.differs.filter((c) => resolutions[c.path] !== 'keep_mine').map((c) => c.path),
+        ...moves.map((move) => move.to),
+      ]);
+      await recordCreatedFolders(backupDir!, createdFolders);
       onBackupReady?.(backupDir!);
       // A move's new path is introduced by this run, whether it is written or
       // the old file moves there: registered before any write, so a failure or
@@ -448,7 +449,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
   } catch (err) {
     if (!dryRun && backupDir) {
       // A file left unrestored is never reported as rolled back (#247).
-      const failures = await attemptRollback(() => rollbackAdopt(vaultRoot, backupDir, addedPaths));
+      const failures = await attemptRollback(() => rollbackAdopt(vaultRoot, backupDir, addedPaths, createdFolders));
       throw withRollbackFailures(err, failures);
     }
     throw err;
@@ -553,6 +554,8 @@ export async function rollbackAdopt(
   vaultRoot: string,
   backupDir: string,
   addedPaths: string[],
+  /** The folders the run recorded, for an unusable record on disk (#295). */
+  createdFolders?: readonly string[],
 ): Promise<RollbackFailure[]> {
   const failures: RollbackFailure[] = [];
 
@@ -608,7 +611,7 @@ export async function rollbackAdopt(
   // The folders the adopt created, once empty again (#258). Read before the
   // snapshot holding the record goes.
   failures.push(
-    ...(await rollbackCreatedFolders(vaultRoot, backupDir, toPosix(vaultRoot, createdFoldersRecord(backupDir)))),
+    ...(await rollbackCreatedFolders(vaultRoot, backupDir, toPosix(vaultRoot, createdFoldersRecord(backupDir)), createdFolders)),
   );
 
   // Remove what the adopt wrote under `.shardmind/` (state.json, the cached

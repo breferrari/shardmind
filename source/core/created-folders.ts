@@ -78,19 +78,23 @@ export function createdFoldersRecord(backupDir: string): string {
 
 /**
  * A snapshotted run's rollback step: remove the folders it recorded, once
- * empty. An unreadable record is a failure naming the record itself
- * (`recordPath`, vault-relative), never silence.
+ * empty. When the record cannot be read or is not a list, `recorded` (the
+ * list the run wrote, still in its memory) is used instead (#295). Only
+ * with neither is it a failure, naming the record itself (`recordPath`,
+ * vault-relative), never silence.
  */
 export async function rollbackCreatedFolders(
   vaultRoot: string,
   backupDir: string,
   recordPath: string,
+  recorded?: readonly string[],
 ): Promise<RollbackFailure[]> {
-  let folders: string[];
+  let folders: readonly string[];
   try {
     folders = await readCreatedFolders(backupDir);
   } catch (err) {
-    return [{ path: recordPath, reason: `folder record unreadable: ${reasonOf(err)}` }];
+    if (recorded === undefined) return [{ path: recordPath, reason: `folder record unreadable: ${reasonOf(err)}` }];
+    folders = recorded;
   }
   return removeCreatedFolders(vaultRoot, folders);
 }

@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (a failed update or adopt removes its folders even when its record of them is damaged — #295)
+
+- **A failed update or adopt no longer leaves the empty folders it made because its list of them in the backup folder was damaged.** It used to report the damaged list and leave the folders, without naming them. It now uses the list it kept in memory, so the folders go as they would have.
+
 ### Fixed (a failed update reports a template cache it could not restore — #294)
 
 - **An update that rolls back without being able to read its own record of the template cache now says so.** It used to restore the cache by copying over it and report nothing, leaving templates from the new version behind for the next update to merge against. Now the update ends with "Rollback incomplete", naming `.shardmind/templates` and the backup to restore it from.
