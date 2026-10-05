@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { ResolvedShard } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 
@@ -43,17 +44,35 @@ function getRegistryIndexUrl(): string {
   ).trim();
 }
 
-// Provisional index.json shape. Not yet ratified in IMPLEMENTATION.md §4.1 —
-// the registry repo is created at Milestone 6 and the format will be finalized
-// then. See #29 for the open questions and the "what to do" checklist.
-interface RegistryEntry {
-  repo: string;
-  latest: string;
-  versions: string[];
-}
+/** The registry index format this engine reads (IMPLEMENTATION §4.1, #29). */
+const REGISTRY_SCHEMA_VERSION = 1;
 
-interface RegistryIndex {
-  shards: Record<string, RegistryEntry>;
+/**
+ * The index: its format version and the shards map. Entries are checked one
+ * at a time, when asked for, so one bad entry cannot break every shard.
+ * Unknown fields are ignored: a new optional field does not bump the version.
+ */
+const RegistryIndexSchema = z.object({
+  schema_version: z.number().int().positive(),
+  shards: z.record(z.string(), z.unknown()),
+});
+type RegistryIndex = z.infer<typeof RegistryIndexSchema>;
+
+/** Only the format version: read before the shape, which a newer format may not share. */
+const IndexVersionProbe = z.object({ schema_version: z.number().int() });
+
+/**
+ * One shard's entry: the GitHub repo that serves it. Its versions are that
+ * repo's releases, so a new release never needs a registry change. Unknown
+ * fields are ignored (room for, say, a later optional yanked list).
+ */
+const RegistryEntrySchema = z.object({
+  repo: z.string().regex(/^[^/\s]+\/[^/\s]+$/, 'must be "owner/name"'),
+});
+
+/** zod's issues as one line: `field: problem; …`. */
+function describeIssues(error: z.ZodError): string {
+  return error.issues.map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`).join('; ');
 }
 
 interface ParsedRef {
@@ -181,51 +200,41 @@ export async function resolve(
     return resolveRefInstall(parsed.namespace, parsed.name, parsed.ref);
   }
 
-  let version: string;
-  let source: string;
-  let repoOwner: string;
-  let repoName: string;
+  // A bare ref resolves exactly as `github:<repo>` with the same suffix: the
+  // registry only names the repo (#29). Versions come from its releases.
+  let repoOwner = parsed.namespace;
+  let repoName = parsed.name;
 
-  if (parsed.direct) {
-    repoOwner = parsed.namespace;
-    repoName = parsed.name;
-    source = `github:${repoOwner}/${repoName}`;
-    version =
-      parsed.version ??
-      (await fetchLatestRelease(repoOwner, repoName, {
-        includePrerelease: options.includePrerelease ?? false,
-      }));
-  } else {
+  if (!parsed.direct) {
     const direct = directCommandHint(options.command ?? 'install', parsed);
     const index = await fetchRegistryIndex(direct);
     const key = `${parsed.namespace}/${parsed.name}`;
-    const entry = index.shards[key];
+    const listed = index.shards[key];
 
-    if (!entry) {
+    if (listed === undefined) {
       throw new ShardMindError(`Shard '${key}' not found in the registry`, 'SHARD_NOT_FOUND', `Check the spelling. ${direct}`);
     }
-
-    if (parsed.version && !entry.versions.includes(parsed.version)) {
+    const checked = RegistryEntrySchema.safeParse(listed);
+    if (!checked.success) {
       throw new ShardMindError(
-        `Version ${parsed.version} not found for ${key}. Available: ${entry.versions.join(', ')}`,
-        'VERSION_NOT_FOUND',
-        'Pick an available version or omit @version for the latest.',
-      );
-    }
-
-    const repoParts = entry.repo.split('/');
-    if (repoParts.length !== 2 || !repoParts[0] || !repoParts[1]) {
-      throw new ShardMindError(
-        `Registry entry for '${key}' has invalid repo field: '${entry.repo}'`,
+        `The registry entry for '${key}' is invalid: ${describeIssues(checked.error)}`,
         'REGISTRY_NETWORK',
-        'Expected "owner/name" format.',
+        direct,
       );
     }
-    repoOwner = repoParts[0];
-    repoName = repoParts[1];
-    version = parsed.version ?? entry.latest;
-    source = `github:${entry.repo}`;
+
+    // The entry schema guarantees exactly one `/` with a name on each side.
+    const slash = checked.data.repo.indexOf('/');
+    repoOwner = checked.data.repo.slice(0, slash);
+    repoName = checked.data.repo.slice(slash + 1);
   }
+
+  const source = `github:${repoOwner}/${repoName}`;
+  const version =
+    parsed.version ??
+    (await fetchLatestRelease(repoOwner, repoName, {
+      includePrerelease: options.includePrerelease ?? false,
+    }));
 
   const tarballUrl = `${getGitHubApiBase()}/repos/${repoOwner}/${repoName}/tarball/v${version}`;
   await verifyTarball(tarballUrl, repoOwner, repoName, version, 'tag');
@@ -330,21 +339,27 @@ async function fetchRegistryIndex(directHint: string): Promise<RegistryIndex> {
     throw fail(`Could not read the shard registry index: ${why(err)}`);
   }
 
+  let json: unknown;
   try {
-    const parsed = JSON.parse(body) as RegistryIndex;
-    if (
-      !parsed ||
-      typeof parsed !== 'object' ||
-      !parsed.shards ||
-      typeof parsed.shards !== 'object' ||
-      Array.isArray(parsed.shards)
-    ) {
-      throw new Error('Missing or invalid "shards" field');
-    }
-    return parsed;
+    json = JSON.parse(body);
   } catch (err) {
     throw fail(`The shard registry index is corrupt: ${why(err)}`);
   }
+
+  // A newer format first, and this check must stay before the shape check:
+  // a newer format's other fields may not be this format's at all.
+  const probe = IndexVersionProbe.safeParse(json);
+  if (probe.success && probe.data.schema_version > REGISTRY_SCHEMA_VERSION) {
+    throw new ShardMindError(
+      `The shard registry index is version ${probe.data.schema_version}; this shardmind reads version ${REGISTRY_SCHEMA_VERSION}`,
+      'REGISTRY_INDEX_UNSUPPORTED',
+      `Update shardmind: npm install -g shardmind@latest. Or: ${directHint}`,
+    );
+  }
+
+  const index = RegistryIndexSchema.safeParse(json);
+  if (!index.success) throw fail(`The shard registry index is corrupt: ${describeIssues(index.error)}`);
+  return index.data;
 }
 
 /**

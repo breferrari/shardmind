@@ -216,7 +216,7 @@ Each ecosystem item is built, or declined with the evidence on the issue. Each p
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | Finalize shardmind/registry index.json schema | [#29](https://github.com/breferrari/shardmind/issues/29) |
+| ✅ | Finalize shardmind/registry index.json schema | [#29](https://github.com/breferrari/shardmind/issues/29) |
 | ✅ | Alternate registry configurability (GHE, private, custom URL) (env var documented; config file declined) | [#39](https://github.com/breferrari/shardmind/issues/39) |
 | ✅ | v1.0: Hosted registry (shardmind.dev) + shard discovery + search (declined) | [#89](https://github.com/breferrari/shardmind/issues/89) |
 | ✅ | v1.0: Community — fork-to-shard guide (validation CI and listing declined) | [#90](https://github.com/breferrari/shardmind/issues/90) |
@@ -476,7 +476,7 @@ Items where shardmind work blocks (or is blocked by) work in other repos. Track 
 Not blockers for engine use, but needed before the registry-mode flow (`shardmind install owner/repo`) works end-to-end and before a second flagship-quality shard exists.
 
 - [ ] **Research-wiki shard + E2E tests** ([#15](https://github.com/breferrari/shardmind/issues/15)) — including the fresh-machine smoke (`npm install -g shardmind` → `shardmind install breferrari/obsidian-mind` and `shardmind install <research-wiki>`). Single tracker; covers the second-shard build, registry-mode end-to-end proof, and registry shape validation.
-- [ ] Create `shardmind/registry` repo with index.json (2 shards). Schema discussion lives in #29 (closed) and is finalized as part of this work; no separate ticket.
+- [ ] Create `shardmind/registry` repo with index.json (2 shards). The index format is ratified in #29 (IMPLEMENTATION §4.1, `schema_version` 1).
 - [x] v6 docs polish: fold remaining SHARD-LAYOUT.md content into ARCHITECTURE §3 + IMPLEMENTATION §4.5/§4.5a/§4.5b; rewrite IMPLEMENTATION §9 (Build Plan) to match the actual #70 task series ([#85](https://github.com/breferrari/shardmind/issues/85)) — partial rewrites already landed with #73. Superseded 2026-10-04: SHARD-LAYOUT.md stays as the contract preflight checks against, and the stale v6 text was rewritten with #64
 
 ---

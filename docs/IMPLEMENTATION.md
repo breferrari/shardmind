@@ -241,16 +241,16 @@ interface ResolvedShard {
 **Algorithm**:
 1. Parse `shardRef` into namespace, name, and optional version OR ref. The regex makes `@<version>` and `#<ref>` mutually exclusive. One leading `v` is stripped from the version, so `@v1.2.3` and `@1.2.3` build the same tarball URL.
 2. If `#<ref>` is set:
-   a. Direct mode only — `#<ref>` without `github:` prefix is rejected as `REGISTRY_INVALID_REF` (the registry index has no per-branch metadata).
+   a. Direct mode only — `#<ref>` without `github:` prefix is rejected as `REGISTRY_INVALID_REF` (the bare grammar has no `#<ref>`).
    b. Resolve the ref to a 40-char hex SHA via `GET /repos/:o/:r/commits/{encodeURIComponent(ref)}`. 404 → `REF_NOT_FOUND`. 422 (ambiguous SHA prefix) → `REF_NOT_FOUND` with a "lengthen the prefix" hint.
    c. Construct tarball URL `${GITHUB_API_BASE}/repos/{owner}/{repo}/tarball/<sha>` (no `v` prefix).
    d. HEAD-verify (`verifyTarball` in `'ref'` mode). 404 here is rare but real (force-push between calls); throws `REF_NOT_FOUND` with a "force-push" hint.
    e. Return `ResolvedShard` with `ref: { name, commit }` populated; `version` is the short SHA (7 chars) for display.
 3. Else if `shardRef` starts with `github:` → direct mode, skip registry. `source = github:{owner}/{repo}`; go to step 6.
-4. Else → fetch registry index from `${REGISTRY_INDEX_URL}` (defaults to `https://raw.githubusercontent.com/shardmind/registry/main/index.json`; see env-var overrides below). The index shape (`{ shards: { "<ns>/<name>": { repo, latest, versions[] } } }`) is provisional until the registry repo exists (#29).
+4. Else → fetch registry index from `${REGISTRY_INDEX_URL}` (defaults to `https://raw.githubusercontent.com/shardmind/registry/main/index.json`; see env-var overrides below). Its shape is under "The registry index" below. `schema_version` greater than 1 → `REGISTRY_INDEX_UNSUPPORTED`.
    Any failure to reach, read or parse the index → `REGISTRY_NETWORK` (see the bare-ref hint below).
-5. Look up `namespace/name` in the index. Missing → `SHARD_NOT_FOUND`. `@version` not in the entry's `versions` → `VERSION_NOT_FOUND` (message lists the available versions). An entry `repo` that is not `owner/name` → `REGISTRY_NETWORK`. No `@version` → the entry's `latest`; `source = github:{entry.repo}`. `includePrerelease` has no effect in registry mode. Go to step 7.
-6. Direct mode without `@version` → resolve via `GET /repos/:o/:r/releases?per_page=100`, filtered:
+5. Look up `namespace/name` in the index. Missing → `SHARD_NOT_FOUND`. An entry that breaks the entry rule below → `REGISTRY_NETWORK`, naming the shard and the field. Otherwise the ref resolves exactly as `github:{entry.repo}` with the same suffix: `source = github:{entry.repo}`, and `{owner}/{repo}` are the entry's from here on. With `@version`, go to step 7; without, step 6 (`includePrerelease` applies).
+6. Without `@version` (direct mode, or a bare ref through its entry) → resolve via `GET /repos/:o/:r/releases?per_page=100`, filtered:
    a. `includePrerelease=false` (default) — first entry where `prerelease === false`.
    b. `includePrerelease=true` — first entry of any kind.
    c. Empty filtered list → `NO_RELEASES_PUBLISHED`. Hint differentiates "repo has zero releases" from "repo has only prereleases" (the latter points at `--include-prerelease`).
@@ -271,6 +271,24 @@ Both are invisible to production users — the defaults reproduce the
 current behavior exactly. The E2E suite uses `SHARDMIND_GITHUB_API_BASE`
 to point at a local stub server (see `tests/e2e/helpers/github-stub.ts`).
 
+**The registry index (#29).** `index.json` in `shardmind/registry`:
+
+```json
+{
+  "schema_version": 1,
+  "shards": {
+    "breferrari/obsidian-mind": { "repo": "breferrari/obsidian-mind" }
+  }
+}
+```
+
+- **`schema_version`** (integer, required) is the index format. This engine reads 1. It bumps only for a change an older engine would misread. A new optional field does not bump it, and fields an engine does not know are ignored. Missing or not an integer → the index is corrupt (`REGISTRY_NETWORK`). Greater than 1 → `REGISTRY_INDEX_UNSUPPORTED`, which asks for a newer shardmind and gives the bare-ref hint.
+- **`shards`** maps a user-facing `<namespace>/<name>`, the bare ref, to its entry. A map rather than a list, so a lookup is by key.
+- **An entry** has one required field, `repo`: the GitHub `owner/name` that serves the shard. It may differ from the key: a mirror, a rename or a transfer keeps the user-facing name. It is checked only when it is the one asked for, so one bad entry cannot break every shard.
+- **Versions come from the shard's own GitHub releases**, not the index. A bare ref resolves exactly as `github:{repo}` with the same suffix: no suffix gives the newest stable release (`includePrerelease` respected), `@version` gives that tag, and a missing tag fails as it does on the `github:` path. So a new release never needs a registry change, and a bare name never lags one. (A hand-kept version list would need a registry pull request on every release.)
+- **Listing a shard** is a pull request to `shardmind/registry` that adds its entry.
+- **Not in version 1:** per-version data such as a `yanked` list, which can be added later as an optional field without a format bump, and hosts other than GitHub (VISION).
+
 **The bare-ref hint (#200).** A bare `owner/repo` that the registry cannot resolve fails with the exact command that works:
 - The cases are: the index is unreachable, answers with a non-OK status, cannot be read, or is corrupt (`REGISTRY_NETWORK`); or it does not list the shard (`SHARD_NOT_FOUND`).
 - The hint is `Run shardmind <command> github:<owner>/<repo>[@<version>] to take it straight from GitHub.`, where `<command>` is the caller's (`options.command`: `install`, `adopt` or `validate`; `install` by default). The message carries the reason.
@@ -280,12 +298,12 @@ to point at a local stub server (see `tests/e2e/helpers/github-stub.ts`).
 **Error cases**:
 - Malformed `shardRef`, or `#<ref>` without `github:` → `REGISTRY_INVALID_REF`.
 - Shard not found in registry → `SHARD_NOT_FOUND`: `"Shard 'foo/bar' not found in the registry"`, with the bare-ref hint.
-- Version not found (registry) → `VERSION_NOT_FOUND`: `"Version 3.5.0 not found for breferrari/obsidian-mind. Available: 3.4.0, 3.3.0"`
 - Version not found (tag verify) → `VERSION_NOT_FOUND`: tarball HEAD returned 404; usually a deleted tag or transient state.
 - No releases published → `NO_RELEASES_PUBLISHED`: `/releases` returned an empty array, or every entry was filtered out by the prerelease policy. Hint mentions `--include-prerelease` when prereleases exist.
 - Ref not found → `REF_NOT_FOUND`: `/commits/<ref>` returned 404, or 422 (ambiguous SHA prefix).
 - Repository not found → `SHARD_NOT_FOUND`: `/releases` returned 404 (the repo itself doesn't exist or is private to an unauthenticated client).
 - Network failure, unexpected HTTP status, or malformed response body → `REGISTRY_NETWORK`. For the registry index, with the bare-ref hint.
+- Registry index in a newer format (`schema_version` > 1) → `REGISTRY_INDEX_UNSUPPORTED`: `"The shard registry index is version 2; this shardmind reads version 1"`. The hint asks for a newer shardmind, then gives the bare-ref hint.
 - Rate limited (403 with `x-ratelimit-remaining: 0`) → `REGISTRY_RATE_LIMITED`. Set `GITHUB_TOKEN` for the higher authenticated rate.
 
 **Environment**: Reads `GITHUB_TOKEN` env var for authenticated requests (5000 req/hr vs 60 unauthenticated).

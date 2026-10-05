@@ -8,6 +8,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (the registry index format is fixed — #29)
+
+- **The shard registry's `index.json` has a ratified format** ([`docs/IMPLEMENTATION.md §4.1`](docs/IMPLEMENTATION.md)): a required `schema_version` (1) and a map from each bare name to the GitHub repo that serves it.
+  - A bare name installs exactly as `github:` would from that repo: no version gives its newest stable release (or prerelease with `--include-prerelease`), and `@version` gives that tag. A shard's new release reaches bare names at once, with no registry change.
+  - shardmind checks only the entry you ask for, so one broken entry cannot stop every install.
+  - An index in a newer format gets its own error, `REGISTRY_INDEX_UNSUPPORTED`, which asks you to update shardmind and gives the `github:` command that works meanwhile.
+
 ### Changed (a bare owner/repo names the command that works — #200)
 
 - **`shardmind install owner/repo` without `github:` now tells you the exact command to run.** A bare name goes through the shard registry, which is not published yet, so it fails. The error used to say to "use github:owner/repo"; it now prints `Run shardmind install github:owner/repo to take it straight from GitHub.`, with your version if you gave one, and with `adopt` or `validate` when that is what you ran. A bare name still never installs from GitHub on its own.
