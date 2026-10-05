@@ -189,7 +189,6 @@ A second shard exists, and the features that wait on one are built or declined. 
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | Research-wiki shard + E2E tests + npm publish | [#15](https://github.com/breferrari/shardmind/issues/15) |
 | ⬜ | v0.2: Shard composition (multi-shard per vault) | [#81](https://github.com/breferrari/shardmind/issues/81) |
 | ⬜ | v0.2: rendered_files opt-in for Nunjucks at vault-visible paths | [#86](https://github.com/breferrari/shardmind/issues/86) |
 
@@ -221,6 +220,29 @@ Each ecosystem item is built, or declined with the evidence on the issue. Each p
 | ⬜ | v1.0: Hosted registry (shardmind.dev) + shard discovery + search | [#89](https://github.com/breferrari/shardmind/issues/89) |
 | ⬜ | v1.0: Community — validation CI + shard listing + fork-to-shard guide | [#90](https://github.com/breferrari/shardmind/issues/90) |
 | ⬜ | v1.0: Teams — managed vault templates + shared values + admin controls | [#91](https://github.com/breferrari/shardmind/issues/91) |
+
+## Phase 12 — one vault transaction
+
+Milestone: [Phase 12](https://github.com/breferrari/shardmind/milestone/13)
+
+Install, update and adopt share one write transaction and run without the UI layer; process control has one owner. Each item is proven against the rollback contract suite (#267), the SIGINT E2E (#186) and the Layer 1/2 suites.
+
+| | Task | Issue |
+|---|---|---|
+| ⬜ | Move install's rollback into its executor | [#300](https://github.com/breferrari/shardmind/issues/300) |
+| ⬜ | Run install, update and adopt through one vault transaction module | [#301](https://github.com/breferrari/shardmind/issues/301) |
+| ⬜ | Run each command as a UI-free flow the Ink machine adapts | [#302](https://github.com/breferrari/shardmind/issues/302) |
+| ⬜ | Give process control a single owner | [#303](https://github.com/breferrari/shardmind/issues/303) |
+
+## Phase 13 — the research-wiki shard
+
+Milestone: [Phase 13](https://github.com/breferrari/shardmind/milestone/14)
+
+Brenno-led: author the research-wiki shard. Not taken by the unattended loop.
+
+| | Task | Issue |
+|---|---|---|
+| ⬜ | Write the research-wiki shard | [#15](https://github.com/breferrari/shardmind/issues/15) |
 
 ## Shelf (retired 2026-10-04)
 
