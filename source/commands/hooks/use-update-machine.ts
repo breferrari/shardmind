@@ -812,6 +812,8 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         const start = action === 'edit_again' && edit.pendingContent !== undefined ? edit.pendingContent : pc.result.content;
         // The editor owns the terminal meanwhile; raw mode comes back on every
         // path, and a Ctrl+C in the editor cancels the edit, not the update.
+        // The handoff stops the stdin read too: a TTY pause leaves the libuv
+        // read running, and its line-mode ReadConsoleW cancel strands ConPTY (#282).
         const outcome = withSigintHeld(() =>
           withTerminalReleased(setStreamRawMode, () =>
             editInEditor(start, path.basename(pc.path), { command: editorCommand, dir: current.ctx.newTempDir }),

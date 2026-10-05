@@ -1706,7 +1706,7 @@ Open a conflict in the user's editor (#50). Pure of Ink. The caller runs `editIn
 ```typescript
 resolveEditorCommand(env: NodeJS.ProcessEnv): string | undefined
 editInEditor(content: string, fileName: string, opts: { command: string; dir: string; platform?: NodeJS.Platform }): EditOutcome
-withTerminalReleased<T>(setRawMode: ((on: boolean) => void) | undefined, fn: () => T): T
+withTerminalReleased<T>(setRawMode: ((on: boolean) => void) | undefined, fn: () => T, input?: NodeJS.ReadStream): T  // input: process.stdin
 withSigintHeld<T>(fn: () => T, onRestored?: () => void): T
 hasConflictMarkers(content: string): boolean
 
@@ -1727,6 +1727,7 @@ type EditOutcome = { kind: 'saved'; content: string } | { kind: 'cancelled'; det
 5. **Cleanup.** The edit directory is removed on every path. A failed removal (a window editor still holding it, Windows `EBUSY`) is left to the run's temp-dir cleanup and never changes the outcome.
 6. **`hasConflictMarkers`**: a line that starts with `<<<<<<< ` or `>>>>>>> `. A lone `=======` line is a Markdown setext underline, not a marker.
 7. **`withTerminalReleased`**: `setRawMode(false)` before `fn`, `setRawMode(true)` after, on every path. The caller passes the stdin stream's own `setRawMode`, not Ink's: Ink counts its raw-mode users and would not leave raw mode while the prompt holds it.
+   - **The read stops too (#282).** Before raw mode goes off, if the stream's handle is reading, `handle.readStop()` stops it, and `handle.readStart()` starts it again after raw mode is back. Raw mode leaving with a read in flight makes libuv on Windows restart it in line mode, a thread blocked in `ReadConsoleW`; cancelling that read when raw mode returns strands ConPTY, and the process never ends after its `exit` event. `stream.pause()` cannot replace it: a TTY stream's pause does not stop the libuv read (net.Socket stops it only when its buffer fills), nor does Ink 8's `pauseInput`, which leaves raw mode and detaches its listener. The handle is Node's internal `_handle`, so each method is feature-checked: without `readStop` and `readStart` the handoff only toggles raw mode, and the hang can recur. A non-zero `readStop` leaves the read as it was; a non-zero `readStart` destroys the stream with that code, as Node's own `tryReadStart` does. One code path on every OS.
 8. **`withSigintHeld`**: an editor that leaves the terminal cooked lets Ctrl+C reach node too, queued in libuv while `spawnSync` blocks, and that Ctrl+C must cancel the edit, not the update and its choices so far.
    - A no-op listener goes on before the SIGINT listeners come off, and they come back before it goes. SIGINT always has a listener: with none, Node closes its signal handle and a signal takes the default action.
    - The queued signal is delivered in the poll phase of the loop turn after `fn`. The restore waits for the check phase after that (two `setImmediate`s), so the no-op listener takes it.
