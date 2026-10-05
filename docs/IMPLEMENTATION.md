@@ -203,7 +203,7 @@ graph TD
 ```typescript
 resolve(
   shardRef: string,
-  options?: { includePrerelease?: boolean },
+  options?: { includePrerelease?: boolean; command?: 'install' | 'adopt' | 'validate' },  // command: 'install'
 ): Promise<ResolvedShard>
 // shardRef examples:
 //   "breferrari/obsidian-mind"           → registry index's `latest`
@@ -248,6 +248,7 @@ interface ResolvedShard {
    e. Return `ResolvedShard` with `ref: { name, commit }` populated; `version` is the short SHA (7 chars) for display.
 3. Else if `shardRef` starts with `github:` → direct mode, skip registry. `source = github:{owner}/{repo}`; go to step 6.
 4. Else → fetch registry index from `${REGISTRY_INDEX_URL}` (defaults to `https://raw.githubusercontent.com/shardmind/registry/main/index.json`; see env-var overrides below). The index shape (`{ shards: { "<ns>/<name>": { repo, latest, versions[] } } }`) is provisional until the registry repo exists (#29).
+   Any failure to reach, read or parse the index → `REGISTRY_NETWORK` (see the bare-ref hint below).
 5. Look up `namespace/name` in the index. Missing → `SHARD_NOT_FOUND`. `@version` not in the entry's `versions` → `VERSION_NOT_FOUND` (message lists the available versions). An entry `repo` that is not `owner/name` → `REGISTRY_NETWORK`. No `@version` → the entry's `latest`; `source = github:{entry.repo}`. `includePrerelease` has no effect in registry mode. Go to step 7.
 6. Direct mode without `@version` → resolve via `GET /repos/:o/:r/releases?per_page=100`, filtered:
    a. `includePrerelease=false` (default) — first entry where `prerelease === false`.
@@ -270,15 +271,21 @@ Both are invisible to production users — the defaults reproduce the
 current behavior exactly. The E2E suite uses `SHARDMIND_GITHUB_API_BASE`
 to point at a local stub server (see `tests/e2e/helpers/github-stub.ts`).
 
+**The bare-ref hint (#200).** A bare `owner/repo` that the registry cannot resolve fails with the exact command that works:
+- The cases are: the index is unreachable, answers with a non-OK status, cannot be read, or is corrupt (`REGISTRY_NETWORK`); or it does not list the shard (`SHARD_NOT_FOUND`).
+- The hint is `Run shardmind <command> github:<owner>/<repo>[@<version>] to take it straight from GitHub.`, where `<command>` is the caller's (`options.command`: `install`, `adopt` or `validate`; `install` by default). The message carries the reason.
+- `update` never reaches the registry: a registry install records `source = github:{entry.repo}`.
+- There is no fallback. A bare ref never resolves through GitHub without the `github:` prefix, so a later registry entry for the same name can never change what an earlier command meant.
+
 **Error cases**:
 - Malformed `shardRef`, or `#<ref>` without `github:` → `REGISTRY_INVALID_REF`.
-- Shard not found in registry → `SHARD_NOT_FOUND`: `"Shard 'foo/bar' not found"`, hint "Check spelling or use github:owner/repo for direct install."
+- Shard not found in registry → `SHARD_NOT_FOUND`: `"Shard 'foo/bar' not found in the registry"`, with the bare-ref hint.
 - Version not found (registry) → `VERSION_NOT_FOUND`: `"Version 3.5.0 not found for breferrari/obsidian-mind. Available: 3.4.0, 3.3.0"`
 - Version not found (tag verify) → `VERSION_NOT_FOUND`: tarball HEAD returned 404; usually a deleted tag or transient state.
 - No releases published → `NO_RELEASES_PUBLISHED`: `/releases` returned an empty array, or every entry was filtered out by the prerelease policy. Hint mentions `--include-prerelease` when prereleases exist.
 - Ref not found → `REF_NOT_FOUND`: `/commits/<ref>` returned 404, or 422 (ambiguous SHA prefix).
 - Repository not found → `SHARD_NOT_FOUND`: `/releases` returned 404 (the repo itself doesn't exist or is private to an unauthenticated client).
-- Network failure, unexpected HTTP status, or malformed response body → `REGISTRY_NETWORK`.
+- Network failure, unexpected HTTP status, or malformed response body → `REGISTRY_NETWORK`. For the registry index, with the bare-ref hint.
 - Rate limited (403 with `x-ratelimit-remaining: 0`) → `REGISTRY_RATE_LIMITED`. Set `GITHUB_TOKEN` for the higher authenticated rate.
 
 **Environment**: Reads `GITHUB_TOKEN` env var for authenticated requests (5000 req/hr vs 60 unauthenticated).
