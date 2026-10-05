@@ -16,7 +16,7 @@
  * Windows: ConPTY divergence + cancellation bridge mismatch (#174).
  */
 
-import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -38,6 +38,7 @@ import {
   CTRL_C,
   driveMinimalWizard,
 } from './helpers/pty-cli.js';
+import { noPty } from './helpers/pty-gates.js';
 
 const SHARD_SLUG = 'acme/demo';
 const SHARD_REF = `github:${SHARD_SLUG}`;
@@ -46,8 +47,6 @@ let stub: GitHubStub;
 let fixtures: TarballFixtures;
 const tempVaults: string[] = [];
 
-// Probed by the global setup (#174), not assumed from the platform.
-const noPty = !inject('ptyCapabilities').works;
 
 async function makeVault(prefix: string): Promise<string> {
   const root = await fs.mkdtemp(
@@ -65,7 +64,7 @@ async function cleanupVaults(): Promise<void> {
   }
 }
 
-describe.skipIf(noPty)(
+describe.skipIf(noPty())(
   'install — Layer 2 PTY scenarios (#111 Phase 2)',
   () => {
     beforeAll(async () => {

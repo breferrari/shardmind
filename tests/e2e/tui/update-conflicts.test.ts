@@ -12,7 +12,7 @@
  * Skipped on Windows: PTY semantics + cancellation bridge mismatch (#174).
  */
 
-import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -38,6 +38,7 @@ import {
   ARROW_DOWN,
   PTY_VIEWPORT_ROWS,
 } from './helpers/pty-cli.js';
+import { exitWaitUntil282, itUntil282, noPty } from './helpers/pty-gates.js';
 import { buildMutatedShard } from './helpers/build-fixture-shard.js';
 import { tick } from '../../component/helpers.js';
 
@@ -57,14 +58,6 @@ const DEFAULT_VALUES = {
 let stub: GitHubStub;
 let fixtures: TarballFixtures;
 
-// Probed by the global setup (#174), not assumed from the platform.
-const noPty = !inject('ptyCapabilities').works;
-// Expected failures under ConPTY (#282): these flows draw their last frame but
-// do not exit there. `it.fails` turns red the moment #282 is fixed, so the
-// marker cannot outlive the bug. The exit wait is shortened meanwhile.
-const conptyHang = !inject('ptyCapabilities').verbatim;
-const itUntil282 = conptyHang ? it.fails : it;
-const EXIT_WAIT_MS = conptyHang ? 20_000 : 60_000;
 
 /**
  * v0.1.0 stays as the unmodified minimal-shard baseline; only v0.2.0
@@ -103,7 +96,7 @@ async function buildMultiConflictTarball(
   });
 }
 
-describe.skipIf(noPty)(
+describe.skipIf(noPty())(
   'update — Layer 2 PTY scenarios (#111 Phase 2)',
   () => {
     beforeAll(async () => {
@@ -134,7 +127,7 @@ describe.skipIf(noPty)(
 
     // ───── Scenario 14 — multi-file conflict iteration (#109 regression) ─────
 
-    itUntil282(
+    itUntil282()(
       '14. ≥3 conflicts → DiffView iterates cleanly under TTY raw mode (#109 regression)',
       async () => {
         const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-mc-'));
@@ -182,7 +175,7 @@ describe.skipIf(noPty)(
           // screen — 80x24 scrolls it off as the diff body fills the
           // viewport.
           const handle = await spawnCliPty(['update'], {
-            timeoutMs: EXIT_WAIT_MS,
+            timeoutMs: exitWaitUntil282(),
             cwd: vault.root,
             env: { SHARDMIND_GITHUB_API_BASE: stub.url },
             rows: PTY_VIEWPORT_ROWS,

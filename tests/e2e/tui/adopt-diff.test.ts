@@ -9,7 +9,7 @@
  * Skipped on Windows: PTY semantics + cancellation bridge mismatch (#174).
  */
 
-import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -30,6 +30,7 @@ import {
   ARROW_DOWN,
   PTY_VIEWPORT_ROWS,
 } from './helpers/pty-cli.js';
+import { exitWaitUntil282, itUntil282, noPty } from './helpers/pty-gates.js';
 import { tick } from '../../component/helpers.js';
 
 const SHARD_SLUG = 'acme/demo';
@@ -39,14 +40,6 @@ const STUB_SHA = 'a'.repeat(40);
 let stub: GitHubStub;
 let fixtures: TarballFixtures;
 
-// Probed by the global setup (#174), not assumed from the platform.
-const noPty = !inject('ptyCapabilities').works;
-// Expected failures under ConPTY (#282): these flows draw their last frame but
-// do not exit there. `it.fails` turns red the moment #282 is fixed, so the
-// marker cannot outlive the bug. The exit wait is shortened meanwhile.
-const conptyHang = !inject('ptyCapabilities').verbatim;
-const itUntil282 = conptyHang ? it.fails : it;
-const EXIT_WAIT_MS = conptyHang ? 20_000 : 60_000;
 
 async function writeRel(root: string, rel: string, body: string): Promise<void> {
   const abs = path.join(root, rel);
@@ -54,7 +47,7 @@ async function writeRel(root: string, rel: string, body: string): Promise<void> 
   await fs.writeFile(abs, body, 'utf-8');
 }
 
-describe.skipIf(noPty)(
+describe.skipIf(noPty())(
   'adopt — Layer 2 PTY scenarios (#111 Phase 2)',
   () => {
     beforeAll(async () => {
@@ -83,7 +76,7 @@ describe.skipIf(noPty)(
 
     // ───── Scenario 20 — multi-file adopt iteration (#109 regression) ─────
 
-    itUntil282(
+    itUntil282()(
       '20. ≥3 differing files → AdoptDiffView iterates cleanly under TTY raw mode (#109 regression)',
       async () => {
         const vault = await fs.mkdtemp(
@@ -114,7 +107,7 @@ describe.skipIf(noPty)(
           // resolves quickly and the planner runs against a known
           // tarball.
           const handle = await spawnCliPty(['adopt', `${SHARD_REF}#v0.1.0`], {
-            timeoutMs: EXIT_WAIT_MS,
+            timeoutMs: exitWaitUntil282(),
             cwd: vault,
             env: { SHARDMIND_GITHUB_API_BASE: stub.url },
             rows: PTY_VIEWPORT_ROWS,

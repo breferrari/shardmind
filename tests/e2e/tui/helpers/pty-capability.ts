@@ -7,7 +7,7 @@
  * - `verbatim`: the bytes it writes arrive unchanged. A POSIX PTY passes
  *   them through; Windows ConPTY renders the child's output and re-emits it
  *   inside its own framing (see conpty-framing.ts).
- * - `signals`: the backend delivers a named signal (`pty.kill('SIGINT')`).
+ * - `signals`: the backend delivers a named signal (`pty.kill('SIGTERM')`).
  *   node-pty's ConPTY backend accepts none; there a Ctrl+C is the \x03 byte.
  */
 
@@ -43,9 +43,17 @@ export async function probePtyCapabilities(timeoutMs = 15_000): Promise<PtyCapab
   } catch {
     return NONE;
   }
+  const end = (): void => {
+    try {
+      pty.kill();
+    } catch {
+      // Already gone.
+    }
+  };
   return new Promise<PtyCapabilities>((resolve) => {
     let out = '';
     let settled = false;
+    let result: PtyCapabilities = NONE;
     const finish = (caps: PtyCapabilities): void => {
       if (settled) return;
       settled = true;
@@ -53,28 +61,28 @@ export async function probePtyCapabilities(timeoutMs = 15_000): Promise<PtyCapab
       resolve(caps);
     };
     const timer = setTimeout(() => {
-      try {
-        pty.kill();
-      } catch {
-        // gone
-      }
+      end();
       finish(NONE);
     }, timeoutMs);
+    // Registered first, so an exit that comes early is still seen: it
+    // reports whatever was learned by then (NONE if the output never came).
+    pty.onExit(() => finish(result));
     let probed = false;
     pty.onData((chunk) => {
       out += chunk;
       if (probed || !out.includes('ok')) return;
       probed = true;
-      // The child is running and the terminal is ready: try a named signal.
+      // The child has written, so the terminal is ready and a backend that
+      // refuses named signals throws here, synchronously (node-pty defers the
+      // call, and so the throw, only before the terminal is ready).
       let signals = true;
       try {
         pty.kill('SIGTERM');
       } catch {
         signals = false;
-        pty.kill();
+        end();
       }
-      const verbatim = out === 'ok';
-      pty.onExit(() => finish({ works: true, verbatim, signals }));
+      result = { works: true, verbatim: out === 'ok', signals };
     });
   });
 }

@@ -18,7 +18,7 @@
  * Skipped on Windows: PTY semantics + cancellation bridge mismatch (#174).
  */
 
-import { describe, it, expect, beforeAll, afterAll, inject } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -30,6 +30,7 @@ import {
 } from '../helpers/github-stub.js';
 import { ensureBuilt } from '../helpers/build-once.js';
 import { spawnCliPty, PTY_VIEWPORT_ROWS } from './helpers/pty-cli.js';
+import { noPty } from './helpers/pty-gates.js';
 import { buildHookFixtureShard } from './helpers/build-fixture-shard.js';
 
 const STDOUT_SLUG = 'l2hooks/stdout';
@@ -43,8 +44,6 @@ const DEFAULT_VALUES = {
   qmd_enabled: true,
 };
 
-// Probed by the global setup (#174), not assumed from the platform.
-const noPty = !inject('ptyCapabilities').works;
 
 // Stable marker the stdout scenario greps for. Picked to be obviously
 // not anywhere in the engine's normal output so a false-positive match
@@ -54,7 +53,7 @@ const LIVE_TAIL_MARKER = 'L2_HOOK_LIVE_TAIL_MARKER_2026';
 let stub: GitHubStub;
 let scratch: string;
 
-describe.skipIf(noPty)(
+describe.skipIf(noPty())(
   'hook lifecycle — Layer 2 PTY scenarios (#111 Phase 2)',
   () => {
     beforeAll(async () => {

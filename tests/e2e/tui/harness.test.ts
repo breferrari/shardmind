@@ -14,7 +14,7 @@
  * that Layer 2 doesn't run there. Tracking via #174.
  */
 
-import { describe, it, expect, inject } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { constants as osConstants } from 'node:os';
@@ -28,14 +28,13 @@ import {
   signalNumberToName,
   ENTER,
 } from './helpers/pty-cli.js';
+import { noPty, ptyCaps } from './helpers/pty-gates.js';
 import {
   buildHookFixtureShard,
   buildMutatedShard,
   FIXTURE_TMP_PREFIX,
 } from './helpers/build-fixture-shard.js';
 
-// Probed by the global setup (#174), not assumed from the platform.
-const noPty = !inject('ptyCapabilities').works;
 
 /**
  * Poll `process.kill(pid, 0)` until the kernel reports the process as
@@ -66,7 +65,7 @@ async function waitForReaped(pid: number, timeoutMs: number): Promise<boolean> {
   return false;
 }
 
-describe.skipIf(noPty)('Layer 2 harness — virtual screen', () => {
+describe.skipIf(noPty())('Layer 2 harness — virtual screen', () => {
   it('renders plain text into the visible viewport', async () => {
     const screen = createVirtualScreen({ cols: 20, rows: 3 });
     await screen.feed('hello world');
@@ -154,7 +153,7 @@ describe.skipIf(noPty)('Layer 2 harness — virtual screen', () => {
   });
 });
 
-describe.skipIf(noPty)('Layer 2 harness — PTY spawn', () => {
+describe.skipIf(noPty())('Layer 2 harness — PTY spawn', () => {
   it('spawns the CLI inside a PTY and reads --version through the screen', async () => {
     const handle = await spawnCliPty(['--version'], {
       cwd: os.tmpdir(),
@@ -304,7 +303,8 @@ describe.skipIf(noPty)('Layer 2 harness — PTY spawn', () => {
       expect(result.timedOut).toBe(true);
       // A backend with signals reports the SIGKILL; ConPTY has none and
       // reports the exit code its kill produced (#174).
-      if (inject('ptyCapabilities').signals) expect(result.signal).toBe('SIGKILL');
+      const { signals } = ptyCaps();
+      if (signals) expect(result.signal).toBe('SIGKILL');
       else expect(result.exitCode).not.toBeNull();
 
       // The load-bearing assertion: the child must actually be reaped.
@@ -315,7 +315,7 @@ describe.skipIf(noPty)('Layer 2 harness — PTY spawn', () => {
       // 500ms safety belt for very contended runners. Without signals
       // (ConPTY, #174) the kill closes the console and the child ends on
       // the close event, which takes longer than a SIGKILL.
-      const reapWindowMs = inject('ptyCapabilities').signals ? 500 : 5_000;
+      const reapWindowMs = signals ? 500 : 5_000;
       const reaped = await waitForReaped(handle.pid, reapWindowMs);
       expect(
         reaped,
@@ -370,7 +370,7 @@ describe.skipIf(noPty)('Layer 2 harness — PTY spawn', () => {
   }, 10_000);
 });
 
-describe.skipIf(noPty)('Layer 2 harness — signal mapping', () => {
+describe.skipIf(noPty())('Layer 2 harness — signal mapping', () => {
   it('signalNumberToName maps known POSIX signals back to their names', () => {
     // The mapping is a reverse lookup over `os.constants.signals`.
     // Pin the three signals every Layer 2 scenario actually depends
@@ -402,7 +402,7 @@ describe.skipIf(noPty)('Layer 2 harness — signal mapping', () => {
   });
 });
 
-describe.skipIf(noPty)('Layer 2 harness — fixture builders', () => {
+describe.skipIf(noPty())('Layer 2 harness — fixture builders', () => {
   it('buildHookFixtureShard honors name + namespace overrides', async () => {
     // Hook scenarios assert against the Summary frame, which prints
     // `<namespace>/<name>@<version>`. Without per-fixture identity,

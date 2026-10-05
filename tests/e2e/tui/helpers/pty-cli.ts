@@ -28,8 +28,7 @@
  */
 
 import * as nodePty from 'node-pty';
-import { inject } from 'vitest';
-import { PTY_CAPABILITIES_KEY } from './pty-capability.js';
+import { ptyCaps } from './pty-gates.js';
 import type { IPty } from 'node-pty';
 import { chmodSync, readdirSync, statSync } from 'node:fs';
 import { constants as osConstants } from 'node:os';
@@ -117,7 +116,7 @@ fixNodePtyPrebuildPerms();
 /**
  * Signal the child the way the PTY backend allows. A POSIX PTY delivers a
  * named signal. node-pty's Windows (ConPTY) backend accepts none ("Signals
- * not supported on windows"): there a Ctrl+C is the  byte typed into the
+ * not supported on windows"): there a Ctrl+C is the \x03 byte typed into the
  * terminal, which ConPTY turns into CTRL_C_EVENT and Node into 'SIGINT', and
  * any other signal is a plain kill. Chosen by what the backend accepts, not
  * by platform (#174).
@@ -125,8 +124,8 @@ fixNodePtyPrebuildPerms();
 function signalPty(pty: IPty, signal: 'SIGINT' | 'SIGKILL'): void {
   // Probed by the global setup: the backend's kill() may throw from a
   // deferred call where no try/catch here could see it.
-  if (inject(PTY_CAPABILITIES_KEY).signals) pty.kill(signal);
-  else if (signal === 'SIGINT') pty.write('');
+  if (ptyCaps().signals) pty.kill(signal);
+  else if (signal === 'SIGINT') pty.write('\x03');
   else pty.kill();
 }
 
@@ -248,7 +247,6 @@ export async function spawnCliPty(
   args: string[],
   opts: SpawnCliPtyOptions,
 ): Promise<PtyHandle> {
-
   // `ensureBuilt` checks that the global setup built dist/. Skip it when
   // the caller is using a node-args override — those harness tests don't
   // touch dist/cli.js.

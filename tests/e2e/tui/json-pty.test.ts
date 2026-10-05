@@ -11,13 +11,14 @@
  * Windows with a faked TTY.
  */
 
-import { describe, it, expect, beforeAll, afterAll, afterEach, inject } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { createGitHubStub, type GitHubStub } from '../helpers/github-stub.js';
 import { buildTarballFixtures, cleanupTarballFixtures, type TarballFixtures } from '../helpers/tarball.js';
 import { ensureBuilt } from '../helpers/build-once.js';
 import { spawnCli } from '../helpers/spawn-cli.js';
 import { createInstalledVault, cleanupAllVaults, stripShardmindMetadata, type Vault } from '../helpers/vault.js';
 import { spawnCliPty } from './helpers/pty-cli.js';
+import { noPty, ptyCaps } from './helpers/pty-gates.js';
 import { stripConptyFraming, stripConptyWraps } from './helpers/conpty-framing.js';
 import { createBrokenDist } from '../helpers/broken-dist.js';
 import { spawnSync } from 'node:child_process';
@@ -59,11 +60,16 @@ export function maskPlanHashes(text: string): string {
  * A terminal capture as the child wrote it. A POSIX PTY passes the bytes
  * through; Windows ConPTY wraps them in its own framing, which is stripped
  * exactly (helpers/conpty-framing.ts, #174) and nothing else, so any other
- * escape byte still fails. The line discipline's CRLF is the one other
- * normalisation.
+ * escape byte still fails. With `wrapped` (a terminal narrower than its
+ * lines), ConPTY's exact line wraps for that size are undone too. The line
+ * discipline's CRLF is the one other normalisation.
  */
-function fromTerminal(raw: string): string {
-  const own = inject('ptyCapabilities').verbatim ? raw : stripConptyFraming(raw, process.execPath);
+function fromTerminal(raw: string, wrapped?: { rows: number; cols: number }): string {
+  let own = raw;
+  if (!ptyCaps().verbatim) {
+    own = stripConptyFraming(own, process.execPath);
+    if (wrapped) own = stripConptyWraps(own, wrapped.rows, wrapped.cols);
+  }
   return own.replace(/\r\n/g, '\n');
 }
 
@@ -100,7 +106,7 @@ describe('maskPlanHashes', () => {
   });
 });
 
-describe.skipIf(!inject('ptyCapabilities').works)('--json in a real terminal (#198)', () => {
+describe.skipIf(noPty())('--json in a real terminal (#198)', () => {
   beforeAll(async () => {
     await ensureBuilt();
     fixtures = await buildTarballFixtures();
@@ -159,8 +165,7 @@ describe.skipIf(!inject('ptyCapabilities').works)('--json in a real terminal (#1
     try {
       await handle.waitForExit();
       const raw = handle.raw();
-      const own = inject('ptyCapabilities').verbatim ? raw : stripConptyWraps(stripConptyFraming(raw, process.execPath), 24, 80);
-      const terminal = maskPlanHashes(own.replace(/\r\n/g, '\n'));
+      const terminal = maskPlanHashes(fromTerminal(raw, { rows: 24, cols: 80 }));
       // Lines did overflow: the plan's hashes are wider than the terminal.
       expect(piped.stdout.split('\n').some((line) => line.length > 80)).toBe(true);
       expect(terminal).not.toContain(ESC);
@@ -189,7 +194,7 @@ describe.skipIf(!inject('ptyCapabilities').works)('--json in a real terminal (#1
         await handle.waitForExit();
         const terminal = fromTerminal(handle.raw());
         expect(JSON.parse(piped.stdout)).toMatchObject({ ok: false, command: 'update', error: { code: null } });
-        if (inject('ptyCapabilities').verbatim) {
+        if (ptyCaps().verbatim) {
           expect(terminal).not.toContain(ESC);
           // A terminal shows stderr too: the document, then the plain-text report.
           expect(terminal).toBe(piped.stdout + piped.stderr);
