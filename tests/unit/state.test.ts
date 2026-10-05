@@ -17,7 +17,7 @@ import {
 } from '../../source/core/state.js';
 import type { ShardState, ShardManifest, ShardSchema } from '../../source/runtime/types.js';
 import { ShardMindError } from '../../source/runtime/types.js';
-import { makeShardSource, makeShardState, makeFileState } from '../helpers/index.js';
+import { makeShardSource, makeShardState, makeFileState, asShown } from '../helpers/index.js';
 import { sha256 } from '../../source/core/fs-utils.js';
 
 function makeState(overrides: Partial<ShardState> = {}): ShardState {
@@ -51,6 +51,18 @@ describe('core/state', () => {
     it('returns null when state.json does not exist', async () => {
       const state = await readState(vault);
       expect(state).toBeNull();
+    });
+
+    it('a state.json another program holds shows the locked-file hint, errno kept (#313)', async () => {
+      await writeState(vault, makeState());
+      const busy = Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+      const spy = vi.spyOn(fsp, 'readFile').mockRejectedValueOnce(busy);
+      const err = await readState(vault).catch((e: unknown) => e);
+      spy.mockRestore();
+      const { shown, errnos } = asShown(err);
+      expect(shown).toMatchObject({ kind: 'known', code: 'STATE_READ_FAILED' });
+      expect(shown.kind === 'known' ? shown.hint : '').toMatch(/Another program is using this file/);
+      expect(errnos).toContain('EBUSY');
     });
 
     it('roundtrips a written state', async () => {

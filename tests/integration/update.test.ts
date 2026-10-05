@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { describeError } from '../../source/core/bug-report.js';
+import { asShown } from '../helpers/index.js';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -105,14 +105,6 @@ async function bumpVersion(shardDir: string, next: string): Promise<void> {
   const raw = await fsp.readFile(manifestPath, 'utf-8');
   const bumped = raw.replace(/^version: .+$/m, `version: ${next}`);
   await fsp.writeFile(manifestPath, bumped, 'utf-8');
-}
-
-/** The error view's reading of `err` (#225), and the errno under it. */
-function asShown(err: unknown) {
-  const shown = describeError(err, '0.0.0-test');
-  const chain: unknown[] = [];
-  for (let e: unknown = err; e && chain.length < 10; e = (e as { cause?: unknown }).cause) chain.push(e);
-  return { shown, errnos: chain.map((e) => (e as { code?: unknown }).code) };
 }
 
 describe('update pipeline (against examples/minimal-shard)', () => {

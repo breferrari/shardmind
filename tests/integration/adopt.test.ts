@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { describeError } from '../../source/core/bug-report.js';
+import { asShown } from '../helpers/index.js';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -115,14 +115,6 @@ async function adopt(vaultRoot: string, resolutions: AdoptResolutions = {}, now?
       now,
     }),
   };
-}
-
-/** The error view's reading of `err` (#225), and the errno under it. */
-function asShown(err: unknown) {
-  const shown = describeError(err, '0.0.0-test');
-  const chain: unknown[] = [];
-  for (let e: unknown = err; e && chain.length < 10; e = (e as { cause?: unknown }).cause) chain.push(e);
-  return { shown, errnos: chain.map((e) => (e as { code?: unknown }).code) };
 }
 
 describe('adopt pipeline (against examples/minimal-shard)', () => {
