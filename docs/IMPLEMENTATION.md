@@ -1705,7 +1705,7 @@ A mounted Ink app in a TTY did two things under `--json` that a pipe never sees:
 
 Ink decides the first from `stdout.isTTY` (`interactive` defaults to `!isInCi && stdout.isTTY`), and Pastel passes no render options. So for a run `isJsonRun` accepts, `cli.ts` marks stdout non-interactive right after `applyNoColor`, before Pastel or any component loads.
 
-1. `isJsonRun`: `--json` appears before any `--`, there is no `-h` or `--help`, and the first non-option argument is `update`, `adopt`, `validate` or absent (the status command). `--json=true` is not a form Commander accepts for a boolean flag. `validate --json` runs headless without Ink (#34), so marking stdout changes nothing there; it is a JSON run for the crash answer below. Install has no `--json`. A unit test ties the accepted commands to every command file under `source/commands/` that declares a `json` option.
+1. `isJsonRun`: `--json` appears before any `--`, there is no `-h` or `--help`, and the first non-option argument is `update`, `adopt`, `validate` or absent (the status command). `--json=true` is not a form Commander accepts for a boolean flag. `validate --json` and the status command's `--json` run headless without Ink (§4.29, #34, #302), so marking stdout changes nothing there; they are JSON runs for the crash answer below. Install has no `--json`. A unit test ties the accepted commands to every command file under `source/commands/` that declares a `json` option.
 2. `markNonInteractive` defines `isTTY` as `false` on stdout. The only readers of `stdout.isTTY` are Ink's interactive decision (and its synchronized-output check) and the self-update banner, which is already off under `--json`.
 
 The second is decided where the prompt is decided, not by faking stdin. Ink derives `isRawModeSupported` from `stdin.isTTY`, but marking stdin non-interactive would send the stdin SIGINT bridge (`core/cancellation.ts`) down its pipe path on a real terminal. A backgrounded run would then get SIGTTIN and stop, and type-ahead would be swallowed. Instead, a machine with a `--json` mode treats `json` like a missing terminal at its prompt decision:
@@ -1964,6 +1964,23 @@ beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTran
    8. With `noPriorInstall`, the snapshot folder is removed, unless a failure names a `backup` inside it (a file restore, or a read of the snapshot, failed): it then holds the only copy (#246). Then `backups/`, only if empty, and `.shardmind/`, only if empty and the run made it: one that was there when the run began is the user's, or the old install's.
 
 **Retention per kind**: install keeps no snapshot; its kept backups (`.shardmind-backup-*` beside the original) are reported, and its set-aside paths are restored or discarded. Adopt (`noPriorInstall: true`) keeps the snapshot only on a failed restore. Update (`noPriorInstall: false`) always keeps it: the rollback removes nothing under `.shardmind/backups/`, and the update summary points at its `files/` as the previous copies of every file it replaced.
+
+### 4.29 Headless `--json` runs: `commands/headless/` and `cli-kit/parse.ts`
+
+A `--json` run of a command listed in `cli.ts`'s `HEADLESS_JSON` never loads Ink (#34, #302): a mounted Ink app writes terminal codes around a document, adds a blank line at unmount (§4.23) and offers prompts. `validate` was the first; status follows, then adopt and update as each moves to a UI-free flow (#302).
+
+```typescript
+// cli-kit/parse.ts (Ink-free)
+parseCommandArgv<A, O>(argv: readonly string[], schemas: { args?: ZodTuple; options?: ZodObject }): { args: A; options: O };
+// commands/headless/<command>.ts
+run<Command>Json(argv: readonly string[], engineVersion: string | undefined, write?: (chunk: string) => void): Promise<number>; // the exit code
+```
+
+1. **Dispatch.** `cli.ts` runs a headless runner when the first argument names a command in `HEADLESS_JSON` (status: no subcommand) and `--json` appears before any `--`, with no `-h` / `--help`, which still go to Pastel. It passes the arguments after the command name.
+2. **Parse.** `parseCommandArgv` builds one Commander command from the command's schemas with the kit's `generateOptions` / `generateArguments`, parses with `exitOverride` so Commander throws instead of exiting, and runs the schemas' `safeParse`. A Commander error (an unknown option, a missing value) and a zod failure both throw an error whose message is what the Pastel run prints (`fromZodError`, one issue). The schemas come from `commands/options/<command>.ts`, the Ink-free modules the `.tsx` command files re-export for Pastel.
+3. **Run.** The runner calls the command's core directly: status calls `buildStatusReport(cwd, { verbose, skipUpdateCheck: false, uncapped: true })`.
+4. **Answer.** One document through `emitJson`: `jsonSuccess(command, result)` and exit 0, or `jsonFailure(command, err)` and exit 1. A parse error is a failure document too. Status answers `statusResult(null)` outside a vault, exit 0, as before.
+5. **Exit.** `cli.ts` sets the exit code, waits for stdout to drain (a pipe write can still be queued on Windows and macOS), and exits. A crash inside a runner reaches the top-level handler, which answers on stdout unless the runner already wrote its document (§4.23). A Ctrl+C runs the runner's cleanup and exits 130.
 
 ## 5. Runtime Module: `shardmind/runtime`
 
