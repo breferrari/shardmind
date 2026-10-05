@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PENDING_FILE } from '../../scripts/vendor/update.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const KIT = path.join(REPO, 'source', 'cli-kit');
@@ -30,6 +31,12 @@ function specifiers(source: string): string[] {
 }
 
 describe('cli-kit boundary (#277)', () => {
+  it('holds no unfinished vendor update (#280)', () => {
+    // A conflicted `vendor:update` leaves this until `--resolved` finishes it;
+    // committed, it would put a half-merged kit on main.
+    expect(fs.existsSync(path.join(KIT, PENDING_FILE)), `finish it: npm run vendor:update -- cli-kit <version> --resolved`).toBe(false);
+  });
+
   it('imports only its allowed packages, node: built-ins, its own files and the ui-kit index', () => {
     const outside: string[] = [];
     for (const file of sourceFiles(KIT)) {

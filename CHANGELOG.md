@@ -8,6 +8,12 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Internal (track the vendored kits against their upstream — #280)
+
+- **`npm run vendor:check` and `npm run vendor:update -- <kit> <version>`.** Each vendored kit (`source/*-kit`) carries a `VENDOR.json` that records its upstream package, version, commit and file map.
+  - `vendor:check` reports kits behind npm's latest, every week in CI, and never fails.
+  - `vendor:update` merges a new upstream into each file with ShardMind's own three-way merge. It writes conflicts with markers and lists them, and advances the record only when everything merged; `--resolved` finishes an update after a person resolves its conflicts.
+
 ### Fixed (an adopt that cannot make its snapshot leaves no empty `.shardmind/` — #269)
 
 - **An adopt that fails before it starts, because its snapshot folder can't be created, no longer leaves an empty `.shardmind/backups/` behind.** It now removes the folders it made on the way, and update does the same. A `.shardmind/` that was already there, or that holds your files, stays.

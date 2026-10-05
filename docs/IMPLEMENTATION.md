@@ -1814,6 +1814,67 @@ spawnProbe: ToolProbe;   // makeProbe() with process.env and 5 s
 
 ---
 
+### 4.27 Vendored kits: `scripts/vendor/` (repo tooling)
+
+ShardMind vendors upstream packages as TypeScript source under `source/<name>-kit/` (`ui-kit` from `@inkjs/ui`, `cli-kit` from Pastel). `scripts/vendor/` tracks each against its upstream and brings a new upstream version in without losing ShardMind's changes (#280). It is repo tooling, run with `tsx` and never shipped: it may import `source/core/differ.ts` (the merge engine) and `source/core/fs-utils.ts`, and nothing in `source/` imports it.
+
+**The record, `source/<kit>/VENDOR.json`** (schemaVersion 1):
+
+```typescript
+interface VendorRecord {
+  schemaVersion: 1;
+  kit: string;                      // 'ui-kit'
+  package: string;                  // '@inkjs/ui'
+  version: string;                  // exact upstream version vendored
+  repository: string;               // https URL of the upstream git repository
+  tag: string;                      // the tag `commit` came from
+  tagPattern?: string;              // default 'v{version}': how a version names its tag
+  commit: string;                   // 40-hex commit of `tag`
+  tarball: { url: string; integrity: string };   // npm's dist, to check the version is what we think
+  sourceRoot: string;               // folder in the repository the vendored files come from
+  license: string;
+  copyright: string;
+  modifiedBy: string;
+  files: Record<string, {           // kit path (POSIX, sorted) → upstream file
+    upstream: string;               // path under `sourceRoot` at `commit`
+    modified: boolean;              // our bytes, header aside, differ from upstream's
+    change?: string;                // one line, required when `modified`
+  }>;
+}
+```
+
+The file is written as `formatRecord` gives it: keys sorted at every depth, two-space JSON, one trailing newline, the form the committed records have. Files ShardMind wrote itself (its own helpers, `index.ts`, `LICENSE*`, `PROVENANCE.md`, `VENDOR.json`) are not in `files`. Every vendored file starts with a header generated from the record, byte for byte (`headerFor(record, path)`):
+
+```
+/*
+ * From <package>@<version> (<repository> at <commit>), <upstream>.
+ * Copyright (c) <copyright>. <license>: see <kit>/LICENSE.
+ * Modified by <modifiedBy>: <change>          ← only when modified
+ */
+                                               ← one blank line, then upstream's bytes
+```
+
+`stripHeader(text, record, path)` removes exactly that header and refuses a file whose header differs, so a hand-edited header is never merged as content.
+
+**`npm run vendor:check`** (`check.ts`): for every `source/*-kit/VENDOR.json`, compare `version` with npm's `dist-tags.latest` and list the kits behind. It also recomputes each file's `modified` (our bytes without the header, against upstream at `commit`) and reports a record that disagrees. It always exits 0. `--summary <file>` writes the report as Markdown; the weekly workflow `.github/workflows/vendor-check.yml` appends it to the job summary.
+
+**`npm run vendor:update <kit> <version> [--commit "Name <email>"] [--resolved]`** (`update.ts`): base = upstream at the recorded `commit`; new = upstream at the new version's tag (`tagPattern`) commit. For each file in `files`:
+1. Ours (without its header) equal to base: take new. A clean update.
+2. Otherwise `threeWayMerge(base, ours, new)` (§4.9). With no conflict, the merge is written. With conflicts, the merge is written with its markers relabelled `<<<<<<< shardmind` / `>>>>>>> <package>@<version>`, and the file is listed.
+3. An `upstream` path the new version no longer has is listed as a conflict and left as it is. Files the new version adds are listed, never added.
+4. Each file written gets the new version's header when the update completes. A run with a conflict keeps every header as the record describes it, so `vendor:check` still reads the kit.
+
+The record advances (`version`, `tag`, `commit`, `tarball`, each `modified`) only when no file conflicted; otherwise the command exits 1 with the list. Text is read as LF, so a CRLF checkout is not a change on every line. `--commit` makes the two commits the original vendoring had: the new upstream as-is (with headers and the advanced record), then ShardMind's changes re-applied, the second skipped when nothing of ShardMind's is left. It refuses to start unless the kit and the index are clean, and commits the kit's paths only.
+
+**Finishing a conflicted update: `--resolved`.** A re-run cannot finish it: a resolution that keeps ShardMind's line conflicts with the old base again. So a conflicted run also writes `<kit>/VENDOR.pending.json`: the version it was updating to, the commit it merged from, and each conflicted file with the hash of the text it wrote (markers included). While that file exists, a plain `vendor:update` of the kit refuses to start. It is not gitignored, so the unfinished state stays visible, and each kit's boundary test fails while it is in the tree, so CI blocks a commit that carries it. After a person resolves the markers, `vendor:update <kit> <version> --resolved` takes each file as it stands and advances the record: `modified` is whether the file differs from the new upstream, a file's `change` is kept, and each file gets the new header. It then removes the pending file. It refuses, before writing anything, and the record never claims a version over a half-merged kit:
+- any file anywhere in the kit that still holds a conflict marker, listing every one;
+- no pending file, or one for another version or another base commit;
+- a file the pending file names as conflicted that is unchanged since the conflicted run, listing every one;
+- a file the new version no longer has (drop it from the kit and `VENDOR.json` first);
+- `--commit`.
+
+Upstream access goes through an `UpstreamSource` (npm metadata, tag → commit, repository at a commit), so tests use fixture upstreams on disk and never the network.
+
 ## 5. Runtime Module: `shardmind/runtime`
 
 ### 5.1 `resolveVaultRoot()`
