@@ -187,11 +187,11 @@ shardmind/
 │   │   ├── tier1.ts                   # Engine-enforced source-side path exclusions
 │   │   ├── shardmindignore.ts         # gitignore-spec glob matcher, negation included (#87)
 │   │   ├── update-planner.ts          # Pure update plan from drift + new shard
-│   │   ├── update-executor.ts         # Apply update plan with rollback
+│   │   ├── update-executor.ts         # Apply update plan on the vault transaction
 │   │   ├── install-planner.ts         # Pure install plan + collisions
-│   │   ├── install-executor.ts        # Apply install plan with rollback
+│   │   ├── install-executor.ts        # Apply install plan on the vault transaction
 │   │   ├── adopt-planner.ts           # Classify user vault vs shard (matches/differs/shard-only)
-│   │   ├── adopt-executor.ts          # Apply adopt plan with snapshot-rollback
+│   │   ├── adopt-executor.ts          # Apply adopt plan on the vault transaction
 │   │   ├── adopt-merge.ts             # Two-way union merge for adopt --mode=auto-merge (#120)
 │   │   ├── values-io.ts               # Shared YAML load for shard-values.yaml
 │   │   ├── values-defaults.ts         # `valuesAreDefaults(values, schema)` — Invariant 2 helper
@@ -377,11 +377,11 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `diff3.ts` | §4.9 | node-diff3's `diff3MergeRegions`, ported with a binary-search LCS; regions identical to node-diff3's (#170) |
 | `migrator.ts` | §4.10 | Apply schema migrations to values |
 | `install-planner.ts` | §4.11a | Pure install plan (outputs, collisions, value-coercion, computed defaults) |
-| `install-executor.ts` | §4.11b | Apply install plan with transactional backup + rollback |
+| `install-executor.ts` | §4.11b | Apply install plan on the vault transaction: moves aside, writes, state.json last |
 | `update-planner.ts` | §4.11 | Plan update actions from drift + new-shard render |
-| `update-executor.ts` | §4.12 | Apply update plan with snapshot-based rollback |
+| `update-executor.ts` | §4.12 | Apply update plan on the vault transaction |
 | `adopt-planner.ts` | §4.17 | Classify user vault vs shard outputs (matches / differs / shard-only) |
-| `adopt-executor.ts` | §4.18 | Apply adopt plan with snapshot-based rollback |
+| `adopt-executor.ts` | §4.18 | Apply adopt plan on the vault transaction |
 | `adopt-merge.ts` | SHARD-LAYOUT.md §Adopt semantics | Two-way union merge for `adopt --mode=auto-merge` (#120) |
 | `values-io.ts` | §4.13 | Shared YAML load for shard-values.yaml (install + update) |
 | `values-defaults.ts` | §4.16 (HookContext extensions) | `valuesAreDefaults(values, schema)` — deep-equal pure fn for Invariant 2 |
@@ -407,7 +407,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `vault-lock.ts` | §4.25 | One run per vault: `<vault>/.shardmind.lock` (wx), `VAULT_LOCKED`, stale same-host takeover, release + exit backstop (#253) |
 | `created-folders.ts` | §4.11b, §4.12 (4a), §4.18 | The folders a run created, for install / update / adopt rollbacks (#258) |
 | `external-tools.ts` | §4.26 | Check a shard's `external_tools` against their version ranges before install / adopt / update write (`EXTERNAL_TOOL_UNMET`); the probe runs without a shell (#138) |
-| `vault-transaction.ts` | §4.28 | One vault transaction for adopt (update and install next): `recordWrite` snapshots a file just before its write, `commitEngineMetadata` writes `state.json` last, `rollback` never throws (#301) |
+| `vault-transaction.ts` | §4.28 | One vault transaction for install, update and adopt: `recordWrite` snapshots a file just before its write (install refuses one), `recordSetAside` moves a collision aside, `commitEngineMetadata` writes `state.json` last, `rollback` never throws, `commit` discards what was set aside (#301) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
