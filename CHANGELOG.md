@@ -39,6 +39,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **The Layer 2 real-terminal tests run on Windows**, under ConPTY, gated on capabilities the test setup probes rather than on the platform. ConPTY's own framing is stripped against an exact allow-list, so the `--json` terminal checks still hold the CLI to byte identity there. They found #282: the diff-prompt flows do not exit under ConPTY.
 
+### Internal (release pipeline order and prerelease tags — #108)
+
+- **The release workflow now publishes to npm only after the GitHub Release, and only the tarball it tested.** It refuses a tag that doesn't match `package.json`'s version. A prerelease (`v0.2.0-beta.1`) goes to npm under its own dist-tag (`beta`, `rc`, or `next`), never `latest`, and its GitHub Release is marked as a prerelease. Before this, npm 11 would have refused such a release after the GitHub Release was already out. A stable release's notes list everything since the previous stable release.
+
 ### Internal (track the vendored kits against their upstream — #280)
 
 - **`npm run vendor:check` and `npm run vendor:update -- <kit> <version>`.** Each vendored kit (`source/*-kit`) carries a `VENDOR.json` that records its upstream package, version, commit and file map.

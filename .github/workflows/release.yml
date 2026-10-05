@@ -1,5 +1,10 @@
 name: Release
 
+# Three jobs in strict order (#108): check → github-release → publish-npm.
+# The GitHub Release (reversible) comes before the npm publish (one-way), and
+# npm gets the exact tarball `check` tested. One workflow, not two: a release
+# created with GITHUB_TOKEN does not trigger another workflow.
+
 on:
   push:
     tags:
@@ -12,6 +17,11 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      dist_tag: ${{ steps.meta.outputs.dist_tag }}
+      tarball: ${{ steps.pack.outputs.tarball }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,23 +29,22 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The tag must be v<package.json version>; the version decides whether
+      # this is a prerelease and its npm dist-tag (never `latest` for one).
+      - id: meta
+        run: node scripts/release/release-meta.mjs "$GITHUB_REF_NAME"
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-
-  publish-npm:
-    needs: check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # The tarball the later jobs ship. Packed from this tested build, so
+      # npm publish uploads exactly what was checked; no rebuild.
+      - id: pack
+        run: echo "tarball=$(npm pack --ignore-scripts | tail -n 1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
         with:
-          node-version: 24
-          cache: npm
-          registry-url: https://registry.npmjs.org
-      - run: npm ci
-      - run: npm run build
-      - run: npm publish --provenance --access public
+          name: package
+          path: ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
 
   github-release:
     needs: check
@@ -45,19 +54,42 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Commits since the previous tag reachable from this one: any tag for a
+      # prerelease, the previous stable tag for a stable release (so v0.2.0
+      # lists everything since v0.1.x, not since its last beta). Sorting all
+      # tags by version would put v0.2.0-beta.1 after v0.2.0.
       - name: Generate changelog from commits
-        id: changelog
+        env:
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
         run: |
-          PREV_TAG=$(git tag --sort=-version:refname | head -2 | tail -1)
-          if [ -z "$PREV_TAG" ]; then
-            PREV_TAG=$(git rev-list --max-parents=0 HEAD)
-          fi
+          EXCLUDE=$([ "$PRERELEASE" = true ] || echo "--exclude=v*-*")
+          PREV_TAG=$(git describe --tags --abbrev=0 $EXCLUDE "${GITHUB_REF_NAME}^" 2>/dev/null || git rev-list --max-parents=0 HEAD)
           echo "## Changes" > /tmp/changelog.md
           echo "" >> /tmp/changelog.md
-          git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges >> /tmp/changelog.md
+          git log "${PREV_TAG}..${GITHUB_REF_NAME}" --pretty=format:"- %s" --no-merges >> /tmp/changelog.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           body_path: /tmp/changelog.md
           generate_release_notes: false
+          prerelease: ${{ needs.check.outputs.prerelease }}
+          make_latest: ${{ needs.check.outputs.prerelease == 'true' && 'false' || 'true' }}
+
+  publish-npm:
+    needs: [check, github-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          name: package
+      # npm 11 refuses a prerelease without --tag; a stable version goes to
+      # latest. Re-running this job alone publishes the same tarball.
+      - env:
+          TARBALL: ${{ needs.check.outputs.tarball }}
+          DIST_TAG: ${{ needs.check.outputs.dist_tag }}
+        run: npm publish "$TARBALL" --provenance --access public --tag "$DIST_TAG"
