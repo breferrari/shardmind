@@ -13,6 +13,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **A Ctrl+C just after an install commits now waits for its cleanup.** Once `state.json` is written, a reinstall or an Overwrite deletes the copies it set aside only to restore on failure. A Ctrl+C at that moment used to let the process exit while that deletion was under way, which could leave some `.shardmind-backup-*` copies behind. Now it waits for the deletion to finish, then says the run had already finished, as before. Nothing is rolled back after the commit, as before.
 - Internal: install's moves, writes, rollback and post-commit cleanup now run in one executor call (`runInstallTransaction`), as update's and adopt's do, so a Ctrl+C or a failure follows the same path in all three commands. The rollback contract, the Ctrl+C end-to-end tests and the terminal tests pass unchanged.
 
+### Fixed (keys typed ahead or pasted reach the right row — #317)
+
+- **In the module review, keys that arrive together now act in order.** A fast typist, a remote shell that batches keystrokes, a key repeat or a paste can deliver several keys at once. An arrow then a space used to toggle the row the cursor was leaving, two spaces toggled only once, and a space then Enter lost the Enter. Each key now acts on what the previous one left.
+- **A pasted answer with a line break submits it.** Pasting `REINSTALL` plus Enter at the reinstall prompt, or any text plus Enter in a text prompt, used to put the line break into the text instead of submitting.
+
 ## [0.2.0] - 2026-10-05
 
 Minor release.
