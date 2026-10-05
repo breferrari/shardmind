@@ -22,7 +22,6 @@ import type {
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { attemptRollback, withRollbackFailures } from './rollback-report.js';
-import { errnoCode } from '../runtime/errno.js';
 import { beginTransaction, type VaultTransaction } from './vault-transaction.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
@@ -748,9 +747,7 @@ async function writeValuesFile(
   try {
     await fsp.writeFile(abs, serialized, 'utf-8');
   } catch (err) {
-    if (errnoCode(err) === 'EACCES') {
-      throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not write ${VALUES_FILE}`, err);
-    }
-    throw err;
+    // Any errno, not only EACCES: a full disk keeps its hint too (#225).
+    throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not write ${VALUES_FILE}`, err);
   }
 }

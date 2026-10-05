@@ -154,7 +154,10 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     return { state, oldValues, newManifest, newSchema };
   }
 
-  it('a full disk shows the disk-full hint, with the path and the errno kept (#313)', async () => {
+  it.each([
+    ['Home.md', /Home\.md/],
+    ['shard-values.yaml', /shard-values\.yaml/],
+  ] as const)('a full disk writing %s shows the disk-full hint, with the path and the errno kept (#313, #301)', async (target, named) => {
     const { state, oldValues, newManifest, newSchema } = await setUpUpdate({
       bumpTo: '0.2.0',
       newHomeTemplate: '# Home v2 {{ user_name }}\n',
@@ -172,7 +175,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       },
       removedFileDecisions: {},
     });
-    const home = path.join(vault, 'Home.md');
+    const home = path.join(vault, target);
     const realWrite = fsp.writeFile;
     const spy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
       if (file === home) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC', path: home });
@@ -194,7 +197,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     spy.mockRestore();
     const { shown, errnos } = asShown(err);
     expect(shown).toMatchObject({ kind: 'known', code: 'UPDATE_WRITE_FAILED' });
-    expect(shown.message).toMatch(/Home\.md/);
+    expect(shown.message).toMatch(named);
     expect(shown.kind === 'known' ? shown.hint : '').toMatch(/The disk is full/);
     expect(errnos).toContain('ENOSPC');
   });
