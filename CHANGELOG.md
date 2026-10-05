@@ -14,6 +14,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
   - `vendor:check` reports kits behind npm's latest, every week in CI, and never fails.
   - `vendor:update` merges a new upstream into each file with ShardMind's own three-way merge. It writes conflicts with markers and lists them, and advances the record only when everything merged; `--resolved` finishes an update after a person resolves its conflicts.
 
+### Changed (Ink 8, React 19.3, chalk 6 — #270)
+
+- **shardmind now runs on Ink 8 with React 19.3 and chalk 6.** It still needs Node 22 or later, as before. A global install carries one copy of chalk, so hook output and shardmind's own output keep agreeing on colour. Commands, help and messages are unchanged.
+
 ### Fixed (an adopt that cannot make its snapshot leaves no empty `.shardmind/` — #269)
 
 - **An adopt that fails before it starts, because its snapshot folder can't be created, no longer leaves an empty `.shardmind/backups/` behind.** It now removes the folders it made on the way, and update does the same. A `.shardmind/` that was already there, or that holds your files, stays.
