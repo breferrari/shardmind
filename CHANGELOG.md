@@ -18,10 +18,12 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **In the module review, keys that arrive together now act in order.** A fast typist, a remote shell that batches keystrokes, a key repeat or a paste can deliver several keys at once. An arrow then a space used to toggle the row the cursor was leaving, two spaces toggled only once, and a space then Enter lost the Enter. Each key now acts on what the previous one left.
 - **A pasted answer with a line break submits it.** Pasting `REINSTALL` plus Enter at the reinstall prompt, or any text plus Enter in a text prompt, used to put the line break into the text instead of submitting.
 
-### Changed (adopt runs on one vault transaction — #301)
+### Changed (adopt and update run on one vault transaction — #301)
 
 - **A failed adopt that moved a renamed file now names the cause.** When `adopt --from-version` could not move a file to its new path, or remove its old one, because the disk was full or a file was locked, the error showed the raw system error. It now says which file it could not move, with the same hint as any other failed write.
-- Internal: adopt snapshots each of your files just before it writes, moves or removes it, instead of all of them up front, and its rollback is the shared vault transaction (`vault-transaction.ts`) that update and install move onto next. The rollback contract passes unchanged.
+- **A failed update that deleted or moved a file now names the cause too.** When an update could not delete a file the release dropped, move a renamed file, or rename a folder whose case the release changed, the error showed the raw system error. It now names the file or folder, with the same hint as any other failed write.
+- **An update's backup holds only the files it changed.** The `Previous copies` folder the update summary points at used to also hold a copy of every file whose conflict you kept as yours. It now holds the files the update wrote, deleted or moved, as they were before.
+- Internal: adopt and update snapshot each of your files just before they write, move or remove it, instead of all of them up front, and their rollback is the shared vault transaction (`vault-transaction.ts`) that install moves onto next. The rollback contract passes unchanged.
 
 ## [0.2.0] - 2026-10-05
 
