@@ -70,14 +70,21 @@ try {
   // even when it renders nothing (#198), and the JSON must be one clean
   // document (#34). Each runner takes the arguments after the command and
   // returns the exit code. `--help` still goes to Pastel.
+  // The status command (the root, no subcommand) runs headless too (#302).
   const HEADLESS_JSON: Record<string, () => Promise<(argv: readonly string[], engineVersion: string | undefined) => Promise<number>>> = {
     validate: async () => (await import('./core/validate-shard.js')).runValidateJson,
+    status: async () => (await import('./commands/headless/status.js')).runStatusJson,
   };
-  const [subcommand, ...subArgs] = process.argv.slice(2);
-  const headless = subcommand === undefined ? undefined : HEADLESS_JSON[subcommand];
-  if (headless && subArgs.includes('--json') && !subArgs.some((a) => a === '-h' || a === '--help')) {
+  const argv = process.argv.slice(2);
+  // A run whose arguments are all options is the root command. A root option
+  // before a subcommand (`shardmind --verbose adopt`) goes to Pastel, which
+  // passes it on (#147).
+  const isRoot = argv.every((arg) => arg.startsWith('-'));
+  const command = isRoot ? 'status' : argv[0];
+  const headless = command === undefined ? undefined : HEADLESS_JSON[command];
+  if (headless && jsonRun) {
     const run = await headless();
-    process.exitCode = await run(subArgs, crash.version);
+    process.exitCode = await run(isRoot ? argv : argv.slice(1), crash.version);
     // A pipe write can still be queued (Windows, macOS): exiting before it
     // drains would cut the document short.
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));

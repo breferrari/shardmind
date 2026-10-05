@@ -19,6 +19,8 @@ export interface BrokenDist {
   readonly cli: string;
   /** Replace the root command's module (`dist/commands/index.js`). */
   setRootCommand(source: string): Promise<void>;
+  /** Replace a subcommand's module (`dist/commands/<name>.js`). */
+  setCommand(name: string, source: string): Promise<void>;
   /** The file name of a built chunk, e.g. `json-output` → `json-output-LK62XWMR.js`. */
   chunk(name: string): Promise<string>;
   /** Replace a built chunk (see `chunk`). */
@@ -42,6 +44,7 @@ export async function createBrokenDist(): Promise<BrokenDist> {
     root,
     cli: path.join(root, 'dist', 'cli.js'),
     setRootCommand: (source) => fs.writeFile(path.join(root, 'dist', 'commands', 'index.js'), source),
+    setCommand: (name, source) => fs.writeFile(path.join(root, 'dist', 'commands', `${name}.js`), source),
     chunk,
     setChunk: async (name, source) => fs.writeFile(path.join(root, 'dist', await chunk(name)), source),
     cleanup: () => fs.rm(root, { recursive: true, force: true, maxRetries: 5 }),
