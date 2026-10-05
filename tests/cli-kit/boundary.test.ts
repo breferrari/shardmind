@@ -1,7 +1,8 @@
 /**
  * cli-kit stays extractable (#277): it imports only ink, react, commander,
  * zod, zod-validation-error, node: built-ins, its own files and the ui-kit's
- * index, and ShardMind reaches it only through its index.
+ * index, and ShardMind reaches it only through its index, or through
+ * `parse.ts`, whose runtime imports never reach Ink (#302).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -52,17 +53,40 @@ describe('cli-kit boundary (#277)', () => {
     expect(outside).toEqual([]);
   });
 
-  it('is reached from the rest of ShardMind only through its index', () => {
+  it('is reached from the rest of ShardMind only through its index and parse.ts', () => {
+    const entries = new Set([path.join(KIT, 'index.js'), path.join(KIT, 'parse.js')]);
     const deep: string[] = [];
     for (const file of sourceFiles(path.join(REPO, 'source'))) {
       if (file.startsWith(KIT + path.sep)) continue;
       for (const spec of specifiers(fs.readFileSync(file, 'utf-8'))) {
         if (!spec.includes('cli-kit')) continue;
         const target = path.resolve(path.dirname(file), spec);
-        if (target !== path.join(KIT, 'index.js')) deep.push(`${path.relative(REPO, file)} → ${spec}`);
+        if (!entries.has(target)) deep.push(`${path.relative(REPO, file)} → ${spec}`);
       }
     }
     expect(deep).toEqual([]);
+  });
+
+  it('keeps parse.ts free of Ink at runtime: no ink, react or ui-kit in its import closure (#302)', () => {
+    // Type-only imports are erased; every other import is followed.
+    const runtimeSpecifiers = (source: string) =>
+      specifiers(source.replace(/^\s*import\s+type\s[^;]+;/gm, '').replace(/^\s*export\s+type\s[^;]+;/gm, ''));
+    const seen = new Set<string>();
+    const reached: string[] = [];
+    const visit = (file: string): void => {
+      if (seen.has(file)) return;
+      seen.add(file);
+      for (const spec of runtimeSpecifiers(fs.readFileSync(file, 'utf-8'))) {
+        if (spec === 'ink' || spec === 'react' || spec.includes('ui-kit')) reached.push(`${path.relative(KIT, file)} → ${spec}`);
+        if (!spec.startsWith('.')) continue;
+        const js = path.resolve(path.dirname(file), spec);
+        const ts = [js.replace(/\.js$/, '.ts'), js.replace(/\.js$/, '.tsx')].find((f) => fs.existsSync(f));
+        if (ts) visit(ts);
+      }
+    };
+    visit(path.join(KIT, 'parse.ts'));
+    expect(seen.size).toBeGreaterThan(3);
+    expect(reached).toEqual([]);
   });
 
   it("keeps Pastel's notice and adds the modifications' copyright", () => {
