@@ -30,6 +30,7 @@ import { walkShardSource } from './modules.js';
 import { loadShardmindignore } from './shardmindignore.js';
 import { mapConcurrent, removePath, sha256 } from './fs-utils.js';
 import { missingFolders, removeCreatedFolders } from './created-folders.js';
+import { environmentHint } from './bug-report.js';
 
 /**
  * Cap on parallel `copyFile` operations during cache population. Same budget
@@ -465,9 +466,11 @@ async function allocateBackupDir(vaultRoot: string, now: Date, kind: 'update' | 
 }
 
 function backupDirError(kind: 'update' | 'adopt', code: 'UPDATE_WRITE_FAILED' | 'ADOPT_WRITE_FAILED', err: unknown): ShardMindError {
-  return new ShardMindError(
+  // A full disk or a locked folder keeps its own hint (#313).
+  const error = new ShardMindError(
     `Could not create the ${kind} backup directory under ${SHARDMIND_DIR}/backups/: ${err instanceof Error ? err.message : String(err)}`,
     code,
-    `Check that ${SHARDMIND_DIR}/ and ${SHARDMIND_DIR}/backups/ are writable folders, then retry.`,
+    environmentHint(err) ?? `Check that ${SHARDMIND_DIR}/ and ${SHARDMIND_DIR}/backups/ are writable folders, then retry.`,
   );
+  return Object.assign(error, { cause: err });
 }

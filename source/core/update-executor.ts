@@ -64,6 +64,7 @@ import type {
   UpdateAction,
   ConflictResolution,
 } from './update-planner.js';
+import { wrapWriteError } from './bug-report.js';
 
 /** Cap fan-out when copying snapshot files during rollback preparation. */
 const SNAPSHOT_CONCURRENCY = 16;
@@ -904,11 +905,7 @@ async function writeFile(vaultRoot: string, outputPath: string, content: string)
     await fsp.mkdir(path.dirname(abs), { recursive: true });
     await fsp.writeFile(abs, content, 'utf-8');
   } catch (err) {
-    throw new ShardMindError(
-      `Could not write ${outputPath} during update`,
-      'UPDATE_WRITE_FAILED',
-      err instanceof Error ? err.message : String(err),
-    );
+    throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not write ${outputPath} during update`, err);
   }
 }
 
@@ -933,11 +930,7 @@ async function writeAction(
       await fsp.writeFile(abs, action.content, 'utf-8');
     }
   } catch (err) {
-    throw new ShardMindError(
-      `Could not write ${action.path} during update`,
-      'UPDATE_WRITE_FAILED',
-      err instanceof Error ? err.message : String(err),
-    );
+    throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not write ${action.path} during update`, err);
   }
 }
 
@@ -958,11 +951,7 @@ async function writeValuesFile(
     await fsp.writeFile(abs, serialized, 'utf-8');
   } catch (err) {
     if (errnoCode(err) === 'EACCES') {
-      throw new ShardMindError(
-        `Could not write ${VALUES_FILE}`,
-        'UPDATE_WRITE_FAILED',
-        'Check filesystem permissions on the vault directory.',
-      );
+      throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not write ${VALUES_FILE}`, err);
     }
     throw err;
   }
