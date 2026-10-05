@@ -10,7 +10,8 @@
  * highlight before any ENTER: in canonical mode the arrow would wait for a
  * newline, so raw mode is really back. The third is kept as mine.
  *
- * Skipped on Windows: PTY semantics + cancellation bridge mismatch (#174).
+ * Runs under Windows ConPTY too (#174): it ends there since the handoff
+ * stops the stdin read, not only raw mode (#282).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -22,7 +23,7 @@ import { createGitHubStub, type GitHubStub } from '../helpers/github-stub.js';
 import { ensureBuilt } from '../helpers/build-once.js';
 import { createInstalledVault, type Vault } from '../helpers/vault.js';
 import { spawnCliPty, ENTER, ARROW_DOWN, CTRL_C, PTY_VIEWPORT_ROWS } from './helpers/pty-cli.js';
-import { exitWaitUntil282, itUntil282, noPty } from './helpers/pty-gates.js';
+import { noPty } from './helpers/pty-gates.js';
 import { buildMutatedShard } from './helpers/build-fixture-shard.js';
 import { tick } from '../../component/helpers.js';
 
@@ -65,7 +66,7 @@ describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)'
     await stub?.close();
   });
 
-  itUntil282()('leaves raw mode for the editor and takes it back for the next prompt', async () => {
+  it('leaves raw mode for the editor and takes it back for the next prompt', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-editor-'));
     let vault: Vault | null = null;
     let edited: string | undefined;
@@ -94,7 +95,7 @@ describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)'
       stub.setLatest(SLUG, '0.2.0');
 
       const handle = await spawnCliPty(['update'], {
-        timeoutMs: exitWaitUntil282(),
+        timeoutMs: 60_000,
         cwd: vault.root,
         env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '', L2_STTY_OUT: sttyOut },
         rows: PTY_VIEWPORT_ROWS,
@@ -150,7 +151,7 @@ describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)'
     }
   }, 180_000);
 
-  itUntil282()('a Ctrl+C while the editor has the terminal cancels the edit, not the update', async () => {
+  it('a Ctrl+C while the editor has the terminal cancels the edit, not the update', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-editor-int-'));
     let vault: Vault | null = null;
     try {
@@ -168,7 +169,7 @@ describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)'
       stub.setLatest(SLUG, '0.2.0');
 
       const handle = await spawnCliPty(['update'], {
-        timeoutMs: exitWaitUntil282(),
+        timeoutMs: 60_000,
         cwd: vault.root,
         env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '' },
         rows: PTY_VIEWPORT_ROWS,
