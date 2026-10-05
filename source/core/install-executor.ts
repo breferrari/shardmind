@@ -34,7 +34,7 @@ import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths, ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
 import { throwIfCancelled } from './run-cancel.js';
-import { reasonOf, type RollbackFailure } from './rollback-report.js';
+import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
 import { missingFolders, removeCreatedFolders } from './created-folders.js';
 import {
   SHARDMIND_DIR,
@@ -557,4 +557,84 @@ function wrapRenderError(outputPath: string, err: unknown): ShardMindError {
     'RENDER_FAILED',
     message,
   );
+}
+
+export interface InstallTransactionOptions extends Omit<InstallRunnerOptions, 'onFileWritten' | 'onDirCreated'> {
+  /**
+   * What to move out of the way, in order: a reinstall's old install, the
+   * untouched files, the stale ones, the user's own.
+   */
+  moveAside: Collision[];
+  /** Absolute paths kept as backups (the Backup policy); every other move is set aside. */
+  keep: ReadonlySet<string>;
+  /** Absolute path of a reinstall's old `.shardmind/`, set aside like the rest. */
+  oldStatePath?: string;
+}
+
+export interface InstallTransactionResult extends InstallResult {
+  /** Kept as `<path>.shardmind-backup-<stamp>` and reported. */
+  backups: BackupRecord[];
+  /** Set aside, but `discardSetAside` could not remove them: still in the vault under their backup name. */
+  left: BackupRecord[];
+}
+
+/** The errors a transaction threw after rolling back (`installRolledBack`). */
+const rolledBack = new WeakSet<object>();
+
+/** Whether the transaction that threw `err` rolled the vault back, for the error view's line. */
+export function installRolledBack(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && rolledBack.has(err);
+}
+
+/**
+ * The whole install, as `use-install-machine` runs it, owning its rollback
+ * the way `runUpdate` and `runAdopt` do (#300). Moves `moveAside` out of the
+ * way, runs `runInstall`, and once state.json is written discards what was
+ * set aside only to be restored on failure (#55). Before that point a
+ * failure, or a cancel through `signal` (#249), rolls back every write,
+ * every created folder and every move, once; after it nothing is rolled
+ * back. A move that fails puts the earlier moves back itself
+ * (`backupCollisions`), and a cancel before the first move has nothing to
+ * undo: a rollback then would delete a reinstall's old `.shardmind/`.
+ * Spec: docs/IMPLEMENTATION.md §4.11b.
+ */
+export async function runInstallTransaction(opts: InstallTransactionOptions): Promise<InstallTransactionResult> {
+  const { moveAside, keep, oldStatePath, ...installOpts } = opts;
+  if (opts.dryRun) {
+    const result = await runInstall(installOpts);
+    return { ...result, backups: [], left: [] };
+  }
+
+  const moved: BackupRecord[] = [];
+  const written: string[] = [];
+  const createdDirs: string[] = [];
+  // A failed move puts the earlier ones back itself, so it is not rolled back.
+  await backupCollisions(moveAside, undefined, (record) => moved.push(record), () => opts.signal?.aborted ?? false);
+  // Cancelled before anything moved: nothing to undo.
+  if (moved.length === 0) throwIfCancelled(opts.signal);
+
+  let result: InstallResult;
+  try {
+    throwIfCancelled(opts.signal);
+    result = await runInstall({
+      ...installOpts,
+      onFileWritten: (outputPath) => written.push(outputPath),
+      onDirCreated: (dir) => createdDirs.push(dir),
+    });
+  } catch (err) {
+    const thrown = withRollbackFailures(
+      err,
+      await attemptRollback(() => rollbackInstall(opts.vaultRoot, written, moved, createdDirs)),
+    );
+    if (typeof thrown === 'object' && thrown !== null) rolledBack.add(thrown);
+    throw thrown;
+  }
+
+  // Committed: state.json is on disk, so nothing below rolls back and a
+  // cancel is ignored. The old install's backups and the owner's own
+  // entries move into the new `.shardmind/` before the rest is removed.
+  const setAside = moved.filter((m) => !keep.has(m.originalPath));
+  const oldState = moved.find((m) => m.originalPath === oldStatePath);
+  const left = await discardSetAside(setAside, oldState, opts.vaultRoot);
+  return { ...result, backups: moved.filter((m) => keep.has(m.originalPath)), left };
 }

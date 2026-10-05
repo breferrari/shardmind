@@ -8,6 +8,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (install owns its rollback, as update and adopt do — #300)
+
+- **A Ctrl+C just after an install commits now waits for its cleanup.** Once `state.json` is written, a reinstall or an Overwrite deletes the copies it set aside only to restore on failure. A Ctrl+C at that moment used to let the process exit while that deletion was under way, which could leave some `.shardmind-backup-*` copies behind. Now it waits for the deletion to finish, then says the run had already finished, as before. Nothing is rolled back after the commit, as before.
+- Internal: install's moves, writes, rollback and post-commit cleanup now run in one executor call (`runInstallTransaction`), as update's and adopt's do, so a Ctrl+C or a failure follows the same path in all three commands. The rollback contract, the Ctrl+C end-to-end tests and the terminal tests pass unchanged.
+
 ## [0.2.0] - 2026-10-05
 
 Minor release.
