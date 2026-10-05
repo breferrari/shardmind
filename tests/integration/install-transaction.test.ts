@@ -31,6 +31,7 @@ import type { Collision } from '../../source/core/install-planner.js';
 import { injectFaults } from '../helpers/fault-fs.js';
 import { trackRun } from '../../source/commands/hooks/shared.js';
 import { treeOf } from '../helpers/vault-tree.js';
+import { asShown } from '../helpers/index.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const MINIMAL_SHARD = path.join(ROOT, 'examples', 'minimal-shard');
@@ -98,7 +99,11 @@ async function userFilesInTheWay(): Promise<Collision[]> {
   return collisions;
 }
 
-/** An installed vault, about to be reinstalled: its old install is set aside. */
+/**
+ * An installed vault, about to be reinstalled: what the machine moves aside,
+ * the old `.shardmind/` and values file first, then the old install's files
+ * at the paths the reinstall writes (#300).
+ */
 async function installedVault(): Promise<Collision[]> {
   const { manifest, schema, selections, values } = await loadMinimal();
   await runInstall({ vaultRoot: vault, manifest, schema, tempDir: MINIMAL_SHARD, resolved: RESOLVED, tarballSha256: 'sha-0', values, selections });
@@ -107,7 +112,11 @@ async function installedVault(): Promise<Collision[]> {
   await fsp.writeFile(path.join(vault, '.shardmind', 'backups', 'update-1', 'Home.md'), 'only copy\n');
   await fsp.rm(path.join(vault, 'shard-values.yaml'));
   await fsp.writeFile(path.join(vault, 'shard-values.yaml'), 'user_name: Old\n');
-  return detectCollisions(vault, ['.shardmind', 'shard-values.yaml']);
+  const { outputs } = await planOutputs(schema, MINIMAL_SHARD, selections, values);
+  return [
+    ...(await detectCollisions(vault, ['.shardmind', 'shard-values.yaml'])),
+    ...(await detectCollisions(vault, outputs.map((o) => o.outputPath))),
+  ];
 }
 
 const rejection = async (p: Promise<unknown>) => p.then(() => { throw new Error('expected a rejection'); }, (err: unknown) => err);
@@ -127,14 +136,14 @@ describe('runInstallTransaction (#300)', () => {
     expect(await fsp.readFile(path.join(vault, 'mine.md'), 'utf-8')).toBe('untouched by the shard\n');
   });
 
-  it('(a) a move that fails puts the earlier moves back itself: nothing to roll back', async () => {
+  it('(a) a move that fails is rolled back: the earlier moves go back (#301)', async () => {
     const collisions = await userFilesInTheWay();
     const before = await treeOf(vault);
     const faults = injectFaults({ fail: { kind: 'rename', nth: 2 } });
     try {
       const err = await rejection(runInstallTransaction(await options(collisions)));
       expect(code(err)).toBe('BACKUP_FAILED');
-      expect(installRolledBack(err)).toBe(false);
+      expect(installRolledBack(err)).toBe(true);
     } finally {
       faults.uninstall();
     }
@@ -157,7 +166,6 @@ describe('runInstallTransaction (#300)', () => {
     abort.abort();
     const err = await rejection(runInstallTransaction(await options([], { signal: abort.signal })));
     expect(code(err)).toBe('CANCELLED');
-    expect(installRolledBack(err)).toBe(false);
     expect(await treeOf(vault)).toEqual(before);
   });
 
@@ -182,7 +190,9 @@ describe('runInstallTransaction (#300)', () => {
     const faults = injectFaults({ fail: { kind: 'write', nth: 3 } });
     try {
       const err = await rejection(runInstallTransaction(await options(collisions)));
-      expect(code(err)).toBe('EIO');
+      // A write failure, its errno kept as the cause (#301).
+      expect(code(err)).toBe('INSTALL_WRITE_FAILED');
+      expect(code((err as { cause?: unknown }).cause)).toBe('EIO');
       expect(installRolledBack(err)).toBe(true);
     } finally {
       faults.uninstall();
@@ -232,7 +242,7 @@ describe('runInstallTransaction (#300)', () => {
   it('(d) a Ctrl+C once state.json is written rolls nothing back, and the discard finishes', async () => {
     const oldInstall = await installedVault();
     const oldState = oldInstall.find((c) => c.outputPath === '.shardmind')!;
-    // The last write is shard-values.yaml, after the last cancel check.
+    // The last write is state.json, after the last cancel check (#301).
     const clean = injectFaults();
     const probe = path.join(work, 'probe');
     await fsp.mkdir(probe);
@@ -267,6 +277,40 @@ describe('runInstallTransaction (#300)', () => {
     const result = await runInstallTransaction(await options(collisions, { dryRun: true }));
     expect(result.backups).toEqual([]);
     expect(result.fileCount).toBeGreaterThan(0);
+    expect(await treeOf(vault)).toEqual(before);
+  });
+
+  it('a file created at a planned output between plan and execute is refused, not overwritten, and the install rolls back (#301)', async () => {
+    const collisions = await userFilesInTheWay();
+    // Planned with Home.md and CLAUDE.md in the way; .claude/settings.json
+    // arrives after planning, where the shard writes too.
+    await fsp.mkdir(path.join(vault, '.claude'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.claude', 'settings.json'), '{"mine": true}\n');
+    const before = await treeOf(vault);
+    const err = await rejection(runInstallTransaction(await options(collisions)));
+    expect(code(err)).toBe('INSTALL_WRITE_FAILED');
+    expect((err as Error).message).toBe('.claude/settings.json appeared after the install was planned');
+    expect((err as { hint?: string }).hint).toMatch(/Run shardmind install again/);
+    expect(installRolledBack(err)).toBe(true);
+    expect(await treeOf(vault)).toEqual(before);
+  });
+
+  it('a full disk while writing shows INSTALL_WRITE_FAILED with the disk-full hint, and rolls back (#301)', async () => {
+    const collisions = await userFilesInTheWay();
+    const before = await treeOf(vault);
+    const home = path.join(vault, 'Home.md');
+    const realWrite = fsp.writeFile;
+    vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (file === home) throw Object.assign(new Error(`ENOSPC: no space left on device, open '${home}'`), { code: 'ENOSPC', path: home });
+      return realWrite(file, data, opts);
+    });
+    const err = await rejection(runInstallTransaction(await options(collisions)));
+    vi.restoreAllMocks();
+    const { shown, errnos } = asShown(err);
+    expect(shown).toMatchObject({ kind: 'known', code: 'INSTALL_WRITE_FAILED' });
+    expect(shown.message).toMatch(/Home\.md/);
+    expect(shown.kind === 'known' ? shown.hint : '').toMatch(/The disk is full/);
+    expect(errnos).toContain('ENOSPC');
     expect(await treeOf(vault)).toEqual(before);
   });
 });

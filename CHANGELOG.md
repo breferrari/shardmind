@@ -18,12 +18,19 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **In the module review, keys that arrive together now act in order.** A fast typist, a remote shell that batches keystrokes, a key repeat or a paste can deliver several keys at once. An arrow then a space used to toggle the row the cursor was leaving, two spaces toggled only once, and a space then Enter lost the Enter. Each key now acts on what the previous one left.
 - **A pasted answer with a line break submits it.** Pasting `REINSTALL` plus Enter at the reinstall prompt, or any text plus Enter in a text prompt, used to put the line break into the text instead of submitting.
 
-### Changed (adopt and update run on one vault transaction — #301)
+### Fixed (install, update and adopt run on one vault transaction — #301)
+
+- **A failed adopt into a clone of the shard repo keeps the clone's own files.** A clone carries the shard's `.shardmind/shard.yaml` and `shard-schema.yaml`. When an adopt into it failed, its rollback deleted them. They are now put back, and an adopt that fails before writing its own `.shardmind/` files leaves them untouched.
+- **An install never overwrites a file that appeared after it was planned.** Install moves the files in its way aside before it writes. A file created at one of its paths after that used to be overwritten, and deleted if the install then failed. It is now refused, the install rolls back, and the error names the file: run `shardmind install` again to plan around it.
+- **A failed install write names the cause.** A full disk or a locked file during an install showed the raw system error. It is now `INSTALL_WRITE_FAILED`, naming the file, with the same hint as a failed update or adopt write.
+
+### Changed (install, update and adopt run on one vault transaction — #301)
 
 - **A failed adopt that moved a renamed file now names the cause.** When `adopt --from-version` could not move a file to its new path, or remove its old one, because the disk was full or a file was locked, the error showed the raw system error. It now says which file it could not move, with the same hint as any other failed write.
 - **A failed update that deleted or moved a file now names the cause too.** When an update could not delete a file the release dropped, move a renamed file, or rename a folder whose case the release changed, the error showed the raw system error. It now names the file or folder, with the same hint as any other failed write.
 - **An update's backup holds only the files it changed.** The `Previous copies` folder the update summary points at used to also hold a copy of every file whose conflict you kept as yours. It now holds the files the update wrote, deleted or moved, as they were before.
-- Internal: adopt and update snapshot each of your files just before they write, move or remove it, instead of all of them up front, and their rollback is the shared vault transaction (`vault-transaction.ts`) that install moves onto next. The rollback contract passes unchanged.
+- Internal: install writes `.shardmind/state.json` last, as update and adopt do, so its point of no return is that one write.
+- Internal: adopt and update snapshot each of your files just before they write, move or remove it, instead of all of them up front. Install, update and adopt now share one vault transaction (`vault-transaction.ts`) for their moves, their rollback and their commit. The rollback contract passes, with a new row per command that fails the `state.json` write.
 
 ## [0.2.0] - 2026-10-05
 

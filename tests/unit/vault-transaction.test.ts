@@ -10,6 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { beginTransaction } from '../../source/core/vault-transaction.js';
 import { renameCaseInPlace } from '../../source/core/rename-migrations.js';
+import { asShown } from '../helpers/index.js';
 
 let vault: string;
 
@@ -273,5 +274,212 @@ describe('vault transaction over a prior install (update, #301)', () => {
     if (caseFolding) expect(await renameCaseInPlace(vault, 'Brain', 'brain', null, tx.journal)).toBe(true);
     expect(await tx.rollback()).toEqual([]);
     expect(await fsp.readdir(vault)).toContain('Brain');
+  });
+});
+
+describe('vault transaction for install (#301)', () => {
+  const beginInstall = (signal?: AbortSignal) =>
+    beginTransaction(vault, { kind: 'install', noPriorInstall: true, signal, now: new Date('2026-10-05T12:00:00Z') });
+  const at = (rel: string) => path.join(vault, rel);
+
+  it('has no snapshot folder and makes nothing under .shardmind/', async () => {
+    const tx = await beginInstall();
+    expect(tx.dir).toBeNull();
+    expect(await exists(at('.shardmind'))).toBe(false);
+  });
+
+  it('with no snapshot, will not record over an existing file (install refuses one first, §4.11b)', async () => {
+    const tx = await beginInstall();
+    await fsp.writeFile(at('Home.md'), 'arrived after planning\n');
+    await expect(tx.recordWrite('Home.md')).rejects.toThrow('Home.md exists, and this transaction has no snapshot to keep it in');
+    expect(await tx.rollback()).toEqual([]);
+    expect(await read('Home.md')).toBe('arrived after planning\n');
+  });
+
+  it('moves a path aside under a backup name, and the rollback moves it back', async () => {
+    await fsp.mkdir(at('brain'));
+    await fsp.writeFile(at('brain/Note.md'), 'mine\n');
+    await fsp.writeFile(at('Home.md'), 'my home\n');
+    const tx = await beginInstall();
+    const folder = await tx.recordSetAside(at('brain'), false);
+    const file = await tx.recordSetAside(at('Home.md'), true);
+    expect(folder.backupPath).toBe(`${at('brain')}.shardmind-backup-2026-10-05T12-00-00`);
+    expect(await exists(at('Home.md'))).toBe(false);
+    // The install writes at both paths.
+    await tx.recordWrite('Home.md');
+    await fsp.writeFile(at('Home.md'), 'shard home\n');
+    await tx.recordWrite('brain/Note.md');
+    await fsp.mkdir(at('brain'));
+    await fsp.writeFile(at('brain/Note.md'), 'shard note\n');
+
+    expect(await tx.rollback()).toEqual([]);
+    expect(await read('Home.md')).toBe('my home\n');
+    expect(await read('brain/Note.md')).toBe('mine\n');
+    expect((await fsp.readdir(vault)).sort()).toEqual(['Home.md', 'brain']);
+    expect(file.backupPath).toContain('.shardmind-backup-');
+  });
+
+  it('takes the next free backup name', async () => {
+    await fsp.writeFile(at('Home.md'), 'mine\n');
+    await fsp.writeFile(at('Home.md.shardmind-backup-2026-10-05T12-00-00'), 'an older backup\n');
+    const tx = await beginInstall();
+    const moved = await tx.recordSetAside(at('Home.md'), true);
+    expect(moved.backupPath).toBe(`${at('Home.md')}.shardmind-backup-2026-10-05T12-00-00.1`);
+  });
+
+  it('a failed move is BACKUP_FAILED, and the rollback puts the earlier moves back (#209)', async () => {
+    await fsp.writeFile(at('a.md'), 'a\n');
+    await fsp.writeFile(at('b.md'), 'b\n');
+    const tx = await beginInstall();
+    await tx.recordSetAside(at('a.md'), false);
+    const realRename = fsp.rename;
+    vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      if (from === at('b.md')) throw Object.assign(new Error('simulated EPERM'), { code: 'EPERM' });
+      return realRename(from, to);
+    });
+    await expect(tx.recordSetAside(at('b.md'), false)).rejects.toMatchObject({ code: 'BACKUP_FAILED' });
+    vi.restoreAllMocks();
+    expect(await tx.rollback()).toEqual([]);
+    expect((await fsp.readdir(vault)).sort()).toEqual(['a.md', 'b.md']);
+  });
+
+  it('no free backup name is BACKUP_FAILED, and the rollback puts the earlier moves back (#209)', async () => {
+    await fsp.writeFile(at('a.md'), 'a');
+    await fsp.writeFile(at('b.md'), 'b');
+    const tx = await beginInstall();
+    await tx.recordSetAside(at('a.md'), false);
+    const realAccess = fsp.access;
+    vi.spyOn(fsp, 'access').mockImplementation(async (p, mode) => {
+      // Every name for b.md is taken.
+      if (String(p).startsWith(`${at('b.md')}.shardmind-backup-`)) return;
+      return realAccess(p, mode);
+    });
+    await expect(tx.recordSetAside(at('b.md'), false)).rejects.toMatchObject({ code: 'BACKUP_FAILED' });
+    vi.restoreAllMocks();
+    expect(await tx.rollback()).toEqual([]);
+    expect((await fsp.readdir(vault)).sort()).toEqual(['a.md', 'b.md']);
+  });
+
+  it('a full disk while moving a path aside is BACKUP_FAILED with the disk-full hint (#225, #301)', async () => {
+    await fsp.writeFile(at('Home.md'), 'mine\n');
+    const tx = await beginInstall();
+    const realRename = fsp.rename;
+    vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      if (from === at('Home.md')) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+      return realRename(from, to);
+    });
+    const err = await tx.recordSetAside(at('Home.md'), true).catch((e: unknown) => e);
+    vi.restoreAllMocks();
+    const { shown, errnos } = asShown(err);
+    expect(shown).toMatchObject({ kind: 'known', code: 'BACKUP_FAILED' });
+    expect(shown.kind === 'known' ? shown.hint : '').toMatch(/The disk is full/);
+    expect(errnos).toContain('ENOSPC');
+    expect(await read('Home.md')).toBe('mine\n');
+  });
+
+  it('a set-aside that cannot be moved back is reported with where it still is', async () => {
+    await fsp.writeFile(at('Home.md'), 'mine\n');
+    const tx = await beginInstall();
+    const moved = await tx.recordSetAside(at('Home.md'), false);
+    const realRename = fsp.rename;
+    vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      if (from === moved.backupPath) throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
+      return realRename(from, to);
+    });
+    const failures = await tx.rollback();
+    vi.restoreAllMocks();
+    expect(failures).toEqual([{ path: 'Home.md', reason: 'restore failed: simulated EBUSY', backup: moved.backupPath }]);
+    expect(await fsp.readFile(moved.backupPath, 'utf-8')).toBe('mine\n');
+  });
+
+  it('commit discards what was set aside and keeps the backups, carrying the old .shardmind/ over (#55, #237)', async () => {
+    await fsp.mkdir(at('.shardmind/backups/update-old'), { recursive: true });
+    await fsp.writeFile(at('.shardmind/state.json'), '{"old":true}');
+    await fsp.writeFile(at('.shardmind/boundary-ignore'), 'mine\n');
+    await fsp.writeFile(at('.shardmind/backups/update-old/x.md'), 'only copy\n');
+    await fsp.writeFile(at('Stale.md'), 'stale\n');
+    await fsp.writeFile(at('Own.md'), 'own\n');
+    const tx = await beginInstall();
+    const oldState = await tx.recordSetAside(at('.shardmind'), false);
+    await tx.recordSetAside(at('Stale.md'), false);
+    const own = await tx.recordSetAside(at('Own.md'), true);
+    await tx.commitEngineMetadata({
+      beforeState: async () => {
+        await fsp.mkdir(at('.shardmind'), { recursive: true });
+      },
+      state: () => fsp.writeFile(at('.shardmind/state.json'), '{"new":true}'),
+    });
+    const { kept, left } = await tx.commit({ oldStatePath: oldState.originalPath });
+    expect(kept).toEqual([own]);
+    expect(left).toEqual([]);
+    expect(await exists(oldState.backupPath)).toBe(false);
+    expect(await exists(at('Stale.md'))).toBe(false);
+    expect(await read('.shardmind/boundary-ignore')).toBe('mine\n');
+    expect(await read('.shardmind/backups/update-old/x.md')).toBe('only copy\n');
+    expect(await read('.shardmind/state.json')).toBe('{"new":true}');
+  });
+
+  it('before its engine commit, a rollback leaves the engine entries already there alone', async () => {
+    await fsp.mkdir(at('.shardmind'));
+    await fsp.writeFile(at('.shardmind/shard.yaml'), 'a clone\'s own\n');
+    const tx = await beginInstall();
+    await tx.recordWrite('Home.md');
+    await fsp.writeFile(at('Home.md'), 'shard home\n');
+    expect(await tx.rollback()).toEqual([]);
+    expect(await read('.shardmind/shard.yaml')).toBe('a clone\'s own\n');
+    expect(await exists(at('Home.md'))).toBe(false);
+  });
+
+  it('during its engine commit, the entries already there are set aside and come back on rollback', async () => {
+    await fsp.mkdir(at('.shardmind/templates'), { recursive: true });
+    await fsp.writeFile(at('.shardmind/shard.yaml'), 'a clone\'s own\n');
+    await fsp.writeFile(at('.shardmind/templates/t.md'), 'theirs\n');
+    const tx = await beginInstall();
+    await expect(
+      tx.commitEngineMetadata({
+        beforeState: async () => {
+          await fsp.mkdir(at('.shardmind/templates'), { recursive: true });
+          await fsp.writeFile(at('.shardmind/shard.yaml'), 'the engine cache\n');
+          throw new Error('disk full');
+        },
+        state: async () => {},
+      }),
+    ).rejects.toThrow('disk full');
+    expect(await tx.rollback()).toEqual([]);
+    expect(await read('.shardmind/shard.yaml')).toBe('a clone\'s own\n');
+    expect(await read('.shardmind/templates/t.md')).toBe('theirs\n');
+    expect((await fsp.readdir(at('.shardmind'))).sort()).toEqual(['shard.yaml', 'templates']);
+  });
+
+  it('a rollback removes a .shardmind/ the engine commit made, once empty', async () => {
+    const tx = await beginInstall();
+    await expect(
+      tx.commitEngineMetadata({
+        beforeState: async () => {
+          await fsp.mkdir(at('.shardmind/templates'), { recursive: true });
+          throw new Error('disk full');
+        },
+        state: async () => {},
+      }),
+    ).rejects.toThrow('disk full');
+    expect(await tx.rollback()).toEqual([]);
+    expect(await exists(at('.shardmind'))).toBe(false);
+  });
+
+  it("a rollback that did nothing leaves the user's empty .shardmind/ there", async () => {
+    await fsp.mkdir(at('.shardmind'));
+    const tx = await beginInstall();
+    expect(await tx.rollback()).toEqual([]);
+    expect(await exists(at('.shardmind'))).toBe(true);
+  });
+
+  it('a Ctrl+C before a move stops it, and nothing is moved', async () => {
+    await fsp.writeFile(at('Home.md'), 'mine\n');
+    const abort = new AbortController();
+    abort.abort();
+    const tx = await beginInstall(abort.signal);
+    await expect(tx.recordSetAside(at('Home.md'), false)).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(await read('Home.md')).toBe('mine\n');
+    expect(await tx.rollback()).toEqual([]);
   });
 });

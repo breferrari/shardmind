@@ -14,11 +14,8 @@ import {
   defaultModuleSelections,
   detectCollisions,
 } from '../../source/core/install-planner.js';
-import {
-  runInstall,
-  rollbackInstall,
-  backupCollisions,
-} from '../../source/core/install-executor.js';
+import { runInstall } from '../../source/core/install-executor.js';
+import { beginTransaction, type VaultTransaction } from '../../source/core/vault-transaction.js';
 import { runPostInstallHook } from '../../source/core/hook.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
 import { makeShardSource } from '../helpers/make-shard-source.js';
@@ -399,7 +396,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     });
   });
 
-  it('backupCollisions renames existing files out of the way', async () => {
+  it('moves each planned collision out of the way (#301)', async () => {
     await fsp.writeFile(path.join(vault, 'Home.md'), 'user content', 'utf-8');
 
     const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
@@ -407,7 +404,9 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     const { outputs } = await planOutputs(schema, MINIMAL_SHARD, selections);
     const collisions = await detectCollisions(vault, outputs.map((o) => o.outputPath));
 
-    const backups = await backupCollisions(collisions);
+    const tx = await beginTransaction(vault, { kind: 'install', noPriorInstall: true });
+    const backups = [];
+    for (const c of collisions) backups.push(await tx.recordSetAside(c.absolutePath, true));
     expect(backups.length).toBeGreaterThan(0);
     await expect(fsp.access(path.join(vault, 'Home.md'))).rejects.toThrow();
     await expect(fsp.access(backups[0]!.backupPath)).resolves.toBeUndefined();
@@ -445,69 +444,47 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     expect(alwaysIncludedFileCount).toBeGreaterThanOrEqual(2);
   });
 
-  it('rollback restores backed-up files', async () => {
-    const original = path.join(vault, 'Home.md');
-    await fsp.writeFile(original, 'user content', 'utf-8');
-
+  /** The minimal shard installed on a transaction, as `runInstallTransaction` runs it. */
+  async function installOn(tx: VaultTransaction) {
     const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
     const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
     const selections = defaultModuleSelections(schema);
-    const validator = buildValuesValidator(schema);
-    const values = validator.parse(resolveComputedDefaults(schema, VALUES));
-    const { outputs } = await planOutputs(schema, MINIMAL_SHARD, selections);
-    const collisions = await detectCollisions(vault, outputs.map((o) => o.outputPath));
-    const backups = await backupCollisions(collisions);
-
-    const result = await runInstall({
-      vaultRoot: vault,
-      manifest,
-      schema,
-      tempDir: MINIMAL_SHARD,
-      resolved: RESOLVED,
-      tarballSha256: 'deadbeef',
-      values,
-      selections,
+    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+    return runInstall({
+      vaultRoot: vault, manifest, schema, tempDir: MINIMAL_SHARD, resolved: RESOLVED,
+      tarballSha256: 'deadbeef', values, selections, tx,
     });
+  }
+  const beginInstall = () => beginTransaction(vault, { kind: 'install', noPriorInstall: true });
+
+  it('rollback restores backed-up files', async () => {
+    const original = path.join(vault, 'Home.md');
+    await fsp.writeFile(original, 'user content', 'utf-8');
+    const tx = await beginInstall();
+    await tx.recordSetAside(original, true);
+    await installOn(tx);
 
     // Simulate a post-install failure and roll back
-    await rollbackInstall(vault, result.writtenPaths, backups, result.createdDirs);
+    expect(await tx.rollback()).toEqual([]);
 
-    const restored = await fsp.readFile(original, 'utf-8');
-    expect(restored).toBe('user content');
-  });
-
-  it('rollback returns each backup it could not move back, with where it is (#247)', async () => {
-    const original = path.join(vault, 'Home.md');
-    const backupPath = path.join(vault, 'Home.md.shardmind-backup-1');
-    await fsp.writeFile(backupPath, 'user content', 'utf-8');
-    await fsp.writeFile(original, 'shard content', 'utf-8');
-    const realRename = fsp.rename;
-    const renameSpy = vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
-      if (from === backupPath) throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
-      return realRename(from, to);
-    });
-    try {
-      const failures = await rollbackInstall(vault, [], [{ originalPath: original, backupPath }], []);
-      expect(failures).toEqual([
-        { path: 'Home.md', reason: 'restore failed: simulated EBUSY', backup: backupPath },
-      ]);
-      expect(await fsp.readFile(backupPath, 'utf-8')).toBe('user content');
-    } finally {
-      renameSpy.mockRestore();
-    }
+    expect(await fsp.readFile(original, 'utf-8')).toBe('user content');
   });
 
   it("rollback reports a written file it could not remove, never a folder that is the user's (#247)", async () => {
+    const tx = await beginInstall();
+    await tx.recordWrite('Locked.md');
     await fsp.writeFile(path.join(vault, 'Locked.md'), 'shard content', 'utf-8');
+    await tx.recordWrite('Theirs.md');
+    // A folder the user put at a recorded file path during the run.
     await fsp.mkdir(path.join(vault, 'Theirs.md', 'inside'), { recursive: true });
     const lockedAbs = path.join(vault, 'Locked.md');
-    const realUnlink = fsp.unlink;
-    const spy = vi.spyOn(fsp, 'unlink').mockImplementation(async (p) => {
+    const realRm = fsp.rm;
+    const spy = vi.spyOn(fsp, 'rm').mockImplementation(async (p, o) => {
       if (p === lockedAbs) throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
-      return realUnlink(p);
+      return realRm(p, o);
     });
     try {
-      const failures = await rollbackInstall(vault, ['Locked.md', 'Theirs.md'], [], []);
+      const failures = await tx.rollback();
       expect(failures).toEqual([{ path: 'Locked.md', reason: 'unlink failed: simulated EBUSY' }]);
     } finally {
       spy.mockRestore();
@@ -515,30 +492,9 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     expect((await fsp.stat(path.join(vault, 'Theirs.md'))).isDirectory()).toBe(true);
   });
 
-  it('an install whose signal is aborted writes nothing and throws CANCELLED (#249)', async () => {
-    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
-    const selections = defaultModuleSelections(schema);
-    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
-    const abort = new AbortController();
-    abort.abort();
-    await expect(
-      runInstall({
-        vaultRoot: vault,
-        manifest,
-        schema,
-        tempDir: MINIMAL_SHARD,
-        resolved: RESOLVED,
-        tarballSha256: 'deadbeef',
-        values,
-        selections,
-        signal: abort.signal,
-      }),
-    ).rejects.toMatchObject({ code: 'CANCELLED' });
-    expect(await fsp.readdir(vault)).toEqual([]);
-  });
-
   it('rollback reports a folder it created that rmdir refuses for another reason than holding files (#258)', async () => {
+    const tx = await beginInstall();
+    await tx.recordWrite('made/Note.md');
     await fsp.mkdir(path.join(vault, 'made'));
     const madeAbs = path.join(vault, 'made');
     const realRmdir = fsp.rmdir;
@@ -547,7 +503,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
       return realRmdir(p, o);
     });
     try {
-      const failures = await rollbackInstall(vault, [], [], ['made']);
+      const failures = await tx.rollback();
       expect(failures).toEqual([{ path: 'made', reason: 'remove failed: simulated EBUSY' }]);
     } finally {
       spy.mockRestore();
@@ -555,24 +511,10 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   });
 
   it('rollback removes all written files and the .shardmind directory', async () => {
-    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
-    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
-    const selections = defaultModuleSelections(schema);
-    const validator = buildValuesValidator(schema);
-    const values = validator.parse(resolveComputedDefaults(schema, VALUES));
+    const tx = await beginInstall();
+    const result = await installOn(tx);
 
-    const result = await runInstall({
-      vaultRoot: vault,
-      manifest,
-      schema,
-      tempDir: MINIMAL_SHARD,
-      resolved: RESOLVED,
-      tarballSha256: 'deadbeef',
-      values,
-      selections,
-    });
-
-    await rollbackInstall(vault, result.writtenPaths, [], result.createdDirs);
+    expect(await tx.rollback()).toEqual([]);
 
     // All originally-written files are gone
     for (const p of result.writtenPaths) {
@@ -584,49 +526,28 @@ describe('install pipeline (against examples/minimal-shard)', () => {
   });
 
   describe('rollback removes only what the install made (#215)', () => {
-    async function freshInstall() {
-      const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
-      const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
-      const selections = defaultModuleSelections(schema);
-      const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
-      return runInstall({
-        vaultRoot: vault, manifest, schema, tempDir: MINIMAL_SHARD, resolved: RESOLVED,
-        tarballSha256: 'deadbeef', values, selections,
-      });
-    }
-
     it("keeps the user's .shardmind/ file and an empty folder they made", async () => {
       await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
       await fsp.writeFile(path.join(vault, '.shardmind', 'boundary-ignore'), 'archive/\n', 'utf-8');
       await fsp.mkdir(path.join(vault, 'brain'), { recursive: true });
-      const result = await freshInstall();
-      expect(result.createdDirs).not.toContain('brain');
-      expect(result.createdDirs).not.toContain('.shardmind');
+      const tx = await beginInstall();
+      await installOn(tx);
 
-      await rollbackInstall(vault, result.writtenPaths, [], result.createdDirs);
+      expect(await tx.rollback()).toEqual([]);
 
       expect((await fsp.readdir(vault)).sort()).toEqual(['.shardmind', 'brain']);
       expect(await fsp.readdir(path.join(vault, '.shardmind'))).toEqual(['boundary-ignore']);
       expect(await fsp.readdir(path.join(vault, 'brain'))).toEqual([]);
     });
 
-    it("removes the engine's .shardmind/ entries even when written after a Ctrl+C snapshot", async () => {
-      const result = await freshInstall();
-      // A Ctrl+C rollback sees the lists as they were when it started, before
-      // runInstall reached the cache and state writes.
-      const early = result.writtenPaths.filter((p) => !p.startsWith('.shardmind/') && p !== 'shard-values.yaml');
-      const earlyDirs = result.createdDirs.filter((d) => d !== '.shardmind' && !d.startsWith('.shardmind/'));
-      await rollbackInstall(vault, [...early, 'shard-values.yaml'], [], [...earlyDirs, '.shardmind']);
-      expect(await fsp.readdir(vault)).toEqual([]);
-    });
-
     it('leaves a folder the user put at a planned file path', async () => {
-      const result = await freshInstall();
+      const tx = await beginInstall();
+      await installOn(tx);
       // Simulate a folder that appeared at a recorded file path.
       await fsp.unlink(path.join(vault, 'Home.md'));
       await fsp.mkdir(path.join(vault, 'Home.md'));
       await fsp.writeFile(path.join(vault, 'Home.md', 'mine.txt'), 'mine\n', 'utf-8');
-      await rollbackInstall(vault, result.writtenPaths, [], result.createdDirs);
+      await tx.rollback();
       expect(await fsp.readFile(path.join(vault, 'Home.md', 'mine.txt'), 'utf-8')).toBe('mine\n');
     });
   });

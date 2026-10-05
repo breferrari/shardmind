@@ -360,9 +360,15 @@ Thrown by `source/core/install-planner.ts` and `source/core/install-executor.ts`
 
 ### `BACKUP_FAILED`
 
-**Meaning:** `fsp.rename` failed while backing up a colliding path, OR 1000+ backups with the same timestamp already exist (shouldn't happen).
+**Meaning:** `fsp.rename` failed while moving a colliding path aside, OR 1000+ backups with the same timestamp already exist (shouldn't happen). The install's rollback puts the earlier moves back; if it cannot, the install fails with `ROLLBACK_INCOMPLETE` instead, naming where each one still is (#301).
 
 **Remedy:** Check permissions at the path referenced in the error. Clean up stale `*.shardmind-backup-*` backup paths if you somehow have a thousand of them.
+
+### `INSTALL_WRITE_FAILED`
+
+**Meaning:** A write during the install executor failed: the `mkdir` and write of a planned output, or the `shard-values.yaml` write (#301). Typically filesystem-level (permissions, a full disk, an antivirus lock). Also thrown before the write when a file appeared at a planned output after the install was planned: the install moved the paths it planned to replace out of the way, and would otherwise overwrite one it never saw. Nothing is overwritten, and the install rolls back. When the rollback could not restore every file, the install fails with `ROLLBACK_INCOMPLETE` instead, naming this code in its message (#247).
+
+**Remedy:** For a file that appeared after planning, run `shardmind install` again: it plans around the file, and offers to back it up. Otherwise check permissions on the vault directory and the mentioned path, and retry. When the cause is an environmental errno (a full disk, a locked or read-only file, a permission refusal), the hint is that errno's own ("The disk is full…", #225), and the errno is kept as the error's `cause`.
 
 ### `CANCELLED`
 

@@ -361,13 +361,15 @@ export const ENGINE_INSTALL_WRITES: readonly string[] = [STATE_FILE, CACHED_MANI
  * (`state.json`, `shard.yaml`, `shard-schema.yaml`, `templates/`, and the
  * run's own snapshot folder when given); `backups/` goes only with that
  * snapshot and only if it is then empty, and `.shardmind/` itself only when
- * `removeEmptyDir` is set and it is empty. `ENGINE_INSTALL_WRITES` lists the
- * entries, so install's rollback can leave them to this one place. The vault owner's files there (`boundary-ignore`, #190) are never
- * touched. Best effort: each failure is returned, never thrown.
+ * `removeEmptyDir` is set and it is empty. `entries: false` skips the
+ * engine entries, for a rollback that removes them before it restores what
+ * it set aside and the folders after (§4.28 step 5). The vault owner's files
+ * there (`boundary-ignore`, #190) are never touched. Best effort: each
+ * failure is returned, never thrown.
  */
 export async function removeEngineWrites(
   vaultRoot: string,
-  opts: { snapshotDir?: string | null; removeEmptyDir: boolean },
+  opts: { entries?: boolean; snapshotDir?: string | null; removeEmptyDir: boolean },
 ): Promise<Array<{ path: string; reason: string }>> {
   const failures: Array<{ path: string; reason: string }> = [];
   const attempt = async (rel: string, op: () => Promise<unknown>, tolerate: (code: string | undefined) => boolean) => {
@@ -379,10 +381,12 @@ export async function removeEngineWrites(
       }
     }
   };
-  for (const rel of ENGINE_INSTALL_WRITES.filter((r) => r !== CACHED_TEMPLATES)) {
-    await attempt(rel, () => fsp.unlink(path.join(vaultRoot, rel)), (code) => code === 'ENOENT');
+  if (opts.entries !== false) {
+    for (const rel of ENGINE_INSTALL_WRITES.filter((r) => r !== CACHED_TEMPLATES)) {
+      await attempt(rel, () => fsp.unlink(path.join(vaultRoot, rel)), (code) => code === 'ENOENT');
+    }
+    await attempt(CACHED_TEMPLATES, () => removePath(path.join(vaultRoot, CACHED_TEMPLATES)), () => false);
   }
-  await attempt(CACHED_TEMPLATES, () => removePath(path.join(vaultRoot, CACHED_TEMPLATES)), () => false);
   if (opts.snapshotDir) {
     const snapshot = opts.snapshotDir;
     await attempt(path.relative(vaultRoot, snapshot), () => removePath(snapshot), () => false);

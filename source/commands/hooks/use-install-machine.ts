@@ -554,8 +554,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         finish({
           kind: 'error',
           error: err as Error,
-          // Only when the transaction rolled back: a failed move puts itself
-          // back, and a failure after state.json rolls nothing back.
+          // Only when the transaction rolled back: a failure after
+          // state.json rolls nothing back.
           detail: installRolledBack(err)
             ? rollbackDetail(err, 'Rolled back partial install (including any pre-install backups).')
             : undefined,
