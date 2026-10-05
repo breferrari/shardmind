@@ -788,16 +788,27 @@ async function snapshotForRollback(
 /** Records whether `.shardmind/templates/` existed when the snapshot was taken (#264). */
 const TEMPLATES_SNAPSHOT_MARKER = 'templates-snapshot.json';
 
-/** The marker, or undefined when the snapshot never finished (or is unreadable). */
-async function readTemplatesMarker(backupDir: string): Promise<{ existed: boolean } | undefined> {
+/**
+ * The marker; `'absent'` when the snapshot never finished (no marker); or
+ * why it cannot be used, when it is there but unreadable or malformed
+ * (#294). Only a missing marker means a snapshot cut short.
+ */
+async function readTemplatesMarker(
+  backupDir: string,
+): Promise<{ existed: boolean } | 'absent' | { unreadable: string }> {
+  let raw: string;
   try {
-    const parsed = JSON.parse(await fsp.readFile(path.join(backupDir, TEMPLATES_SNAPSHOT_MARKER), 'utf-8')) as {
-      existed?: unknown;
-    };
-    return typeof parsed.existed === 'boolean' ? { existed: parsed.existed } : undefined;
-  } catch {
-    return undefined;
+    raw = await fsp.readFile(path.join(backupDir, TEMPLATES_SNAPSHOT_MARKER), 'utf-8');
+  } catch (err) {
+    return isEnoent(err) ? 'absent' : { unreadable: reasonOf(err) };
   }
+  try {
+    const parsed = JSON.parse(raw) as { existed?: unknown };
+    if (typeof parsed?.existed === 'boolean') return { existed: parsed.existed };
+  } catch {
+    // Not JSON: reported below like any other malformed marker.
+  }
+  return { unreadable: `${TEMPLATES_SNAPSHOT_MARKER} is not { existed: boolean }` };
 }
 
 async function copyOptional(src: string, dst: string): Promise<void> {
@@ -849,8 +860,19 @@ export async function rollbackUpdate(
   // none of before (#264). Only when the snapshot says it is complete: a
   // snapshot cut short by a failed copy restores by copying over, as it
   // never touches templates it did not hold.
-  const marker = await readTemplatesMarker(backupDir);
+  // A marker that is there but unusable is a failure (#294): restore by
+  // copying over, which brings the snapshot's templates back, and name the
+  // cache, since templates the new version added may still be in it.
+  const read = await readTemplatesMarker(backupDir);
+  const marker = read === 'absent' || 'unreadable' in read ? undefined : read;
   await restoreTree(cacheDir, vaultRoot, failures, marker === undefined ? {} : { skip: [CACHED_TEMPLATES] });
+  if (read !== 'absent' && 'unreadable' in read) {
+    failures.push({
+      path: toPosix(vaultRoot, path.join(vaultRoot, CACHED_TEMPLATES)),
+      reason: `templates marker unreadable: ${read.unreadable}`,
+      backup: path.join(cacheDir, CACHED_TEMPLATES),
+    });
+  }
   if (marker !== undefined) {
     await restoreDirExactly(
       marker.existed ? path.join(cacheDir, CACHED_TEMPLATES) : path.join(backupDir, 'no-templates-cache'),

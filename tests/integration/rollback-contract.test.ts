@@ -279,12 +279,6 @@ interface KnownDefect {
 }
 
 const KNOWN_DEFECTS: KnownDefect[] = [
-  {
-    issue: '#294',
-    pipeline: 'update',
-    fault: 'rollback-read',
-    leaves: ['.shardmind/templates/Fresh', '.shardmind/templates/Fresh/Deep', '.shardmind/templates/Fresh/Deep/note.md'],
-  },
   { issue: '#295', pipeline: 'update', fault: 'rollback-read', leaves: ['Fresh', 'Fresh/Deep'] },
   { issue: '#295', pipeline: 'update', fault: 'tracker', leaves: ['Fresh', 'Fresh/Deep'] },
   { issue: '#295', pipeline: 'adopt', fault: 'rollback-read', leaves: ['.claude', '.claude/commands', 'brain'] },
