@@ -75,7 +75,7 @@ describe('resolveRefForUpdate — error-hint rewriting', () => {
 
   it('keeps SHARD_NOT_FOUND but rewrites the hint for update audience', async () => {
     globalThis.fetch = vi.fn(async () =>
-      new Response(JSON.stringify({ shards: {} }), { status: 200 }),
+      new Response(JSON.stringify({ schema_version: 1, shards: {} }), { status: 200 }),
     ) as typeof fetch;
 
     const err = await resolveRefForUpdate('ghost/shard').catch((e: unknown) => e);

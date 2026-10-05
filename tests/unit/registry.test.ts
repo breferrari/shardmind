@@ -5,7 +5,13 @@ import { ShardMindError } from '../../source/runtime/types.js';
 
 const REGISTRY_URL = 'https://raw.githubusercontent.com/shardmind/registry/main/index.json';
 
+/** A registry index response; a version-1 index unless `body` sets `schema_version` itself (#29). */
 function indexResponse(body: object, status = 200): Response {
+  return new Response(JSON.stringify({ schema_version: 1, ...body }), { status });
+}
+
+/** A response with exactly `body`, for an index whose own shape is under test. */
+function rawResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
@@ -358,13 +364,16 @@ describe('registry.resolve', () => {
         if (u === REGISTRY_URL) {
           return indexResponse({
             shards: {
-              'breferrari/obsidian-mind': {
-                repo: 'breferrari/obsidian-mind',
-                latest: '3.5.0',
-                versions: ['3.5.0', '3.4.0'],
-              },
+              'breferrari/obsidian-mind': { repo: 'breferrari/obsidian-mind' },
             },
           });
+        }
+        // No suffix: the newest stable release of the entry's repo, as github: does (#29).
+        if (u === 'https://api.github.com/repos/breferrari/obsidian-mind/releases?per_page=100') {
+          return releasesResponse([
+            { tag_name: 'v3.6.0-beta.1', prerelease: true },
+            { tag_name: 'v3.5.0', prerelease: false },
+          ]);
         }
         if (u.includes('/tarball/v3.5.0') && init?.method === 'HEAD') return headOk();
         throw new Error(`Unexpected fetch: ${u}`);
@@ -386,11 +395,7 @@ describe('registry.resolve', () => {
         if (u === REGISTRY_URL) {
           return indexResponse({
             shards: {
-              'breferrari/obsidian-mind': {
-                repo: 'breferrari/obsidian-mind',
-                latest: '3.5.0',
-                versions: ['3.5.0', '3.4.0'],
-              },
+              'breferrari/obsidian-mind': { repo: 'breferrari/obsidian-mind' },
             },
           });
         }
@@ -419,14 +424,12 @@ describe('registry.resolve', () => {
         if (u === REGISTRY_URL) {
           return indexResponse({
             shards: {
-              'breferrari/obsidian-mind': {
-                repo: 'other-owner/mirror-repo',
-                latest: '3.5.0',
-                versions: ['3.5.0'],
-              },
+              'breferrari/obsidian-mind': { repo: 'other-owner/mirror-repo' },
             },
           });
         }
+        // The versions are the entry repo's releases, not the key's.
+        if (u === 'https://api.github.com/repos/other-owner/mirror-repo/releases?per_page=100') return singleStableRelease('v3.5.0');
         if (init?.method === 'HEAD') return headOk();
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
@@ -445,7 +448,7 @@ describe('registry.resolve', () => {
       globalThis.fetch = vi.fn(async () =>
         indexResponse({
           shards: {
-            'ns/name': { repo: 'broken', latest: '1.0.0', versions: ['1.0.0'] },
+            'ns/name': { repo: 'broken' },
           },
         }),
       ) as typeof fetch;
@@ -471,24 +474,53 @@ describe('registry.resolve', () => {
       });
     });
 
-    it('throws VERSION_NOT_FOUND when requested version is not in index', async () => {
-      globalThis.fetch = vi.fn(async () =>
-        indexResponse({
-          shards: {
-            'breferrari/obsidian-mind': {
-              repo: 'breferrari/obsidian-mind',
-              latest: '3.5.0',
-              versions: ['3.5.0', '3.4.0'],
-            },
-          },
-        }),
-      ) as typeof fetch;
+    it('a version with no such tag fails exactly as on the github: path (#29)', async () => {
+      const answer = (url: string | URL | Request, init?: RequestInit): Response => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u === REGISTRY_URL) return indexResponse({ shards: { 'breferrari/obsidian-mind': { repo: 'breferrari/obsidian-mind' } } });
+        if (u.endsWith('/tarball/v9.9.9') && init?.method === 'HEAD') return headNotFound();
+        throw new Error(`Unexpected fetch: ${u}`);
+      };
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => answer(url, init)) as typeof fetch;
+      const bare = await resolve('breferrari/obsidian-mind@9.9.9').catch((e: unknown) => e as ShardMindError);
+      const direct = await resolve('github:breferrari/obsidian-mind@9.9.9').catch((e: unknown) => e as ShardMindError);
+      expect(bare).toBeInstanceOf(ShardMindError);
+      expect(bare.code).toBe('VERSION_NOT_FOUND');
+      expect({ code: bare.code, message: bare.message, hint: bare.hint }).toEqual({
+        code: direct.code,
+        message: direct.message,
+        hint: direct.hint,
+      });
+    });
 
-      const err = await resolve('breferrari/obsidian-mind@9.9.9').catch((e) => e);
-      expect(err).toBeInstanceOf(ShardMindError);
-      expect(err.code).toBe('VERSION_NOT_FOUND');
-      expect(err.message).toContain('3.5.0');
-      expect(err.message).toContain('3.4.0');
+    it('takes @v1.2.3 as 1.2.3, and asks no releases list for a pinned version', async () => {
+      const seen: string[] = [];
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        seen.push(u);
+        if (u === REGISTRY_URL) return indexResponse({ shards: { 'breferrari/obsidian-mind': { repo: 'breferrari/obsidian-mind' } } });
+        if (u.endsWith('/tarball/v1.2.3') && init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+      expect((await resolve('breferrari/obsidian-mind@v1.2.3')).version).toBe('1.2.3');
+      expect(seen.some(isReleasesListing)).toBe(false);
+    });
+
+    it('respects includePrerelease for a bare ref', async () => {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u === REGISTRY_URL) return indexResponse({ shards: { 'breferrari/obsidian-mind': { repo: 'breferrari/obsidian-mind' } } });
+        if (isReleasesListing(u)) {
+          return releasesResponse([
+            { tag_name: 'v4.0.0-beta.1', prerelease: true },
+            { tag_name: 'v3.5.0', prerelease: false },
+          ]);
+        }
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+      expect((await resolve('breferrari/obsidian-mind')).version).toBe('3.5.0');
+      expect((await resolve('breferrari/obsidian-mind', { includePrerelease: true })).version).toBe('4.0.0-beta.1');
     });
   });
 
@@ -778,14 +810,11 @@ describe('registry.resolve', () => {
         if (u === REGISTRY_URL) {
           return indexResponse({
             shards: {
-              'breferrari/obsidian-mind': {
-                repo: 'breferrari/obsidian-mind',
-                latest: '3.5.0',
-                versions: ['3.5.0'],
-              },
+              'breferrari/obsidian-mind': { repo: 'breferrari/obsidian-mind' },
             },
           });
         }
+        if (isReleasesListing(u)) return singleStableRelease('v3.5.0');
         if (init?.method === 'HEAD') return headNotFound();
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
@@ -881,7 +910,7 @@ describe('registry.resolve', () => {
         if (u === 'http://127.0.0.1:12345/index.json') {
           return indexResponse({
             shards: {
-              'ns/name': { repo: 'ns/name', latest: '1.0.0', versions: ['1.0.0'] },
+              'ns/name': { repo: 'ns/name' },
             },
           });
         }
@@ -889,7 +918,7 @@ describe('registry.resolve', () => {
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
 
-      await resolveFresh('ns/name');
+      await resolveFresh('ns/name@1.0.0');
     });
 
     it('SHARDMIND_REGISTRY_INDEX_URL reroutes registry index lookup', async () => {
@@ -904,7 +933,7 @@ describe('registry.resolve', () => {
         if (u === 'http://127.0.0.1:12345/index.json') {
           return indexResponse({
             shards: {
-              'ns/name': { repo: 'ns/name', latest: '1.0.0', versions: ['1.0.0'] },
+              'ns/name': { repo: 'ns/name' },
             },
           });
         }
@@ -912,7 +941,7 @@ describe('registry.resolve', () => {
         throw new Error(`Unexpected fetch: ${u}`);
       }) as typeof fetch;
 
-      await resolveFresh('ns/name');
+      await resolveFresh('ns/name@1.0.0');
       expect(seen[0]).toBe('http://127.0.0.1:12345/index.json');
       expect(seen.some((u) => u.includes('raw.githubusercontent.com'))).toBe(false);
     });
@@ -1012,7 +1041,7 @@ describe('registry.resolve', () => {
         seen.push(u);
         if (u === 'https://stub.example.invalid/index.json') {
           return indexResponse({
-            shards: { 'acme/demo': { repo: 'acme/demo', latest: '1.0.0', versions: ['1.0.0'] } },
+            shards: { 'acme/demo': { repo: 'acme/demo' } },
           });
         }
         if (isReleasesListing(u)) return singleStableRelease('v1.0.0');
@@ -1096,6 +1125,72 @@ describe('registry.resolve', () => {
       await expect(resolve('breferrari/obsidian-mind')).rejects.toMatchObject({
         message: expect.stringMatching(/^The shard registry index is corrupt: /),
       });
+    });
+  });
+
+  // #29: the ratified index shape. schema_version is required; a newer one
+  // asks for a newer shardmind; only the requested entry is checked.
+  describe('index shape (#29)', () => {
+    const ENTRY = { repo: 'breferrari/obsidian-mind' };
+    const RUN = 'Run shardmind install github:breferrari/obsidian-mind to take it straight from GitHub.';
+
+    /** Answers the index with `index`, and HEAD-verifies any tarball. */
+    function serve(index: () => Response): void {
+      globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const u = typeof url === 'string' ? url : url.toString();
+        if (u === REGISTRY_URL) return index();
+        if (isReleasesListing(u)) return singleStableRelease('v9.0.1');
+        if (init?.method === 'HEAD') return headOk();
+        throw new Error(`Unexpected fetch: ${u}`);
+      }) as typeof fetch;
+    }
+
+    it('resolves a version-1 index, ignoring fields it does not know', async () => {
+      serve(() => rawResponse({ schema_version: 1, generated: '2026-10-05', shards: { 'breferrari/obsidian-mind': { ...ENTRY, yanked: ['8.0.0'] } } }));
+      const result = await resolve('breferrari/obsidian-mind');
+      expect(result.version).toBe('9.0.1');
+      expect(result.source).toBe('github:breferrari/obsidian-mind');
+    });
+
+    it.each([
+      ['missing', { shards: {} }],
+      ['a string', { schema_version: '1', shards: {} }],
+      ['not an integer', { schema_version: 1.5, shards: {} }],
+      ['zero', { schema_version: 0, shards: {} }],
+    ])('calls an index with schema_version %s corrupt', async (_label, body) => {
+      serve(() => rawResponse(body));
+      await expect(resolve('breferrari/obsidian-mind')).rejects.toMatchObject({
+        code: 'REGISTRY_NETWORK',
+        message: expect.stringMatching(/^The shard registry index is corrupt: .*schema_version/),
+        hint: RUN,
+      });
+    });
+
+    it('asks for a newer shardmind when the index is a newer version', async () => {
+      serve(() => rawResponse({ schema_version: 2, catalogue: [] }));
+      await expect(resolve('breferrari/obsidian-mind')).rejects.toMatchObject({
+        code: 'REGISTRY_INDEX_UNSUPPORTED',
+        message: 'The shard registry index is version 2; this shardmind reads version 1',
+        hint: `Update shardmind: npm install -g shardmind@latest. Or: ${RUN}`,
+      });
+    });
+
+    it.each([
+      ['no repo', {}],
+      ['a repo that is not owner/name', { repo: 'obsidian-mind' }],
+      ['a repo with three parts', { repo: 'a/b/c' }],
+      ['a repo that is not a string', { repo: 42 }],
+    ])('rejects the requested entry with %s, naming the shard and repo', async (_label, entry) => {
+      serve(() => indexResponse({ shards: { 'breferrari/obsidian-mind': entry } }));
+      const err = await resolve('breferrari/obsidian-mind').catch((e: unknown) => e as ShardMindError);
+      expect(err).toMatchObject({ code: 'REGISTRY_NETWORK', hint: RUN });
+      expect(err.message).toContain("'breferrari/obsidian-mind'");
+      expect(err.message).toContain('repo');
+    });
+
+    it('resolves a good entry while another entry in the index is broken', async () => {
+      serve(() => indexResponse({ shards: { 'breferrari/obsidian-mind': ENTRY, 'someone/broken': { repo: 42 } } }));
+      expect((await resolve('breferrari/obsidian-mind')).version).toBe('9.0.1');
     });
   });
 });
