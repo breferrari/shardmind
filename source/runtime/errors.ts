@@ -97,6 +97,7 @@ export type ErrorCode =
   | 'INSTALL_NON_INTERACTIVE_WITHOUT_VALUES'
   | 'INSTALL_GATE_NON_INTERACTIVE'
   | 'INSTALL_SHARD_INVALID'
+  | 'INSTALL_WRITE_FAILED'
 
   // Update / merge
   | 'MERGE_FAILED'
@@ -114,9 +115,6 @@ export type ErrorCode =
   | 'ADOPT_FROM_VERSION_INVALID'
   | 'ADOPT_NON_INTERACTIVE_WITHOUT_VALUES'
   | 'ADOPT_WRITE_FAILED'
-
-  // Install
-  | 'INSTALL_WRITE_FAILED'
   | 'MIGRATION_INVALID_VERSION'
   // Reserved for the v0.2 sandboxed-transform path: currently migrator.ts
   // swallows `type_changed` transform exceptions and records a warning

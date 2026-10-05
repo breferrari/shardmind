@@ -36,6 +36,7 @@ import { throwIfCancelled } from './run-cancel.js';
 import { pathExists, removePath, settleAll, toPosix } from './fs-utils.js';
 import { isEnoent } from '../runtime/errno.js';
 import { ShardMindError } from '../runtime/types.js';
+import { wrapWriteError } from './bug-report.js';
 import { ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
 import {
   CACHED_MANIFEST,
@@ -123,6 +124,9 @@ export function beginTransaction(
 export function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction>;
 export async function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction> {
   const now = opts.now ?? new Date();
+  // A `.shardmind/` that was here is the user's (or the old install's): the
+  // rollback removes only one this run made, once empty.
+  const hadStateDir = await pathExists(path.join(vaultRoot, SHARDMIND_DIR));
   // Install keeps its record in memory: nothing reads one after a crash, and
   // on a reinstall the folder would sit in the `.shardmind/` that restoring
   // the old one replaces whole (§4.28 step 1).
@@ -162,15 +166,9 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
     // A folder at the path is the user's: the write fails on it, and the
     // rollback leaves it alone. Only a file is copied.
     if (!stat.isFile()) return;
-    if (filesDir === null) {
-      // Install moved every path it planned to replace out of the way; one
-      // here now appeared after planning, and overwriting it would lose it.
-      throw new ShardMindError(
-        `${rel} appeared after the install was planned`,
-        'INSTALL_WRITE_FAILED',
-        'A file was created at a path the install writes, after it was planned. Nothing was overwritten. Run shardmind install again to plan around it.',
-      );
-    }
+    // No snapshot to keep it in: the caller refuses an existing file before
+    // it records (install, §4.11b), so one here is a file that arrived since.
+    if (filesDir === null) throw new Error(`${rel} exists, and this transaction has no snapshot to keep it in`);
     const copy = path.join(filesDir, rel);
     await fsp.mkdir(path.dirname(copy), { recursive: true });
     try {
@@ -189,16 +187,9 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
       backupPath = await uniqueBackupPath(abs, stamp);
       await fsp.rename(abs, backupPath);
     } catch (err) {
-      if (err instanceof ShardMindError) throw err;
-      // The earlier moves are the rollback's to put back.
-      throw Object.assign(
-        new ShardMindError(
-          `Could not move ${abs} aside`,
-          'BACKUP_FAILED',
-          `${reasonOf(err)}. Check permissions on the path and retry.`,
-        ),
-        { cause: err },
-      );
+      // The earlier moves are the rollback's to put back; an errno keeps its
+      // hint (#225), and a ShardMindError (no free name) passes through.
+      throw wrapWriteError('BACKUP_FAILED', `Could not move ${abs} aside`, err, `${reasonOf(err)}. Check permissions on the path and retry.`);
     }
     const moved = { originalPath: abs, backupPath, keep };
     setAside.push(moved);
@@ -309,7 +300,7 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
         for (const failure of await removeEngineWrites(vaultRoot, {
           entries: false,
           snapshotDir: dir === null || keep ? null : dir,
-          removeEmptyDir: true,
+          removeEmptyDir: !hadStateDir,
         })) {
           failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
         }

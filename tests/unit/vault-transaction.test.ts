@@ -10,6 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { beginTransaction } from '../../source/core/vault-transaction.js';
 import { renameCaseInPlace } from '../../source/core/rename-migrations.js';
+import { asShown } from '../helpers/index.js';
 
 let vault: string;
 
@@ -287,13 +288,10 @@ describe('vault transaction for install (#301)', () => {
     expect(await exists(at('.shardmind'))).toBe(false);
   });
 
-  it('refuses a file that appeared at a planned output after planning, before the write', async () => {
+  it('with no snapshot, will not record over an existing file (install refuses one first, §4.11b)', async () => {
     const tx = await beginInstall();
     await fsp.writeFile(at('Home.md'), 'arrived after planning\n');
-    await expect(tx.recordWrite('Home.md')).rejects.toMatchObject({
-      code: 'INSTALL_WRITE_FAILED',
-      message: expect.stringContaining('Home.md appeared after the install was planned'),
-    });
+    await expect(tx.recordWrite('Home.md')).rejects.toThrow('Home.md exists, and this transaction has no snapshot to keep it in');
     expect(await tx.rollback()).toEqual([]);
     expect(await read('Home.md')).toBe('arrived after planning\n');
   });
@@ -360,6 +358,23 @@ describe('vault transaction for install (#301)', () => {
     vi.restoreAllMocks();
     expect(await tx.rollback()).toEqual([]);
     expect((await fsp.readdir(vault)).sort()).toEqual(['a.md', 'b.md']);
+  });
+
+  it('a full disk while moving a path aside is BACKUP_FAILED with the disk-full hint (#225, #301)', async () => {
+    await fsp.writeFile(at('Home.md'), 'mine\n');
+    const tx = await beginInstall();
+    const realRename = fsp.rename;
+    vi.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      if (from === at('Home.md')) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+      return realRename(from, to);
+    });
+    const err = await tx.recordSetAside(at('Home.md'), true).catch((e: unknown) => e);
+    vi.restoreAllMocks();
+    const { shown, errnos } = asShown(err);
+    expect(shown).toMatchObject({ kind: 'known', code: 'BACKUP_FAILED' });
+    expect(shown.kind === 'known' ? shown.hint : '').toMatch(/The disk is full/);
+    expect(errnos).toContain('ENOSPC');
+    expect(await read('Home.md')).toBe('mine\n');
   });
 
   it('a set-aside that cannot be moved back is reported with where it still is', async () => {
@@ -449,6 +464,13 @@ describe('vault transaction for install (#301)', () => {
     ).rejects.toThrow('disk full');
     expect(await tx.rollback()).toEqual([]);
     expect(await exists(at('.shardmind'))).toBe(false);
+  });
+
+  it("a rollback that did nothing leaves the user's empty .shardmind/ there", async () => {
+    await fsp.mkdir(at('.shardmind'));
+    const tx = await beginInstall();
+    expect(await tx.rollback()).toEqual([]);
+    expect(await exists(at('.shardmind'))).toBe(true);
   });
 
   it('a Ctrl+C before a move stops it, and nothing is moved', async () => {

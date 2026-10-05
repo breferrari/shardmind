@@ -82,6 +82,16 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   // rollback removes exactly what this install made (#207, #215, #258), and
   // a Ctrl+C stops the run here (#249).
   const recordWrite = async (rel: string): Promise<void> => {
+    // Every path the install planned to replace was moved out of the way, so
+    // a file here appeared after planning: refused, never overwritten, since
+    // a rollback would then delete it (#301).
+    if (tx && (await isFile(path.join(vaultRoot, rel)))) {
+      throw new ShardMindError(
+        `${rel} appeared after the install was planned`,
+        'INSTALL_WRITE_FAILED',
+        'A file was created at a path the install writes, after it was planned. Nothing was overwritten. Run shardmind install again to plan around it.',
+      );
+    }
     await tx?.recordWrite(rel);
     writtenPaths.push(rel);
   };
@@ -195,6 +205,10 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   }
 
   return { writtenPaths, state, fileCount: totalFiles };
+}
+
+async function isFile(abs: string): Promise<boolean> {
+  return fsp.lstat(abs).then((st) => st.isFile(), () => false);
 }
 
 async function writeVaultFile(vaultRoot: string, outputPath: string, content: string | Buffer): Promise<void> {
