@@ -89,15 +89,58 @@ export function hasConflictMarkers(content: string): boolean {
  * restore it after, whether `fn` returns or throws. `setRawMode` sets the
  * stream itself: Ink's own setter counts its users and would not leave raw
  * mode while a prompt holds it.
+ *
+ * The read on `input` stops for `fn` too (#282). Raw mode leaving with a
+ * libuv read in flight restarts it in line mode on Windows, a thread blocked
+ * in `ReadConsoleW`, and cancelling that read when raw mode returns strands
+ * ConPTY: the process never ends after its `exit` event. `input.pause()`
+ * cannot do it, since a TTY stream's pause leaves the libuv read running
+ * (net.Socket stops it only when its buffer fills), and neither can Ink 8's
+ * `pauseInput`. One code path on every OS.
  */
-export function withTerminalReleased<T>(setRawMode: ((on: boolean) => void) | undefined, fn: () => T): T {
+export function withTerminalReleased<T>(
+  setRawMode: ((on: boolean) => void) | undefined,
+  fn: () => T,
+  input: NodeJS.ReadStream = process.stdin,
+): T {
   if (!setRawMode) return fn();
+  const restartRead = stopRead(input);
   setRawMode(false);
   try {
     return fn();
   } finally {
     setRawMode(true);
+    restartRead?.();
   }
+}
+
+type ReadHandle = { reading?: boolean; readStop: () => number; readStart: () => number };
+
+/**
+ * Stop the libuv read under `input` and return its restart, or undefined when
+ * nothing was stopped. The handle is Node's internal `_handle`, so each method
+ * is checked: without them the hang can recur, but the handoff still works.
+ * A failed restart destroys the stream with its code, as Node's own
+ * `tryReadStart` does.
+ */
+function stopRead(input: NodeJS.ReadStream): (() => void) | undefined {
+  const handle: unknown = Reflect.get(input, '_handle');
+  if (!isReadHandle(handle) || handle.reading !== true) return undefined;
+  if (handle.readStop() !== 0) return undefined;
+  handle.reading = false;
+  return () => {
+    const code = handle.readStart();
+    if (code === 0) {
+      handle.reading = true;
+      return;
+    }
+    input.destroy(new Error(`stdin could not read again after the editor (libuv error ${code})`));
+  };
+}
+
+function isReadHandle(handle: unknown): handle is ReadHandle {
+  if (typeof handle !== 'object' || handle === null) return false;
+  return typeof Reflect.get(handle, 'readStop') === 'function' && typeof Reflect.get(handle, 'readStart') === 'function';
 }
 
 let sigintHeld = false;

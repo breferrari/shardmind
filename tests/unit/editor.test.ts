@@ -214,4 +214,109 @@ describe('withTerminalReleased (#50)', () => {
   it('just runs the call when raw mode cannot be set', () => {
     expect(withTerminalReleased(undefined, () => 'ran')).toBe('ran');
   });
+
+  // #282: a read in flight when raw mode leaves becomes a line-mode read on
+  // Windows, and cancelling it strands ConPTY. The handle's read stops first.
+  describe('the stdin read (#282)', () => {
+    function fakeInput(handle: Record<string, unknown> | undefined) {
+      const input = { _handle: handle, destroy: vi.fn() };
+      return { input: input as unknown as NodeJS.ReadStream, destroy: input.destroy };
+    }
+    function readingHandle(log: string[], codes: { stop?: number; start?: number } = {}) {
+      return {
+        reading: true,
+        readStop: () => {
+          log.push('readStop');
+          return codes.stop ?? 0;
+        },
+        readStart: () => {
+          log.push('readStart');
+          return codes.start ?? 0;
+        },
+      };
+    }
+
+    it('stops a reading handle before raw mode leaves and starts it after raw mode returns', () => {
+      const log: string[] = [];
+      const handle = readingHandle(log);
+      const { input } = fakeInput(handle);
+      const result = withTerminalReleased(
+        (on) => log.push(`raw ${on}`),
+        () => {
+          log.push(`fn reading=${handle.reading}`);
+          return 'edited';
+        },
+        input,
+      );
+      expect(result).toBe('edited');
+      expect(log).toEqual(['readStop', 'raw false', 'fn reading=false', 'raw true', 'readStart']);
+      expect(handle.reading).toBe(true);
+    });
+
+    it('starts the read again when the call throws', () => {
+      const log: string[] = [];
+      const { input } = fakeInput(readingHandle(log));
+      expect(() =>
+        withTerminalReleased(
+          (on) => log.push(`raw ${on}`),
+          () => {
+            throw new Error('editor crashed');
+          },
+          input,
+        ),
+      ).toThrow('editor crashed');
+      expect(log).toEqual(['readStop', 'raw false', 'raw true', 'readStart']);
+    });
+
+    it('leaves a handle that is not reading alone', () => {
+      const log: string[] = [];
+      const handle = { ...readingHandle(log), reading: false };
+      const { input } = fakeInput(handle);
+      withTerminalReleased((on) => log.push(`raw ${on}`), () => undefined, input);
+      expect(log).toEqual(['raw false', 'raw true']);
+      expect(handle.reading).toBe(false);
+    });
+
+    it('only toggles raw mode when the handle has no readStop or readStart', () => {
+      for (const handle of [undefined, { reading: true }, { reading: true, readStop: () => 0 }, { reading: true, readStart: () => 0 }]) {
+        const log: string[] = [];
+        const { input } = fakeInput(handle);
+        withTerminalReleased((on) => log.push(`raw ${on}`), () => undefined, input);
+        expect(log).toEqual(['raw false', 'raw true']);
+      }
+    });
+
+    it('leaves the read as it was when readStop fails', () => {
+      const log: string[] = [];
+      const handle = readingHandle(log, { stop: -4058 });
+      const { input } = fakeInput(handle);
+      withTerminalReleased((on) => log.push(`raw ${on}`), () => undefined, input);
+      expect(log).toEqual(['readStop', 'raw false', 'raw true']);
+      expect(handle.reading).toBe(true);
+    });
+
+    it('destroys the stream with the code when readStart fails, as Node does', () => {
+      const log: string[] = [];
+      const handle = readingHandle(log, { start: -4077 });
+      const { input, destroy } = fakeInput(handle);
+      withTerminalReleased((on) => log.push(`raw ${on}`), () => undefined, input);
+      expect(log).toEqual(['readStop', 'raw false', 'raw true', 'readStart']);
+      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(destroy.mock.calls[0]![0]).toBeInstanceOf(Error);
+      expect(String(destroy.mock.calls[0]![0])).toContain('-4077');
+      expect(handle.reading).toBe(false);
+    });
+
+    it('reads process.stdin by default', () => {
+      const log: string[] = [];
+      const previous: unknown = Reflect.get(process.stdin, '_handle');
+      Reflect.set(process.stdin, '_handle', readingHandle(log));
+      try {
+        withTerminalReleased((on) => log.push(`raw ${on}`), () => undefined);
+      } finally {
+        Reflect.set(process.stdin, '_handle', previous);
+      }
+      expect(log).toEqual(['readStop', 'raw false', 'raw true', 'readStart']);
+    });
+  });
 });
