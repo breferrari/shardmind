@@ -1843,7 +1843,7 @@ interface VendorRecord {
 }
 ```
 
-Files ShardMind wrote itself (its own helpers, `index.ts`, `LICENSE*`, `PROVENANCE.md`, `VENDOR.json`) are not in `files`. Every vendored file starts with a header generated from the record, byte for byte (`headerFor(record, path)`):
+The file is written as `formatRecord` gives it: keys sorted at every depth, two-space JSON, one trailing newline, the form the committed records have. Files ShardMind wrote itself (its own helpers, `index.ts`, `LICENSE*`, `PROVENANCE.md`, `VENDOR.json`) are not in `files`. Every vendored file starts with a header generated from the record, byte for byte (`headerFor(record, path)`):
 
 ```
 /*
