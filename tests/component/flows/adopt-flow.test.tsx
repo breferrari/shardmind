@@ -601,9 +601,10 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
       const valuesFile = path.join(vault, 'values.yaml');
       await fs.writeFile(valuesFile, stringifyYaml(DEFAULT_VALUES), 'utf-8');
       const homeAbs = path.join(vault, 'Home.md');
-      // A shard file's write fails, and restoring Home.md from the snapshot fails.
+      // The values file's write fails after Home.md was written (a file is
+      // snapshotted just before its write, #301), and restoring Home.md fails.
       vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, opts) => {
-        if (file === path.join(vault, 'CLAUDE.md')) {
+        if (file === path.join(vault, 'shard-values.yaml')) {
           throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
         }
         return realWrite(file, data, opts);
@@ -695,9 +696,9 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
     let interrupted = false;
     try {
       await adoptWithCtrlC(vault, (v, interrupt) => {
-        // A shard file's write fails, so runAdopt rolls back on its own.
+        // The values file's write fails after Home.md was written, so runAdopt rolls back on its own.
         vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, opts) => {
-          if (file === path.join(v, 'CLAUDE.md')) {
+          if (file === path.join(v, 'shard-values.yaml')) {
             throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
           }
           return realWrite(file, data, opts);
