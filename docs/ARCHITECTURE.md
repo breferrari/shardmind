@@ -723,7 +723,7 @@ No `list` (vault-local, one shard per vault, nothing to list). No `doctor` (bake
 
 The root command. Shows vault health at a glance. Runs hash comparisons and file existence checks. No network call by default (update check cached for 24 hours).
 
-Every top-level command (`status`, `install`, `update`, `adopt`) additionally hits `registry.npmjs.org/shardmind/latest` once per 24h via [`core/self-update-check.ts`](IMPLEMENTATION.md#419-self-update-checkts) and shows a one-line banner above its UI when a newer engine version is published. Silent on offline / non-TTY / `CI=1` / `--no-update-check` / `SHARDMIND_NO_UPDATE_CHECK`. The check fires after first paint via `setTimeout(0)` so it never delays a render.
+Every top-level command (`status`, `install`, `update`, `adopt`) additionally hits `registry.npmjs.org/shardmind/latest` once per 24h via [`core/self-update-check.ts`](IMPLEMENTATION.md#419-self-update-checkts) and shows a one-line banner above its UI when a newer engine version is published. Silent on offline / non-TTY / `CI=1` / `--no-update-check` / `SHARDMIND_NO_UPDATE_CHECK`. No command calls npm itself, so none ever waits for the network (#285). A command reads the 24h cache after first paint and shows the banner when the cache holds a fresh answer. A stale or missing cache starts a detached child that refreshes it, so the next run shows the banner. That is update-notifier's behaviour: a first-ever run shows none. Status, the fast command, holds its exit only for the local cache read, so a cached banner always renders.
 
 **Installed, healthy:**
 
