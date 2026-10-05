@@ -13,8 +13,12 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
-/** What a call does to the vault. `restore` is a copy or rename out of a run's backup. */
-export type FaultKind = 'write' | 'rename' | 'mkdir' | 'remove' | 'restore';
+/**
+ * What a call does to the vault. `restore` is a copy or rename out of a
+ * run's backup; `read` is a listing, a read or a stat, which a rollback
+ * needs to find what to put back (#292).
+ */
+export type FaultKind = 'write' | 'rename' | 'mkdir' | 'remove' | 'restore' | 'read';
 
 export type FaultCounts = Record<FaultKind, number>;
 
@@ -30,9 +34,21 @@ export interface FaultPlan {
    * writes whose destination is inside that folder are counted.
    */
   beforeWrite?: { nth: number; hook: () => void | Promise<void>; under?: string };
+  /**
+   * Also throw at the `nth` call of `kind` made after `fail` fired: a
+   * rollback that cannot remove what the run added, or cannot read its own
+   * snapshot (#292).
+   */
+  inRollback?: { kind: 'remove' | 'read'; nth: number };
+  /** Run just before `fail` throws, with the run's state as it is then (#292). */
+  onFail?: () => void | Promise<void>;
 }
 
 const KIND: Record<string, Exclude<FaultKind, 'restore'>> = {
+  readdir: 'read',
+  readFile: 'read',
+  lstat: 'read',
+  stat: 'read',
   writeFile: 'write',
   copyFile: 'write',
   cp: 'write',
@@ -70,17 +86,20 @@ export function injectFaults(plan: FaultPlan = {}): {
    */
   writtenAfterHook: string[];
   /** Which of the plan's faults happened: a row whose fault never fired proves nothing. */
-  fired: { fail: boolean; restore: boolean; hook: boolean };
+  fired: { fail: boolean; restore: boolean; hook: boolean; rollback: boolean };
+  /** The calls of each kind made after `fail` fired: the rollback's (#292). */
+  afterFail: FaultCounts;
   /** Mark the run as over: every fs mutation from now on is recorded (#274). */
   settle: () => void;
   /** What was written, renamed, made or removed after `settle`: a run still going. */
   touchedAfterSettle: string[];
   uninstall: () => void;
 } {
-  const counts: FaultCounts = { write: 0, rename: 0, mkdir: 0, remove: 0, restore: 0 };
+  const counts: FaultCounts = { write: 0, rename: 0, mkdir: 0, remove: 0, restore: 0, read: 0 };
+  const afterFail: FaultCounts = { write: 0, rename: 0, mkdir: 0, remove: 0, restore: 0, read: 0 };
   let hooked = false;
   let writesUnder = 0;
-  const fired = { fail: false, restore: false, hook: false };
+  const fired = { fail: false, restore: false, hook: false, rollback: false };
   let settled = false;
   const touchedAfterSettle: string[] = [];
   const writtenAfterHook: string[] = [];
@@ -93,7 +112,8 @@ export function injectFaults(plan: FaultPlan = {}): {
       const isRestore = (method === 'copyFile' || method === 'rename') && BACKUP.test(String(args[0]));
       const kind: FaultKind = isRestore ? 'restore' : base;
       const n = ++counts[kind];
-      if (settled) touchedAfterSettle.push(`${method} ${String(method === 'copyFile' || method === 'cp' || method === 'rename' ? args[1] : args[0])}`);
+      const late = fired.fail ? ++afterFail[kind] : 0;
+      if (settled && kind !== 'read') touchedAfterSettle.push(`${method} ${String(method === 'copyFile' || method === 'cp' || method === 'rename' ? args[1] : args[0])}`);
       if (hooked && (kind === 'write' || kind === 'rename')) {
         writtenAfterHook.push(String(method === 'writeFile' ? args[0] : args[1]));
       }
@@ -108,8 +128,13 @@ export function injectFaults(plan: FaultPlan = {}): {
         }
       }
       if (plan.fail?.kind === kind && plan.fail.nth === n) {
+        if (plan.onFail) await plan.onFail();
         fired.fail = true;
         throw injectedError(kind, n);
+      }
+      if (fired.fail && plan.inRollback?.kind === kind && plan.inRollback.nth === late) {
+        fired.rollback = true;
+        throw injectedError(kind, late);
       }
       if (kind === 'restore' && plan.failRestore?.nth === n) {
         fired.restore = true;
@@ -120,6 +145,7 @@ export function injectFaults(plan: FaultPlan = {}): {
   }
   return {
     counts,
+    afterFail,
     writtenAfterHook,
     fired,
     settle: () => {
