@@ -32,10 +32,6 @@ beforeEach(async () => {
   root = path.join(os.tmpdir(), `shardmind-lint-${crypto.randomUUID()}`);
   shard = path.join(root, 'shard');
   await fsp.cp(MINIMAL_SHARD, shard, { recursive: true });
-  // The example declares a hook but ships no .gitignore (its file count is
-  // pinned across the E2E suites), so each copy gets one that keeps hook
-  // logs out of git, as AUTHORING.md asks of a real shard (#201).
-  await fsp.writeFile(path.join(shard, '.gitignore'), '.shardmind/logs/\n', 'utf-8');
 });
 
 afterEach(async () => {
@@ -52,6 +48,13 @@ const errors = (r: Awaited<ReturnType<typeof lintShard>>) => r.findings.filter((
 const warnings = (r: Awaited<ReturnType<typeof lintShard>>) => r.findings.filter((f) => f.severity === 'warning');
 
 describe('lintShard (#34)', () => {
+  it('finds nothing in examples/minimal-shard as it is in the repo, warnings included', async () => {
+    // Authors are told to copy it (#84), so it must show none of the
+    // mistakes validate exists to catch (#201).
+    const result = await lintShard(MINIMAL_SHARD, {});
+    expect(result.findings).toEqual([]);
+  });
+
   it('finds nothing in the minimal shard', async () => {
     const result = await lintShard(shard, {});
     expect(result.findings).toEqual([]);

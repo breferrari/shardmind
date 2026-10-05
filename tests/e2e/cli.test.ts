@@ -971,10 +971,11 @@ describe('shardmind install — Invariant 1', () => {
     expect(report.staticByteMismatches).toEqual([]);
     expect(report.missingFromInstall).toEqual([]);
     expect(report.extrasInInstall).toEqual([]);
-    // Sanity check — minimal-shard has 6 paths after Tier 1 +
-    // .shardmindignore filtering (1 .shardmindignore + 1 CLAUDE.md +
-    // 1 .claude/commands/example-command.md + 3 `.njk` templates).
-    expect(report.matched).toBe(6);
+    // Sanity check — minimal-shard has 7 paths after Tier 1 +
+    // .shardmindignore filtering (1 .shardmindignore + 1 .gitignore +
+    // 1 CLAUDE.md + 1 .claude/commands/example-command.md + 3 `.njk`
+    // templates).
+    expect(report.matched).toBe(7);
   }, 30_000);
 });
 

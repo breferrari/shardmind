@@ -30,9 +30,6 @@ describe('validate command — Layer 1 flow (#34)', () => {
   beforeEach(async () => {
     root = path.join(os.tmpdir(), `shardmind-validate-flow-${crypto.randomUUID()}`);
     await fs.cp(MINIMAL_SHARD, root, { recursive: true });
-    // The example declares a hook and ships no .gitignore; a clean shard
-    // keeps its hook logs out of git (#201).
-    await fs.writeFile(path.join(root, '.gitignore'), '.shardmind/logs/\n', 'utf-8');
   });
 
   afterEach(async () => {

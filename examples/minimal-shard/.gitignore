@@ -1,0 +1,3 @@
+# Hook output, written by shardmind into the installed vault: machine state,
+# not content (docs/AUTHORING.md, #201).
+.shardmind/logs/
