@@ -122,6 +122,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ✅ | Exit after a diff prompt under Windows ConPTY | [#282](https://github.com/breferrari/shardmind/issues/282) |
 | ✅ | Report an update rollback that cannot read its templates marker | [#294](https://github.com/breferrari/shardmind/issues/294) |
 | ✅ | Remove the run's folders when its created-folders record is unusable | [#295](https://github.com/breferrari/shardmind/issues/295) |
+| ⬜ | Keep the environment hint when an update or adopt write fails | [#313](https://github.com/breferrari/shardmind/issues/313) |
 
 ## Phase 6 — docs match the code
 
