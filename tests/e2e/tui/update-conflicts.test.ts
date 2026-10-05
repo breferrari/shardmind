@@ -250,6 +250,12 @@ describe.skipIf(noPty())(
           const valuesPath = path.join(vault, '.values.yaml');
           await fs.writeFile(valuesPath, stringifyYaml(DEFAULT_VALUES), 'utf-8');
 
+          // Armed before the spawn: the tarball request proves the CLI has
+          // mounted its SIGINT handler and started the download. A fixed
+          // delay fired before the handler existed on a slow start, which
+          // POSIX hid (death by SIGINT is accepted) and Windows CI did not
+          // (0xC000013A), the #57 pattern (#174).
+          const requested = stub.waitForTarballRequest();
           const handle = await spawnCliPty(
             ['install', SHARD_REF, '--yes', '--values', valuesPath],
             {
@@ -258,9 +264,8 @@ describe.skipIf(noPty())(
             },
           );
           try {
-            // 500 ms in: well before download finishes (we slowed the
-            // stream to 2 s) and well before any write begins.
-            await tick(500);
+            // Mid-download: the stream is slowed to 2 s, and no write has begun.
+            await requested;
             handle.sigint();
 
             const exit = await handle.waitForExit();
