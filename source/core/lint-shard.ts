@@ -7,10 +7,12 @@
  * Spec: docs/IMPLEMENTATION.md §4.22, docs/ARCHITECTURE.md §10.5b.
  */
 
+import fs from 'node:fs/promises';
 import path from 'node:path';
+import ignore from 'ignore';
 import type { ModuleSelections, ShardManifest, ShardSchema } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE, SHARD_SOURCE_DIR } from '../runtime/vault-paths.js';
+import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE, SHARD_SOURCE_DIR, hookLogRelPath } from '../runtime/vault-paths.js';
 import { assertEngineCompatible, parseManifest } from './manifest.js';
 import { buildValuesValidator, parseSchema } from './schema.js';
 import { resolveComputedDefaults } from './install-planner.js';
@@ -194,6 +196,35 @@ export async function lintShard(
       message: `Group '${group.id}' has no values`,
       hint: 'Add values to it, or remove the group.',
     });
+  }
+
+  // Hook logs land in `.shardmind/logs/` inside the vault, which is often a
+  // git repository: the .gitignore the shard installs should keep them out
+  // (#201). The engine writes no .gitignore of its own.
+  const hooks = manifest.hooks;
+  if (hooks.bootstrap || hooks.personalize || hooks['post-update'] || hooks['post-install']) {
+    const gitignore = [...resolution.copy, ...resolution.render].find((e) => e.outputPath === '.gitignore');
+    let rules: string | undefined;
+    if (gitignore) {
+      try {
+        rules = resolution.render.includes(gitignore)
+          ? [await renderFile(gitignore, context, env)].flat()[0]?.content
+          : await fs.readFile(gitignore.sourcePath, 'utf-8');
+      } catch {
+        // A .gitignore.njk that fails to render is already reported above.
+      }
+    }
+    const logs = path.posix.dirname(hookLogRelPath('bootstrap'));
+    if (!gitignore || (rules !== undefined && !ignore().add(rules).ignores(hookLogRelPath('bootstrap')))) {
+      findings.push({
+        severity: 'warning',
+        code: 'LINT_LOGS_NOT_GITIGNORED',
+        message: gitignore
+          ? `The shard's .gitignore does not ignore ${logs}/, where its hooks' logs land`
+          : `The shard declares a hook but installs no .gitignore, so its hooks' logs in ${logs}/ can be committed`,
+        hint: `List ${logs}/ in the .gitignore at the shard's root. See docs/AUTHORING.md.`,
+      });
+    }
   }
 
   return done();

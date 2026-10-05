@@ -30,6 +30,9 @@ describe('validate command — Layer 1 flow (#34)', () => {
   beforeEach(async () => {
     root = path.join(os.tmpdir(), `shardmind-validate-flow-${crypto.randomUUID()}`);
     await fs.cp(MINIMAL_SHARD, root, { recursive: true });
+    // The example declares a hook and ships no .gitignore; a clean shard
+    // keeps its hook logs out of git (#201).
+    await fs.writeFile(path.join(root, '.gitignore'), '.shardmind/logs/\n', 'utf-8');
   });
 
   afterEach(async () => {
@@ -42,6 +45,15 @@ describe('validate command — Layer 1 flow (#34)', () => {
     const r = render(<Validate args={[root]} options={OPTIONS} />);
     const frame = await waitFor(allFrames(r), (f) => /0 errors, 0 warnings/.test(f), 15_000);
     expect(frame).toContain('✓');
+  });
+
+  it('warns when a shard with a hook installs no .gitignore for its logs, and still passes (#201)', async () => {
+    await fs.rm(path.join(root, '.gitignore'));
+    const r = render(<Validate args={[root]} options={OPTIONS} />);
+    const frame = await waitFor(allFrames(r), (f) => /0 errors, 1 warning/.test(f), 15_000);
+    expect(frame).toMatch(/LINT_LOGS_NOT_GITIGNORED/);
+    expect(frame).toMatch(/\.shardmind\/logs\//);
+    expect(process.exitCode ?? 0).toBe(0);
   });
 
   it('lists a broken template with its code, hint and ERRORS link, and sets exit code 1', async () => {

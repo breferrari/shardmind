@@ -32,6 +32,10 @@ beforeEach(async () => {
   root = path.join(os.tmpdir(), `shardmind-lint-${crypto.randomUUID()}`);
   shard = path.join(root, 'shard');
   await fsp.cp(MINIMAL_SHARD, shard, { recursive: true });
+  // The example declares a hook but ships no .gitignore (its file count is
+  // pinned across the E2E suites), so each copy gets one that keeps hook
+  // logs out of git, as AUTHORING.md asks of a real shard (#201).
+  await fsp.writeFile(path.join(shard, '.gitignore'), '.shardmind/logs/\n', 'utf-8');
 });
 
 afterEach(async () => {
@@ -193,6 +197,56 @@ describe('lintShard (#34)', () => {
     expect(errors(result)).toEqual([]);
     expect(warnings(result).map((f) => f.message).join('\n')).toMatch(/ghost/);
     expect(warnings(result).map((f) => f.message).join('\n')).toMatch(/empty/);
+  });
+
+  describe('hook logs and the vault .gitignore (#201)', () => {
+    const LOGS = 'LINT_LOGS_NOT_GITIGNORED';
+    const logWarning = (r: Awaited<ReturnType<typeof lintShard>>) => warnings(r).find((f) => f.code === LOGS);
+
+    it('is quiet when the installed .gitignore ignores .shardmind/logs/', async () => {
+      await write('.gitignore', '.DS_Store\n.shardmind/logs/\n');
+      expect(logWarning(await lintShard(shard, {}))).toBeUndefined();
+    });
+
+    it.each([
+      ['.shardmind/logs'],
+      ['.shardmind/'],
+      ['*.log'],
+      ['/.shardmind/logs/*'],
+    ])('accepts any rule that ignores the log files: %s', async (rule) => {
+      await write('.gitignore', `${rule}\n`);
+      expect(logWarning(await lintShard(shard, {}))).toBeUndefined();
+    });
+
+    it('warns when a shard with a hook installs no .gitignore', async () => {
+      await fsp.rm(path.join(shard, '.gitignore'), { force: true });
+      const warning = logWarning(await lintShard(shard, {}));
+      expect(warning?.message).toMatch(/installs no \.gitignore/);
+      expect(warning?.hint).toMatch(/\.shardmind\/logs\//);
+    });
+
+    it('warns when the .gitignore does not ignore the logs, and a negation can undo a broader rule', async () => {
+      await write('.gitignore', 'node_modules/\n');
+      expect(logWarning(await lintShard(shard, {}))?.message).toMatch(/does not ignore \.shardmind\/logs\//);
+      await write('.gitignore', '*.log\n!.shardmind/logs/*.log\n');
+      expect(logWarning(await lintShard(shard, {}))).toBeDefined();
+    });
+
+    it('reads a rendered .gitignore.njk, and ignores one that .shardmindignore keeps out of the vault', async () => {
+      await fsp.rm(path.join(shard, '.gitignore'), { force: true });
+      await write('.gitignore.njk', '{{ "" }}.shardmind/logs/\n');
+      expect(logWarning(await lintShard(shard, {}))).toBeUndefined();
+      await fsp.rm(path.join(shard, '.gitignore.njk'));
+      await write('.gitignore', '.shardmind/logs/\n');
+      await edit('.shardmindignore', (s) => `${s}\n.gitignore\n`);
+      expect(logWarning(await lintShard(shard, {}))?.message).toMatch(/installs no \.gitignore/);
+    });
+
+    it('says nothing about logs for a shard that declares no hook', async () => {
+      await fsp.rm(path.join(shard, '.gitignore'), { force: true });
+      await edit('.shardmind/shard.yaml', (s) => s.replace(/hooks:[\s\S]*$/, ''));
+      expect(logWarning(await lintShard(shard, {}))).toBeUndefined();
+    });
   });
 
   it('reports an engine-version requirement this engine does not meet', async () => {
