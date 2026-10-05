@@ -608,31 +608,26 @@ export async function runInstallTransaction(opts: InstallTransactionOptions): Pr
   const moved: BackupRecord[] = [];
   const written: string[] = [];
   const createdDirs: string[] = [];
-  const rollBack = async (err: unknown): Promise<unknown> => {
-    const failures = await attemptRollback(() => rollbackInstall(opts.vaultRoot, written, moved, createdDirs));
-    const thrown = withRollbackFailures(err, failures);
-    if (typeof thrown === 'object' && thrown !== null) rolledBack.add(thrown);
-    return thrown;
-  };
-
+  // A failed move puts the earlier ones back itself, so it is not rolled back.
   await backupCollisions(moveAside, undefined, (record) => moved.push(record), () => opts.signal?.aborted ?? false);
-  if (opts.signal?.aborted) {
-    try {
-      throwIfCancelled(opts.signal);
-    } catch (err) {
-      throw moved.length > 0 ? await rollBack(err) : err;
-    }
-  }
+  // Cancelled before anything moved: nothing to undo.
+  if (moved.length === 0) throwIfCancelled(opts.signal);
 
   let result: InstallResult;
   try {
+    throwIfCancelled(opts.signal);
     result = await runInstall({
       ...installOpts,
       onFileWritten: (outputPath) => written.push(outputPath),
       onDirCreated: (dir) => createdDirs.push(dir),
     });
   } catch (err) {
-    throw await rollBack(err);
+    const thrown = withRollbackFailures(
+      err,
+      await attemptRollback(() => rollbackInstall(opts.vaultRoot, written, moved, createdDirs)),
+    );
+    if (typeof thrown === 'object' && thrown !== null) rolledBack.add(thrown);
+    throw thrown;
   }
 
   // Committed: state.json is on disk, so nothing below rolls back and a

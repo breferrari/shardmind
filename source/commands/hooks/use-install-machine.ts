@@ -103,7 +103,7 @@ interface PlacedCollisions {
   /** What the transaction moves out of the way, in order (#300). */
   moveAside: Collision[];
   /** The moves kept as `<path>.shardmind-backup-<timestamp>` and reported; the rest is set aside. */
-  keep: Set<string>;
+  keep: ReadonlySet<string>;
   /** A reinstall's old `.shardmind/`, set aside with the rest. */
   oldStatePath: string | undefined;
   /** Replaced with no backup and holding the user's own content; reported. */
@@ -596,11 +596,10 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
       // Only files still there are reported as kept: a folder at the path,
       // or a file deleted meanwhile, is not one the user edited.
       const keptStale = await stillFiles(vaultRoot, [...stale.own, ...staleNow.own]);
-      const oldInstall = ctx.previous && !dryRun
-        ? await detectCollisions(vaultRoot, [SHARDMIND_DIR, VALUES_FILE])
-        : [];
+      const oldInstall = ctx.previous ? await detectCollisions(vaultRoot, [SHARDMIND_DIR, VALUES_FILE]) : [];
+      // A dry run moves nothing: the transaction skips the moves itself.
       await executeInstall(ctx, result, {
-        moveAside: dryRun ? [] : [...oldInstall, ...recheck.untouched, ...staleNow.untouched, ...ownNow],
+        moveAside: [...oldInstall, ...recheck.untouched, ...staleNow.untouched, ...ownNow],
         keep: new Set(policy === 'backup' ? ownNow.map((c) => c.absolutePath) : []),
         oldStatePath: oldInstall.find((c) => c.outputPath === SHARDMIND_DIR)?.absolutePath,
         replaced,

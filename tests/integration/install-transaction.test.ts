@@ -29,6 +29,7 @@ import {
 import type { ResolvedShard } from '../../source/runtime/types.js';
 import type { Collision } from '../../source/core/install-planner.js';
 import { injectFaults } from '../helpers/fault-fs.js';
+import { trackRun } from '../../source/commands/hooks/shared.js';
 import { treeOf } from '../helpers/vault-tree.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -150,6 +151,16 @@ describe('runInstallTransaction (#300)', () => {
     expect(await treeOf(vault)).toEqual(before);
   });
 
+  it('(b) a run aborted before it starts (an earlier Ctrl+C) writes nothing', async () => {
+    const before = await treeOf(vault);
+    const abort = new AbortController();
+    abort.abort();
+    const err = await rejection(runInstallTransaction(await options([], { signal: abort.signal })));
+    expect(code(err)).toBe('CANCELLED');
+    expect(installRolledBack(err)).toBe(false);
+    expect(await treeOf(vault)).toEqual(before);
+  });
+
   it('(b) a cancel between moves puts back what was moved', async () => {
     const collisions = await userFilesInTheWay();
     const before = await treeOf(vault);
@@ -235,14 +246,18 @@ describe('runInstallTransaction (#300)', () => {
     const abort = new AbortController();
     const faults = injectFaults({ beforeWrite: { nth: lastWrite, hook: () => abort.abort() } });
     try {
-      const result = await runInstallTransaction(await options(oldInstall, { oldStatePath: oldState.absolutePath, signal: abort.signal }));
+      const run = runInstallTransaction(await options(oldInstall, { oldStatePath: oldState.absolutePath, signal: abort.signal }));
+      // What the Ctrl+C handler awaits (stopRun): it settles only once the
+      // discard is over, so the process never exits halfway through it.
+      const end = await trackRun(abort, run).done;
+      expect(end).toEqual({ finished: true, failures: [] });
+      const names = await fsp.readdir(vault);
+      expect(names.filter((n) => n.includes('.shardmind-backup-'))).toEqual([]);
       expect(faults.fired.hook).toBe(true);
-      expect(result.left).toEqual([]);
+      expect((await run).left).toEqual([]);
     } finally {
       faults.uninstall();
     }
-    const names = await fsp.readdir(vault);
-    expect(names.filter((n) => n.includes('.shardmind-backup-'))).toEqual([]);
     expect(await fsp.readFile(path.join(vault, 'shard-values.yaml'), 'utf-8')).toMatch(/user_name: Alice/);
   });
 
