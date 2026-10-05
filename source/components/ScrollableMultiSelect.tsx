@@ -52,7 +52,10 @@ export default function ScrollableMultiSelect({
       // A run of plain keys (spaces, Enter) arrives as one input, and an
       // Enter in it is not reported as `key.return` (#317): one at a time.
       if (input.length > 1) {
-        for (const ch of input) handleKey(ch, ch === '\r' || ch === '\n' ? { ...key, return: true } : key);
+        // A CR LF is one Enter; a walked key is never an arrow.
+        for (const ch of input.replace(/\r\n/g, '\r')) {
+          handleKey(ch, { ...key, upArrow: false, downArrow: false, return: ch === '\r' || ch === '\n' });
+        }
         return;
       }
       if (options.length === 0) {

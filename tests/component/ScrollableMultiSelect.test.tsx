@@ -252,6 +252,14 @@ describe('ScrollableMultiSelect — keys in one input chunk (#317)', () => {
     expect(onSubmit.mock.calls).toEqual([[['v2']]]);
   });
 
+  it('a CR LF in one write submits once', async () => {
+    const onSubmit = vi.fn();
+    const { stdin } = await mount(<ScrollableMultiSelect options={opts(2)} visibleOptionCount={2} onSubmit={onSubmit} />);
+    stdin.write(SPACE + '\r\n');
+    await tick(30);
+    expect(onSubmit.mock.calls).toEqual([[['v0']]]);
+  });
+
   it('arrows past the window in one write scroll it to the cursor', async () => {
     const { stdin, lastFrame } = await mount(<ScrollableMultiSelect options={opts(6)} visibleOptionCount={2} />);
     stdin.write(ARROW_DOWN + ARROW_DOWN + ARROW_DOWN);

@@ -68,7 +68,8 @@
       "upstream": "components/select/use-select-state.ts"
     },
     "components/select/use-select.ts": {
-      "modified": false,
+      "change": "an Enter inside a run of plain keys selects too (ShardMind #317).",
+      "modified": true,
       "upstream": "components/select/use-select.ts"
     },
     "components/spinner/index.ts": {

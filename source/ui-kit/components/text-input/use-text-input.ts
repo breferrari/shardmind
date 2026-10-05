@@ -125,7 +125,9 @@ export const useTextInput = ({
 
 			// A run of typed or pasted text arrives as one input, and an Enter
 			// inside it is not reported as `key.return` (ShardMind fix, #317):
-			// insert each line and submit at each line break, in order.
+			// insert each line and submit at each line break, in order. Several
+			// breaks in one chunk submit once, with the final text: the submissions
+			// land in one render.
 			if (/[\r\n]/.test(input)) {
 				const lines = input.split(/\r\n|\r|\n/);
 				for (const [index, line] of lines.entries()) {
