@@ -125,6 +125,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ✅ | Keep the environment hint when an update or adopt write fails | [#313](https://github.com/breferrari/shardmind/issues/313) |
 | ✅ | Apply each key in one input chunk to the multiselect state the previous key left | [#317](https://github.com/breferrari/shardmind/issues/317) |
 | ⬜ | Validate a shard repo's tracked files, as the release tarball ships them | [#320](https://github.com/breferrari/shardmind/issues/320) |
+| ⬜ | Take the target release for base-identical files when adopting with --from-version and keep-all-mine | [#325](https://github.com/breferrari/shardmind/issues/325) |
 
 ## Phase 6 — docs match the code
 
