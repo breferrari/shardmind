@@ -244,7 +244,7 @@ Brenno-led: author the research-wiki shard. Not taken by the unattended loop.
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | Write the research-wiki shard | [#15](https://github.com/breferrari/shardmind/issues/15) |
+| ⬜ | Write the wiki-mind shard (research wiki) | [#15](https://github.com/breferrari/shardmind/issues/15) |
 
 ## Shelf (retired 2026-10-04)
 
