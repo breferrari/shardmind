@@ -230,7 +230,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
   // If we're mid-write, walk the executor's snapshot back before exiting.
   // Tempdir cleanup fires on every Ctrl-C — otherwise cancelling during the
   // download/plan phase would leak the extracted shard on disk.
-  // What `rollbackUpdate` could not restore is printed before the exit (#247).
+  // What the run's rollback could not restore is printed before the exit (#247).
   useSigintRollback({
     isActive: () => !dryRun && runRef.current !== null,
     // runUpdate rolls back in its own catch once the abort stops it.

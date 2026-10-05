@@ -36,7 +36,7 @@ import {
   removedFilesNeedingDecision,
   renderNewShard,
 } from '../../source/core/update-planner.js';
-import { runUpdate, rollbackUpdate } from '../../source/core/update-executor.js';
+import { runUpdate } from '../../source/core/update-executor.js';
 import { runPostUpdateHook } from '../../source/core/hook.js';
 import {
   defaultModuleSelections,
@@ -948,27 +948,6 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       writeSpy.mockRestore();
       copySpy.mockRestore();
     }
-  });
-
-  it('rollbackUpdate reports a snapshot folder it could not read instead of throwing (#247)', async () => {
-    const backupDir = path.join(vault, '.shardmind', 'backups', 'update-isolated');
-    const brain = path.join(backupDir, 'files', 'brain');
-    await fsp.mkdir(brain, { recursive: true });
-    await fsp.writeFile(path.join(backupDir, 'files', 'Home.md'), 'home\n', 'utf-8');
-    await fsp.writeFile(path.join(brain, 'a.md'), 'a\n', 'utf-8');
-    const realReaddir = fsp.readdir;
-    const spy = vi.spyOn(fsp, 'readdir').mockImplementation((async (dir: string, opts: unknown) => {
-      if (dir === brain) throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
-      return (realReaddir as (d: string, o: unknown) => Promise<unknown>)(dir, opts);
-    }) as typeof fsp.readdir);
-    try {
-      const failures = await rollbackUpdate(vault, backupDir, []);
-      expect(failures).toContainEqual({ path: 'brain', reason: 'readdir failed: simulated EACCES', backup: brain });
-    } finally {
-      spy.mockRestore();
-    }
-    // The readable part is still restored.
-    expect(await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('home\n');
   });
 
   it('preexisting add-collision + accept_new writes shard bytes and adopts as managed', async () => {

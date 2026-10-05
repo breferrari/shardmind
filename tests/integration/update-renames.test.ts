@@ -32,7 +32,7 @@ import {
   removedFilesNeedingDecision,
   type ConflictResolution,
 } from '../../source/core/update-planner.js';
-import { runUpdate, rollbackUpdate } from '../../source/core/update-executor.js';
+import { runUpdate } from '../../source/core/update-executor.js';
 import { defaultModuleSelections, resolveComputedDefaults } from '../../source/core/install-planner.js';
 import { runInstall } from '../../source/core/install-executor.js';
 import { buildRenderContext } from '../../source/core/renderer.js';
@@ -638,7 +638,8 @@ describe('update applies rename migrations (#178)', () => {
         if (path.basename(String(to)) === LOWER) throw new Error('rename interrupted');
         return realRename(from, to);
       });
-      await expect(update(v2)).rejects.toThrow(/rename interrupted/);
+      // Wrapped as a write failure, the cause kept as its hint (#301).
+      await expect(update(v2)).rejects.toMatchObject({ code: 'UPDATE_WRITE_FAILED', hint: 'rename interrupted' });
       vi.restoreAllMocks();
       expect(await rootNames()).toEqual([COPY]);
       expect(await read(COPY)).toBe(before);
@@ -914,17 +915,16 @@ describe('update applies rename migrations (#178)', () => {
       }
     });
 
-    it("a real SIGINT mid-update, through the command's rollback handler, leaves the vault as it was", async () => {
+    it("a real SIGINT mid-update, through the command's handler, stops the run and its own rollback leaves the vault as it was (#249)", async () => {
       await install();
       await write('brain/mine.md', 'mine\n');
       const before = await vaultTree();
       const v2 = await folderCase('0.2.0', changeNote);
-      let backupDir: string | undefined;
-      const added: string[] = [];
+      // Hold the note's write open until the Ctrl+C lands, as a slow disk would.
       let blocked = false;
-      let release!: (err: Error) => void;
-      const held = new Promise<never>((_, reject) => {
-        release = reject;
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
       });
       const realWrite = fsp.writeFile;
       vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
@@ -934,72 +934,31 @@ describe('update applies rename migrations (#178)', () => {
         }
         return realWrite(file, data, opts as Parameters<typeof realWrite>[2]);
       });
-      // The update command's handler, mounted as the command mounts it, with
-      // the process exit it ends in stubbed.
+      // The update command's handler, mounted as the command mounts it: a
+      // Ctrl+C aborts the run and waits for its rollback (stopRun), and the
+      // process exit it ends in is stubbed.
       const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as typeof process.exit);
+      const abort = new AbortController();
+      let running: Promise<unknown> = Promise.resolve();
       const Handler = () => {
         useSigintRollback({
-          isActive: () => backupDir !== undefined,
+          isActive: () => true,
           rollback: async () => {
-            await rollbackUpdate(vault, backupDir!, added);
+            abort.abort();
+            release();
+            await running;
           },
         });
         return null;
       };
       const ui = render(React.createElement(Handler));
-      const running = update(v2, 'keep_mine', false, undefined, {
-        onBackupReady: (dir) => {
-          backupDir = dir;
-        },
-        onFileTouched: (rel, introduced) => {
-          if (introduced) added.push(rel);
-        },
-      }).catch(() => undefined);
+      running = update(v2, 'keep_mine', false, undefined, { signal: abort.signal }).catch((e: unknown) => e);
       await vi.waitFor(() => expect(blocked).toBe(true), { timeout: 10_000 });
       process.emit('SIGINT');
       await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(130), { timeout: 10_000 });
+      expect(await running).toMatchObject({ code: 'CANCELLED' });
       expect(await vaultTree()).toEqual(before);
       ui.unmount();
-      release(new Error('interrupted'));
-      await running;
-      vi.restoreAllMocks();
-    });
-
-    it('a Ctrl+C mid-update, rolled back from the backup and touched paths the SIGINT handler holds, leaves the vault as it was', async () => {
-      await install();
-      await write('brain/mine.md', 'mine\n');
-      const before = await vaultTree();
-      const v2 = await folderCase('0.2.0', changeNote);
-      // Hold the note's write open, then roll back the way the update command's
-      // SIGINT handler does: from the backup dir and the paths it was told of.
-      let backupDir: string | undefined;
-      const added: string[] = [];
-      let blocked = false;
-      let release!: (err: Error) => void;
-      const held = new Promise<never>((_, reject) => {
-        release = reject;
-      });
-      const realWrite = fsp.writeFile;
-      vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
-        if (String(file).toLowerCase().endsWith(path.join('brain', 'north star.md').toLowerCase())) {
-          blocked = true;
-          await held;
-        }
-        return realWrite(file, data, opts as Parameters<typeof realWrite>[2]);
-      });
-      const running = update(v2, 'keep_mine', false, undefined, {
-        onBackupReady: (dir) => {
-          backupDir = dir;
-        },
-        onFileTouched: (rel, introduced) => {
-          if (introduced) added.push(rel);
-        },
-      }).catch(() => undefined);
-      await vi.waitFor(() => expect(blocked).toBe(true), { timeout: 10_000 });
-      await rollbackUpdate(vault, backupDir!, added);
-      expect(await vaultTree()).toEqual(before);
-      release(new Error('interrupted'));
-      await running;
       vi.restoreAllMocks();
     });
   });

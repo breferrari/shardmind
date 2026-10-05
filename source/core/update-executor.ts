@@ -20,28 +20,17 @@ import type {
   MergeStats,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
-import {
-  createdFoldersRecord,
-  missingFolders,
-  recordCreatedFolders,
-  rollbackCreatedFolders,
-} from './created-folders.js';
-import { errnoCode, isEnoent } from '../runtime/errno.js';
-import { pathExists, mapConcurrent, settleAll, toPosix } from './fs-utils.js';
-import { restoreDirExactly, restoreTree } from './restore-tree.js';
+import { attemptRollback, withRollbackFailures } from './rollback-report.js';
+import { errnoCode } from '../runtime/errno.js';
+import { beginTransaction, type VaultTransaction } from './vault-transaction.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { throwIfCancelled } from './run-cancel.js';
 import {
   assertRenameTargetFree,
-  caseJournal,
   folderChanges,
   moveToFreePath,
   renameCaseInPlace,
-  sameFile,
-  undoCaseHops,
-  type CaseJournal,
 } from './rename-migrations.js';
 import { hashValues } from './install-planner.js';
 import {
@@ -50,15 +39,8 @@ import {
   writeState,
   initShardDir,
   STATE_SCHEMA_VERSION,
-  createBackupDir,
 } from './state.js';
-import {
-  VALUES_FILE,
-  STATE_FILE,
-  CACHED_MANIFEST,
-  CACHED_SCHEMA,
-  CACHED_TEMPLATES,
-} from '../runtime/vault-paths.js';
+import { VALUES_FILE } from '../runtime/vault-paths.js';
 import type {
   UpdatePlan,
   UpdateAction,
@@ -67,7 +49,6 @@ import type {
 import { wrapWriteError } from './bug-report.js';
 
 /** Cap fan-out when copying snapshot files during rollback preparation. */
-const SNAPSHOT_CONCURRENCY = 16;
 
 export interface UpdateRunnerOptions {
   vaultRoot: string;
@@ -228,38 +209,25 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     if (action.renamedFrom !== undefined) await assertRenameTargetFree(vaultRoot, action.renamedFrom, action.path, 'update');
   }
 
-  const backupDir = dryRun ? null : await createBackupDir(vaultRoot, now, 'update');
-  const addedPaths: string[] = [];
-  // In-place case renames (#169, #195), journaled so any rollback undoes them.
-  const journal = backupDir === null ? undefined : caseJournal(backupDir);
+  // The engine cache is snapshotted here; each vault file just before the
+  // run writes, deletes or moves onto it (§4.28).
+  const tx = dryRun
+    ? null
+    : await beginTransaction(vaultRoot, { kind: 'update', now, signal, keepAfterRollback: 'always', noPriorInstall: false });
   const folderMoves = folderChangesOf(touched.caseRenames);
-  // The folders this run records for its rollback, kept here too, so an
-  // unusable record on disk still undoes them (#295).
-  let createdFolders: string[] | undefined;
 
   try {
-    if (!dryRun) {
-      await snapshotForRollback(vaultRoot, plan, backupDir!);
-      // The folders on the way to every touched path that do not exist, and
-      // every new spelling of a folder renamed by case, so a rollback
-      // removes the ones the run created (#195, #258).
-      createdFolders = await missingFolders(vaultRoot, [...touched.writes, ...touched.deletes], {
-        folders: folderMoves.map((move) => move.to),
-      });
-      await recordCreatedFolders(backupDir!, createdFolders);
-      // Report the backup dir to the caller before any writes happen,
-      // once it holds the restore data. Progress only: the rollback is
-      // this run's own catch (#249).
-      onBackupReady?.(backupDir!);
-    }
-
-    // A rename's new path is introduced by this run, whichever pass fills it:
-    // registered once, before any write, so a failure or Ctrl+C mid-pass
-    // removes it (#178).
-    if (!dryRun) {
+    if (tx) {
+      // Before any write. Progress only: the rollback is this run's own
+      // catch (#249).
+      onBackupReady?.(tx.dir);
+      // A rename's new path is introduced by this run, whichever pass fills
+      // it, and its old file is snapshotted: recorded once, before any write,
+      // so a failure or Ctrl+C mid-pass removes the one and restores the
+      // other (#178).
       for (const action of plan.actions) {
         if (action.renamedFrom === undefined) continue;
-        addedPaths.push(action.path);
+        await tx.recordMove(action.renamedFrom, action.path);
         onFileTouched?.(action.path, true);
       }
     }
@@ -268,10 +236,10 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     // file is written, where the filesystem folds case (#195): files the user
     // keeps in it move with it. Elsewhere the paired files move one by one.
     const renamedFolders = new Set<string>();
-    if (!dryRun) {
+    if (tx) {
       for (const move of folderMoves) {
-        throwIfCancelled(signal);
-        if (await renameCaseInPlace(vaultRoot, move.from, move.to, null, journal)) renamedFolders.add(move.from);
+        await tx.recordFolder(move.to);
+        if (await renameFolderCase(vaultRoot, move, tx)) renamedFolders.add(move.from);
       }
     }
 
@@ -314,7 +282,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
         conflictResolutions,
         nextFiles,
         summary,
-        addedPaths,
+        tx,
         dryRun,
         adoptPreexisting,
         onProgress,
@@ -332,9 +300,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
         vaultRoot,
         nextFiles,
         summary,
-        addedPaths,
-        dryRun,
-        journal,
+        tx,
       });
     }
     for (const action of plan.actions) {
@@ -344,7 +310,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
         vaultRoot,
         nextFiles,
         summary,
-        dryRun,
+        tx,
         onProgress,
         index: ++index,
         total: progressTotal,
@@ -353,7 +319,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     // An old folder spelling the moves vacated, where it is a folder of its
     // own (a case-sensitive filesystem): removed once empty, never with the
     // user's files in it (#195).
-    if (!dryRun) {
+    if (tx) {
       for (const move of [...folderMoves].reverse()) {
         if (renamedFolders.has(move.from)) continue;
         await fsp.rmdir(path.join(vaultRoot, move.from)).catch(() => {});
@@ -388,24 +354,22 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       bootstrap_fingerprint: currentState.bootstrap_fingerprint,
     };
 
-    if (!dryRun) {
-      throwIfCancelled(signal);
-      await initShardDir(vaultRoot);
-      await cacheTemplates(vaultRoot, newTempDir);
-      await cacheManifest(vaultRoot, newManifest, newSchema, newTempDir);
-      await writeValuesFile(vaultRoot, newValues);
-      // state.json commits the update: the last point a Ctrl+C can stop it.
-      throwIfCancelled(signal);
-      await writeState(vaultRoot, nextState);
+    if (tx) {
+      await tx.commitEngineMetadata({
+        beforeState: async () => {
+          await initShardDir(vaultRoot);
+          await cacheTemplates(vaultRoot, newTempDir);
+          await cacheManifest(vaultRoot, newManifest, newSchema, newTempDir);
+          await writeValuesFile(vaultRoot, newValues);
+        },
+        state: () => writeState(vaultRoot, nextState),
+      });
     }
 
-    return { state: nextState, summary, backupDir };
+    return { state: nextState, summary, backupDir: tx?.dir ?? null };
   } catch (err) {
-    if (!dryRun && backupDir) {
-      // A file left unrestored is never reported as rolled back (#247).
-      const failures = await attemptRollback(() => rollbackUpdate(vaultRoot, backupDir, addedPaths, createdFolders));
-      throw withRollbackFailures(err, failures);
-    }
+    // A file left unrestored is never reported as rolled back (#247).
+    if (tx) throw withRollbackFailures(err, await attemptRollback(() => tx.rollback()));
     throw err;
   }
 }
@@ -419,7 +383,8 @@ interface ApplyContext {
   conflictResolutions: Record<string, ConflictResolution>;
   nextFiles: Record<string, FileState>;
   summary: UpdateSummary;
-  addedPaths: string[];
+  /** The run's transaction; null in a dry run, which writes nothing. */
+  tx: VaultTransaction | null;
   dryRun: boolean;
   adoptPreexisting: boolean;
   onProgress: ((event: UpdateProgressEvent) => void) | undefined;
@@ -432,7 +397,7 @@ interface DeleteContext {
   vaultRoot: string;
   nextFiles: Record<string, FileState>;
   summary: UpdateSummary;
-  dryRun: boolean;
+  tx: VaultTransaction | null;
   onProgress: ((event: UpdateProgressEvent) => void) | undefined;
   index: number;
   total: number;
@@ -472,23 +437,15 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         outputPath: action.path,
         action: action.kind,
       });
-      if (!ctx.dryRun) {
-        // For `add` / `restore_missing`, the path is expected to be
-        // absent. If it happens to exist (an untracked user file at a
-        // colliding path, or a file the previous install didn't record),
-        // the snapshot-for-rollback pass already captured it — so a
-        // rollback restores the original instead of leaving our content
-        // in place. Rollback's added-paths list only erases paths that
-        // were NEWLY introduced by this run, so we check disk first to
-        // decide which list to update.
-        const introduced =
-          action.kind !== 'overwrite' && !(await pathExists(path.join(ctx.vaultRoot, action.path)));
+      if (ctx.tx) {
+        // A file already there (an untracked user file at an added path, a
+        // file the previous install didn't record) is snapshotted, so a
+        // rollback restores it; a path with nothing there is introduced, so
+        // a rollback removes it.
+        await ctx.tx.recordWrite(action.path);
         await writeAction(ctx.vaultRoot, action);
-        // A rename's new path is registered before the write pass (#178).
-        if (action.renamedFrom === undefined) {
-          if (introduced) ctx.addedPaths.push(action.path);
-          ctx.onFileTouched?.(action.path, introduced);
-        }
+        // A rename's new path is reported before the write pass (#178).
+        if (action.renamedFrom === undefined) ctx.onFileTouched?.(action.path, ctx.tx.introduced.includes(action.path));
       }
       ctx.nextFiles[action.path] = buildFileState(action, action.renderedHash, 'managed');
       ctx.summary.wroteFiles.push(action.path);
@@ -514,7 +471,8 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         outputPath: action.path,
         action: action.kind,
       });
-      if (!ctx.dryRun) {
+      if (ctx.tx) {
+        await ctx.tx.recordWrite(action.path);
         await writeFile(ctx.vaultRoot, action.path, action.content);
       }
       // Record the new render as the baseline, never the merged bytes: they
@@ -541,12 +499,16 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         // Edited in the user's editor (#50): their text, written as text
         // (an edit is never offered for a binary file), and tracked as
         // their modified copy at the shard's hash, the §4.7 baseline (#150).
-        if (!ctx.dryRun) await writeAction(ctx.vaultRoot, { path: action.path, content: resolution.content });
+        if (ctx.tx) {
+          await ctx.tx.recordWrite(action.path);
+          await writeAction(ctx.vaultRoot, { path: action.path, content: resolution.content });
+        }
         ctx.nextFiles[action.path] = buildFileState(action, action.newContentHash, 'modified');
         ctx.summary.wroteFiles.push(action.path);
         ctx.summary.conflictsEdited++;
       } else if (resolution === 'accept_new') {
-        if (!ctx.dryRun) {
+        if (ctx.tx) {
+          await ctx.tx.recordWrite(action.path);
           // Copy-origin: writeAction copies the bytes; a UTF-8 write of
           // `newContent` mangles binary (#63).
           await writeAction(ctx.vaultRoot, { ...action, content: action.newContent });
@@ -593,8 +555,9 @@ async function applyDeleteAction(action: UpdateAction, ctx: DeleteContext): Prom
     outputPath: action.path,
     action: 'delete',
   });
-  if (!ctx.dryRun) {
-    await fsp.rm(path.join(ctx.vaultRoot, action.path), { force: true });
+  if (ctx.tx) {
+    await ctx.tx.recordWrite(action.path);
+    await removeVaultFile(ctx.vaultRoot, action.path);
   }
   delete ctx.nextFiles[action.path];
   ctx.summary.deletedFiles.push(action.path);
@@ -663,28 +626,33 @@ async function completeRename(
     vaultRoot: string;
     nextFiles: Record<string, FileState>;
     summary: UpdateSummary;
-    addedPaths: string[];
-    dryRun: boolean;
+    /** The run's transaction; null in a dry run. */
+    tx: VaultTransaction | null;
     /** The paths the write pass wrote. */
     written: ReadonlySet<string>;
-    journal?: CaseJournal;
   },
 ): Promise<void> {
   const to = action.path;
   // What the write pass did, not a re-derivation of it.
   const wroteNewPath = ctx.written.has(to);
-  if (!ctx.dryRun) {
-    // A case-only rename on a case-folding filesystem wrote into the old
-    // file itself: unlinking the old path would delete the new content, so
-    // it is renamed in place (#169).
-    if (wroteNewPath) {
-      if (!(await renameCaseInPlace(ctx.vaultRoot, from, to, ctx.addedPaths, ctx.journal))) {
-        await fsp.rm(path.join(ctx.vaultRoot, from), { force: true });
+  const tx = ctx.tx;
+  if (tx) {
+    try {
+      // A case-only rename on a case-folding filesystem wrote into the old
+      // file itself: unlinking the old path would delete the new content, so
+      // it is renamed in place (#169).
+      if (wroteNewPath) {
+        if (!(await renameCaseInPlace(ctx.vaultRoot, from, to, tx.introduced, tx.journal))) {
+          await fsp.rm(path.join(ctx.vaultRoot, from), { force: true });
+        }
       }
+      // Checked at the top of the run; something may still arrive during the
+      // write pass. A volatile file the user deleted has no file to move.
+      else await moveToFreePath(ctx.vaultRoot, from, to, tx.introduced, 'update', tx.journal);
+    } catch (err) {
+      // A refusal keeps its own code; an errno keeps its hint (#225).
+      throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not move ${from} to ${to} during update`, err);
     }
-    // Checked at the top of the run; something may still arrive during the
-    // write pass. A volatile file the user deleted has no file to move.
-    else await moveToFreePath(ctx.vaultRoot, from, to, ctx.addedPaths, 'update', ctx.journal);
   }
   // An action that wrote or re-recorded the new path set its own entry;
   // otherwise the old entry moves across, under the new template keys.
@@ -710,194 +678,27 @@ function folderChangesOf(pairs: ReadonlyArray<readonly [string, string]>): Array
   return [...byFrom.values()].sort((a, b) => a.from.split('/').length - b.from.split('/').length);
 }
 
-async function snapshotForRollback(
-  vaultRoot: string,
-  plan: UpdatePlan,
-  backupDir: string,
-): Promise<void> {
-  // `add` is included here too: in the normal flow the path does not
-  // exist on disk, so `copyOptional` ENOENTs and does nothing. But if
-  // the user has created an untracked file at the same path (e.g. an
-  // orphan a previous install didn't capture), snapshotting here means
-  // a rollback can restore it instead of leaving the user with our
-  // overwritten content.
-  const toSnapshot = new Set<string>();
-  for (const action of plan.actions) {
-    switch (action.kind) {
-      case 'overwrite':
-      case 'auto_merge':
-      case 'delete':
-      case 'conflict':
-      case 'restore_missing':
-      case 'add':
-        toSnapshot.add(action.path);
-        break;
-      case 'noop':
-      case 'skip_volatile':
-      case 'keep_as_user':
-        break;
-    }
-    // A rename deletes or moves its old path, and fills its new one (#178).
-    if (action.renamedFrom !== undefined) {
-      toSnapshot.add(action.renamedFrom);
-      toSnapshot.add(action.path);
-    }
-  }
-  // A case-only rename's two paths can be one file (#169): back it up once,
-  // under its old name, which a rollback restores.
-  for (const [from, to] of pathsTheUpdateTouches(plan.actions).caseRenames) {
-    if (await sameFile(vaultRoot, from, to)) toSnapshot.delete(to);
-  }
-
-  const filesBackupDir = path.join(backupDir, 'files');
-  const cacheBackupDir = path.join(backupDir, 'cache');
-  await settleAll([
-    fsp.mkdir(filesBackupDir, { recursive: true }),
-    fsp.mkdir(cacheBackupDir, { recursive: true }),
-  ]);
-
-  // Copy snapshots with bounded concurrency. ENOENT is expected for
-  // `missing` entries and any uninitialized cache file — tolerate both.
-  // Every branch settles before a failure is thrown, so none writes into the
-  // snapshot while the rollback reads it (#274).
-  await settleAll([
-    mapConcurrent([...toSnapshot], SNAPSHOT_CONCURRENCY, (rel) =>
-      copyOptional(path.join(vaultRoot, rel), path.join(filesBackupDir, rel)),
-    ),
-    mapConcurrent(
-      [STATE_FILE, CACHED_MANIFEST, CACHED_SCHEMA, VALUES_FILE],
-      SNAPSHOT_CONCURRENCY,
-      (rel) => copyOptional(path.join(vaultRoot, rel), path.join(cacheBackupDir, rel)),
-    ),
-    (async () => {
-      const templatesSrc = path.join(vaultRoot, CACHED_TEMPLATES);
-      let existed = true;
-      try {
-        await fsp.cp(templatesSrc, path.join(cacheBackupDir, CACHED_TEMPLATES), {
-          recursive: true,
-        });
-      } catch (err) {
-        if (!isEnoent(err)) throw err;
-        existed = false;
-      }
-      // Written last, once the copy is whole: the rollback restores the
-      // template cache exactly only when it knows the snapshot is (#264).
-      await fsp.writeFile(path.join(backupDir, TEMPLATES_SNAPSHOT_MARKER), JSON.stringify({ existed }));
-    })(),
-  ]);
-}
-
-/** Records whether `.shardmind/templates/` existed when the snapshot was taken (#264). */
-const TEMPLATES_SNAPSHOT_MARKER = 'templates-snapshot.json';
-
-/**
- * The marker; `'absent'` when the snapshot never finished (no marker); or
- * why it cannot be used, when it is there but unreadable or malformed
- * (#294). Only a missing marker means a snapshot cut short.
- */
-async function readTemplatesMarker(
-  backupDir: string,
-): Promise<{ existed: boolean } | 'absent' | { unreadable: string }> {
-  let raw: string;
-  try {
-    raw = await fsp.readFile(path.join(backupDir, TEMPLATES_SNAPSHOT_MARKER), 'utf-8');
-  } catch (err) {
-    return isEnoent(err) ? 'absent' : { unreadable: reasonOf(err) };
-  }
-  try {
-    const parsed = JSON.parse(raw) as { existed?: unknown };
-    if (typeof parsed?.existed === 'boolean') return { existed: parsed.existed };
-  } catch {
-    // Not JSON: reported below like any other malformed marker.
-  }
-  return { unreadable: `${TEMPLATES_SNAPSHOT_MARKER} is not { existed: boolean }` };
-}
-
-async function copyOptional(src: string, dst: string): Promise<void> {
-  try {
-    await fsp.mkdir(path.dirname(dst), { recursive: true });
-    await fsp.copyFile(src, dst);
-  } catch (err) {
-    if (!isEnoent(err)) throw err;
-  }
-}
-
-/**
- * Restore from a snapshot. Returns a list of per-file failures so the
- * caller can surface them — silently swallowing rollback errors would
- * tell the user "rollback done" while the vault sat in a partially-
- * restored state. Best-effort across every file: one failure does not
- * abort the rest of the restore.
- */
-export async function rollbackUpdate(
-  vaultRoot: string,
-  backupDir: string,
-  addedPaths: string[],
-  /** The folders the run recorded, for an unusable record on disk (#295). */
-  createdFolders?: readonly string[],
-): Promise<RollbackFailure[]> {
-  const failures: RollbackFailure[] = [];
-
-  // Put back the old spelling of every file or folder renamed in place by
-  // case (#169, #195). Either order with the restore below gives the same
-  // tree on a case-folding filesystem (mutation-checked against the folder
-  // rollback tests in tests/integration/update-renames.test.ts); undo-first
-  // is chosen for readability.
-  failures.push(...(await undoCaseHops(vaultRoot, backupDir)));
-
-  // Remove anything we newly introduced first so the restore-step can't
-  // spuriously "succeed" by landing a snapshot on top of a brand-new file.
-  for (const rel of addedPaths) {
-    try {
-      await fsp.rm(path.join(vaultRoot, rel), { force: true });
-    } catch (err) {
-      failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
-    }
-  }
-
-  const filesDir = path.join(backupDir, 'files');
-  await restoreTree(filesDir, vaultRoot, failures);
-
-  const cacheDir = path.join(backupDir, 'cache');
-  // `cacheTemplates` rewrote the template cache whole: restore it exactly,
-  // so the new version's added templates go, and so does a cache there was
-  // none of before (#264). Only when the snapshot says it is complete: a
-  // snapshot cut short by a failed copy restores by copying over, as it
-  // never touches templates it did not hold.
-  // A marker that is there but unusable is a failure (#294): restore by
-  // copying over, which brings the snapshot's templates back, and name the
-  // cache, since templates the new version added may still be in it.
-  const read = await readTemplatesMarker(backupDir);
-  const marker = read === 'absent' || 'unreadable' in read ? undefined : read;
-  await restoreTree(cacheDir, vaultRoot, failures, marker === undefined ? {} : { skip: [CACHED_TEMPLATES] });
-  if (read !== 'absent' && 'unreadable' in read) {
-    failures.push({
-      path: toPosix(vaultRoot, path.join(vaultRoot, CACHED_TEMPLATES)),
-      reason: `templates marker unreadable: ${read.unreadable}`,
-      backup: path.join(cacheDir, CACHED_TEMPLATES),
-    });
-  }
-  if (marker !== undefined) {
-    await restoreDirExactly(
-      marker.existed ? path.join(cacheDir, CACHED_TEMPLATES) : path.join(backupDir, 'no-templates-cache'),
-      path.join(vaultRoot, CACHED_TEMPLATES),
-      failures,
-      { label: CACHED_TEMPLATES },
-    );
-  }
-
-  // Folders the run created (a new file's folder, a rename's new folder on a
-  // case-sensitive filesystem, #195), once nothing is left in them (#258).
-  failures.push(
-    ...(await rollbackCreatedFolders(vaultRoot, backupDir, toPosix(vaultRoot, createdFoldersRecord(backupDir)), createdFolders)),
-  );
-
-  return failures;
-}
-
 // ---------------------------------------------------------------------------
 // Low-level file ops
 // ---------------------------------------------------------------------------
+
+/** A delete action's removal; an errno keeps its hint (#225). */
+async function removeVaultFile(vaultRoot: string, rel: string): Promise<void> {
+  try {
+    await fsp.rm(path.join(vaultRoot, rel), { force: true });
+  } catch (err) {
+    throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not delete ${rel} during update`, err);
+  }
+}
+
+/** A folder renamed in place by case (#195); an errno keeps its hint (#225). */
+async function renameFolderCase(vaultRoot: string, move: { from: string; to: string }, tx: VaultTransaction): Promise<boolean> {
+  try {
+    return await renameCaseInPlace(vaultRoot, move.from, move.to, null, tx.journal);
+  } catch (err) {
+    throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not rename ${move.from} to ${move.to} during update`, err);
+  }
+}
 
 async function writeFile(vaultRoot: string, outputPath: string, content: string): Promise<void> {
   const abs = path.join(vaultRoot, outputPath);
