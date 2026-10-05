@@ -24,9 +24,9 @@ afterEach(async () => {
 });
 
 const begin = (signal?: AbortSignal) =>
-  beginTransaction(vault, { kind: 'adopt', keepAfterRollback: 'on-restore-failure', noPriorInstall: true, signal });
+  beginTransaction(vault, { kind: 'adopt', noPriorInstall: true, signal });
 /** As update begins one: an install before it, the snapshot always kept. */
-const beginUpdate = () => beginTransaction(vault, { kind: 'update', keepAfterRollback: 'always', noPriorInstall: false });
+const beginUpdate = () => beginTransaction(vault, { kind: 'update', noPriorInstall: false });
 const read = (rel: string) => fsp.readFile(path.join(vault, rel), 'utf-8');
 const exists = (abs: string) => fsp.access(abs).then(() => true, () => false);
 

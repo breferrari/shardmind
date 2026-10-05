@@ -2,9 +2,10 @@
  * Update executor — disk-mutating operations for `shardmind update`.
  *
  * Mirrors install-executor's split: the planner decides, this file acts.
- * Before any writes happen we snapshot every file the plan will touch
- * (and the engine's cache) into a per-run backup directory; if anything
- * fails we walk it back. Commands never see partial state.
+ * The run's vault transaction (`vault-transaction.ts`, #301) snapshots the
+ * engine's cache when it begins and each file just before it is written,
+ * deleted or moved; if anything fails it walks the run back. Commands never
+ * see partial state.
  */
 
 import fsp from 'node:fs/promises';
@@ -48,8 +49,6 @@ import type {
 } from './update-planner.js';
 import { wrapWriteError } from './bug-report.js';
 
-/** Cap fan-out when copying snapshot files during rollback preparation. */
-
 export interface UpdateRunnerOptions {
   vaultRoot: string;
   plan: UpdatePlan;
@@ -77,16 +76,15 @@ export interface UpdateRunnerOptions {
   onProgress?: (event: UpdateProgressEvent) => void;
   /**
    * Fires exactly once, after the backup directory is created and the
-   * snapshot is staged but before any vault mutation happens. Progress
+   * engine cache snapshotted, before any vault mutation happens. Progress
    * only: the rollback is runUpdate's own, in its catch, and a Ctrl+C
    * reaches it through `signal` (#249).
    */
   onBackupReady?: (backupDir: string) => void;
   /**
    * Fires after each write with the file's vault-relative path and
-   * whether we newly introduced it (as opposed to overwriting an
-   * existing on-disk file): the same list runUpdate's own rollback
-   * erases, so a caller can see exactly which files this run created. A rename's new
+   * whether the run introduced it (nothing was there when it was
+   * recorded): the same list runUpdate's own rollback erases, so a caller can see exactly which files this run created. A rename's new
    * path (#178) fires once before the write pass, after it was checked
    * free.
    */
@@ -152,16 +150,16 @@ export interface UpdateSummary {
  * Execute an UpdatePlan against a real vault.
  *
  * Flow:
- *   1. Snapshot every path the plan touches (file content + .shardmind/
- *      cache) into `.shardmind/backups/update-<ts>/`.
+ *   1. Begin the vault transaction: `.shardmind/backups/update-<ts>/`,
+ *      with the engine cache snapshotted.
  *   2. Apply each action in dependency-safe order (deletes last so a new
  *      file at the same path can't collide with the about-to-be-deleted
- *      one).
- *   3. Re-cache manifest/schema/templates, re-write values, write new
- *      state.json.
- *   4. On any exception between step 1 and the final state write, run
- *      rollback: restore snapshots and delete any files we added that
- *      weren't in the pre-run snapshot.
+ *      one), recording each path just before it is touched.
+ *   3. Re-cache manifest/schema/templates, re-write values, then write
+ *      the new state.json last (`commitEngineMetadata`).
+ *   4. On any exception before the state write, the transaction's
+ *      rollback undoes the run: case renames, introduced paths, the
+ *      snapshot, the engine cache, the folders it created.
  */
 export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult> {
   const {
@@ -213,7 +211,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // run writes, deletes or moves onto it (§4.28).
   const tx = dryRun
     ? null
-    : await beginTransaction(vaultRoot, { kind: 'update', now, signal, keepAfterRollback: 'always', noPriorInstall: false });
+    : await beginTransaction(vaultRoot, { kind: 'update', now, signal, noPriorInstall: false });
   const folderMoves = folderChangesOf(touched.caseRenames);
 
   try {
@@ -283,7 +281,6 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
         nextFiles,
         summary,
         tx,
-        dryRun,
         adoptPreexisting,
         onProgress,
         onFileTouched,
@@ -385,7 +382,6 @@ interface ApplyContext {
   summary: UpdateSummary;
   /** The run's transaction; null in a dry run, which writes nothing. */
   tx: VaultTransaction | null;
-  dryRun: boolean;
   adoptPreexisting: boolean;
   onProgress: ((event: UpdateProgressEvent) => void) | undefined;
   onFileTouched?: (outputPath: string, introduced: boolean) => void;
@@ -609,15 +605,16 @@ function actionEmitsProgress(action: UpdateAction): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Snapshot + rollback
+// Renames
 // ---------------------------------------------------------------------------
 
 /**
  * Finish a rename migration's move once the write pass is done (#178). An
  * action that wrote its new path leaves the old file to delete; one that
  * wrote nothing (no change, a volatile file, a conflict kept as mine or
- * skipped) moves the old file across. The state entry moves with it, and
- * the new path counts as added so a rollback removes it.
+ * skipped) moves the old file across. The state entry moves with it; both
+ * paths were recorded before the write pass (`recordMove`), so a rollback
+ * removes the new one and restores the old.
  */
 async function completeRename(
   action: UpdateAction,

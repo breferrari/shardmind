@@ -35,15 +35,11 @@ export interface TransactionOptions {
   now?: Date;
   signal?: AbortSignal;
   /**
-   * What the snapshot folder becomes after a rollback: `always` kept (update:
-   * its summary points at it), or kept only when a restore failed, when it
-   * holds the only copy of a file (adopt, #246).
-   */
-  keepAfterRollback: 'always' | 'on-restore-failure';
-  /**
-   * No install before this run: a rollback also removes what it wrote under
-   * `.shardmind/` (adopt, #243). Otherwise the engine cache is snapshotted
-   * when the run begins and restored by its rollback (update).
+   * No install before this run (adopt): a rollback also removes what it
+   * wrote under `.shardmind/`, the snapshot included unless it holds the
+   * only copy of a file (#243, #246). Otherwise (update) the engine cache is
+   * snapshotted when the run begins and restored by its rollback, and the
+   * snapshot is kept: the update summary points at it.
    */
   noPriorInstall: boolean;
 }
@@ -183,7 +179,7 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
       if (opts.noPriorInstall) {
         // The snapshot goes with the rest, unless it holds the only copy of
         // a file: a failure that names its backup there (restore-tree.ts).
-        const keep = opts.keepAfterRollback === 'always' || failures.some((f) => f.backup !== undefined);
+        const keep = failures.some((f) => f.backup !== undefined);
         for (const failure of await removeEngineWrites(vaultRoot, { snapshotDir: keep ? null : dir, removeEmptyDir: true })) {
           failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
         }
