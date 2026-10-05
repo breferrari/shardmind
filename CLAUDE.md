@@ -135,7 +135,7 @@ shardmind/
 │   │       ├── use-update-machine.ts
 │   │       ├── use-adopt-machine.ts
 │   │       ├── use-status-report.ts   # Async loader for status command
-│   │       ├── use-self-update-check.ts # Async npm-registry check + suppression rules (#113)
+│   │       ├── use-self-update-check.ts # Cached npm check + detached refresh + suppression rules (#113, #285)
 │   │       ├── use-self-update-banner.tsx # Composed hook: pkg.version + check + <SelfUpdateBanner /> (#113)
 │   │       ├── cli-version.ts         # Bundle-aware shardmind pkg.version resolver (#113)
 │   │       ├── use-vault-lock.ts      # take/release the vault lock in install/update/adopt (#253)
@@ -217,7 +217,8 @@ shardmind/
 │   │   ├── external-tools.ts          # Check external_tools against their ranges; no-shell probe (#138)
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
-│   │   └── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
+│   │   ├── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
+│   │   └── self-update-refresh.ts     # Detached child that refreshes the npm self-update cache (#285)
 │   ├── ui-kit/                        # Components vendored from @inkjs/ui 2.0.0 (#43, #273); index.ts is the only entry, licences + PROVENANCE.md + VENDOR.json inside
 │   ├── cli-kit/                       # CLI framework vendored from Pastel 4.0.1 (#277); index.ts is the only entry, positional options built in (#147)
 │   ├── runtime/                       # Exported for hook scripts
