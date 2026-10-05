@@ -545,10 +545,12 @@ npm run release:major    # 0.1.0 → 1.0.0
 #    v<version> release tag body via the GitHub UI or `gh release edit`.
 ```
 
-This triggers `.github/workflows/release.yml`:
-- Runs typecheck + test + build
-- Publishes to npm with provenance
-- Creates GitHub Release with changelog from commits since last tag
+This triggers `.github/workflows/release.yml`, three jobs in strict order (#108):
+1. **check**: refuses a tag that is not `v<package.json version>`, then runs typecheck, test and build, and packs the tarball (`npm pack`). The tarball is the artifact the later jobs ship, so what was tested is what is published.
+2. **github-release**: creates the GitHub Release with a changelog from the commits since the previous tag reachable from this one. A prerelease version (`0.2.0-beta.1`) is marked prerelease and never made "latest". This step is reversible: delete the release and the tag before the next job runs and nothing reaches npm.
+3. **publish-npm**: publishes that tarball with provenance under its npm dist-tag: `latest` for a stable version, and for a prerelease its first identifier when that is alphabetic (`beta.1` → `beta`, `rc.2` → `rc`), else `next`. A prerelease never goes to `latest`. npm 11 refuses a prerelease without `--tag`. If this job fails, re-run it alone ("Re-run failed jobs"); it publishes the same tarball.
+
+One workflow, not two: a release created with `GITHUB_TOKEN` does not trigger another workflow, so a separate `release: published` pipeline would need a PAT. Whether ShardMind publishes prereleases at all is the maintainer's call; the pipeline handles one correctly if it is tagged.
 
 **Do not** publish manually with `npm publish`. Always tag and let CI handle it.
 
