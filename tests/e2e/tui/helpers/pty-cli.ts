@@ -129,6 +129,16 @@ function signalPty(pty: IPty, signal: 'SIGINT' | 'SIGKILL'): void {
   else pty.kill();
 }
 
+/**
+ * How long a killed child gets to report its exit. A SIGKILL lands at once;
+ * without signals (ConPTY) the kill closes the console and the child ends on
+ * the close event, which takes longer. Waiting for it keeps a dispose from
+ * returning, and the worker from tearing down, under a console still closing.
+ */
+function killGraceMs(): number {
+  return ptyCaps().signals ? 200 : 5_000;
+}
+
 // ───── Spawn options ─────────────────────────────────────────────────
 
 export interface SpawnCliPtyOptions {
@@ -415,11 +425,7 @@ export async function spawnCliPty(
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     if (winner === 'timeout') {
       // Force-kill so vitest workers don't hang on a stuck child.
-      try {
-        signalPty(pty, 'SIGKILL');
-      } catch {
-        // Already dead.
-      }
+      kill();
       // The SIGKILL above eventually fires `onExit` and resolves
       // `exitPromise`. If it lands within the grace window, surface
       // the captured info; otherwise return a synthetic SIGKILL state
@@ -428,7 +434,7 @@ export async function spawnCliPty(
       // pin the worker after this function returns.
       let graceHandle: NodeJS.Timeout | undefined;
       const gracePromise = new Promise<'killed'>((resolve) => {
-        graceHandle = setTimeout(() => resolve('killed'), 200);
+        graceHandle = setTimeout(() => resolve('killed'), killGraceMs());
       });
       const graceWinner = await Promise.race([exitPromise, gracePromise]);
       if (graceHandle !== undefined) clearTimeout(graceHandle);
@@ -440,8 +446,14 @@ export async function spawnCliPty(
     return { ...winner, timedOut: false };
   };
 
+  // Once per child. A second kill before the exit lands would, on ConPTY,
+  // start another console-list agent against a console already closing:
+  // node-pty's "AttachConsole failed", and a worker that can die at teardown
+  // (#174).
+  let killRequested = false;
   const kill = (): void => {
-    if (exitInfo !== null) return;
+    if (exitInfo !== null || killRequested) return;
+    killRequested = true;
     try {
       signalPty(pty, 'SIGKILL');
     } catch {
@@ -459,7 +471,7 @@ export async function spawnCliPty(
       kill();
       let drainHandle: NodeJS.Timeout | undefined;
       const drainPromise = new Promise<void>((resolve) => {
-        drainHandle = setTimeout(resolve, 200);
+        drainHandle = setTimeout(resolve, killGraceMs());
       });
       await Promise.race([exitPromise, drainPromise]);
       if (drainHandle !== undefined) clearTimeout(drainHandle);
