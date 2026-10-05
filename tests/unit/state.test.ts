@@ -771,6 +771,48 @@ describe('createBackupDir (#248)', () => {
     }
   });
 
+  it('removes the folders it made on the way when it cannot create the snapshot folder (#269)', async () => {
+    await fsp.mkdir(vault, { recursive: true });
+    const realMkdir = fsp.mkdir;
+    let exclusive = 0;
+    const spy = vi.spyOn(fsp, 'mkdir').mockImplementation((async (p: string, opts?: { recursive?: boolean }) => {
+      // The first try finds no parents (ENOENT), they are made, and the
+      // second, the snapshot folder itself, fails.
+      if (opts?.recursive === false && ++exclusive === 2) {
+        throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
+      }
+      return realMkdir(p, opts);
+    }) as typeof fsp.mkdir);
+    try {
+      await expect(createBackupDir(vault, new Date(), 'adopt')).rejects.toMatchObject({ code: 'ADOPT_WRITE_FAILED' });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await fsp.readdir(vault)).toEqual([]);
+  });
+
+  it("keeps a .shardmind/ that was there when it cannot create the snapshot folder (#269)", async () => {
+    await fsp.mkdir(path.join(vault, '.shardmind'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind', 'boundary-ignore'), 'archive/\n');
+    const realMkdir = fsp.mkdir;
+    let exclusive = 0;
+    const spy = vi.spyOn(fsp, 'mkdir').mockImplementation((async (p: string, opts?: { recursive?: boolean }) => {
+      // The first try finds no parents (ENOENT), they are made, and the
+      // second, the snapshot folder itself, fails.
+      if (opts?.recursive === false && ++exclusive === 2) {
+        throw Object.assign(new Error('simulated EACCES'), { code: 'EACCES' });
+      }
+      return realMkdir(p, opts);
+    }) as typeof fsp.mkdir);
+    try {
+      await expect(createBackupDir(vault, new Date(), 'update')).rejects.toMatchObject({ code: 'UPDATE_WRITE_FAILED' });
+    } finally {
+      spy.mockRestore();
+    }
+    // backups/ was made on the way and goes; .shardmind/ and the user's file stay.
+    expect(await fsp.readdir(path.join(vault, '.shardmind'))).toEqual(['boundary-ignore']);
+  });
+
   it('never reuses a folder that is already there, even an empty one', async () => {
     const now = new Date('2026-10-04T12:00:00.000Z');
     const taken = path.join(vault, '.shardmind', 'backups', 'adopt-2026-10-04T12-00-00-000');

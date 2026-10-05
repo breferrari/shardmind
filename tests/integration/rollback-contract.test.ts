@@ -276,15 +276,7 @@ interface KnownDefect {
   leaves: string[];
 }
 
-const KNOWN_DEFECTS: KnownDefect[] = [
-  {
-    // A failed snapshot folder leaves the folders made on the way to it.
-    issue: '#269',
-    pipeline: 'adopt',
-    fault: 'mkdir',
-    leaves: ['.shardmind', '.shardmind/backups'],
-  },
-];
+const KNOWN_DEFECTS: KnownDefect[] = [];
 /** Per issue, the paths a row passed on it with. */
 const knownDefectsSeen = new Map<string, Set<string>>();
 /** Pipelines with a row whose restore fault actually fired. */

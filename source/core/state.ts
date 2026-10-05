@@ -29,6 +29,7 @@ import { migrateState } from './state-migrator.js';
 import { walkShardSource } from './modules.js';
 import { loadShardmindignore } from './shardmindignore.js';
 import { mapConcurrent, removePath, sha256 } from './fs-utils.js';
+import { missingFolders, removeCreatedFolders } from './created-folders.js';
 
 /**
  * Cap on parallel `copyFile` operations during cache population. Same budget
@@ -414,9 +415,22 @@ export async function removeEngineWrites(
  * copies. The suffix also guards against clock rewinds, coarse filesystem
  * mtime granularity, and two concurrent runs that hit the exact same
  * millisecond. Any other failure (a read-only vault, a file where a
- * folder should be) is the kind's write-failed error, not a raw errno.
+ * folder should be) is the kind's write-failed error, not a raw errno, and
+ * leaves no folder it made on the way (`.shardmind/`, `backups/`): it runs
+ * before the run's rollback exists, so it cleans up after itself (#269).
  */
 export async function createBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt'): Promise<string> {
+  const madeOnTheWay = await missingFolders(vaultRoot, [`${SHARDMIND_DIR}/backups/${kind}`]);
+  try {
+    return await allocateBackupDir(vaultRoot, now, kind);
+  } catch (err) {
+    // Only the folders that were missing, and only while empty.
+    await removeCreatedFolders(vaultRoot, madeOnTheWay);
+    throw err;
+  }
+}
+
+async function allocateBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt'): Promise<string> {
   const stamp = now.toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
   const base = path.join(vaultRoot, SHARDMIND_DIR, 'backups', `${kind}-${stamp}`);
   const code = kind === 'update' ? 'UPDATE_WRITE_FAILED' : 'ADOPT_WRITE_FAILED';
