@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import path from 'node:path';
+import type { ReadStream as TtyReadStream } from 'node:tty';
 import { useApp, useStdin } from 'ink';
 import { loadValuesYaml } from '../../core/values-io.js';
 import { toPosix } from '../../core/fs-utils.js';
@@ -771,9 +772,13 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 
   const { stdin, isRawModeSupported } = useStdin();
   // The stream's own raw mode, not Ink's setter: Ink counts its users and
-  // would leave raw mode on while the prompt holds it (#50).
+  // would leave raw mode on while the prompt holds it (#50). Ink 8 types
+  // stdin as any readable stream, so the TTY's setRawMode is checked for.
   const setStreamRawMode = useMemo(
-    () => (isRawModeSupported && typeof stdin.setRawMode === 'function' ? (on: boolean) => void stdin.setRawMode(on) : undefined),
+    () =>
+      isRawModeSupported && 'setRawMode' in stdin && typeof stdin.setRawMode === 'function'
+        ? (on: boolean) => void (stdin as TtyReadStream).setRawMode(on)
+        : undefined,
     [stdin, isRawModeSupported],
   );
   // $VISUAL, then $EDITOR; with neither, the prompt offers no editor (#50).
