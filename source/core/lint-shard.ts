@@ -19,6 +19,7 @@ import { resolveComputedDefaults } from './install-planner.js';
 import { resolveModules } from './modules.js';
 import { findOutputClashes, outputClashError, plannedOutputRefs } from './output-clash.js';
 import { buildRenderContext, compileTemplate, createRenderer, renderFile } from './renderer.js';
+import { HOOK_STAGES } from './hook.js';
 
 export interface LintFinding {
   severity: 'error' | 'warning';
@@ -145,12 +146,18 @@ export async function lintShard(
 
   const context = buildRenderContext(manifest, values, selections, new Date(), opts.vaultRoot);
   const env = createRenderer(shardDir);
+  // A rendered `.gitignore.njk`, kept for the hook-log check below (#201).
+  let renderedGitignore: string | undefined;
   for (const entry of resolution.render) {
     try {
       const list = entry.iterator ? values[entry.iterator] : undefined;
       // An `_each` over an empty list renders nothing, so compile it instead.
-      if (Array.isArray(list) && list.length === 0) await compileTemplate(entry, env);
-      else await renderFile(entry, context, env);
+      if (Array.isArray(list) && list.length === 0) {
+        await compileTemplate(entry, env);
+      } else {
+        const rendered = await renderFile(entry, context, env);
+        if (entry.outputPath === '.gitignore' && !Array.isArray(rendered)) renderedGitignore = rendered.content;
+      }
     } catch (err) {
       error(err, entry.outputPath);
     }
@@ -201,21 +208,16 @@ export async function lintShard(
   // Hook logs land in `.shardmind/logs/` inside the vault, which is often a
   // git repository: the .gitignore the shard installs should keep them out
   // (#201). The engine writes no .gitignore of its own.
-  const hooks = manifest.hooks;
-  if (hooks.bootstrap || hooks.personalize || hooks['post-update'] || hooks['post-install']) {
+  if (HOOK_STAGES.some((slot) => manifest.hooks[slot])) {
     const gitignore = [...resolution.copy, ...resolution.render].find((e) => e.outputPath === '.gitignore');
-    let rules: string | undefined;
-    if (gitignore) {
-      try {
-        rules = resolution.render.includes(gitignore)
-          ? [await renderFile(gitignore, context, env)].flat()[0]?.content
-          : await fs.readFile(gitignore.sourcePath, 'utf-8');
-      } catch {
-        // A .gitignore.njk that fails to render is already reported above.
-      }
-    }
-    const logs = path.posix.dirname(hookLogRelPath('bootstrap'));
-    if (!gitignore || (rules !== undefined && !ignore().add(rules).ignores(hookLogRelPath('bootstrap')))) {
+    // Its text: copied as is, or as rendered above. A .gitignore.njk that
+    // failed to render is already reported, so it is left unjudged here.
+    const gitignoreText =
+      gitignore && resolution.copy.includes(gitignore) ? await fs.readFile(gitignore.sourcePath, 'utf-8') : renderedGitignore;
+    const logFile = hookLogRelPath('bootstrap');
+    const logs = path.posix.dirname(logFile);
+    const logsIgnored = gitignoreText === undefined || ignore().add(gitignoreText).ignores(logFile);
+    if (!gitignore || !logsIgnored) {
       findings.push({
         severity: 'warning',
         code: 'LINT_LOGS_NOT_GITIGNORED',

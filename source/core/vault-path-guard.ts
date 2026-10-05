@@ -28,6 +28,7 @@ import {
   VALUES_FILE,
 } from '../runtime/vault-paths.js';
 import { mapConcurrent } from './fs-utils.js';
+import { HOOK_STAGES } from './hook.js';
 
 export type UnsafeVaultPathReason = 'symlink' | 'symlinked-folder' | 'hard-link' | 'case-mismatch';
 
@@ -51,7 +52,7 @@ const ENGINE_WRITE_PATHS: readonly string[] = [
   path.join(SHARDMIND_DIR, 'update-check.json'),
   HOOK_LOGS_DIR,
   // Every hook slot's full-output log, `.shardmind/logs/<slot>.log`.
-  ...(['bootstrap', 'personalize', 'post-update', 'post-install'] as const).map((slot) =>
+  ...HOOK_STAGES.map((slot) =>
     path.join(HOOK_LOGS_DIR, `${slot}.log`),
   ),
 ];

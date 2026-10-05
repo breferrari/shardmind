@@ -122,7 +122,9 @@ const KILL_GRACE_MS = 2_000;
  * the deprecated legacy slot (#102); the three new slots are bootstrap /
  * personalize / post-update.
  */
-export type HookStage = 'bootstrap' | 'personalize' | 'post-update' | 'post-install';
+/** Every hook slot a shard can declare in `shard.yaml`. */
+export const HOOK_STAGES = ['bootstrap', 'personalize', 'post-update', 'post-install'] as const;
+export type HookStage = (typeof HOOK_STAGES)[number];
 
 /**
  * The shape of a command-machine `Phase` variant while a hook subprocess
