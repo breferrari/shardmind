@@ -20,6 +20,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **CI runs on the merge queue, and reports one check with a fixed name, `ci-passed`, for main's ruleset to require.** It passes only when every OS and Node job passed. The jobs it covers are named after their matrix values, so a new Node version or OS no longer renames the check a merge waits on.
 
+### Docs (eleven proposals declined — #199, #81, #86, #79, #80, #82, #83, #84, #39, #89, #91)
+
+- **The README now says how to stop using shardmind on a vault:** delete `.shardmind/` and `shard-values.yaml`. Eleven proposals with no request behind them are declined, each with its reason in `docs/SHARD-LAYOUT.md` §Out of scope (a `--skip-hooks` flag, several shards per vault, `rendered_files`, guided files, structural variants, dependency fetching, `eject`, `init`, named registries, a hosted registry, team management). Each can reopen if its reason stops holding.
+
 ### Internal (the coverage report counts the spawned CLI — #293)
 
 - **`npm run test:coverage` always writes a report**, even when a test times out, and caps the test workers at 4 so a loaded machine does not time out to begin with.
