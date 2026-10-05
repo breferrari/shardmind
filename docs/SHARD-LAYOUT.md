@@ -40,7 +40,7 @@ my-shard/                             ← git repo root; also opens cleanly as a
 │       ├── personalize.ts            ← optional, non-fatal; managed-file edits (engine skips when values are defaults)
 │       └── post-update.ts            ← optional, non-fatal; additive managed-file edits on update
 │
-├── .shardmindignore                  ← at repo root; glob semantics (negation deferred to v0.2)
+├── .shardmindignore                  ← at repo root; gitignore semantics, negation included (#87)
 │
 ├── <vault content at native paths>   ← brain/, work/, Home.md, bases/, etc. (v5.1's shape)
 │
@@ -171,7 +171,7 @@ A hook is an ordinary Node subprocess with full filesystem access; the engine ca
 - **`bootstrap` wrote a managed file** → `HOOK_BOOTSTRAP_MANAGED_WRITE` warning naming the paths. Detection folds into the post-hook re-hash: a tracked file whose bytes changed between the pre-hook snapshot and the end of bootstrap is a violation. The comparison is against the snapshot, not against `rendered_hash`, so a file the user edited before the update is not mistaken for a bootstrap write. Move the edit to `personalize`.
 - **`personalize` created an unmanaged file** → `HOOK_PERSONALIZE_UNMANAGED_CREATE` warning. Detection is a path-only vault walk (ignore-filtered + Tier-1-filtered) before and after; install/adopt only. Scoped to *creation* — a `personalize` that modifies or deletes an already-present unmanaged file (e.g. bootstrap's `.qmd/` artifacts) is not detected, because the path set is unchanged and the check avoids content-hashing the whole vault. Move the artifact creation to `bootstrap`.
 - **The walk could not read a folder** → `HOOK_BOUNDARY_INCOMPLETE` warning naming the folders (`.` is the vault root, shown as "the vault root"). A folder that vanished counts as empty. A busy or permission-denied folder (`EBUSY` / `EPERM` / `EACCES`, typical of a Windows scanner holding it) is read once more after 50 ms; a folder that still cannot be read is reported, never treated as empty, because an empty read would make the check say nothing was created. When the hook also created files, the creation warning lists the unreadable folders with them. A path under a folder that could not be read before the hook is not counted as created.
-- **The vault owner can exclude folders from that walk** (#190) in `.shardmind/boundary-ignore`, a file they own: one gitignore-style pattern per line, matched as `.shardmindignore` is (negation rejected). An excluded folder is never read, so it never makes the check incomplete. The cost is the user's explicit trade: whatever `personalize` creates in an excluded folder goes undetected. A missing file excludes nothing. A file that cannot be read or parsed, or that would switch the check off, is not applied. Switching off is judged by outcome, so every spelling is caught: the file matches every name at the vault root (`*`, `**`), or it excludes every folder the vault root holds (`*/`, `/*/`, a list naming each one). Such a file is not applied: the check runs without it and warns `HOOK_BOUNDARY_IGNORE_INVALID`. The shard never ships this file and updates never touch it (`.shardmind/` is Tier 1).
+- **The vault owner can exclude folders from that walk** (#190) in `.shardmind/boundary-ignore`, a file they own: one gitignore-style pattern per line, matched as `.shardmindignore` is, negation included (#87). An excluded folder is never read, so it never makes the check incomplete. The cost is the user's explicit trade: whatever `personalize` creates in an excluded folder goes undetected. A missing file excludes nothing. A file that cannot be read or parsed, or that would switch the check off, is not applied. Switching off is judged by outcome, so every spelling is caught: the file matches every name at the vault root (`*`, `**`), or it excludes every folder the vault root holds (`*/`, `/*/`, a list naming each one). Such a file is not applied: the check runs without it and warns `HOOK_BOUNDARY_IGNORE_INVALID`. The shard never ships this file and updates never touch it (`.shardmind/` is Tier 1).
 
 These are warnings, not thrown errors — see [`docs/ERRORS.md §Hook lifecycle (non-fatal warnings)`](ERRORS.md). They turn yesterday's comment-checked conventions into machine-checked signals an author sees during their dev loop.
 
@@ -244,7 +244,7 @@ Reuses: drift detection (`core/drift.ts`), install-executor, value collection (`
 |-------|------|-----------|
 | Engine metadata dir | `.shardmind/` on both sides | Mirror; same semantics source ↔ installed |
 | Exclusion file | `.shardmindignore` at repo root | `.gitignore` convention; more discoverable than nested |
-| Ignore-file semantics | Glob-only in v0.1 (negation deferred to v0.2) | obsidian-mind's patterns are simple excludes; negation not exercised |
+| Ignore-file semantics | gitignore semantics, negation included (#87) | An author can re-include one file a broader pattern excludes (`*.gif`, then `!onboarding.gif`) |
 | Dotfolder render marker | `.njk` suffix | Obsidian hides dotfolders; no clone-UX cost |
 | No `templates/` in vocabulary | — | Obsidian reserves `templates/` for user note templates |
 
@@ -312,7 +312,7 @@ Paths reference current code. Detail to land in `ARCHITECTURE.md §3` + `IMPLEME
 3. `source/core/download.ts:78-79` — look for manifest/schema under `.shardmind/` in the extracted tarball.
 4. `source/core/fs-utils.ts:25-27` — remove `stripTemplatePrefix` helper (dead under flat layout).
 5. `source/runtime/vault-paths.ts` — add `SHARD_SOURCE_DIR = '.shardmind'`; keep installed-side `.shardmind/templates/` cache constant.
-6. New parser: `.shardmindignore` glob matcher (gitignore semantics minus negation).
+6. New parser: `.shardmindignore` glob matcher (gitignore semantics; negation since #87).
 7. New data: canonical Tier 1 exclusion set.
 
 ### Schema + values
@@ -433,7 +433,6 @@ Criterion: **obsidian-mind v6 does not need these to install, configure, or upgr
 | Deferred | Why not needed for v6 | How it's added later without redesign |
 |----------|----------------------|---------------------------------------|
 | `rendered_files` opt-in (Nunjucks at vault-visible paths) | obsidian-mind uses post-install hook to personalize `brain/North Star.md`; no `{{ }}` at vault-visible paths | New optional field in `shard.yaml`; `renderer.ts` extended to include files in the list during install. Existing `rendered_files: undefined` behavior stays |
-| `.shardmindignore` negation (`!pattern`) | obsidian-mind's patterns are simple excludes; no negation needed | Parser upgrade; existing glob-only files keep working |
 | Shard composition (multi-shard per vault) | One shard per vault in v0.1 | State.json extends from `{shard, version}` to `{shards: [...]}`; single-shard remains the special case. No break |
 | Dependency fetching | Shards vendor deps (obsidian-mind already does this) | `shard.yaml` gets `dependencies: []`; engine fetches on install. No break |
 | Structural variants | obsidian-mind is a single shard | Future feature; orthogonal to layout |

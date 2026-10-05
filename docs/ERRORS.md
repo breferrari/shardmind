@@ -595,12 +595,6 @@ Thrown by `source/core/modules.ts::walkShardSource` and `source/core/shardmindig
 
 **Remedy:** Check filesystem permissions on the shard's extracted temp directory; re-run the install. Persistent failures are usually a corrupt download — clearing `.shardmind/templates/` (for installed vaults) and re-running update forces a fresh fetch.
 
-### `SHARDMINDIGNORE_NEGATION_UNSUPPORTED`
-
-**Meaning:** The `.shardmindignore` file contained a negation pattern (`!pattern`). v0.1 supports glob-only semantics; negation is deferred to v0.2 ([#87](https://github.com/breferrari/shardmind/issues/87)).
-
-**Remedy:** Shard authors: rewrite the ignore patterns as positive excludes (no `!` prefix). End users: report to the shard author — this is a shard-side fix.
-
 ## Update-check cache (status + update)
 
 ### `UPDATE_CHECK_FAILED`
@@ -647,7 +641,7 @@ These are **not** thrown `ShardMindError`s — they don't appear in the `ErrorCo
 
 ### `HOOK_BOUNDARY_IGNORE_INVALID`
 
-**Meaning:** `.shardmind/boundary-ignore`, the vault owner's list of folders the `personalize` boundary walk skips, was not applied. It could not be read, it could not be parsed (for example a `!` negation, not supported yet), or it would switch the whole check off: it matches every name at the vault root (`*`, `**`), or it excludes every folder the vault root holds (`*/`, `/*/`, a list naming each one). The check ran without it.
+**Meaning:** `.shardmind/boundary-ignore`, the vault owner's list of folders the `personalize` boundary walk skips, was not applied. It could not be read, or it would switch the whole check off: it matches every name at the vault root (`*`, `**`), or it excludes every folder the vault root holds (`*/`, `/*/`, a list naming each one). The check ran without it.
 
 **Remedy:** Fix the file: list the folders you mean by name (`.cache/`, `scratch/`), one per line. The check cannot be switched off as a whole.
 
