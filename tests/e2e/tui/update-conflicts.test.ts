@@ -38,6 +38,7 @@ import {
   ARROW_DOWN,
   PTY_VIEWPORT_ROWS,
 } from './helpers/pty-cli.js';
+import { noPty } from './helpers/pty-gates.js';
 import { buildMutatedShard } from './helpers/build-fixture-shard.js';
 import { tick } from '../../component/helpers.js';
 
@@ -57,7 +58,6 @@ const DEFAULT_VALUES = {
 let stub: GitHubStub;
 let fixtures: TarballFixtures;
 
-const skipOnWindows = process.platform === 'win32';
 
 /**
  * v0.1.0 stays as the unmodified minimal-shard baseline; only v0.2.0
@@ -96,7 +96,7 @@ async function buildMultiConflictTarball(
   });
 }
 
-describe.skipIf(skipOnWindows)(
+describe.skipIf(noPty())(
   'update — Layer 2 PTY scenarios (#111 Phase 2)',
   () => {
     beforeAll(async () => {
@@ -249,6 +249,12 @@ describe.skipIf(skipOnWindows)(
           const valuesPath = path.join(vault, '.values.yaml');
           await fs.writeFile(valuesPath, stringifyYaml(DEFAULT_VALUES), 'utf-8');
 
+          // Armed before the spawn: the tarball request proves the CLI has
+          // mounted its SIGINT handler and started the download. A fixed
+          // delay fired before the handler existed on a slow start, which
+          // POSIX hid (death by SIGINT is accepted) and Windows CI did not
+          // (0xC000013A), the #57 pattern (#174).
+          const requested = stub.waitForTarballRequest();
           const handle = await spawnCliPty(
             ['install', SHARD_REF, '--yes', '--values', valuesPath],
             {
@@ -257,9 +263,8 @@ describe.skipIf(skipOnWindows)(
             },
           );
           try {
-            // 500 ms in: well before download finishes (we slowed the
-            // stream to 2 s) and well before any write begins.
-            await tick(500);
+            // Mid-download: the stream is slowed to 2 s, and no write has begun.
+            await requested;
             handle.sigint();
 
             const exit = await handle.waitForExit();

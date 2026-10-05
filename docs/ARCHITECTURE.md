@@ -1663,9 +1663,28 @@ staying hermetic. No test reaches the public internet.
   `useSigintRollback` timing window, raw-mode keystroke handling
   (`@inkjs/ui` Select / TextInput behave differently when
   `stdin.isRaw === true`), and incremental ANSI rendering during the
-  `running-hook` phase. macOS + Linux only — Windows skipped because
-  ConPTY semantics diverge enough that those scenarios are their own
-  track (**#174**). Helpers: `tests/e2e/tui/helpers/pty-cli.ts` (typed
+  `running-hook` phase. It runs on every OS, Windows under ConPTY (#174),
+  gated on what the PTY can do rather than on the platform: the vitest
+  global setup probes, once per run, `works` (a PTY child delivers its
+  output and exit), `verbatim` (its bytes arrive unchanged) and
+  `signals` (the backend accepts a named signal), and provides them to
+  the workers (`tests/e2e/tui/helpers/pty-capability.ts`). Without
+  `signals` (ConPTY) a Ctrl+C is the `\x03` byte, which ConPTY raises as
+  a real Ctrl+C event, and a kill closes the console. Without `verbatim`
+  a byte-identity test strips ConPTY's own framing, an exact allow-list
+  measured on Windows 11 through node-pty 1.1.0
+  (`tests/e2e/tui/helpers/conpty-framing.ts`):
+  `\x1b[?9001h\x1b[?1004h` first, always; `\x1b[?25l\x1b[2J\x1b[m\x1b[H`
+  before the first output; `\x1b]0;<child exe>\x07\x1b[?25h` once, after
+  the first frame; and, for a line longer than the terminal once output
+  scrolls, `\r\n\x1b[<rows-1>;<cols>H` plus a repeat of the character
+  before the break. Each is stripped only where ConPTY puts it; any other
+  escape byte fails, so a new ConPTY sequence shows up as a change to the
+  list. The `--json` checks use a 500-column terminal so nothing wraps
+  (allowing cursor moves would hide #198's bug), with one 80x24 case that
+  undoes ConPTY's exact wrap. Four diff-prompt scenarios do not exit under
+  ConPTY (#282) and are expected failures there (`it.fails`), so they
+  turn red when it is fixed. Helpers: `tests/e2e/tui/helpers/pty-cli.ts` (typed
   PTY wrapper with `write` / `waitForScreen` / `sigint` / `kill`),
   `virtual-screen.ts` (xterm-headless feeder + serializer),
   `build-fixture-shard.ts` (custom-shard tarball builder for hook

@@ -22,6 +22,7 @@ import { createGitHubStub, type GitHubStub } from '../helpers/github-stub.js';
 import { ensureBuilt } from '../helpers/build-once.js';
 import { createInstalledVault, type Vault } from '../helpers/vault.js';
 import { spawnCliPty, ENTER, ARROW_DOWN, CTRL_C, PTY_VIEWPORT_ROWS } from './helpers/pty-cli.js';
+import { exitWaitUntil282, itUntil282, noPty } from './helpers/pty-gates.js';
 import { buildMutatedShard } from './helpers/build-fixture-shard.js';
 import { tick } from '../../component/helpers.js';
 
@@ -30,7 +31,6 @@ const REF = `github:${SLUG}`;
 const DEFAULT_VALUES = { user_name: 'Alice', org_name: 'Acme Labs', vault_purpose: 'engineering', qmd_enabled: true };
 
 let stub: GitHubStub;
-const skipOnWindows = process.platform === 'win32';
 
 /** As in update-conflicts.test.ts: only v0.2.0 appends, so each user edit at the bottom conflicts. */
 async function buildConflictTarball(version: string, outDir: string, append: boolean): Promise<string> {
@@ -55,7 +55,7 @@ async function buildConflictTarball(version: string, outDir: string, append: boo
   });
 }
 
-describe.skipIf(skipOnWindows)('update — Open in editor under a real terminal (#50)', () => {
+describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)', () => {
   beforeAll(async () => {
     await ensureBuilt();
     stub = await createGitHubStub({ shards: { [SLUG]: { versions: {} as Record<string, string>, latest: '0.1.0' } } });
@@ -65,7 +65,7 @@ describe.skipIf(skipOnWindows)('update — Open in editor under a real terminal 
     await stub?.close();
   });
 
-  it('leaves raw mode for the editor and takes it back for the next prompt', async () => {
+  itUntil282()('leaves raw mode for the editor and takes it back for the next prompt', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-editor-'));
     let vault: Vault | null = null;
     let edited: string | undefined;
@@ -94,6 +94,7 @@ describe.skipIf(skipOnWindows)('update — Open in editor under a real terminal 
       stub.setLatest(SLUG, '0.2.0');
 
       const handle = await spawnCliPty(['update'], {
+        timeoutMs: exitWaitUntil282(),
         cwd: vault.root,
         env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '', L2_STTY_OUT: sttyOut },
         rows: PTY_VIEWPORT_ROWS,
@@ -149,7 +150,7 @@ describe.skipIf(skipOnWindows)('update — Open in editor under a real terminal 
     }
   }, 180_000);
 
-  it('a Ctrl+C while the editor has the terminal cancels the edit, not the update', async () => {
+  itUntil282()('a Ctrl+C while the editor has the terminal cancels the edit, not the update', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-editor-int-'));
     let vault: Vault | null = null;
     try {
@@ -167,6 +168,7 @@ describe.skipIf(skipOnWindows)('update — Open in editor under a real terminal 
       stub.setLatest(SLUG, '0.2.0');
 
       const handle = await spawnCliPty(['update'], {
+        timeoutMs: exitWaitUntil282(),
         cwd: vault.root,
         env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '' },
         rows: PTY_VIEWPORT_ROWS,

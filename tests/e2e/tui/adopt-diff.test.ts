@@ -30,6 +30,7 @@ import {
   ARROW_DOWN,
   PTY_VIEWPORT_ROWS,
 } from './helpers/pty-cli.js';
+import { noPty } from './helpers/pty-gates.js';
 import { tick } from '../../component/helpers.js';
 
 const SHARD_SLUG = 'acme/demo';
@@ -39,7 +40,6 @@ const STUB_SHA = 'a'.repeat(40);
 let stub: GitHubStub;
 let fixtures: TarballFixtures;
 
-const skipOnWindows = process.platform === 'win32';
 
 async function writeRel(root: string, rel: string, body: string): Promise<void> {
   const abs = path.join(root, rel);
@@ -47,7 +47,7 @@ async function writeRel(root: string, rel: string, body: string): Promise<void> 
   await fs.writeFile(abs, body, 'utf-8');
 }
 
-describe.skipIf(skipOnWindows)(
+describe.skipIf(noPty())(
   'adopt — Layer 2 PTY scenarios (#111 Phase 2)',
   () => {
     beforeAll(async () => {

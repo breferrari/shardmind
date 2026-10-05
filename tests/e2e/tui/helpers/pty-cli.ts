@@ -20,17 +20,15 @@
  * `dist/` is built once per run by the vitest global setup; `spawnCliPty`
  * calls `ensureBuilt()` to check it exists before the first spawn.
  *
- * Windows: not supported in this layer. node-pty's ConPTY backend has
- * different semantics than POSIX pty (TerminateProcess vs SIGINT,
- * different alt-screen behavior), and the in-tree SIGINT bridge
- * (`source/core/cancellation.ts`) targets the non-TTY pipe path. Tests
- * `it.skipIf(process.platform === 'win32')` per scenario; tracking
- * follow-up via #174. Importing this module on Windows is allowed (the
- * file parses) but `spawnCliPty` throws — guarding the call site with
- * the skip prevents the throw.
+ * Windows runs under ConPTY (#174). What differs is decided by the PTY's
+ * probed capabilities (helpers/pty-capability.ts), not by the platform:
+ * without named signals a Ctrl+C is the \x03 byte and a kill closes the
+ * console; without verbatim bytes a test strips ConPTY's framing
+ * (helpers/conpty-framing.ts).
  */
 
 import * as nodePty from 'node-pty';
+import { ptyCaps } from './pty-gates.js';
 import type { IPty } from 'node-pty';
 import { chmodSync, readdirSync, statSync } from 'node:fs';
 import { constants as osConstants } from 'node:os';
@@ -114,6 +112,32 @@ function fixNodePtyPrebuildPerms(): void {
 // fix. Vitest may import this file in any worker order; idempotency
 // guards above keep it safe.
 fixNodePtyPrebuildPerms();
+
+/**
+ * Signal the child the way the PTY backend allows. A POSIX PTY delivers a
+ * named signal. node-pty's Windows (ConPTY) backend accepts none ("Signals
+ * not supported on windows"): there a Ctrl+C is the \x03 byte typed into the
+ * terminal, which ConPTY turns into CTRL_C_EVENT and Node into 'SIGINT', and
+ * any other signal is a plain kill. Chosen by what the backend accepts, not
+ * by platform (#174).
+ */
+function signalPty(pty: IPty, signal: 'SIGINT' | 'SIGKILL'): void {
+  // Probed by the global setup: the backend's kill() may throw from a
+  // deferred call where no try/catch here could see it.
+  if (ptyCaps().signals) pty.kill(signal);
+  else if (signal === 'SIGINT') pty.write('\x03');
+  else pty.kill();
+}
+
+/**
+ * How long a killed child gets to report its exit. A SIGKILL lands at once;
+ * without signals (ConPTY) the kill closes the console and the child ends on
+ * the close event, which takes longer. Waiting for it keeps a dispose from
+ * returning, and the worker from tearing down, under a console still closing.
+ */
+function killGraceMs(): number {
+  return ptyCaps().signals ? 200 : 5_000;
+}
 
 // ───── Spawn options ─────────────────────────────────────────────────
 
@@ -233,12 +257,6 @@ export async function spawnCliPty(
   args: string[],
   opts: SpawnCliPtyOptions,
 ): Promise<PtyHandle> {
-  if (process.platform === 'win32') {
-    throw new Error(
-      'spawnCliPty is not supported on Windows — Layer 2 scenarios skip via it.skipIf. See #174.',
-    );
-  }
-
   // `ensureBuilt` checks that the global setup built dist/. Skip it when
   // the caller is using a node-args override — those harness tests don't
   // touch dist/cli.js.
@@ -382,10 +400,7 @@ export async function spawnCliPty(
   };
 
   const sigint = (): void => {
-    // node-pty exposes a `kill(signal)` that delivers via the kernel,
-    // matching what a real terminal sends on Ctrl+C. The string form
-    // is required by node-pty's typings.
-    pty.kill('SIGINT');
+    signalPty(pty, 'SIGINT');
   };
 
   type ExitResult = { exitCode: number | null; signal: string | null; timedOut: boolean };
@@ -410,11 +425,7 @@ export async function spawnCliPty(
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     if (winner === 'timeout') {
       // Force-kill so vitest workers don't hang on a stuck child.
-      try {
-        pty.kill('SIGKILL');
-      } catch {
-        // Already dead.
-      }
+      kill();
       // The SIGKILL above eventually fires `onExit` and resolves
       // `exitPromise`. If it lands within the grace window, surface
       // the captured info; otherwise return a synthetic SIGKILL state
@@ -423,7 +434,7 @@ export async function spawnCliPty(
       // pin the worker after this function returns.
       let graceHandle: NodeJS.Timeout | undefined;
       const gracePromise = new Promise<'killed'>((resolve) => {
-        graceHandle = setTimeout(() => resolve('killed'), 200);
+        graceHandle = setTimeout(() => resolve('killed'), killGraceMs());
       });
       const graceWinner = await Promise.race([exitPromise, gracePromise]);
       if (graceHandle !== undefined) clearTimeout(graceHandle);
@@ -435,10 +446,16 @@ export async function spawnCliPty(
     return { ...winner, timedOut: false };
   };
 
+  // Once per child. A second kill before the exit lands would, on ConPTY,
+  // start another console-list agent against a console already closing:
+  // node-pty's "AttachConsole failed", and a worker that can die at teardown
+  // (#174).
+  let killRequested = false;
   const kill = (): void => {
-    if (exitInfo !== null) return;
+    if (exitInfo !== null || killRequested) return;
+    killRequested = true;
     try {
-      pty.kill('SIGKILL');
+      signalPty(pty, 'SIGKILL');
     } catch {
       // Already dead.
     }
@@ -454,7 +471,7 @@ export async function spawnCliPty(
       kill();
       let drainHandle: NodeJS.Timeout | undefined;
       const drainPromise = new Promise<void>((resolve) => {
-        drainHandle = setTimeout(resolve, 200);
+        drainHandle = setTimeout(resolve, killGraceMs());
       });
       await Promise.race([exitPromise, drainPromise]);
       if (drainHandle !== undefined) clearTimeout(drainHandle);
