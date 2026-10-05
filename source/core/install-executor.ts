@@ -2,7 +2,8 @@
  * Install executor — disk-mutating operations.
  *
  * The counterpart to `install-planner.ts`. Functions here write, rename,
- * or delete files in the vault. Read-only enumeration and planning
+ * or delete files in the vault, through the run's vault transaction
+ * (`vault-transaction.ts`, #301). Read-only enumeration and planning
  * stays in the planner.
  */
 
@@ -18,37 +19,19 @@ import type {
   ModuleSelections,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { errnoCode, isEnoent } from '../runtime/errno.js';
+import { errnoCode } from '../runtime/errno.js';
 import { resolveModules } from './modules.js';
 import { createRenderer, renderFile, buildRenderContext } from './renderer.js';
-import {
-  initShardDir,
-  cacheTemplates,
-  cacheManifest,
-  writeState,
-  STATE_SCHEMA_VERSION,
-  removeEngineWrites,
-  ENGINE_INSTALL_WRITES,
-} from './state.js';
-import { sha256, toPosix, pathExists, removePath } from './fs-utils.js';
+import { initShardDir, cacheTemplates, cacheManifest, writeState, STATE_SCHEMA_VERSION } from './state.js';
+import { sha256, toPosix } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
-import { assertSafeVaultPaths, ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
-import { throwIfCancelled } from './run-cancel.js';
-import { attemptRollback, reasonOf, withRollbackFailures, type RollbackFailure } from './rollback-report.js';
-import { missingFolders, removeCreatedFolders } from './created-folders.js';
-import {
-  SHARDMIND_DIR,
-  VALUES_FILE,
-  STATE_FILE,
-  CACHED_MANIFEST,
-  CACHED_SCHEMA,
-  CACHED_TEMPLATES,
-} from '../runtime/vault-paths.js';
+import { assertSafeVaultPaths } from './vault-path-guard.js';
+import { attemptRollback, withRollbackFailures } from './rollback-report.js';
+import { wrapWriteError } from './bug-report.js';
+import { beginTransaction, type BackupRecord, type VaultTransaction } from './vault-transaction.js';
+import { VALUES_FILE } from '../runtime/vault-paths.js';
 
-export interface BackupRecord {
-  originalPath: string;
-  backupPath: string;
-}
+export type { BackupRecord } from './vault-transaction.js';
 
 export interface InstallRunnerOptions {
   vaultRoot: string;
@@ -61,28 +44,16 @@ export interface InstallRunnerOptions {
   selections: ModuleSelections;
   onProgress?: (event: ProgressEvent) => void;
   /**
-   * Fires after each successful write with the vault-relative output path.
-   * Used by the command layer to maintain a live rollback list for SIGINT.
+   * The run's transaction (§4.28): every write is recorded on it first, and
+   * the engine metadata is committed through it. None in a dry run, or in a
+   * test's bare install, which writes the same files without a record.
    */
-  onFileWritten?: (outputPath: string) => void;
-  /**
-   * Fires before a write with each vault-relative folder (POSIX) the write
-   * will create, so a rollback removes only folders this install made and
-   * never one the user already had (#215).
-   */
-  onDirCreated?: (dir: string) => void;
+  tx?: VaultTransaction;
   dryRun?: boolean;
-  /**
-   * Aborted on Ctrl+C (#249): checked before every write, so the run stops
-   * between two writes with `CANCELLED` and is rolled back once.
-   */
-  signal?: AbortSignal;
 }
 
 export interface InstallResult {
   writtenPaths: string[];
-  /** Folders this install created, as reported through `onDirCreated`. */
-  createdDirs: string[];
   state: ShardState;
   fileCount: number;
 }
@@ -93,213 +64,13 @@ export type ProgressEvent =
   | { kind: 'done'; total: number };
 
 /**
- * Rename each colliding path to `<original>.shardmind-backup-<timestamp>`.
- * Works for both files and directories (fsp.rename handles both).
- * Unique-suffix-appends when the canonical backup name already exists.
- *
- * **Transactional**: if any rename fails, the successful renames from
- * earlier in the loop are walked back (backup → original) before
- * `BACKUP_FAILED` throws. The vault is left byte-identical to its
- * pre-call state so the caller can surface the error without risking
- * that user content has been silently stashed at a `.shardmind-backup-*`
- * path. A rare secondary failure during restore-walk records the path
- * in the thrown error's hint so the user can recover manually — this is
- * the only case where partial-backup state can escape the function, and
- * we keep the user informed instead of hiding it.
- */
-export async function backupCollisions(
-  collisions: Collision[],
-  timestamp: Date = new Date(),
-  /** Called after each rename, so an interrupt mid-loop can undo the moves so far (#55). */
-  onMoved?: (record: BackupRecord) => void,
-  /** Checked before each rename: true stops the loop with the moves made so far (#55). */
-  shouldStop?: () => boolean,
-): Promise<BackupRecord[]> {
-  const stamp = timestamp.toISOString().replace(/:/g, '-').replace(/\..+$/, '');
-  const records: BackupRecord[] = [];
-
-  for (const collision of collisions) {
-    if (shouldStop?.()) break;
-    // Name lookup and rename are both guarded: a lookup that fails (no free
-    // name, an I/O error) walks back the moves already made too (#209).
-    let backupPath: string;
-    try {
-      backupPath = await uniqueBackupPath(collision.absolutePath, stamp);
-      await fsp.rename(collision.absolutePath, backupPath);
-    } catch (err) {
-      // Restore the renames we've already done so the vault ends up
-      // indistinguishable from its pre-call state. Walk backwards — no
-      // ordering dependency here, but matching the deepest-first intuition
-      // makes directory-over-file edge cases behave more predictably.
-      const orphaned: string[] = [];
-      for (let i = records.length - 1; i >= 0; i--) {
-        const record = records[i]!;
-        try {
-          await fsp.rename(record.backupPath, record.originalPath);
-        } catch {
-          // Secondary failure — user content still exists at backupPath,
-          // just not at originalPath. Report it so recovery is possible.
-          orphaned.push(record.backupPath);
-        }
-      }
-
-      const rootMessage = err instanceof Error ? err.message : String(err);
-      const hint = orphaned.length > 0
-        ? `${rootMessage}. Partial backups could not be restored to: ${orphaned.join(', ')}. Move them back manually before retrying.`
-        : `${rootMessage}. Earlier backups were restored; the vault is unchanged. Check permissions on the collision target and retry.`;
-
-      throw new ShardMindError(
-        `Could not back up existing ${collision.kind}: ${collision.absolutePath}`,
-        'BACKUP_FAILED',
-        hint,
-      );
-    }
-    const record = { originalPath: collision.absolutePath, backupPath };
-    records.push(record);
-    onMoved?.(record);
-  }
-
-  return records;
-}
-
-/**
- * Move the vault owner's own entries (everything not in
- * `ENGINE_SHARDMIND_ENTRIES`) from a reinstall's old `.shardmind/` into the
- * new one, so a reinstall keeps them (#237). An entry whose name the new
- * folder already has moves under `<name>-<n>`, as `carryOverBackups` does,
- * so nothing is dropped when the old folder is deleted.
- */
-export async function carryOverUserEntries(oldStateDir: string, vaultRoot: string): Promise<void> {
-  let entries: string[];
-  try {
-    entries = await fsp.readdir(oldStateDir);
-  } catch (err) {
-    if (isEnoent(err)) return;
-    throw err;
-  }
-  const own = entries.filter((entry) => !ENGINE_SHARDMIND_ENTRIES.has(entry.toLowerCase()));
-  if (own.length === 0) return;
-  const to = path.join(vaultRoot, SHARDMIND_DIR);
-  await fsp.mkdir(to, { recursive: true });
-  for (const entry of own) {
-    let target = path.join(to, entry);
-    for (let n = 1; await pathExists(target); n++) target = path.join(to, `${entry}-${n}`);
-    await fsp.rename(path.join(oldStateDir, entry), target);
-  }
-}
-
-/**
- * Move the `backups/` of an old `.shardmind/` that a reinstall set aside
- * into the new one, before the old one is deleted (#55). An update's or
- * an adopt's snapshot can be the only copy of the user's earlier files.
- * Entries already in the new `backups/` are kept; an old entry whose
- * name is taken moves under `<name>-<n>`, so nothing is dropped.
- */
-export async function carryOverBackups(oldStateDir: string, vaultRoot: string): Promise<void> {
-  const from = path.join(oldStateDir, 'backups');
-  let entries: string[];
-  try {
-    entries = await fsp.readdir(from);
-  } catch (err) {
-    if (isEnoent(err)) return;
-    throw err;
-  }
-  const to = path.join(vaultRoot, SHARDMIND_DIR, 'backups');
-  await fsp.mkdir(to, { recursive: true });
-  for (const entry of entries) {
-    let target = path.join(to, entry);
-    for (let n = 1; await pathExists(target); n++) target = path.join(to, `${entry}-${n}`);
-    await fsp.rename(path.join(from, entry), target);
-  }
-}
-
-/**
- * Delete what an install set aside only to restore on failure, once it
- * has succeeded (#55). The old `.shardmind/` (`oldState`) first hands its
- * `backups/` and the vault owner's own entries (#237) to the new one; if
- * that fails it stays set aside, so nothing is lost. Best effort: it never throws, because the install it follows
- * is already committed.
- */
-export async function discardSetAside(
-  setAside: BackupRecord[],
-  oldState: BackupRecord | undefined,
-  vaultRoot: string,
-): Promise<BackupRecord[]> {
-  // What could not be removed is still there under its backup name, and is
-  // returned so the summary lists it rather than calling it removed (#228).
-  const left: BackupRecord[] = [];
-  for (const record of setAside) {
-    if (record === oldState) {
-      try {
-        await carryOverBackups(record.backupPath, vaultRoot);
-        await carryOverUserEntries(record.backupPath, vaultRoot);
-      } catch {
-        left.push(record);
-        continue;
-      }
-    }
-    try {
-      await removePath(record.backupPath);
-    } catch {
-      left.push(record);
-    }
-  }
-  return left;
-}
-
-async function uniqueBackupPath(absolutePath: string, stamp: string): Promise<string> {
-  const base = `${absolutePath}.shardmind-backup-${stamp}`;
-  if (!(await pathExists(base))) return base;
-  for (let i = 1; i < 1000; i++) {
-    const candidate = `${base}.${i}`;
-    if (!(await pathExists(candidate))) return candidate;
-  }
-  throw new ShardMindError(
-    `Could not find a unique backup name for ${absolutePath}`,
-    'BACKUP_FAILED',
-    'Too many existing backups with the same timestamp — clean up old .shardmind-backup-* files and retry.',
-  );
-}
-
-/**
- * Move backup files back to their original paths. Used during rollback
- * after a failed install so the user's pre-install content comes back
- * intact. Best-effort per entry — individual failures are reported but
- * don't abort the rest of the restore.
- */
-export async function restoreBackups(
-  records: BackupRecord[],
-): Promise<{ restored: BackupRecord[]; failed: Array<BackupRecord & { reason: string }> }> {
-  const restored: BackupRecord[] = [];
-  const failed: Array<BackupRecord & { reason: string }> = [];
-
-  for (const record of records) {
-    try {
-      // Remove whatever the partial install wrote at the original path,
-      // then move the backup back.
-      await removePath(record.originalPath);
-      await fsp.rename(record.backupPath, record.originalPath);
-      restored.push(record);
-    } catch (err) {
-      failed.push({
-        ...record,
-        reason: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  return { restored, failed };
-}
-
-/**
  * Execute the install pipeline: render + copy + write + cache + state.
- * Returns writtenPaths, but a caller that rolls back on failure must collect
- * paths through `onFileWritten`: when this throws, the return value never
- * arrives (#207). Each path is reported just before its write, so a write
- * that fails partway is rolled back too.
+ * Each path is recorded on the transaction just before its write, so a
+ * write that fails partway is rolled back too (#207); the rollback is the
+ * transaction's, run by `runInstallTransaction`.
  */
 export async function runInstall(opts: InstallRunnerOptions): Promise<InstallResult> {
-  const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, onFileWritten, onDirCreated, dryRun, signal } = opts;
+  const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, tx, dryRun } = opts;
 
   const resolution = await resolveModules(schema, selections, tempDir);
   // Refuse before the first write, dry run included, if any path would
@@ -307,21 +78,12 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   await assertSafeVaultPaths(vaultRoot, [...resolution.render, ...resolution.copy].map((e) => e.outputPath));
   const totalFiles = resolution.render.length + resolution.copy.length;
   const writtenPaths: string[] = [];
-  const createdDirs: string[] = [];
-  // Report a path before its write, with every folder the write will create,
-  // so a rollback removes exactly what this install made (#207, #215, #258).
-  // A folder an earlier write created exists by then, so it is never
-  // reported twice.
-  const folderSeen = new Map<string, boolean>();
+  // Every write is recorded first, with the folders it will create, so a
+  // rollback removes exactly what this install made (#207, #215, #258), and
+  // a Ctrl+C stops the run here (#249).
   const recordWrite = async (rel: string): Promise<void> => {
-    // Every write is recorded first, so this is the one place to stop (#249).
-    throwIfCancelled(signal);
-    for (const dir of await missingFolders(vaultRoot, [rel], { seen: folderSeen })) {
-      createdDirs.push(dir);
-      onDirCreated?.(dir);
-    }
+    await tx?.recordWrite(rel);
     writtenPaths.push(rel);
-    onFileWritten?.(rel);
   };
   const fileStates: Record<string, FileState> = {};
 
@@ -380,7 +142,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     const hash = sha256(buffer);
     if (!dryRun) {
       await recordWrite(entry.outputPath);
-      await writeVaultFileBuffer(vaultRoot, entry.outputPath, buffer);
+      await writeVaultFile(vaultRoot, entry.outputPath, buffer);
     }
     fileStates[entry.outputPath] = {
       template: toPosix(tempDir, entry.sourcePath),
@@ -410,116 +172,42 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   };
 
   if (!dryRun) {
-    // The engine's own `.shardmind/` entries, each recorded like any other
-    // write: a rollback removes these and never `.shardmind/` wholesale,
-    // which may hold the user's files (`boundary-ignore`, #190, #215).
-    await recordWrite(toPosixRel(CACHED_TEMPLATES));
-    await initShardDir(vaultRoot);
-    await cacheTemplates(vaultRoot, tempDir);
-    await recordWrite(toPosixRel(CACHED_MANIFEST));
-    await recordWrite(toPosixRel(CACHED_SCHEMA));
-    await cacheManifest(vaultRoot, manifest, schema, tempDir);
-    await recordWrite(toPosixRel(STATE_FILE));
-    await writeState(vaultRoot, state);
-    // Recorded only once written: the exclusive write fails on the user's
-    // own stray values file, which must survive the rollback.
-    await writeValuesFile(vaultRoot, values);
-    writtenPaths.push(VALUES_FILE);
-    onFileWritten?.(VALUES_FILE);
-  }
-
-  return { writtenPaths, createdDirs, state, fileCount: totalFiles };
-}
-
-/**
- * Roll back a partial install: remove every path it wrote (the engine's
- * `.shardmind/` entries included), then the folders it created, then
- * restore any backups. Removes only what this install made: never
- * `.shardmind/` wholesale, and never a folder the user already had (#215).
- * Best-effort: it never throws. It returns what it could not undo (#247):
- * each backup it could not move back, with where that backup still is,
- * each file it wrote but could not remove, and each folder it created that
- * `rmdir` refused for a reason other than holding files (#258), so the
- * caller reports the rollback as incomplete.
- *
- * `createdDirs` is what `runInstall` reported through `onDirCreated`; only
- * those folders are removed, and only when empty.
- */
-export async function rollbackInstall(
-  vaultRoot: string,
-  writtenPaths: string[],
-  backups: BackupRecord[],
-  createdDirs: string[],
-): Promise<RollbackFailure[]> {
-  const deepestFirst = (paths: Iterable<string>) =>
-    [...paths].sort((a, b) => toPosixRel(b).split('/').length - toPosixRel(a).split('/').length);
-
-  // The engine's own entries are `removeEngineWrites`' (below), not unlinked here.
-  const failures: RollbackFailure[] = [];
-  const files = new Set(writtenPaths.map(toPosixRel));
-  for (const rel of ENGINE_INSTALL_WRITES) files.delete(toPosixRel(rel));
-  for (const rel of deepestFirst(files)) {
-    const abs = path.join(vaultRoot, rel);
-    try {
-      // unlink, not a recursive remove: a folder the user put at a planned
-      // file path is theirs, and unlink leaves it alone.
-      await fsp.unlink(abs);
-    } catch (err) {
-      if (isEnoent(err)) continue;
-      // A folder is the user's (above). Anything else is the install's file,
-      // still there, and is reported (#247).
-      const isFolder = await fsp.lstat(abs).then((st) => st.isDirectory(), () => false);
-      if (!isFolder) failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
+    // The engine's own `.shardmind/` entries: a rollback removes these, and
+    // never `.shardmind/` wholesale, which may hold the user's files
+    // (`boundary-ignore`, #190, #215). state.json last, so it is the point of
+    // no return, as in update and adopt (#301).
+    const beforeState = async (): Promise<void> => {
+      await initShardDir(vaultRoot);
+      await cacheTemplates(vaultRoot, tempDir);
+      await cacheManifest(vaultRoot, manifest, schema, tempDir);
+      await writeValuesFile(vaultRoot, values);
+      // Introduced only once written: the exclusive write fails on the
+      // user's own stray values file, which must survive the rollback.
+      tx?.introduced.push(VALUES_FILE);
+      writtenPaths.push(VALUES_FILE);
+    };
+    const writeStateFile = () => writeState(vaultRoot, state);
+    if (tx) await tx.commitEngineMetadata({ beforeState, state: writeStateFile });
+    else {
+      await beforeState();
+      await writeStateFile();
     }
   }
-  // The engine's own entries go whether or not they were recorded: a Ctrl+C
-  // rollback snapshots the lists while `runInstall` may still be writing
-  // them. Shared with adopt's rollback (#243); nothing else under
-  // `.shardmind/` is touched, and the folder itself is left to `createdDirs`.
-  for (const failure of await removeEngineWrites(vaultRoot, { removeEmptyDir: false })) {
-    failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
-  }
 
-  // The folders it created, once empty again; one holding the user's files
-  // stays (#215, #258).
-  failures.push(...(await removeCreatedFolders(vaultRoot, createdDirs)));
-
-  // Restore any backups last, so they land on paths that have been
-  // freed by the file removal above.
-  const { failed } = await restoreBackups(backups);
-  for (const f of failed) {
-    failures.push({
-      path: toPosixRel(path.relative(vaultRoot, f.originalPath)),
-      reason: `restore failed: ${f.reason}`,
-      backup: f.backupPath,
-    });
-  }
-  return failures;
+  return { writtenPaths, state, fileCount: totalFiles };
 }
 
-/** A vault-relative path in POSIX form, whichever separator it was built with. */
-function toPosixRel(rel: string): string {
-  return rel.split(path.sep).join('/');
-}
-
-async function writeVaultFile(
-  vaultRoot: string,
-  outputPath: string,
-  content: string,
-): Promise<void> {
+async function writeVaultFile(vaultRoot: string, outputPath: string, content: string | Buffer): Promise<void> {
   const abs = path.join(vaultRoot, outputPath);
-  await fsp.mkdir(path.dirname(abs), { recursive: true });
-  await fsp.writeFile(abs, content, 'utf-8');
-}
-
-async function writeVaultFileBuffer(
-  vaultRoot: string,
-  outputPath: string,
-  content: Buffer,
-): Promise<void> {
-  const abs = path.join(vaultRoot, outputPath);
-  await fsp.mkdir(path.dirname(abs), { recursive: true });
-  await fsp.writeFile(abs, content);
+  try {
+    await fsp.mkdir(path.dirname(abs), { recursive: true });
+    // A Buffer goes through untouched, so a binary copy survives.
+    if (typeof content === 'string') await fsp.writeFile(abs, content, 'utf-8');
+    else await fsp.writeFile(abs, content);
+  } catch (err) {
+    // An errno keeps its hint (#225, #301).
+    throw wrapWriteError('INSTALL_WRITE_FAILED', `Could not write ${outputPath} during install`, err);
+  }
 }
 
 /**
@@ -543,7 +231,7 @@ async function writeValuesFile(
         'Move or remove shard-values.yaml before re-running install. If `.shardmind/state.json` also exists, run `shardmind update` instead to upgrade the current install in place; without state.json, update throws UPDATE_NO_INSTALL.',
       );
     }
-    throw err;
+    throw wrapWriteError('INSTALL_WRITE_FAILED', `Could not write ${VALUES_FILE} during install`, err);
   }
 }
 
@@ -559,7 +247,12 @@ function wrapRenderError(outputPath: string, err: unknown): ShardMindError {
   );
 }
 
-export interface InstallTransactionOptions extends Omit<InstallRunnerOptions, 'onFileWritten' | 'onDirCreated'> {
+export interface InstallTransactionOptions extends Omit<InstallRunnerOptions, 'tx'> {
+  /**
+   * Aborted on Ctrl+C (#249): checked before every move and write, so the
+   * run stops between two of them with `CANCELLED` and is rolled back once.
+   */
+  signal?: AbortSignal;
   /**
    * What to move out of the way, in order: a reinstall's old install, the
    * untouched files, the stale ones, the user's own.
@@ -574,7 +267,7 @@ export interface InstallTransactionOptions extends Omit<InstallRunnerOptions, 'o
 export interface InstallTransactionResult extends InstallResult {
   /** Kept as `<path>.shardmind-backup-<stamp>` and reported. */
   backups: BackupRecord[];
-  /** Set aside, but `discardSetAside` could not remove them: still in the vault under their backup name. */
+  /** Set aside, but the commit could not remove them: still in the vault under their backup name. */
   left: BackupRecord[];
 }
 
@@ -588,44 +281,29 @@ export function installRolledBack(err: unknown): boolean {
 
 /**
  * The whole install, as `use-install-machine` runs it, owning its rollback
- * the way `runUpdate` and `runAdopt` do (#300). Moves `moveAside` out of the
- * way, runs `runInstall`, and once state.json is written discards what was
- * set aside only to be restored on failure (#55). Before that point a
- * failure, or a cancel through `signal` (#249), rolls back every write,
- * every created folder and every move, once; after it nothing is rolled
- * back. A move that fails puts the earlier moves back itself
- * (`backupCollisions`), and a cancel before the first move has nothing to
- * undo: a rollback then would delete a reinstall's old `.shardmind/`.
- * Spec: docs/IMPLEMENTATION.md §4.11b.
+ * the way `runUpdate` and `runAdopt` do (#300). On its vault transaction
+ * (#301): moves `moveAside` out of the way, runs `runInstall`, and once
+ * state.json is written commits, discarding what was set aside only to be
+ * restored on failure (#55). Before that point a failed move, a failure, or
+ * a cancel through `signal` (#249) rolls back every move, every write and
+ * every created folder, once; engine entries only once their commit began,
+ * so a reinstall's old install is never deleted. After it nothing is rolled
+ * back. Spec: docs/IMPLEMENTATION.md §4.11b.
  */
 export async function runInstallTransaction(opts: InstallTransactionOptions): Promise<InstallTransactionResult> {
-  const { moveAside, keep, oldStatePath, ...installOpts } = opts;
+  const { moveAside, keep, oldStatePath, signal, ...installOpts } = opts;
   if (opts.dryRun) {
     const result = await runInstall(installOpts);
     return { ...result, backups: [], left: [] };
   }
 
-  const moved: BackupRecord[] = [];
-  const written: string[] = [];
-  const createdDirs: string[] = [];
-  // A failed move puts the earlier ones back itself, so it is not rolled back.
-  await backupCollisions(moveAside, undefined, (record) => moved.push(record), () => opts.signal?.aborted ?? false);
-  // Cancelled before anything moved: nothing to undo.
-  if (moved.length === 0) throwIfCancelled(opts.signal);
-
+  const tx = await beginTransaction(opts.vaultRoot, { kind: 'install', noPriorInstall: true, signal });
   let result: InstallResult;
   try {
-    throwIfCancelled(opts.signal);
-    result = await runInstall({
-      ...installOpts,
-      onFileWritten: (outputPath) => written.push(outputPath),
-      onDirCreated: (dir) => createdDirs.push(dir),
-    });
+    for (const collision of moveAside) await tx.recordSetAside(collision.absolutePath, keep.has(collision.absolutePath));
+    result = await runInstall({ ...installOpts, tx });
   } catch (err) {
-    const thrown = withRollbackFailures(
-      err,
-      await attemptRollback(() => rollbackInstall(opts.vaultRoot, written, moved, createdDirs)),
-    );
+    const thrown = withRollbackFailures(err, await attemptRollback(() => tx.rollback()));
     if (typeof thrown === 'object' && thrown !== null) rolledBack.add(thrown);
     throw thrown;
   }
@@ -633,8 +311,6 @@ export async function runInstallTransaction(opts: InstallTransactionOptions): Pr
   // Committed: state.json is on disk, so nothing below rolls back and a
   // cancel is ignored. The old install's backups and the owner's own
   // entries move into the new `.shardmind/` before the rest is removed.
-  const setAside = moved.filter((m) => !keep.has(m.originalPath));
-  const oldState = moved.find((m) => m.originalPath === oldStatePath);
-  const left = await discardSetAside(setAside, oldState, opts.vaultRoot);
-  return { ...result, backups: moved.filter((m) => keep.has(m.originalPath)), left };
+  const { kept, left } = await tx.commit({ oldStatePath });
+  return { ...result, backups: kept, left };
 }
