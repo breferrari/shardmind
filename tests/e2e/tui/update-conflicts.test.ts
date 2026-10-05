@@ -38,7 +38,7 @@ import {
   ARROW_DOWN,
   PTY_VIEWPORT_ROWS,
 } from './helpers/pty-cli.js';
-import { exitWaitUntil282, itUntil282, noPty } from './helpers/pty-gates.js';
+import { noPty } from './helpers/pty-gates.js';
 import { buildMutatedShard } from './helpers/build-fixture-shard.js';
 import { tick } from '../../component/helpers.js';
 
@@ -127,7 +127,7 @@ describe.skipIf(noPty())(
 
     // ───── Scenario 14 — multi-file conflict iteration (#109 regression) ─────
 
-    itUntil282()(
+    it(
       '14. ≥3 conflicts → DiffView iterates cleanly under TTY raw mode (#109 regression)',
       async () => {
         const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-mc-'));
@@ -175,7 +175,6 @@ describe.skipIf(noPty())(
           // screen — 80x24 scrolls it off as the diff body fills the
           // viewport.
           const handle = await spawnCliPty(['update'], {
-            timeoutMs: exitWaitUntil282(),
             cwd: vault.root,
             env: { SHARDMIND_GITHUB_API_BASE: stub.url },
             rows: PTY_VIEWPORT_ROWS,

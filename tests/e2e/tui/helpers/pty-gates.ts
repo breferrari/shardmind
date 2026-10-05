@@ -13,10 +13,11 @@ export function ptyCaps(): PtyCapabilities {
 }
 
 /**
- * Expected failures under ConPTY (#282): the diff-prompt flows draw their last
- * frame but do not exit there. `it.fails` turns red the moment #282 is fixed,
- * so the marker cannot outlive the bug; the exit wait is shortened meanwhile.
- * Delete both when #282 lands.
+ * Expected failures under ConPTY (#282): the Open in editor flows (#50) draw
+ * their last frame but do not exit there. `it.fails` turns red the moment
+ * #282 is fixed, so the marker cannot outlive the bug; the exit wait is
+ * shortened meanwhile. Delete both when #282 lands. (The diff-prompt flows
+ * hung too on Ink 7 and exit since Ink 8, #286; why is #282's to prove.)
  */
 export function itUntil282(): typeof it | typeof it.fails {
   return ptyCaps().verbatim ? it : it.fails;

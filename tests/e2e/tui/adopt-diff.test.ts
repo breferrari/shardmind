@@ -30,7 +30,7 @@ import {
   ARROW_DOWN,
   PTY_VIEWPORT_ROWS,
 } from './helpers/pty-cli.js';
-import { exitWaitUntil282, itUntil282, noPty } from './helpers/pty-gates.js';
+import { noPty } from './helpers/pty-gates.js';
 import { tick } from '../../component/helpers.js';
 
 const SHARD_SLUG = 'acme/demo';
@@ -76,7 +76,7 @@ describe.skipIf(noPty())(
 
     // ───── Scenario 20 — multi-file adopt iteration (#109 regression) ─────
 
-    itUntil282()(
+    it(
       '20. ≥3 differing files → AdoptDiffView iterates cleanly under TTY raw mode (#109 regression)',
       async () => {
         const vault = await fs.mkdtemp(
@@ -107,7 +107,6 @@ describe.skipIf(noPty())(
           // resolves quickly and the planner runs against a known
           // tarball.
           const handle = await spawnCliPty(['adopt', `${SHARD_REF}#v0.1.0`], {
-            timeoutMs: exitWaitUntil282(),
             cwd: vault,
             env: { SHARDMIND_GITHUB_API_BASE: stub.url },
             rows: PTY_VIEWPORT_ROWS,
