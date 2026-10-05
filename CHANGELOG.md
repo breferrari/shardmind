@@ -8,6 +8,12 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Internal (the coverage report counts the spawned CLI — #293)
+
+- **`npm run test:coverage` always writes a report**, even when a test times out, and caps the test workers at 4 so a loaded machine does not time out to begin with.
+- **The report counts what the CLI runs in the E2E and real-terminal suites**, not only the in-process tests. Each spawned CLI's V8 coverage is mapped back to `source/` through sourcemaps and added to the same report: lines go from 90.3% to 93.3%, and the update machine's branches from 65.2% to 77.6%.
+- **A Coverage workflow runs it on Linux, macOS and Windows by hand** and uploads each report. It is not a gate.
+
 ### Fixed (a failed update or adopt removes its folders even when its record of them is damaged — #295)
 
 - **A failed update or adopt no longer leaves the empty folders it made because its list of them in the backup folder was damaged.** It used to report the damaged list and leave the folders, without naming them. It now uses the list it kept in memory, so the folders go as they would have.
