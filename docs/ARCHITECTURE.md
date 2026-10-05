@@ -1070,7 +1070,8 @@ The update-check cache (`.shardmind/update-check.json`, 24h TTL) is stable-only.
 | **typescript** | Language |
 | **@sindresorhus/tsconfig** | Pastel's recommended TS config |
 | **vitest** | Test runner |
-| **@vitest/coverage-v8** | Coverage report (`npm run test:coverage`), pinned to vitest's version; no thresholds yet (#267) |
+| **@vitest/coverage-v8** | Coverage report (`npm run test:coverage`), pinned to vitest's version; no thresholds yet (#267). The coverage run extends its provider to count the spawned CLI (#293, §19.8) |
+| **@bcoe/v8-coverage** | Merges the spawned CLI's V8 coverage across processes for the coverage run (#293, §19.8); the merge `@vitest/coverage-v8` itself uses, pinned to its version |
 
 ### 11.4 Dependency Risk: `@inkjs/ui`
 
@@ -1830,6 +1831,27 @@ staying hermetic. No test reaches the public internet.
   smokes pin the contract (parses through engine loaders + manifest-
   version stamping in the tarball builder) so a fixture regression
   surfaces as one obvious failure rather than ~30 cryptic E2E failures.
+
+### 19.8 Coverage run
+
+`npm run test:coverage` writes a report (text summary and HTML under `coverage/`) and has no thresholds and no CI gate (#267). It counts the code the spawned CLI runs, not only the test workers (#293).
+
+- **A report on every run.** `coverage.reportOnFailure` is on, so a test that times out does not cost the whole report. The script caps the workers at 4 (`--maxWorkers=4`): at full parallelism the instrumented suite timed out on a loaded machine.
+- **What it counts.** `source/**/*.{ts,tsx}`. A bare `source/**` also tried to parse the vendored kits' licences and notes.
+- **The spawned CLI.** The E2E and Layer 2 suites run `dist/cli.js` in a child process, which vitest's v8 provider cannot see, since it profiles the workers through the inspector. So a coverage run does three things:
+  1. The global setup provides the coverage directory, read from vitest's resolved config. A setup file sets `NODE_V8_COVERAGE` inside each worker, so each process the worker spawns (the CLI, the hook runner it starts) writes its V8 coverage when it exits. The workers themselves do not: through `test.env` the variable would also reach each worker's own fork.
+  2. The global setup builds `dist/` with sourcemaps (`tsup --sourcemap`). The maps join `dist/`'s freshness check, so a build without them is rebuilt.
+  3. The spawn helpers compact the coverage directory each time a CLI exits. Each file keeps only its `dist/` entries, about 4% of what Node writes, and a file with none is deleted. Only the coverage run's own directory is touched, never a `NODE_V8_COVERAGE` a caller set for another tool.
+- **The provider.** `tests/coverage-run/subprocess-provider.ts` is vitest's v8 module with `getProvider` swapped for a subclass (`subprocess-coverage-provider.ts`), loaded only in the main process. The subclass adds one step:
+  - It merges the `dist/` entries across the processes, with the same merge the v8 provider uses (`@bcoe/v8-coverage`, pinned to the provider's version).
+  - It maps each bundle back to `source/` through its sourcemap, with the provider's own conversion.
+  - It moves the hits onto the workers' coverage (`tests/coverage-run/transfer-hits.ts`). The two mappings disagree on some starts (`const` versus its initializer, `export` versus a function's name) and on most ends, so merging them as two structures would count everything twice. Instead:
+    - A statement or function with hits goes to the innermost workers' item of its kind that starts on the same line, no later than it, and whose range contains its start. An item that ran means its enclosing item ran, so its hit never lands on code that did not run.
+    - A branch goes only to the workers' branch at the same position, of the same type and number of paths. Its hits are per path, and an enclosing branch's paths are other code.
+    - The totals are therefore those of the workers' coverage. The run logs how many items it added and how many had no match.
+  - It removes the directory once it has read it, except in watch mode, where a rerun that keeps the last coverage reports those processes again. A raw file whose compacted copy exists is read once.
+- **What it cannot count.** A child killed by a signal writes no coverage. A process that exits, `process.exit` included, does.
+- **On three OSes.** `.github/workflows/coverage.yml` runs it on Linux, macOS and Windows, by hand only, and uploads each report as an artifact.
 
 ---
 

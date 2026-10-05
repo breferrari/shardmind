@@ -49,10 +49,10 @@ export const DIST_ARTIFACTS: readonly string[] = [
 
 export const DIST_CLI = path.join(REPO_ROOT, 'dist', 'cli.js');
 
-/** Absolute paths of the artifacts in `DIST_ARTIFACTS` that are not on disk. */
-async function missingArtifacts(root: string): Promise<string[]> {
+/** Absolute paths of the artifacts in `artifacts` (by default `DIST_ARTIFACTS`) that are not on disk. */
+async function missingArtifacts(root: string, artifacts: readonly string[] = DIST_ARTIFACTS): Promise<string[]> {
   const missing: string[] = [];
-  for (const rel of DIST_ARTIFACTS) {
+  for (const rel of artifacts) {
     const full = path.join(root, rel);
     if (!(await pathExists(full))) missing.push(full);
   }
@@ -104,8 +104,22 @@ const BUILD_CONFIG_FILES = ['tsup.config.ts', 'tsconfig.json', 'package.json'];
 /** tsup failed, or succeeded without writing every artifact. */
 class BuildFailure extends Error {}
 
-/** One build attempt; `capture` pipes the output instead of streaming it. */
-export type BuildRunner = (capture: boolean) => BuildResult;
+/** One build attempt; `capture` pipes the output instead of streaming it, `sourcemap` adds `tsup --sourcemap`. */
+export type BuildRunner = (capture: boolean, sourcemap: boolean) => BuildResult;
+
+export type BuildOptions = {
+  /**
+   * Write each artifact's sourcemap, for a coverage run: the provider maps the
+   * spawned CLI's coverage of `dist/` back to `source/` through them (#293).
+   * The maps join the freshness check, so a `dist/` built without them rebuilds.
+   */
+  sourcemap?: boolean;
+};
+
+/** The files a build must leave fresh: the artifacts, and with `sourcemap` their maps. */
+function expectedArtifacts(opts: BuildOptions): string[] {
+  return opts.sourcemap ? DIST_ARTIFACTS.flatMap((rel) => [rel, `${rel}.map`]) : [...DIST_ARTIFACTS];
+}
 
 /**
  * Builds `dist/` if any build input is newer than it, or if a `dist/` artifact is
@@ -115,9 +129,12 @@ export type BuildRunner = (capture: boolean) => BuildResult;
  */
 export async function buildIfStale(
   root: string = REPO_ROOT,
-  run: BuildRunner = (capture) => runBuild(root, capture),
+  run: BuildRunner = (capture, sourcemap) => runBuild(root, capture, sourcemap),
+  opts: BuildOptions = {},
 ): Promise<void> {
-  const distMtime = await earliestMtime(DIST_ARTIFACTS.map((rel) => path.join(root, rel)));
+  const expected = expectedArtifacts(opts);
+  const sourcemap = opts.sourcemap === true;
+  const distMtime = await earliestMtime(expected.map((rel) => path.join(root, rel)));
   const configPaths = BUILD_CONFIG_FILES.map((f) => path.join(root, f));
   const srcMtime = await latestMtime([...(await walkSources(root)), ...configPaths]);
 
@@ -132,14 +149,14 @@ export async function buildIfStale(
   // First attempt streams to the terminal so a local `npm test` still shows
   // live build progress. The retry captures instead, so a real failure can
   // report why rather than just an exit code.
-  let result = run(false);
+  let result = run(false, sourcemap);
 
   if (!buildSucceeded(result)) {
     // Retry once. `tsup` here is deterministic and idempotent, so a retry
     // cannot mask a genuine breakage — a broken build fails twice. What it
     // absorbs is contention: a CPU-starved build failure here fails the whole
     // run (#144). `npm run build` succeeds standalone every time.
-    result = run(true);
+    result = run(true, sourcemap);
   }
 
   if (!buildSucceeded(result)) {
@@ -148,7 +165,7 @@ export async function buildIfStale(
 
   // Sanity: a zero exit must have produced every artifact the workers check
   // for, so a gap fails here, in the setup, rather than in every worker.
-  const missing = await missingArtifacts(root);
+  const missing = await missingArtifacts(root, expected);
   if (missing.length > 0) {
     throw new BuildFailure(`tsup exited 0 but did not write: ${missing.join(', ')}`);
   }
@@ -163,9 +180,10 @@ export async function buildIfStale(
 export async function buildForRun(
   root: string = REPO_ROOT,
   run?: BuildRunner,
+  opts: BuildOptions = {},
 ): Promise<string | null> {
   try {
-    await buildIfStale(root, run);
+    await buildIfStale(root, run, opts);
     return null;
   } catch (err) {
     // A build failure's message says all there is; anything else is a bug in
@@ -193,8 +211,8 @@ const BUILD_TIMEOUT_MS = 180_000;
  */
 type BuildResult = SpawnSyncReturns<string>;
 
-function runBuild(root: string, capture: boolean): BuildResult {
-  return spawnSync('npx', ['tsup'], {
+function runBuild(root: string, capture: boolean, sourcemap: boolean): BuildResult {
+  return spawnSync('npx', sourcemap ? ['tsup', '--sourcemap'] : ['tsup'], {
     cwd: root,
     stdio: capture ? 'pipe' : 'inherit',
     // On Windows, `npx` is a cmd shim — spawn must use `shell: true` to

@@ -22,6 +22,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
+import { compactSubprocessCoverage } from '../../coverage-run/compact-coverage.js';
 import { DIST_CLI, ensureBuilt } from './build-once.js';
 
 export interface CliResult {
@@ -161,6 +162,8 @@ export async function spawnCli(args: string[], opts: SpawnCliOptions): Promise<C
     },
   );
   clearTimeout(timeoutHandle);
+  // A coverage run: shrink what this CLI (and its children) wrote (#293).
+  compactSubprocessCoverage();
 
   return {
     stdout: normalizeLineEndings(stdout),

@@ -20,7 +20,7 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest watch",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --maxWorkers=4",
     "vendor:check": "tsx scripts/vendor/check.ts",
     "vendor:update": "tsx scripts/vendor/update.ts",
     "test:merge": "vitest run tests/unit/drift.test.ts",
@@ -49,6 +49,7 @@
     "zod-validation-error": "^4.0.2"
   },
   "devDependencies": {
+    "@bcoe/v8-coverage": "1.0.2",
     "@sindresorhus/tsconfig": "^8.1.0",
     "@types/diff": "^6.0.0",
     "@types/node": "25.6.0",

@@ -37,6 +37,7 @@ import { fileURLToPath } from 'node:url';
 import { DIST_CLI, ensureBuilt } from '../../helpers/build-once.js';
 import { tick } from '../../../component/helpers.js';
 import { createVirtualScreen, type VirtualScreen } from './virtual-screen.js';
+import { compactSubprocessCoverage } from '../../../coverage-run/compact-coverage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -349,6 +350,8 @@ export async function spawnCliPty(
       pty.onExit(({ exitCode, signal }) => {
         const info = { exitCode, signal: signalNumberToName(signal) };
         exitInfo = info;
+        // A coverage run: shrink what this CLI (and its children) wrote (#293).
+        compactSubprocessCoverage();
         resolve(info);
       });
     },

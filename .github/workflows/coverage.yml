@@ -1,0 +1,42 @@
+name: Coverage
+
+# `npm run test:coverage` on all three OSes, by hand only (#293): a report,
+# uploaded as an artifact, with no gate and no schedule. The report counts
+# what the spawned CLI runs too (tests/coverage-run/subprocess-provider.ts).
+on:
+  workflow_dispatch:
+
+jobs:
+  coverage:
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      # No build step: the vitest global setup builds dist/ with sourcemaps
+      # for a coverage run, which the provider needs to map dist/ to source/.
+      - run: npm run test:coverage
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}
+          path: |
+            coverage/
+            !coverage/.subprocess/
+          if-no-files-found: warn

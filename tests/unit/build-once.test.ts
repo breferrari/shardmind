@@ -21,6 +21,7 @@ import {
   type BuildRunner,
 } from '../e2e/helpers/build-once.js';
 import { createSetup, type SetupProject } from '../global-setup.js';
+import { SUBPROCESS_COVERAGE_DIR, SUBPROCESS_COVERAGE_DIR_KEY } from '../coverage-run/coverage-run.js';
 import { pathExists } from '../../source/core/fs-utils.js';
 import config from '../../vitest.config.js';
 import tsupConfig from '../../tsup.config.js';
@@ -186,6 +187,79 @@ describe('buildIfStale (global setup)', () => {
 
     await expect(buildIfStale(root, run)).rejects.toThrow(/dist[\\/]runtime[\\/]index\.js/);
   });
+
+  // A coverage run maps the spawned CLI back to source/ through the maps (#293).
+  describe('with sourcemap', () => {
+    async function writeMaps(mtime: Date): Promise<void> {
+      for (const rel of DIST_ARTIFACTS) await write(`${rel}.map`, mtime);
+    }
+    /** Writes the artifacts and their maps, and records the sourcemap flag of each call. */
+    function mapRunner(): { run: BuildRunner; flags: boolean[] } {
+      const flags: boolean[] = [];
+      const run: BuildRunner = (_capture, sourcemap) => {
+        flags.push(sourcemap);
+        for (const rel of DIST_ARTIFACTS) {
+          for (const out of sourcemap ? [rel, `${rel}.map`] : [rel]) {
+            const full = path.join(root, out);
+            fsSync.mkdirSync(path.dirname(full), { recursive: true });
+            fsSync.writeFileSync(full, 'built');
+          }
+        }
+        return result(0);
+      };
+      return { run, flags };
+    }
+
+    it('rebuilds, asking for maps, a fresh dist/ that has none', async () => {
+      await writeDist(NEW);
+      const { run, flags } = mapRunner();
+
+      await buildIfStale(root, run, { sourcemap: true });
+
+      expect(flags).toEqual([true]);
+      expect(await exists('dist/cli.js.map')).toBe(true);
+    });
+
+    it('rebuilds when a map is older than the sources', async () => {
+      await writeDist(NEW);
+      await writeMaps(OLD);
+      await write('source/core/state.ts', NEW);
+      const { run, flags } = mapRunner();
+
+      await buildIfStale(root, run, { sourcemap: true });
+
+      expect(flags).toEqual([true]);
+    });
+
+    it('does not build when the artifacts and their maps are fresh', async () => {
+      await writeDist(NEW);
+      await writeMaps(NEW);
+      const { run, flags } = mapRunner();
+
+      await buildIfStale(root, run, { sourcemap: true });
+
+      expect(flags).toEqual([]);
+    });
+
+    it('throws when a build asked for maps leaves one missing', async () => {
+      await writeDist(OLD);
+      await write('source/core/state.ts', NEW);
+      const { run } = fakeRunner([0]); // writes the artifacts only
+
+      await expect(buildIfStale(root, run, { sourcemap: true })).rejects.toThrow(/dist[\\/]cli\.js\.map/);
+    });
+
+    it('a plain run neither asks for maps nor needs them', async () => {
+      await writeDist(OLD);
+      await write('source/core/state.ts', NEW);
+      const { run, flags } = mapRunner();
+
+      await buildIfStale(root, run);
+
+      expect(flags).toEqual([false]);
+      expect(await exists('dist/cli.js.map')).toBe(false);
+    });
+  });
 });
 
 describe('buildForRun', () => {
@@ -246,13 +320,14 @@ describe('ensureBuilt (workers)', () => {
 });
 
 describe('global setup', () => {
-  function fakeProject(): SetupProject & {
+  function fakeProject(coverage = false): SetupProject & {
     provided: Map<string, unknown>;
     rerun: () => Promise<void>;
   } {
     const provided = new Map<string, unknown>();
     let onRerun: Parameters<SetupProject['onTestsRerun']>[0] | undefined;
     return {
+      config: { coverage: { enabled: coverage } },
       provided,
       provide: (key, value) => {
         provided.set(key, value);
@@ -269,6 +344,19 @@ describe('global setup', () => {
   // A stand-in for the PTY probe: these cases never spawn a terminal.
   const CAPS = { works: true, verbatim: false, signals: false };
   const probe = async () => CAPS;
+
+  // The spawned CLI's coverage maps through dist/'s sourcemaps, and its
+  // children write to the directory the provider reads (#293).
+  it.each([true, false])('with coverage %s, asks for sourcemaps and provides the directory only in a coverage run', async (coverage) => {
+    const asked: unknown[] = [];
+    const project = fakeProject(coverage);
+    await createSetup(async (opts) => {
+      asked.push(opts);
+      return null;
+    }, probe)(project);
+    expect(asked).toEqual([{ sourcemap: coverage }]);
+    expect(project.provided.get(SUBPROCESS_COVERAGE_DIR_KEY)).toBe(coverage ? SUBPROCESS_COVERAGE_DIR : null);
+  });
 
   it('provides null to the workers when the build succeeds', async () => {
     const project = fakeProject();
