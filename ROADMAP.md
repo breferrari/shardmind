@@ -124,6 +124,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ✅ | Remove the run's folders when its created-folders record is unusable | [#295](https://github.com/breferrari/shardmind/issues/295) |
 | ✅ | Keep the environment hint when an update or adopt write fails | [#313](https://github.com/breferrari/shardmind/issues/313) |
 | ⬜ | Apply each key in one input chunk to the multiselect state the previous key left | [#317](https://github.com/breferrari/shardmind/issues/317) |
+| ⬜ | Validate a shard repo's tracked files, as the release tarball ships them | [#320](https://github.com/breferrari/shardmind/issues/320) |
 
 ## Phase 6 — docs match the code
 
