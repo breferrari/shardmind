@@ -2,7 +2,7 @@
 
 `Select`, `TextInput`, `Alert`, `Badge`, `ProgressBar`, `Spinner` and `StatusMessage` from [`@inkjs/ui`](https://github.com/vadimdemedes/ink-ui) 2.0.0, tag `v2.0.0`, commit `14b1145da0123a48cfc2f0ec9ff33dff0633f464`, MIT (see `LICENSE`).
 
-`Select` and `TextInput` were vendored into ShardMind on 2026-10-04 (#43): upstream has been frozen since 2024-05-22, and its bugs needed local workarounds. The other five followed on 2026-10-05 (#273), so ShardMind neither imports nor depends on `@inkjs/ui` any more. Pastel still depends on it (#277). The git history of this folder reads as a diff from upstream.
+`Select` and `TextInput` were vendored into ShardMind on 2026-10-04 (#43): upstream has been frozen since 2024-05-22, and its bugs needed local workarounds. The other five followed on 2026-10-05 (#273), so ShardMind neither imports nor depends on `@inkjs/ui` any more. Pastel, which depended on it too, is vendored as the cli-kit (#277). The git history of this folder reads as a diff from upstream.
 
 1. Upstream, byte for byte, in one commit for each issue:
    - #43: `components/select`, `components/text-input`, `lib/option-map.ts`, `theme.tsx`, `types.ts`;

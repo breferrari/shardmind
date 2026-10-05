@@ -99,7 +99,9 @@ Every PR for a v6 issue must demonstrate in its description:
 
 | Tool | Purpose |
 |------|---------|
-| **Pastel** | CLI framework — file-system routing, zod arg parsing, Commander under the hood |
+| **Pastel** (vendored) | CLI framework in `source/cli-kit/`, vendored from Pastel 4.0.1 (#277): file-system routing, zod arg parsing |
+| **commander** | Argument parsing under the cli-kit |
+| **zod-validation-error** | The cli-kit's message for an invalid argument or option |
 | **Ink** | React terminal renderer. Prompts and status widgets come from `source/ui-kit/`, vendored from `@inkjs/ui` 2.0.0 (#43, #273) |
 | **React** | Required peer dep for Ink |
 | **chalk** | The colour decision Ink already makes; read `chalk.level`, don't re-derive it. Same range as Ink's (^5), one deduped copy (#37) |
@@ -121,7 +123,6 @@ Every PR for a v6 issue must demonstrate in its description:
 shardmind/
 ├── source/                           # Pastel convention (not src/)
 │   ├── cli.ts                        # Pastel entry point
-│   ├── cli-options.ts                # Positional options on Pastel's Commander (#147)
 │   ├── commands/
 │   │   ├── index.tsx                  # Status display (root command)
 │   │   ├── _app.tsx                   # Pastel custom app: wraps every command in CrashBoundary (#225)
@@ -217,7 +218,8 @@ shardmind/
 │   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   └── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
-│   ├── ui-kit/                        # Components vendored from @inkjs/ui 2.0.0 (#43, #273); index.ts is the only entry, licences + PROVENANCE.md inside
+│   ├── ui-kit/                        # Components vendored from @inkjs/ui 2.0.0 (#43, #273); index.ts is the only entry, licences + PROVENANCE.md + VENDOR.json inside
+│   ├── cli-kit/                       # CLI framework vendored from Pastel 4.0.1 (#277); index.ts is the only entry, positional options built in (#147)
 │   ├── runtime/                       # Exported for hook scripts
 │   │   ├── index.ts                   # Re-exports
 │   │   ├── values.ts                  # loadValues(), validateValues()
@@ -316,6 +318,7 @@ Use `npm ci` for routine syncing after `git pull` — it installs exactly what t
 - `source/runtime/` — exported for hook scripts. **Zero dependency on Ink, React, or Pastel.** If you import from `ink` or `react` here, the build is broken.
 - `source/internal/` — NOT public API. Contains the hook-runner subprocess entry (`hook-runner.ts`) that `core/hook.ts` spawns via `node --import tsx`. Must not be imported at module scope by anything in `source/`; only spawn-paths touch it. Exported from package.json's `exports` under `./internal/hook-runner` so `createRequire` can resolve it at runtime.
 - `source/types/` — re-exports from `runtime/types.ts`. Both CLI and runtime import from here.
+- `source/cli-kit/` — the CLI framework vendored from Pastel 4.0.1 (#277): imports only `ink`, `react`, `commander`, `zod`, `zod-validation-error`, `node:` built-ins, its own files and the ui-kit's index (`tests/cli-kit/boundary.test.ts`); ShardMind imports it only through `cli-kit/index.ts`. See ARCHITECTURE §11.4.
 - `source/ui-kit/` — the TUI components (`Select`, `TextInput`, `Alert`, `Badge`, `ProgressBar`, `Spinner`, `StatusMessage`) vendored from `@inkjs/ui` 2.0.0 (#43, #273), self-contained for later extraction: imports only `ink`, `react`, `node:` built-ins and its own files (`tests/ui-kit/boundary.test.ts` enforces it); ShardMind imports it only through `ui-kit/index.ts`, via `components/ui.ts`. See ARCHITECTURE §11.4.
 
 Do not cross these boundaries:

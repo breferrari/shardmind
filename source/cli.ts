@@ -6,7 +6,7 @@ import { exitQuietlyWhenStdoutCloses } from './core/stdout-closed.js';
 
 // NO_COLOR turns colour off unless FORCE_COLOR is set (#37). chalk, which Ink
 // colours through, reads the environment once when it is first imported, so
-// this runs before Pastel loads Ink: Pastel and cli-options are imported
+// this runs before the cli-kit loads Ink: the cli-kit is imported
 // dynamically below, never statically above this line.
 applyNoColor(process.env);
 
@@ -84,8 +84,7 @@ try {
     process.exit();
   }
 
-  const { default: Pastel } = await import('pastel');
-  const { enablePositionalOptions, pastelCommander } = await import('./cli-options.js');
+  const { default: Pastel } = await import('./cli-kit/index.js');
 
   // Windows doesn't deliver parent→child SIGINT via child_process.kill() — Node
   // emulates SIGINT/SIGTERM as TerminateProcess, which skips every registered
@@ -104,22 +103,6 @@ try {
   // `../package.json` resolves to the package root in both dev and published
   // layouts.
   const pkg = createRequire(import.meta.url)('../package.json') as { version: string };
-
-  // An option written after a subcommand belongs to it, not to the root
-  // command; Pastel never enables this on the Commander program it builds
-  // (#147). See source/cli-options.ts. If a Pastel or Commander layout ever
-  // defeats the patch, run without it (with a warning) rather than refuse
-  // every command.
-  try {
-    enablePositionalOptions(pastelCommander());
-  } catch (err) {
-    // Options keep Commander's default scoping. Say so on stderr, so a broken
-    // layout shows up in a bug report instead of as flags that do nothing.
-    process.emitWarning(
-      `subcommand option scoping is off (${err instanceof Error ? err.message : String(err)}); see #147`,
-      { code: 'SHARDMIND_OPTION_SCOPE' },
-    );
-  }
 
   const app = new Pastel({
     importMeta: import.meta,

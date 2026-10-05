@@ -10,7 +10,7 @@ export default defineConfig([
     target: 'node18',
     banner: { js: '#!/usr/bin/env node' },
   },
-  // Pastel commands — file-system routing requires separate files in dist/commands/
+  // Commands — the cli-kit routes by file, so each is its own file in dist/commands/
   {
     entry: {
       'commands/index': 'source/commands/index.tsx',
@@ -23,7 +23,7 @@ export default defineConfig([
     format: ['esm'],
     dts: true,
     target: 'node18',
-    external: ['react', 'ink', '@inkjs/ui', 'pastel'],
+    external: ['react', 'ink'],
   },
   // Runtime entry — NO shebang, imported as a module by hook scripts
   {

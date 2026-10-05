@@ -1,5 +1,5 @@
 /*
- * From @inkjs/ui 2.0.0 (github.com/vadimdemedes/ink-ui, commit 14b1145),
+ * From @inkjs/ui@2.0.0 (https://github.com/vadimdemedes/ink-ui at 14b1145da0123a48cfc2f0ec9ff33dff0633f464), components/text-input/index.ts.
  * Copyright (c) Vadym Demedes. MIT: see ui-kit/LICENSE.
  */
 
