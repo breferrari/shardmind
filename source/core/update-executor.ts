@@ -203,6 +203,20 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     onFileTouched,
   } = opts;
 
+  // Every conflict must arrive decided (#292). The machine resolves each
+  // pending conflict before it writes, so a missing one is a caller bug:
+  // refuse it before anything is snapshotted or written, and never choose
+  // for the user. Adopt's executor has the same guard.
+  for (const action of plan.actions) {
+    if (action.kind === 'conflict' && conflictResolutions[action.path] === undefined) {
+      throw new ShardMindError(
+        `Missing update resolution for ${action.path}`,
+        'UPDATE_WRITE_FAILED',
+        'Every pending conflict needs a resolution before runUpdate is called. This is a shardmind bug: please report it.',
+      );
+    }
+  }
+
   // Checked again at write time (#163): planning may have been a while
   // ago, behind prompts. Before the snapshot or any write, dry run included.
   const touched = pathsTheUpdateTouches(plan.actions);
@@ -511,7 +525,8 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
       return;
     }
     case 'conflict': {
-      const resolution = ctx.conflictResolutions[action.path] ?? 'keep_mine';
+      // Checked present for every conflict before the run started (#292).
+      const resolution = ctx.conflictResolutions[action.path]!;
       ctx.onProgress?.({
         kind: 'file',
         index: ctx.index,
