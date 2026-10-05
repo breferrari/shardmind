@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The merge queue on main runs CI on each queued merge before it lands.
+  merge_group:
+    types: [checks_requested]
 
 jobs:
   check:
@@ -45,3 +48,20 @@ jobs:
       # dist/ when it is stale, for local dev; here it finds dist/ fresh.
       - run: npm run build
       - run: npm test
+
+  # The one check main's ruleset requires. Its name is fixed: the matrix
+  # jobs above are named from their matrix values (`check (ubuntu-latest,
+  # 22)`), so adding a Node or OS would rename them, and a required check
+  # nobody reports blocks every merge. This job passes only when every
+  # matrix job passed; a failed, cancelled or skipped one fails it.
+  # Do not rename it without changing the ruleset in the same breath.
+  ci-passed:
+    name: ci-passed
+    if: always()
+    needs: [check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every matrix job passed
+        run: |
+          echo "check matrix: ${{ needs.check.result }}"
+          test "${{ needs.check.result }}" = "success"

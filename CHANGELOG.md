@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Internal (CI ready for a merge queue)
+
+- **CI runs on the merge queue, and reports one check with a fixed name, `ci-passed`, for main's ruleset to require.** It passes only when every OS and Node job passed. The jobs it covers are named after their matrix values, so a new Node version or OS no longer renames the check a merge waits on.
+
 ### Internal (the coverage report counts the spawned CLI — #293)
 
 - **`npm run test:coverage` always writes a report**, even when a test times out, and caps the test workers at 4 so a loaded machine does not time out to begin with.
