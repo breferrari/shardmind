@@ -403,6 +403,8 @@ The old single `post-install` hook bundled three jobs with different lifecycles 
 
 **If your hook crashes**, the install/update/adopt still succeeds (hooks are non-fatal). The Summary shows a dimmed, truncated head of the hook's output under a "Non-fatal; your vault is ready." warning, and writes the **full** captured stdout/stderr to `.shardmind/logs/<slot>.log` in the installed vault — point users there (or `cat` it yourself) to debug a failing hook.
 
+**Keep those logs out of the vault's git history.** A vault is often a git repository, and a log is the user's machine state, not content. A shard that declares any hook lists `.shardmind/logs/` in the `.gitignore` it installs at the vault root, as obsidian-mind does. The engine does not write a `.gitignore` for you (#201). `shardmind validate` warns (`LINT_LOGS_NOT_GITIGNORED`) when a shard with a hook installs no `.gitignore`, or one that does not ignore `.shardmind/logs/`.
+
 ### Per-slot context
 
 - **`BootstrapContext`** → `{ slot: 'bootstrap', vaultRoot, values, modules, shard, previousVersion? }`. No `valuesAreDefaults`, no file lists.

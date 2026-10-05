@@ -21,6 +21,7 @@ import {
   CACHED_SCHEMA,
   CACHED_TEMPLATES,
   HOOK_LOGS_DIR,
+  HOOK_STAGES,
   LOCK_FILE,
   LOCK_TAKEOVER_FILE,
   SHARDMIND_DIR,
@@ -51,7 +52,7 @@ const ENGINE_WRITE_PATHS: readonly string[] = [
   path.join(SHARDMIND_DIR, 'update-check.json'),
   HOOK_LOGS_DIR,
   // Every hook slot's full-output log, `.shardmind/logs/<slot>.log`.
-  ...(['bootstrap', 'personalize', 'post-update', 'post-install'] as const).map((slot) =>
+  ...HOOK_STAGES.map((slot) =>
     path.join(HOOK_LOGS_DIR, `${slot}.log`),
   ),
 ];

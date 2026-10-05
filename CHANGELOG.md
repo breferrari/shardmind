@@ -24,6 +24,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **The README now says how to stop using shardmind on a vault:** delete `.shardmind/` and `shard-values.yaml`. Eleven proposals with no request behind them are declined, each with its reason in `docs/SHARD-LAYOUT.md` §Out of scope (and the hosted registry, already a VISION non-goal, reaffirmed there). Each can reopen if its reason stops holding.
 
+### Added (validate warns about hook logs left to git — #201)
+
+- **`shardmind validate` warns when a shard with a hook would let its logs reach git.** Hooks write their output to `.shardmind/logs/` inside the vault, and a vault is often a git repository. A shard that declares a hook should list `.shardmind/logs/` in the `.gitignore` it installs, as obsidian-mind does. `validate` now says so (`LINT_LOGS_NOT_GITIGNORED`) when that `.gitignore` is missing or doesn't cover the folder. It is a warning: the shard still validates and installs. The engine doesn't write a `.gitignore` of its own.
+
 ### Internal (the coverage report counts the spawned CLI — #293)
 
 - **`npm run test:coverage` always writes a report**, even when a test times out, and caps the test workers at 4 so a loaded machine does not time out to begin with.

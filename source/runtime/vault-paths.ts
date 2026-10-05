@@ -30,6 +30,9 @@ export const BOUNDARY_IGNORE_FILE = path.join(SHARDMIND_DIR, 'boundary-ignore');
  * as a user-facing pointer in the Summary, and `path.join(vaultRoot, …)`
  * resolves a posix-style relative path correctly on every platform.
  */
+/** Every hook slot a shard can declare in `shard.yaml`. */
+export const HOOK_STAGES = ['bootstrap', 'personalize', 'post-update', 'post-install'] as const;
+
 export function hookLogRelPath(slot: string): string {
   return `${SHARDMIND_DIR}/logs/${slot}.log`;
 }

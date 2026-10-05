@@ -7,10 +7,12 @@
  * Spec: docs/IMPLEMENTATION.md §4.22, docs/ARCHITECTURE.md §10.5b.
  */
 
+import fs from 'node:fs/promises';
 import path from 'node:path';
+import ignore from 'ignore';
 import type { ModuleSelections, ShardManifest, ShardSchema } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE, SHARD_SOURCE_DIR } from '../runtime/vault-paths.js';
+import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE, SHARD_SOURCE_DIR, HOOK_STAGES, hookLogRelPath } from '../runtime/vault-paths.js';
 import { assertEngineCompatible, parseManifest } from './manifest.js';
 import { buildValuesValidator, parseSchema } from './schema.js';
 import { resolveComputedDefaults } from './install-planner.js';
@@ -143,12 +145,18 @@ export async function lintShard(
 
   const context = buildRenderContext(manifest, values, selections, new Date(), opts.vaultRoot);
   const env = createRenderer(shardDir);
+  // A rendered `.gitignore.njk`, kept for the hook-log check below (#201).
+  let renderedGitignore: string | undefined;
   for (const entry of resolution.render) {
     try {
       const list = entry.iterator ? values[entry.iterator] : undefined;
       // An `_each` over an empty list renders nothing, so compile it instead.
-      if (Array.isArray(list) && list.length === 0) await compileTemplate(entry, env);
-      else await renderFile(entry, context, env);
+      if (Array.isArray(list) && list.length === 0) {
+        await compileTemplate(entry, env);
+      } else {
+        const rendered = await renderFile(entry, context, env);
+        if (entry.outputPath === '.gitignore' && !Array.isArray(rendered)) renderedGitignore = rendered.content;
+      }
     } catch (err) {
       error(err, entry.outputPath);
     }
@@ -194,6 +202,30 @@ export async function lintShard(
       message: `Group '${group.id}' has no values`,
       hint: 'Add values to it, or remove the group.',
     });
+  }
+
+  // Hook logs land in `.shardmind/logs/` inside the vault, which is often a
+  // git repository: the .gitignore the shard installs should keep them out
+  // (#201). The engine writes no .gitignore of its own.
+  if (HOOK_STAGES.some((slot) => manifest.hooks[slot])) {
+    const gitignore = [...resolution.copy, ...resolution.render].find((e) => e.outputPath === '.gitignore');
+    // Its text: copied as is, or as rendered above. A .gitignore.njk that
+    // failed to render is already reported, so it is left unjudged here.
+    const gitignoreText =
+      gitignore && resolution.copy.includes(gitignore) ? await fs.readFile(gitignore.sourcePath, 'utf-8') : renderedGitignore;
+    const logFile = hookLogRelPath('bootstrap');
+    const logs = path.posix.dirname(logFile);
+    const logsIgnored = gitignoreText === undefined || ignore().add(gitignoreText).ignores(logFile);
+    if (!gitignore || !logsIgnored) {
+      findings.push({
+        severity: 'warning',
+        code: 'LINT_LOGS_NOT_GITIGNORED',
+        message: gitignore
+          ? `The shard's .gitignore does not ignore ${logs}/, where its hooks' logs land`
+          : `The shard declares a hook but installs no .gitignore, so its hooks' logs in ${logs}/ can be committed`,
+        hint: `List ${logs}/ in the .gitignore at the shard's root. See docs/AUTHORING.md.`,
+      });
+    }
   }
 
   return done();

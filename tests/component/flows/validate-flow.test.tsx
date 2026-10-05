@@ -44,6 +44,15 @@ describe('validate command — Layer 1 flow (#34)', () => {
     expect(frame).toContain('✓');
   });
 
+  it('warns when a shard with a hook installs no .gitignore for its logs, and still passes (#201)', async () => {
+    await fs.rm(path.join(root, '.gitignore'));
+    const r = render(<Validate args={[root]} options={OPTIONS} />);
+    const frame = await waitFor(allFrames(r), (f) => /0 errors, 1 warning/.test(f), 15_000);
+    expect(frame).toMatch(/LINT_LOGS_NOT_GITIGNORED/);
+    expect(frame).toMatch(/\.shardmind\/logs\//);
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+
   it('lists a broken template with its code, hint and ERRORS link, and sets exit code 1', async () => {
     await fs.writeFile(path.join(root, 'brain', 'Broken.md.njk'), '{% if %}\n');
     const r = render(<Validate args={[root]} options={OPTIONS} />);
