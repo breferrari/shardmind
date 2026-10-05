@@ -8,6 +8,22 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-05
+
+Minor release.
+
+- **A failed run is safer.** A failed or cancelled install, update or adopt puts your vault back, or names exactly what it could not restore.
+- **Update copes with more.** It handles renames, case-only renames and binary files.
+- **New commands and options:** `shardmind validate`, `--json`, resolving a conflict in your editor, and one shardmind run per vault at a time.
+- **For shard authors:** a shard can name the tools it needs, re-include files in `.shardmindignore`, and be installed by bare name through the registry.
+
+**Before you upgrade:**
+
+- **Node 22 or later** is required, as in 0.1.x.
+- **Ink 8 and React 19.3.** shardmind's dependencies move to Ink 8, React 19.3 and chalk 6. This matters only if something installs shardmind's dependency tree alongside its own React: it needs React 19.3 or later. `shardmind/runtime`, which hook scripts import, uses neither React nor Ink and is unaffected.
+- **No more Pastel or `@inkjs/ui`.** shardmind carries its own copies of both. Nothing that imported them through shardmind can keep doing so.
+- **Installing by bare name** (`shardmind install obsidian-mind`) needs **0.2.0 or later**. The registry index is repo-only: each name maps to the GitHub repo that serves it (#29). shardmind 0.1.x reads the old format and fails on the new one. `github:owner/repo` works in every version.
+
 ### Changed (the registry index format is fixed — #29)
 
 - **The shard registry's `index.json` has a ratified format** ([`docs/IMPLEMENTATION.md §4.1`](docs/IMPLEMENTATION.md)): a required `schema_version` (1) and a map from each bare name to the GitHub repo that serves it.
