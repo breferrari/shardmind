@@ -279,6 +279,35 @@ describe('adopt --from-version applies rename migrations (#179)', () => {
     expect(await exists('AGENTS.md')).toBe(false);
   });
 
+  // On a case-folding filesystem the path guard refuses the new spelling
+  // before any write (#163); elsewhere the new spelling is a new path. Either
+  // way the file ends where it was.
+  it('a failed adopt leaves a case-only renamed file under its old spelling (#301)', async () => {
+    await cloneOfV1();
+    await write(COPY, 'My edit.\n');
+    const dir = path.join(root, 'shard-case');
+    await fsp.cp(MINIMAL_SHARD, dir, { recursive: true });
+    const manifestPath = path.join(dir, '.shardmind', 'shard.yaml');
+    const manifest = (await fsp.readFile(manifestPath, 'utf-8')).replace(/^version: .+$/m, 'version: 0.2.0');
+    await fsp.writeFile(
+      manifestPath,
+      `${manifest}\nmigrations:\n  - from: "0.1.0"\n    to: "0.2.0"\n    renames:\n      "${COPY}": "claude.md"\n`,
+      'utf-8',
+    );
+    await fsp.rename(path.join(dir, COPY), path.join(dir, 'claude.md'));
+    const realWrite = fsp.writeFile;
+    vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (String(file).endsWith('state.json')) throw new Error('disk full');
+      return realWrite(file, data, opts as Parameters<typeof realWrite>[2]);
+    });
+    await expect(adopt(dir, '0.1.0')).rejects.toThrow(/disk full|case-mismatch/);
+    vi.restoreAllMocks();
+    const names = await fsp.readdir(vault);
+    expect(names).toContain(COPY);
+    expect(names).not.toContain('claude.md');
+    expect(await read(COPY)).toBe('My edit.\n');
+  });
+
   it.each([
     ['moving the file to its new path', 'keep_mine', 'rename'],
     ['removing the old file', 'use_shard', 'rm'],
