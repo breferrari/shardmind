@@ -21,6 +21,7 @@ import {
   CACHED_SCHEMA,
   CACHED_TEMPLATES,
   HOOK_LOGS_DIR,
+  HOOK_STAGES,
   LOCK_FILE,
   LOCK_TAKEOVER_FILE,
   SHARDMIND_DIR,
@@ -28,7 +29,6 @@ import {
   VALUES_FILE,
 } from '../runtime/vault-paths.js';
 import { mapConcurrent } from './fs-utils.js';
-import { HOOK_STAGES } from './hook.js';
 
 export type UnsafeVaultPathReason = 'symlink' | 'symlinked-folder' | 'hard-link' | 'case-mismatch';
 

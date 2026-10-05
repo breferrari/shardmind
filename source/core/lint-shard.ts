@@ -12,14 +12,13 @@ import path from 'node:path';
 import ignore from 'ignore';
 import type { ModuleSelections, ShardManifest, ShardSchema } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE, SHARD_SOURCE_DIR, hookLogRelPath } from '../runtime/vault-paths.js';
+import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE, SHARD_SOURCE_DIR, HOOK_STAGES, hookLogRelPath } from '../runtime/vault-paths.js';
 import { assertEngineCompatible, parseManifest } from './manifest.js';
 import { buildValuesValidator, parseSchema } from './schema.js';
 import { resolveComputedDefaults } from './install-planner.js';
 import { resolveModules } from './modules.js';
 import { findOutputClashes, outputClashError, plannedOutputRefs } from './output-clash.js';
 import { buildRenderContext, compileTemplate, createRenderer, renderFile } from './renderer.js';
-import { HOOK_STAGES } from './hook.js';
 
 export interface LintFinding {
   severity: 'error' | 'warning';

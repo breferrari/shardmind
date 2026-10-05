@@ -37,6 +37,7 @@ import type { AnyHookContext, HookContext, ShardManifest } from '../runtime/type
 import { assertNever } from '../runtime/types.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
 import { pathExists } from './fs-utils.js';
+import type { HOOK_STAGES } from '../runtime/vault-paths.js';
 
 /**
  * Maximum captured bytes per stream (stdout / stderr). A pathological hook
@@ -122,8 +123,6 @@ const KILL_GRACE_MS = 2_000;
  * the deprecated legacy slot (#102); the three new slots are bootstrap /
  * personalize / post-update.
  */
-/** Every hook slot a shard can declare in `shard.yaml`. */
-export const HOOK_STAGES = ['bootstrap', 'personalize', 'post-update', 'post-install'] as const;
 export type HookStage = (typeof HOOK_STAGES)[number];
 
 /**
