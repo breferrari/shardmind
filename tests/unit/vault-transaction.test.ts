@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { beginTransaction } from '../../source/core/vault-transaction.js';
+import { acquireVaultLock } from '../../source/core/vault-lock.js';
 import { renameCaseInPlace } from '../../source/core/rename-migrations.js';
 import { asShown } from '../helpers/index.js';
 
@@ -488,16 +489,20 @@ describe('vault transaction for an install into a folder it creates (#333)', () 
   // `vault` is the cwd here: the install's vault is a folder inside it.
   const lockOf = (root: string) => path.join(root, '.shardmind.lock');
   const beginInto = (folders: string[], root = folders[folders.length - 1]!) =>
-    beginTransaction(root, { kind: 'install', noPriorInstall: true, createRoot: { folders, command: 'install' } });
+    beginTransaction(root, {
+      kind: 'install',
+      noPriorInstall: true,
+      createRoot: { folders, lock: () => acquireVaultLock(root, 'install') },
+    });
 
-  it('makes the folder and holds its lock; commit keeps the folder and releases the lock', async () => {
+  it('makes the folder and takes its lock; commit keeps the folder and leaves the lock to the caller', async () => {
     const root = path.join(vault, 'wiki-mind');
     const tx = await beginInto([root]);
     expect(await exists(lockOf(root))).toBe(true);
     await tx.recordWrite('Home.md');
     await fsp.writeFile(path.join(root, 'Home.md'), '# Home\n');
     await tx.commit();
-    expect(await exists(lockOf(root))).toBe(false);
+    expect(await exists(lockOf(root))).toBe(true);
     expect(await fsp.readFile(path.join(root, 'Home.md'), 'utf-8')).toBe('# Home\n');
   });
 

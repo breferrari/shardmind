@@ -35,7 +35,6 @@ import { caseJournal, sameFile, undoCaseHops, type CaseJournal } from './rename-
 import { throwIfCancelled } from './run-cancel.js';
 import { pathExists, removePath, settleAll, toPosix } from './fs-utils.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
-import { acquireVaultLock, type VaultLock } from './vault-lock.js';
 import { ShardMindError } from '../runtime/types.js';
 import { wrapWriteError } from './bug-report.js';
 import { ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
@@ -63,10 +62,12 @@ export interface TransactionOptions {
   noPriorInstall: boolean;
   /**
    * Install into a folder it creates (#333): the missing levels, outermost
-   * first (`install-destination.ts`). Begin makes them and takes the vault
-   * lock; the rollback releases it and removes them, once empty.
+   * first (`install-destination.ts`), and the caller's vault lock, taken
+   * once the folder exists (it lives inside it). Begin makes the folders and
+   * calls `lock`; the rollback releases the lock, then removes the folders
+   * once empty. On commit the lock stays the caller's to release.
    */
-  createRoot?: { folders: readonly string[]; command: 'install' };
+  createRoot?: CreateRoot;
 }
 
 /** A path moved out of the way under a backup name (absolute paths). */
@@ -320,7 +321,6 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
     },
 
     async commit({ oldStatePath } = {}) {
-      createdRoot?.lock.release();
       const kept = setAside.filter((m) => m.keep).map(({ originalPath, backupPath }) => ({ originalPath, backupPath }));
       const left = await discardSetAside(
         setAside.filter((m) => !m.keep),
@@ -332,10 +332,16 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
   };
 }
 
+export interface CreateRoot {
+  folders: readonly string[];
+  /** Take the vault lock (`acquireVaultLock`, §4.25); returns its release. */
+  lock: () => { release(): void };
+}
+
 interface CreatedRoot {
   /** The levels this begin made, outermost first. */
   made: string[];
-  lock: VaultLock;
+  lock: { release(): void };
 }
 
 /**
@@ -344,7 +350,7 @@ interface CreatedRoot {
  * name one wins; the other is refused, as is a file at any level. A parent
  * another run made meanwhile is a folder all the same, and not ours.
  */
-async function createVaultRoot(vaultRoot: string, root: { folders: readonly string[]; command: 'install' }): Promise<CreatedRoot> {
+async function createVaultRoot(vaultRoot: string, root: CreateRoot): Promise<CreatedRoot> {
   const made: string[] = [];
   try {
     for (const folder of root.folders) {
@@ -363,7 +369,7 @@ async function createVaultRoot(vaultRoot: string, root: { folders: readonly stri
         }
       }
     }
-    return { made, lock: acquireVaultLock(vaultRoot, root.command) };
+    return { made, lock: root.lock() };
   } catch (err) {
     for (const folder of [...made].reverse()) await fsp.rmdir(folder).catch(() => {});
     throw err;
