@@ -5,7 +5,7 @@
  * listener's call count after each phase as JSON.
  */
 import { spawnSync } from 'node:child_process';
-import { withSigintHeld } from '../../../source/core/editor.js';
+import { withSigintHeld } from '../../../source/core/process-control.js';
 
 let calls = 0;
 process.on('SIGINT', () => {

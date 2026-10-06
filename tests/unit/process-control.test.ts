@@ -7,13 +7,14 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import {
   onSigint,
   emitSigint,
   withSigintHeld,
   setExitCode,
   exitProcess,
-  STARTUP_STEPS,
+  exitOnSigint,
   resetSigintForTests,
 } from '../../source/core/process-control.js';
 
@@ -57,19 +58,62 @@ describe('the SIGINT stack', () => {
     if (before === 0) expect(emitSigint()).toBe(false);
   });
 
-  it('a handler that throws or rejects does not stop the next', () => {
+  it('a handler that throws does not stop the next, and its throw still surfaces after them', () => {
     const ran: string[] = [];
     onSigint(() => {
       throw new Error('sync');
     });
-    onSigint(async () => Promise.reject(new Error('async')));
     onSigint(() => void ran.push('after'));
-    emitSigint();
+    expect(() => emitSigint()).toThrow('sync');
     expect(ran).toEqual(['after']);
+  });
+
+  it('exitOnSigint runs the cleanup, then exits 130, once', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const order: string[] = [];
+    exitOnSigint(() => async () => void order.push('cleanup'));
+    emitSigint();
+    await tick();
+    expect(order).toEqual(['cleanup']);
+    expect(exit).toHaveBeenCalledWith(130);
+    expect(emitSigint()).toBe(process.listenerCount('SIGINT') > 0);
+  });
+
+  it('exitOnSigint still exits 130 when the cleanup throws or there is none', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    exitOnSigint(() => () => {
+      throw new Error('cleanup broke');
+    });
+    exitOnSigint(() => undefined);
+    emitSigint();
+    await tick();
+    expect(exit.mock.calls).toEqual([[130], [130]]);
   });
 });
 
 describe('withSigintHeld (#50, #282)', () => {
+  it('a handler removed during the hold leaves no listener behind: with none left, emitSigint is false', async () => {
+    const before = process.listenerCount('SIGINT');
+    const off = onSigint(() => {});
+    withSigintHeld(() => off());
+    await tick();
+    expect(process.listenerCount('SIGINT')).toBe(before);
+  });
+
+  it('a handler added during the hold is held too, and runs once after it', async () => {
+    const ran: string[] = [];
+    withSigintHeld(() => {
+      onSigint(() => void ran.push('added'));
+      process.emit('SIGINT');
+    });
+    // The queued signal lands before the restore: still held.
+    process.emit('SIGINT');
+    expect(ran).toEqual([]);
+    await tick();
+    process.emit('SIGINT');
+    expect(ran).toEqual(['added']);
+  });
+
   it('takes every listener off while fn runs, a no-op takes the signal, and they come back after', async () => {
     const ran: string[] = [];
     onSigint(() => void ran.push('stack'));
@@ -106,18 +150,58 @@ describe('the exit code', () => {
 });
 
 describe('the startup order (§4.32 step 4)', () => {
-  it('cli.ts runs its process setup in STARTUP_STEPS order', () => {
-    const source = fs.readFileSync(path.join(ROOT, 'source', 'cli.ts'), 'utf-8');
-    const at = STARTUP_STEPS.map((step) => source.indexOf(`${step}(`));
-    expect(at.every((i) => i >= 0), `every step is called: ${STARTUP_STEPS.join(', ')}`).toBe(true);
-    expect([...at].sort((a, b) => a - b)).toEqual(at);
-    // ...all before the cli-kit (and so Ink) loads.
-    expect(Math.max(...at)).toBeLessThan(source.indexOf("import('./cli-kit/index.js')"));
+  // The calls as they run in cli.ts, read from its syntax tree: comments
+  // and strings cannot stand in for them.
+  const STEPS = ['applyNoColor', 'exitQuietlyWhenStdoutCloses', 'installCrashHandlers', 'installStdinCancellation'];
+  const file = path.join(ROOT, 'source', 'cli.ts');
+  const tree = ts.createSourceFile(file, fs.readFileSync(file, 'utf-8'), ts.ScriptTarget.Latest, true);
+  const calls: Array<{ name: string; at: number }> = [];
+  const imports: Array<{ spec: string; at: number }> = [];
+  let headlessRun = -1;
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      if (ts.isIdentifier(node.expression)) calls.push({ name: node.expression.text, at: node.getStart() });
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword && ts.isStringLiteral(node.arguments[0]!)) {
+        imports.push({ spec: node.arguments[0].text, at: node.getStart() });
+      }
+    }
+    // The headless runner picked: `HEADLESS_JSON[...]`.
+    if (ts.isElementAccessExpression(node) && node.expression.getText() === 'HEADLESS_JSON' && headlessRun === -1) headlessRun = node.getStart();
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+
+  it('each step runs once, in order', () => {
+    const steps = calls.filter((c) => STEPS.includes(c.name));
+    expect(steps.map((c) => c.name)).toEqual(STEPS);
+  });
+
+  it('colour and the closed-stdout handler come before any dynamic import (#37, #252)', () => {
+    const firstImport = Math.min(...imports.map((i) => i.at));
+    for (const name of ['applyNoColor', 'exitQuietlyWhenStdoutCloses']) {
+      expect(calls.find((c) => c.name === name)!.at, name).toBeLessThan(firstImport);
+    }
+  });
+
+  it('the crash handlers are installed before any import but their own module (#225)', () => {
+    const installed = calls.find((c) => c.name === 'installCrashHandlers')!.at;
+    const others = imports.filter((i) => i.spec !== './core/bug-report.js' && i.spec !== './commands/hooks/cli-version.js');
+    expect(Math.min(...others.map((i) => i.at))).toBeGreaterThan(installed);
+  });
+
+  it('the stdin bridge is installed before a headless runner or the cli-kit loads (#155, #302)', () => {
+    const bridge = calls.find((c) => c.name === 'installStdinCancellation')!.at;
+    expect(headlessRun).toBeGreaterThan(bridge);
+    expect(imports.find((i) => i.spec === './cli-kit/index.js')!.at).toBeGreaterThan(bridge);
   });
 });
 
 describe('no module but the owner touches SIGINT or the exit code (#303)', () => {
   // internal/: child processes with their own exit. cli-kit/: vendored Pastel.
+  // The scan reads the literal `process.` receiver: an alias (`const p =
+  // process`) or a destructured `exit` would pass it, so review keeps to the
+  // literal form, and modules that take a process-like object (stdout-closed,
+  // bug-report) take the owner's writers too.
   const EXEMPT = [path.join('source', 'internal'), path.join('source', 'cli-kit'), path.join('source', 'core', 'process-control.ts')];
   const FORBIDDEN: Array<[string, RegExp]> = [
     ['a SIGINT listener', /process\.(?:on|once|off|removeListener|addListener|prependListener)\(\s*['"]SIGINT['"]/],

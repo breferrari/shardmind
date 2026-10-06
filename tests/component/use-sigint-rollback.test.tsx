@@ -20,7 +20,7 @@ import {
 } from '../../source/commands/hooks/shared.js';
 import { ShardMindError } from '../../source/runtime/types.js';
 import { withRollbackFailures } from '../../source/core/rollback-report.js';
-import { withSigintHeld } from '../../source/core/editor.js';
+import { withSigintHeld } from '../../source/core/process-control.js';
 
 function Probe(props: { rollback: () => Promise<unknown>; cleanup: () => Promise<void> }) {
   useSigintRollback({ isActive: () => true, rollback: props.rollback, cleanup: props.cleanup });

@@ -29,7 +29,7 @@ function fakeProcess() {
 describe('exitQuietlyWhenStdoutCloses', () => {
   it('does not end the run at EPIPE: later writes are dropped, their callbacks still called', async () => {
     const { proc, stdout, written } = fakeProcess();
-    exitQuietlyWhenStdoutCloses(proc);
+    exitQuietlyWhenStdoutCloses(proc, (code) => (proc.exitCode = code));
     stdout.emit('error', epipe());
     let called = false;
     const returned = stdout.write('after the pipe closed', () => (called = true));
@@ -46,7 +46,7 @@ describe('exitQuietlyWhenStdoutCloses', () => {
     // A failed write's callback runs before 'error' is emitted; a run that
     // exits from that callback must still exit 141.
     const { proc, stdout } = fakeProcess();
-    exitQuietlyWhenStdoutCloses(proc);
+    exitQuietlyWhenStdoutCloses(proc, (code) => (proc.exitCode = code));
     Object.assign(stdout, { errored: epipe() });
     proc.emit('exit', 0);
     expect(proc.exitCode).toBe(STDOUT_CLOSED_EXIT_CODE);
@@ -54,7 +54,7 @@ describe('exitQuietlyWhenStdoutCloses', () => {
 
   it('exits 141 when the run would have exited 0', () => {
     const { proc, stdout } = fakeProcess();
-    exitQuietlyWhenStdoutCloses(proc);
+    exitQuietlyWhenStdoutCloses(proc, (code) => (proc.exitCode = code));
     stdout.emit('error', epipe());
     proc.emit('exit', 0);
     expect(proc.exitCode).toBe(STDOUT_CLOSED_EXIT_CODE);
@@ -63,7 +63,7 @@ describe('exitQuietlyWhenStdoutCloses', () => {
 
   it('keeps an exit code the run reached itself', () => {
     const { proc, stdout } = fakeProcess();
-    exitQuietlyWhenStdoutCloses(proc);
+    exitQuietlyWhenStdoutCloses(proc, (code) => (proc.exitCode = code));
     stdout.emit('error', epipe());
     proc.exitCode = 1;
     proc.emit('exit', 1);
@@ -72,7 +72,7 @@ describe('exitQuietlyWhenStdoutCloses', () => {
 
   it('leaves the exit code alone while stdout is open', () => {
     const { proc, written, stdout } = fakeProcess();
-    exitQuietlyWhenStdoutCloses(proc);
+    exitQuietlyWhenStdoutCloses(proc, (code) => (proc.exitCode = code));
     stdout.write('{}\n');
     proc.emit('exit', 0);
     expect(proc.exitCode).toBeUndefined();
@@ -81,14 +81,14 @@ describe('exitQuietlyWhenStdoutCloses', () => {
 
   it('rethrows any other stdout error, so the crash handler still reports it', () => {
     const { proc, stdout } = fakeProcess();
-    exitQuietlyWhenStdoutCloses(proc);
+    exitQuietlyWhenStdoutCloses(proc, (code) => (proc.exitCode = code));
     const other = Object.assign(new Error('EIO: i/o error, write'), { code: 'EIO' });
     expect(() => stdout.emit('error', other)).toThrow(other);
   });
 
   it('ignores further stdout errors once the pipe has closed', () => {
     const { proc, stdout } = fakeProcess();
-    exitQuietlyWhenStdoutCloses(proc);
+    exitQuietlyWhenStdoutCloses(proc, (code) => (proc.exitCode = code));
     stdout.emit('error', epipe());
     const destroyed = Object.assign(new Error('Cannot call write after a stream was destroyed'), { code: 'ERR_STREAM_DESTROYED' });
     expect(() => stdout.emit('error', destroyed)).not.toThrow();

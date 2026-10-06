@@ -14,9 +14,9 @@ import {
   editInEditor,
   hasConflictMarkers,
   resolveEditorCommand,
-  withSigintHeld,
   withTerminalReleased,
 } from '../../source/core/editor.js';
+import { withSigintHeld } from '../../source/core/process-control.js';
 
 let dir: string;
 let fake: string;

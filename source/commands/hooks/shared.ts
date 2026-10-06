@@ -20,7 +20,7 @@ import {
   rollbackFailuresOf,
   type RollbackFailure,
 } from '../../core/rollback-report.js';
-import { exitProcess, onSigint } from '../../core/process-control.js';
+import { exitProcess, onSigint, resetSigintForTests } from '../../core/process-control.js';
 import {
   tailAtUtf8Boundary,
   summarizeHook,
@@ -95,8 +95,9 @@ export function appendHookOutput<P extends { kind: string }>(
  * that left files behind never ends silently.
  *
  * The handler registers ONCE on mount and deregisters on unmount. The
- * callbacks are reached through refs so React doesn't thrash
- * process.on/off on every render when the caller passes inline arrows.
+ * callbacks are reached through refs so React doesn't re-register the
+ * handler (`onSigint`, process-control.ts) on every render when the caller
+ * passes inline arrows.
  */
 export function useSigintRollback(opts: {
   isActive: () => boolean;
@@ -167,6 +168,9 @@ export function resetSigintRollbackForTests(): void {
   sigintRollbackStarted = false;
   for (const off of sigintHandlers) off();
   sigintHandlers.clear();
+  // Entries other modules left (a hook's once cleanup from a run whose exit
+  // was mocked) go too.
+  resetSigintForTests();
 }
 
 /**

@@ -4,7 +4,7 @@
  *
  * Pure of Ink: the caller releases the terminal's raw mode around
  * `editInEditor` with `withTerminalReleased`, and holds SIGINT with
- * `withSigintHeld`. The vault is never written here; the update executor
+ * `withSigintHeld` (process-control.ts, #303). The vault is never written here; the update executor
  * writes an edit under its snapshot and rollback.
  */
 
@@ -143,9 +143,6 @@ function isReadHandle(handle: unknown): handle is ReadHandle {
   return typeof Reflect.get(handle, 'readStop') === 'function' && typeof Reflect.get(handle, 'readStart') === 'function';
 }
 
-// The hold is process-control's, the one owner of SIGINT (#303); re-exported
-// here for the editor's callers.
-export { withSigintHeld } from './process-control.js';
 
 function cancelled(detail: string): EditOutcome {
   return { kind: 'cancelled', detail: detail.endsWith('.') ? detail : `${detail}.` };

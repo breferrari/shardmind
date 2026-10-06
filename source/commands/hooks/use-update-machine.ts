@@ -41,7 +41,8 @@ import {
   type UpdateQuestion,
 } from '../../core/flows/update.js';
 import type { DiffAction } from '../../components/DiffView.js';
-import { editInEditor, hasConflictMarkers, resolveEditorCommand, withSigintHeld, withTerminalReleased } from '../../core/editor.js';
+import { editInEditor, hasConflictMarkers, resolveEditorCommand, withTerminalReleased } from '../../core/editor.js';
+import { withSigintHeld } from '../../core/process-control.js';
 
 export interface UseUpdateMachineInput {
   vaultRoot: string;

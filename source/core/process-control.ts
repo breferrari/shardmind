@@ -5,8 +5,9 @@
  * Every other module goes through these functions; a scan test fails a
  * `process.on('SIGINT', …)`, `process.exitCode =` or `process.exit(`
  * anywhere else in `source/`, except `internal/` (child processes with their
- * own exit) and `cli-kit/` (vendored). Imports nothing, so `cli.ts` can load
- * it before anything else.
+ * own exit) and `cli-kit/` (vendored). Imports nothing, so `cli.ts` and the
+ * stdin bridge can load it before chalk (#37). The startup order `cli.ts`
+ * runs is asserted by a test that reads it (§4.32 step 4).
  */
 
 type SigintHandler = () => void | Promise<void>;
@@ -19,16 +20,27 @@ interface Entry {
 /** The handlers, in the order they were added. */
 const stack: Entry[] = [];
 
-/** The one process listener: every handler, in order; a rejection never stops the next. */
+/** While an editor owns the terminal, the stack runs nothing (`withSigintHeld`). */
+let held = false;
+
+/**
+ * The one process listener: every handler, in the order it was added. A
+ * handler that throws does not stop the others; the first throw is rethrown
+ * once they have all run, so it still reaches the crash handler, as a
+ * listener's throw did. A rejection stays unhandled, as before.
+ */
 const dispatch = (): void => {
+  if (held) return;
+  let thrown: { error: unknown } | undefined;
   for (const entry of [...stack]) {
     if (entry.once) remove(entry);
     try {
-      void Promise.resolve(entry.handler()).catch(() => {});
-    } catch {
-      // A handler that throws synchronously does not stop the others.
+      void entry.handler();
+    } catch (error) {
+      thrown ??= { error };
     }
   }
+  if (thrown) throw thrown.error;
 };
 
 function remove(entry: Entry): void {
@@ -42,7 +54,8 @@ function remove(entry: Entry): void {
 
 /**
  * Run `handler` on SIGINT, after the handlers added before it. Returns its
- * removal. `once`: removed before it runs.
+ * removal. `once`: removed before it runs. The handlers run together, where
+ * the first of them was added among the process's other listeners (Ink's).
  */
 export function onSigint(handler: SigintHandler, opts: { once?: boolean } = {}): () => void {
   const entry: Entry = { handler, once: opts.once ?? false };
@@ -51,39 +64,55 @@ export function onSigint(handler: SigintHandler, opts: { once?: boolean } = {}):
   return () => remove(entry);
 }
 
+/**
+ * On SIGINT, run the cleanup `cleanupOf` returns (a download's temp dir, #57),
+ * then exit 130: a headless run's Ctrl+C. Once; returns its removal.
+ */
+export function exitOnSigint(cleanupOf: () => (() => Promise<void>) | undefined): () => void {
+  return onSigint(
+    () => {
+      void Promise.resolve()
+        .then(() => cleanupOf()?.())
+        .catch(() => {})
+        .finally(() => exitProcess(130));
+    },
+    { once: true },
+  );
+}
+
 /** Deliver a SIGINT in-process (the stdin bridge's Ctrl+C, #155): true when a listener ran. */
 export function emitSigint(): boolean {
   return process.emit('SIGINT');
 }
 
-let sigintHeld = false;
-
 /**
- * Run `fn` while every SIGINT listener is held off: an editor owns the
- * terminal, and a Ctrl+C there must cancel the edit, not the run (#50).
+ * Run `fn` while SIGINT is held off: an editor owns the terminal, and a
+ * Ctrl+C there must cancel the edit, not the run (#50).
  *
  * A Ctrl+C in a terminal that went cooked also reaches node, queued in libuv
- * while `spawnSync` blocks. A no-op listener goes on before the others come
- * off (the stack's and Ink's own `signal-exit` one), and the others come back
- * before it goes, so SIGINT always has a listener: with none, Node would
- * close its signal handle and a signal in that window would take the default
- * action and kill the process. The queued signal is delivered in the poll
- * phase of the loop turn after `fn` returns; the restore waits for the check
- * phase after that one (two `setImmediate`s), so the no-op listener takes it.
- * `rawListeners` keeps a `once` listener a `once`. A nested call just runs
- * `fn`. `onRestored` runs once the listeners are back.
+ * while `spawnSync` blocks. The stack is held (`held`: its listener runs
+ * nothing), so a handler added or removed meanwhile keeps the listener in
+ * step with the stack. The process's other listeners (Ink's `signal-exit`)
+ * come off behind a no-op one and come back before it goes, so SIGINT always
+ * has a listener: with none, Node would close its signal handle and a signal
+ * in that window would take the default action and kill the process. The
+ * queued signal is delivered in the poll phase of the loop turn after `fn`
+ * returns; the restore waits for the check phase after that one (two
+ * `setImmediate`s), so the hold takes it. `rawListeners` keeps a `once`
+ * listener a `once`. A nested call just runs `fn`. `onRestored` runs once
+ * the listeners are back.
  */
 export function withSigintHeld<T>(fn: () => T, onRestored?: () => void): T {
-  if (sigintHeld) return fn();
-  sigintHeld = true;
+  if (held) return fn();
+  held = true;
   const hold = (): void => {};
-  const listeners = process.rawListeners('SIGINT') as Array<(...args: unknown[]) => void>;
+  const foreign = (process.rawListeners('SIGINT') as Array<(...args: unknown[]) => void>).filter((l) => l !== dispatch);
   process.on('SIGINT', hold);
-  for (const l of listeners) process.removeListener('SIGINT', l);
+  for (const l of foreign) process.removeListener('SIGINT', l);
   const restore = (): void => {
-    for (const l of listeners) process.on('SIGINT', l);
+    for (const l of foreign) process.on('SIGINT', l);
     process.removeListener('SIGINT', hold);
-    sigintHeld = false;
+    held = false;
     onRestored?.();
   };
   try {
@@ -108,14 +137,9 @@ export function exitProcess(code?: number): void {
   else process.exit(code);
 }
 
-/**
- * The order `cli.ts` sets the process up in, before anything loads Ink
- * (§4.32 step 4). A unit test reads `cli.ts` and asserts its calls follow it.
- */
-export const STARTUP_STEPS = ['applyNoColor', 'exitQuietlyWhenStdoutCloses', 'installCrashHandlers', 'installStdinCancellation'] as const;
-
 /** For tests: drop every handler and the listener, as a fresh process has none. */
 export function resetSigintForTests(): void {
   stack.length = 0;
+  held = false;
   process.removeListener('SIGINT', dispatch);
 }
