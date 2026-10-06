@@ -10,7 +10,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Changed (state.json is checked on every read — #343)
 
-- **A `.shardmind/state.json` that does not match its contract is refused with `STATE_CORRUPT`, naming the field**, such as `files["Home.md"].ownership`. Before, any JSON with a `schema_version` was read as-is, and a hand-edited or damaged file failed later in an unclear way. The engine and the runtime's `loadState` check the same contract. Every state.json a released ShardMind wrote passes. A field the check does not know is kept, so a newer minor version's additions survive.
+- **A `.shardmind/state.json` that does not match its contract is refused with `STATE_CORRUPT`, naming the field**, such as `files["Home.md"].ownership`. Before, any JSON with a `schema_version` was read as-is, and a hand-edited or damaged file failed later in an unclear way. The engine and the runtime's `loadState` check the same contract; `shardmind` (status) shows the problem as a warning and still reports what it can. Every state.json a released ShardMind wrote passes. A field the check does not know is kept, so a newer minor version's additions survive.
 
 ### Changed (`adopt --mode auto-merge` is experimental — #347)
 

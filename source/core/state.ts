@@ -57,7 +57,16 @@ const REHASH_CONCURRENCY = 16;
  */
 export const STATE_SCHEMA_VERSION = 2;
 
-export async function readState(vaultRoot: string): Promise<ShardState | null> {
+/**
+ * `onContractError` (status only): a state.json that breaks the contract
+ * (#343) is handed to it and read as it is, unchecked, so the ambient status
+ * report keeps degrading field by field over a hand-broken file instead of
+ * failing. Every other reader leaves it out and gets `STATE_CORRUPT`.
+ */
+export async function readState(
+  vaultRoot: string,
+  opts: { onContractError?: (err: ShardMindError) => void } = {},
+): Promise<ShardState | null> {
   const filePath = path.join(vaultRoot, STATE_FILE);
 
   let raw: string;
@@ -94,10 +103,20 @@ export async function readState(vaultRoot: string): Promise<ShardState | null> {
   // The version first: a newer state is refused before its shape is judged.
   // Then the contract, on the migrated object (#343).
   const version = (parsed as { schema_version: number }).schema_version;
-  if (version === STATE_SCHEMA_VERSION) return parseShardState(parsed, filePath);
+  const checked = (value: unknown): ShardState => {
+    if (!opts.onContractError) return parseShardState(value, filePath);
+    try {
+      return parseShardState(value, filePath);
+    } catch (err) {
+      if (!(err instanceof ShardMindError)) throw err;
+      opts.onContractError(err);
+      return value as ShardState;
+    }
+  };
+  if (version === STATE_SCHEMA_VERSION) return checked(parsed);
 
   const migrated = migrateState(parsed, version, STATE_SCHEMA_VERSION);
-  if (migrated) return parseShardState(migrated, filePath);
+  if (migrated) return checked(migrated);
 
   throw new ShardMindError(
     `Unsupported state schema_version: ${version}`,

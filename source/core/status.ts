@@ -118,17 +118,20 @@ export async function buildStatusReport(
   // A display cap, or none under `uncapped`.
   const cap = (display: number): number => (opts.uncapped ? Infinity : display);
 
-  const state = await readState(vaultRoot);
+  // Status is ambient: a state.json that breaks its contract (#343) is
+  // reported as a warning and read as it is, each field degrading below.
+  const warnings: StatusWarning[] = [];
+  const state = await readState(vaultRoot, {
+    onContractError: (err) => warnings.push({ severity: 'error', message: err.message, hint: err.hint }),
+  });
   if (!state) return null;
 
-  // `readState` casts without field-level validation, so state.version may
-  // arrive as an empty string from a hand-edited state.json. Normalize once
+  // A state read past its contract check may hold anything, so state.version
+  // may arrive as an empty string from a hand-edited state.json. Normalize once
   // here so every `UpdateStatus.current` (via this closure or `resolveUpdate`)
   // and every equality check against `latest_version` uses the same value.
   // Mirrors the synthesizeManifest fallback for `state.shard`.
   const currentVersion = state.version?.trim() || 'unknown';
-
-  const warnings: StatusWarning[] = [];
 
   const manifest = await loadCachedManifest(vaultRoot, warnings);
   const schema = await loadCachedSchema(vaultRoot, warnings);
@@ -760,7 +763,7 @@ function emitSectionWarnings(input: WarningInputs): void {
  *
  * Defends against a `state.shard` that is null, empty, whitespace-only, or
  * missing a `/` separator. `ShardState.shard` is typed as `string` but
- * `readState` casts without field-level runtime validation, so a hand-
+ * Status reads past the contract check (#343), so a hand-
  * edited or partially-corrupt state.json can land here with malformed
  * values. Every parse path collapses to `unknown/unknown` rather than
  * rendering whitespace or crashing on `.split` of null.
