@@ -26,6 +26,7 @@ function makeState(overrides: Partial<ShardState> = {}): ShardState {
     shard: 'breferrari/obsidian-mind',
     source: 'github:breferrari/obsidian-mind',
     version: '3.5.0',
+    tarball_sha256: 'f'.repeat(64),
     installed_at: '2026-04-18T00:00:00.000Z',
     updated_at: '2026-04-18T00:00:00.000Z',
     values_hash: 'abc123',

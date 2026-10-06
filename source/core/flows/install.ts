@@ -129,7 +129,20 @@ export async function runInstallFlow(input: InstallFlowInput, io: InstallFlowIO)
   // Before state is read: a plan made from a state another run is changing
   // would be stale (#253). --dry-run writes nothing and takes no lock.
   if (!creating && !input.dryRun) io.lock();
-  const existing = creating ? null : await readState(vaultRoot);
+  // A state.json that breaks its contract (#343) is reinstalled over under
+  // --force, as if no install were there; without it, STATE_CORRUPT says so.
+  let brokenState: ShardMindError | undefined;
+  const read = creating ? null : await readState(vaultRoot, { onContractError: (err) => (brokenState = err) });
+  if (brokenState && !force) {
+    throw new ShardMindError(
+      brokenState.message,
+      'STATE_CORRUPT',
+      'Restore .shardmind/state.json from version control, or add --force to reinstall over it: the values are answered again, and files you changed are overwritten without a backup.',
+    );
+  }
+  // Reinstalled over, its files and modules are not trusted: every file on
+  // disk is a collision, which --force overwrites.
+  const existing = brokenState && read ? { ...read, files: {}, modules: {} } : read;
   if (defaults && existing && !force) {
     throw new ShardMindError(
       `Vault already shardmind-managed (${existing.shard}@${existing.version}); --defaults refuses to overwrite`,

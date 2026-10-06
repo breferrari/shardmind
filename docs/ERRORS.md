@@ -247,17 +247,17 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 
 ### `STATE_CORRUPT`
 
-**Meaning:** `state.json` is not valid JSON, or is missing the `schema_version` field.
+**Meaning:** `state.json` is not valid JSON, has no integer `schema_version`, or does not match the state contract (`ShardState`, docs/IMPLEMENTATION.md §4.7, #343): a required field is missing or has the wrong type, or a file entry is malformed. The message names the first bad field by its path, such as `files["Home.md"].ownership`. Thrown by update, adopt, install over an existing vault (with `--force`, install reinstalls over it instead, trusting none of its files), and the runtime's `loadState`. Status shows a contract mismatch as a warning with the same message and keeps reporting; invalid JSON or a missing `schema_version` is still its failure.
 
-**Remedy:** Engine-owned file shouldn't be corrupted by normal use. If you hand-edited it or had a disk event, the simplest fix is `rm -rf .shardmind/` and reinstall (your `shard-values.yaml` is preserved).
+**Remedy:** Engine-owned file shouldn't be corrupted by normal use. If you hand-edited it or had a disk event, restore `.shardmind/state.json` from version control, or reinstall over it with `shardmind install <shard> . --force` (#343): the values are answered again, and files you changed are overwritten without a backup.
 
 ### `STATE_UNSUPPORTED_VERSION`
 
 **Meaning:** `state.json` uses a schema version this engine doesn't know how to read, and no migration rule handles the jump.
 
-**Typical cause:** A newer version of shardmind wrote the state, then you downgraded. Or a future version added shape that v0.1 can't read.
+**Typical cause:** A newer version of shardmind wrote the state, then you downgraded.
 
-**Remedy:** Upgrade shardmind (`npm install -g shardmind@latest`). In v0.2+, migrations will handle forward compatibility.
+**Remedy:** Upgrade shardmind (`npm install -g shardmind@latest`). An older state is always migrated forward; only a newer one is refused.
 
 ### `STATE_CACHE_MISSING_MANIFEST`
 

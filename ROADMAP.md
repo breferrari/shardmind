@@ -262,7 +262,7 @@ Everything 1.0 freezes is either decided or built: the contract review's behavio
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | Validate state.json on read | [#343](https://github.com/breferrari/shardmind/issues/343) |
+| ✅ | Validate state.json on read | [#343](https://github.com/breferrari/shardmind/issues/343) |
 | ⬜ | Report a state.json from a newer ShardMind in status instead of failing | [#344](https://github.com/breferrari/shardmind/issues/344) |
 | ⬜ | Trim shardmind/runtime to what hooks use | [#345](https://github.com/breferrari/shardmind/issues/345) |
 | ⬜ | Remove the reserved type_changed error code | [#346](https://github.com/breferrari/shardmind/issues/346) |

@@ -26,6 +26,7 @@ import {
 } from '../runtime/vault-paths.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { migrateState } from './state-migrator.js';
+import { parseShardState, STATE_CORRUPT_HINT } from '../runtime/state-schema.js';
 import { walkShardSource } from './modules.js';
 import { loadShardmindignore } from './shardmindignore.js';
 import { mapConcurrent, removePath, sha256 } from './fs-utils.js';
@@ -56,7 +57,16 @@ const REHASH_CONCURRENCY = 16;
  */
 export const STATE_SCHEMA_VERSION = 2;
 
-export async function readState(vaultRoot: string): Promise<ShardState | null> {
+/**
+ * `onContractError` (status only): a state.json that breaks the contract
+ * (#343) is handed to it and read as it is, unchecked, so the ambient status
+ * report keeps degrading field by field over a hand-broken file instead of
+ * failing. Every other reader leaves it out and gets `STATE_CORRUPT`.
+ */
+export async function readState(
+  vaultRoot: string,
+  opts: { onContractError?: (err: ShardMindError) => void } = {},
+): Promise<ShardState | null> {
   const filePath = path.join(vaultRoot, STATE_FILE);
 
   let raw: string;
@@ -73,32 +83,40 @@ export async function readState(vaultRoot: string): Promise<ShardState | null> {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new ShardMindError(
-      `Corrupt state.json: ${filePath}`,
-      'STATE_CORRUPT',
-      'Delete .shardmind/ and reinstall, or fix the JSON manually.',
-    );
+    throw new ShardMindError(`Corrupt state.json: ${filePath}`, 'STATE_CORRUPT', STATE_CORRUPT_HINT);
   }
 
+  // The version is read before the schema runs: a newer state must be
+  // refused as unsupported, not judged against this engine's contract.
   if (
     !parsed ||
     typeof parsed !== 'object' ||
-    typeof (parsed as { schema_version?: unknown }).schema_version !== 'number'
+    !Number.isInteger((parsed as { schema_version?: unknown }).schema_version)
   ) {
     throw new ShardMindError(
-      `Corrupt state.json: ${filePath}`,
+      `Corrupt state.json: ${filePath}: schema_version: missing, or not an integer`,
       'STATE_CORRUPT',
-      'Missing or invalid schema_version field.',
+      STATE_CORRUPT_HINT,
     );
   }
 
+  // The version first: a newer state is refused before its shape is judged.
+  // Then the contract, on the migrated object (#343).
   const version = (parsed as { schema_version: number }).schema_version;
-  if (version === STATE_SCHEMA_VERSION) {
-    return parsed as ShardState;
-  }
+  const checked = (value: unknown): ShardState => {
+    if (!opts.onContractError) return parseShardState(value, filePath);
+    try {
+      return parseShardState(value, filePath);
+    } catch (err) {
+      if (!(err instanceof ShardMindError)) throw err;
+      opts.onContractError(err);
+      return value as ShardState;
+    }
+  };
+  if (version === STATE_SCHEMA_VERSION) return checked(parsed);
 
   const migrated = migrateState(parsed, version, STATE_SCHEMA_VERSION);
-  if (migrated) return migrated;
+  if (migrated) return checked(migrated);
 
   throw new ShardMindError(
     `Unsupported state schema_version: ${version}`,
@@ -121,6 +139,9 @@ export async function writeState(vaultRoot: string, state: ShardState): Promise<
     );
   }
 
+  // The contract checked on the way out too: a writer's bug fails here,
+  // before it reaches disk, not at the next read (#343).
+  parseShardState(state, filePath);
   const serialized = JSON.stringify(state, null, 2) + '\n';
   await fsp.writeFile(filePath, serialized, 'utf-8');
 }

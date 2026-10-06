@@ -26,6 +26,7 @@ import {
 } from '../../source/core/install-planner.js';
 import { runInstall } from '../../source/core/install-executor.js';
 import { buildStatusReport } from '../../source/core/status.js';
+import { readState } from '../../source/core/state.js';
 import { primeLatestVersion } from '../../source/core/update-check.js';
 import type { ResolvedShard } from '../../source/runtime/types.js';
 
@@ -149,6 +150,21 @@ describe('status pipeline (against examples/minimal-shard)', () => {
     await expect(
       buildStatusReport(vault, { verbose: false, skipUpdateCheck: true }),
     ).rejects.toMatchObject({ code: 'STATE_CORRUPT' });
+  });
+
+  it('reports a state.json that breaks its contract as a warning naming the field, and still reports (#343)', async () => {
+    await installMinimal(vault);
+    const file = path.join(vault, '.shardmind', 'state.json');
+    const state = JSON.parse(await fsp.readFile(file, 'utf-8')) as Record<string, unknown>;
+    await fsp.writeFile(file, JSON.stringify({ ...state, modules: { brain: 'maybe' } }), 'utf-8');
+
+    const report = await buildStatusReport(vault, { verbose: false, skipUpdateCheck: true });
+    expect(report).not.toBeNull();
+    expect(report!.warnings).toContainEqual(
+      expect.objectContaining({ severity: 'error', message: expect.stringContaining('modules["brain"]') }),
+    );
+    // The commands that write still refuse it.
+    await expect(readState(vault)).rejects.toMatchObject({ code: 'STATE_CORRUPT' });
   });
 
   it('invalidates the cache when the source changed between runs', async () => {

@@ -179,8 +179,10 @@ export interface ShardState {
    * vault tracks branch movement.
    *
    * Both `ref` and `resolvedSha` are optional and forward-compatible:
-   * pre-#76 state.json (no ref fields) reads fine because `ShardState`
-   * is the type of an existing-vault `state.json`, not a strict schema.
+   * pre-#76 state.json (no ref fields) reads fine. `ShardState` and
+   * `FileState` are the file's contract, checked on every read
+   * (`state-schema.ts`, #343): within a major version a field is only
+   * ever added.
    */
   ref?: string;
   /**

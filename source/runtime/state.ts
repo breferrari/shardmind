@@ -15,6 +15,7 @@ import type { ShardState } from './types.js';
 import { ShardMindError } from './types.js';
 import { SHARDMIND_DIR, STATE_FILE } from './vault-paths.js';
 import { isEnoent } from './errno.js';
+import { parseShardState, STATE_CORRUPT_HINT } from './state-schema.js';
 
 const MAX_DEPTH = 20;
 
@@ -68,7 +69,7 @@ export function resolveVaultRoot(): string {
  * @returns The parsed `ShardState`, or `null` if state.json is absent.
  * @throws ShardMindError `VAULT_NOT_FOUND` if no vault in the ancestor chain.
  * @throws ShardMindError `STATE_READ_FAILED` on I/O errors.
- * @throws ShardMindError `STATE_CORRUPT` if state.json is not valid JSON.
+ * @throws ShardMindError `STATE_CORRUPT` if state.json is not valid JSON, or does not match the `ShardState` contract (#343).
  *
  * @example
  * ```ts
@@ -94,15 +95,15 @@ export async function loadState(): Promise<ShardState | null> {
     );
   }
 
+  let parsed: unknown;
   try {
-    return JSON.parse(raw) as ShardState;
-  } catch (err) {
-    throw new ShardMindError(
-      `Corrupt state.json: ${filePath}`,
-      'STATE_CORRUPT',
-      'Delete .shardmind/ and reinstall, or fix the JSON manually.',
-    );
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new ShardMindError(`Corrupt state.json: ${filePath}`, 'STATE_CORRUPT', STATE_CORRUPT_HINT);
   }
+  // The same contract the engine reads with (#343). No version check here:
+  // a hook runs only after the engine has read, and migrated, this file.
+  return parseShardState(parsed, filePath);
 }
 
 /**
