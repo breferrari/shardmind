@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (internal: one owner for process control — #303)
+
+- Internal: SIGINT handling, the exit code and the CLI's startup order go through one module, `core/process-control.ts`, instead of a dozen call sites; a scan test keeps it that way. Ctrl+C, exit codes and the closed-stdout and crash behaviour are unchanged.
+
 ### Changed (internal: the executors' unused callbacks removed — #323)
 
 - Internal: `runUpdate` and `runAdopt` no longer take `onBackupReady` / `onFileTouched`. Nothing in the engine passed them since the rollback became the executor's own (#249, #301); the tests that used them as timing hooks now use the `fsp` seam.

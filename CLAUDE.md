@@ -219,6 +219,7 @@ shardmind/
 │   │   ├── created-folders.ts         # The folders a run created, removed by its rollback (#258)
 │   │   ├── external-tools.ts          # Check external_tools against their ranges; no-shell probe (#138)
 │   │   ├── vault-transaction.ts       # One vault transaction: snapshot before each write, rollback, state.json last (#301)
+│   │   ├── process-control.ts         # The one owner of SIGINT (handler stack, editor hold), the exit code and cli.ts's startup order (#303)
 │   │   ├── install-destination.ts     # Where install puts the vault: shard-named folder, [folder] or `.`; refuses a non-empty one (#333)
 │   │   ├── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   │   └── flows/                     # UI-free command runs the Ink machines adapt (§4.30, #302): prepare-shard, values, run (the shared write step), install, adopt, update
@@ -413,6 +414,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `created-folders.ts` | §4.11b, §4.12 (4a), §4.18 | The folders a run created, for install / update / adopt rollbacks (#258) |
 | `external-tools.ts` | §4.26 | Check a shard's `external_tools` against their version ranges before install / adopt / update write (`EXTERNAL_TOOL_UNMET`); the probe runs without a shell (#138) |
 | `vault-transaction.ts` | §4.28 | One vault transaction for install, update and adopt: `recordWrite` snapshots a file just before its write (install refuses one), `recordSetAside` moves a collision aside, `commitEngineMetadata` writes `state.json` last, `rollback` never throws, `commit` discards what was set aside (#301) |
+| `process-control.ts` | §4.32 | The one owner of the CLI process's SIGINT handling (a handler stack behind one listener, `withSigintHeld`), its exit code (`setExitCode` / `exitProcess`) and `cli.ts`'s startup order (`STARTUP_STEPS`); a scan test keeps every other module off them (#303) |
 | `install-destination.ts` | §4.31 | Where `install <shard> [folder]` puts the vault: a folder named after the shard, the one given, or `.`; refuses a non-empty one before any download (`INSTALL_DESTINATION_NOT_EMPTY`); the folders to make go to the transaction's `createRoot` (#333) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
