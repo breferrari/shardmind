@@ -139,7 +139,7 @@ export async function lintShard(
   const selections: ModuleSelections = Object.fromEntries(Object.keys(schema.modules).map((id) => [id, 'included']));
   let resolution;
   try {
-    resolution = await resolveModules(schema, selections, shardDir, opts.tracked ? { tracked: opts.tracked } : {});
+    resolution = await resolveModules(schema, selections, shardDir, { tracked: opts.tracked });
   } catch (err) {
     error(err);
     return done();

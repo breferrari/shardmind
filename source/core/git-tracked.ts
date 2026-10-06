@@ -40,7 +40,8 @@ export async function gitFiles(dir: string, run: GitRunner = runGit): Promise<Gi
     ]);
     return { tracked: new Set(split(tracked)), untracked: split(untracked) };
   } catch {
-    // Not a work tree, or no git: the directory is walked as it is.
+    // Not a work tree, no git, or git failed (a listing past `maxBuffer`):
+    // the directory is walked as it is, as before #320.
     return null;
   }
 }
