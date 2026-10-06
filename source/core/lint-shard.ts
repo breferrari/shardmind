@@ -43,6 +43,8 @@ export async function lintShard(
     vaultRoot?: string;
     /** Throw an error that is not a ShardMindError (an engine bug, an I/O failure) instead of listing it. */
     rethrowUnexpected?: boolean;
+    /** The files git tracks (#320): only these are walked, as the release tarball holds them. */
+    tracked?: ReadonlySet<string>;
   },
 ): Promise<LintResult> {
   const findings: LintFinding[] = [];
@@ -137,7 +139,7 @@ export async function lintShard(
   const selections: ModuleSelections = Object.fromEntries(Object.keys(schema.modules).map((id) => [id, 'included']));
   let resolution;
   try {
-    resolution = await resolveModules(schema, selections, shardDir);
+    resolution = await resolveModules(schema, selections, shardDir, opts.tracked ? { tracked: opts.tracked } : {});
   } catch (err) {
     error(err);
     return done();

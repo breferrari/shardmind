@@ -12,6 +12,9 @@ import { loadValuesYaml } from './values-io.js';
 import { errorFindings, lintShard, type LintFinding } from './lint-shard.js';
 import { emitJson, jsonFailure, jsonSuccess } from './json-output.js';
 import { ShardMindError } from '../runtime/types.js';
+import { gitFiles } from './git-tracked.js';
+import { isTier1Excluded } from './tier1.js';
+import { loadShardmindignore } from './shardmindignore.js';
 import { exitOnSigint } from './process-control.js';
 
 export interface ValidateReport {
@@ -50,7 +53,13 @@ export async function validateShard(
 
   const dir = path.resolve(target);
   const kind = await fsp.stat(dir).then((s) => (s.isDirectory() ? 'dir' : 'file'), () => 'none');
-  if (kind === 'dir') return report(dir, (await lintShard(dir, lintOpts)).findings);
+  if (kind === 'dir') {
+    // In a git work tree, what the release tarball ships: the tracked files (#320).
+    const git = await gitFiles(dir);
+    if (git === null) return report(dir, (await lintShard(dir, lintOpts)).findings);
+    const { findings } = await lintShard(dir, { ...lintOpts, tracked: git.tracked });
+    return report(dir, [...findings, ...(await untrackedWarnings(dir, git.untracked))]);
+  }
   // A path that is a file, or that is spelled as a path and missing, is the
   // author's typo, not a shard reference to look up.
   if (kind === 'file' || looksLikePath(target)) {
@@ -70,6 +79,24 @@ export async function validateShard(
   } finally {
     await shard.cleanup().catch(() => {});
   }
+}
+
+/**
+ * One `LINT_UNTRACKED_FILE` warning per untracked file that would be shard
+ * content: it ships only once committed, so it was not validated (#320).
+ * Tier 1 paths and `.shardmindignore`d ones are never content.
+ */
+async function untrackedWarnings(dir: string, untracked: readonly string[]): Promise<LintFinding[]> {
+  const ignore = await loadShardmindignore(dir);
+  return untracked
+    .filter((rel) => !isTier1Excluded(rel) && !ignore.ignores(rel, false))
+    .map((rel) => ({
+      severity: 'warning' as const,
+      code: 'LINT_UNTRACKED_FILE',
+      message: `${rel} is not tracked by git, so a release would not ship it; it was not validated`,
+      hint: 'Commit it to make it part of the shard, or ignore it (.gitignore, or .shardmindignore if it stays in the repo but not in vaults).',
+      path: rel,
+    }));
 }
 
 function report(target: string, findings: LintFinding[]): ValidateReport {
