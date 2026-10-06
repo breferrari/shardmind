@@ -304,6 +304,25 @@ Shorthand `key: [a, b]` expands to `key: { required: [a, b] }`. Optional `path_m
 
 Ordered rules applied to `shard-values.yaml` when the shard version moves forward. Four change types: `rename`, `added`, `removed`, `type_changed`. See `MigrationChange` in `source/runtime/types.ts` for the exact shape.
 
+A `type_changed` change converts one value:
+
+```yaml
+migrations:
+  - from_version: 2.0.0
+    changes:
+      - type: type_changed
+        key: qmd_enabled
+        from: boolean          # for readers; the engine ignores from/to
+        to: string
+        transform: 'value ? "enabled" : "disabled"'
+```
+
+- `transform` is a JavaScript expression with the old value bound to `value`. Whatever it returns becomes the value; `undefined` counts as unset, so the new schema's default applies, or the update fails if the key is required.
+- It runs synchronously inside shardmind, with no timeout, and it is **not sandboxed**. Keep it to a pure expression; one that never returns hangs the update.
+- If it throws, the update keeps the old value and lists a warning in its summary.
+- If it returns the wrong type for the new schema, the update stops before writing anything, with `VALUES_INVALID` naming the key and the type it expected. Test your transform on the old value's possible inputs.
+- A key the user's values don't have is skipped, with a warning.
+
 ## 5. Templates
 
 Any file ending in `.njk` anywhere in the shard root is rendered with [Nunjucks](https://mozilla.github.io/nunjucks/). Engine settings:

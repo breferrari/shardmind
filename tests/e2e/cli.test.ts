@@ -2220,3 +2220,55 @@ describe('a bare owner/repo the registry cannot resolve (#200)', () => {
     expect(doc.error.hint).toBe('Run shardmind adopt github:nobody/bare-ref@1.2.0 to take it straight from GitHub.');
   });
 });
+
+// #346: a value that doesn't fit the schema is the user's or the shard
+// author's to fix. Every path reports VALUES_INVALID naming the key, before
+// any write, never the "this is a bug in shardmind" view.
+describe('a value of the wrong type (#346)', () => {
+  let vault: Vault | null = null;
+  afterEach(async () => {
+    defaultLatest();
+    await vault?.cleanup();
+    vault = null;
+  });
+
+  const WRONG = { ...DEFAULT_VALUES, qmd_enabled: 'enabled' };
+
+  it('install --values reports VALUES_INVALID and writes nothing', async () => {
+    vault = await createEmptyVault('values-wrong-install');
+    const valuesPath = await writeValuesFile(vault, WRONG);
+    const result = await spawnCli(['install', SHARD_REF, '.', '--yes', '--values', valuesPath], { cwd: vault.root, env: envWithStub() });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/VALUES_INVALID/);
+    expect(result.stdout).toContain('qmd_enabled');
+    expect(result.stdout).not.toMatch(/bug in shardmind/);
+    expect(await vault.exists('.shardmind')).toBe(false);
+  });
+
+  it('adopt --values --dry-run --json reports it as a document', async () => {
+    vault = await createEmptyVault('values-wrong-adopt');
+    const valuesPath = await writeValuesFile(vault, WRONG);
+    const result = await spawnCli(['adopt', SHARD_REF, '--values', valuesPath, '--dry-run', '--json'], { cwd: vault.root, env: envWithStub() });
+    expect(result.exitCode).toBe(1);
+    const doc = JSON.parse(result.stdout) as { ok: boolean; error: { code: string; message: string; hint?: string } };
+    expect(doc.ok).toBe(false);
+    expect(doc.error.code).toBe('VALUES_INVALID');
+    expect(doc.error.message).toContain('qmd_enabled');
+    expect(doc.error.hint).toContain('--values file');
+  });
+
+  it('update with a hand-edited shard-values.yaml reports it and names that file', async () => {
+    vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'values-wrong-update' });
+    const yaml = await vault.readFile('shard-values.yaml');
+    await vault.writeFile('shard-values.yaml', yaml.replace(/qmd_enabled: .*/, 'qmd_enabled: "enabled"'));
+    const before = await vault.readFile('.shardmind/state.json');
+    stub.setLatest(SHARD_SLUG, '0.2.0');
+    const result = await spawnCli(['update', '--yes'], { cwd: vault.root, env: envWithStub() });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/VALUES_INVALID/);
+    expect(result.stdout).toContain('qmd_enabled');
+    expect(result.stdout.replace(/\s+/g, ' ')).toContain('shard-values.yaml');
+    expect(result.stdout).not.toMatch(/bug in shardmind/);
+    expect(await vault.readFile('.shardmind/state.json')).toBe(before);
+  }, 60_000);
+});

@@ -8,6 +8,12 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (a wrong-typed value is reported, not shown as a crash — #346)
+
+- **A value of the wrong type now fails as `VALUES_INVALID`, naming the key and the type it expected.** Before, it showed as "a bug in shardmind" with a stack trace. This covers a `--values` file on install or adopt, a hand-edited `shard-values.yaml` on update, and a shard's `type_changed` migration that returns the wrong type. The hint says where the value came from: your `--values` file or the prompts, or on update `shard-values.yaml`. It adds a note to report it to the shard's author if a migration or the new schema made it invalid.
+- **`MIGRATION_TRANSFORM_FAILED` is documented as what it is:** reserved for a transform failure and not raised yet. It used to promise a sandboxed evaluator that was never built.
+- **What a `type_changed` transform does is documented** in AUTHORING and IMPLEMENTATION §4.10. It runs as a JavaScript expression inside shardmind, with no timeout and no sandbox. A throw keeps the old value and adds a warning to the update's summary.
+
 ### Changed (status on a vault from a newer ShardMind — #344)
 
 - **`shardmind` on a vault whose `state.json` a newer ShardMind wrote shows a notice instead of an error**: which schema the file has, which this ShardMind reads, and the upgrade command. It exits 0, as status does for anything it can show. `shardmind --json` answers `ok: false` with `STATE_UNSUPPORTED_VERSION` and a new `error.details` field holding both numbers, exit 1. `update`, `adopt` and `install` still refuse, with the clearer message.

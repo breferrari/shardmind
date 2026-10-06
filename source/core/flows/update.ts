@@ -246,7 +246,7 @@ async function valuesAndModules(
       ctx.newSchema,
       Object.fromEntries(ctx.newOptionalModules.map((m) => [m.id, 'included'])),
     );
-    return { values: validateValues(ctx.newSchema, ctx.migratedValues), selections, pendingModules: [] };
+    return { values: validateValues(ctx.newSchema, ctx.migratedValues, 'vault'), selections, pendingModules: [] };
   }
 
   let given = ctx.migratedValues;
@@ -259,7 +259,7 @@ async function valuesAndModules(
     }
     given = { ...ctx.migratedValues, ...(await io.ask({ kind: 'new-values', ctx })) };
   }
-  const values = validateValues(ctx.newSchema, given);
+  const values = validateValues(ctx.newSchema, given, 'vault');
 
   if (ctx.newOptionalModules.length === 0) {
     return { values, selections: mergeModuleSelections(ctx.state.modules, ctx.newSchema, {}), pendingModules: [] };

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { describeZodIssues } from './zod-issues.js';
 import type { ResolvedShard } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 
@@ -69,11 +70,6 @@ const IndexVersionProbe = z.object({ schema_version: z.number().int() });
 const RegistryEntrySchema = z.object({
   repo: z.string().regex(/^[^/\s]+\/[^/\s]+$/, 'must be "owner/name"'),
 });
-
-/** zod's issues as one line: `field: problem; …`. */
-function describeIssues(error: z.ZodError): string {
-  return error.issues.map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`).join('; ');
-}
 
 interface ParsedRef {
   direct: boolean;
@@ -217,7 +213,7 @@ export async function resolve(
     const checked = RegistryEntrySchema.safeParse(listed);
     if (!checked.success) {
       throw new ShardMindError(
-        `The registry entry for '${key}' is invalid: ${describeIssues(checked.error)}`,
+        `The registry entry for '${key}' is invalid: ${describeZodIssues(checked.error)}`,
         'REGISTRY_NETWORK',
         direct,
       );
@@ -366,7 +362,7 @@ async function fetchRegistryIndex(directHint: string): Promise<RegistryIndex> {
   }
 
   const index = RegistryIndexSchema.safeParse(json);
-  if (!index.success) throw fail(`The shard registry index is corrupt: ${describeIssues(index.error)}`);
+  if (!index.success) throw fail(`The shard registry index is corrupt: ${describeZodIssues(index.error)}`);
   return index.data;
 }
 
