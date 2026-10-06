@@ -427,27 +427,38 @@ A renamed file is planned at its new path as the old one would have been at the 
 
 **On adopt** (#179): `shardmind adopt <shard> --from-version <v>` applies the rename chain from `<v>` to the shard's version, for a vault cloned from release `<v>` before the engine managed it. A renamed file whose new path is absent from the vault, and whose old path exists there and is not produced by the shard, is compared at the new path against the shard's output. It then moves: a match or Keep mine carries the user's file to the new path; Use the shard's or a merge writes the new path and deletes the old one. Something already at the new path, two renames into one path, or an old path the shard still ships leaves the rename out. A `--from-version` that is not semver is refused (`ADOPT_FROM_VERSION_INVALID`); a version no migration applies to is a no-op. Without the flag, adopt is unchanged.
 
-## Out of scope — deferred to v0.2
+## Out of scope and planned
 
-Criterion: **obsidian-mind v6 does not need these to install, configure, or upgrade cleanly.** Each is a clean additive extension — deferring doesn't force retroactive design changes.
+Criterion: **obsidian-mind v6 does not need these to install, configure, or upgrade cleanly.** Each is a clean additive extension: adding it later forces no retroactive design change.
 
-Nothing from the original v0.2 list is still deferred: `.shardmindignore` negation was built (#87), and the rest was declined on 2026-10-05, below. A new deferral goes here with its date.
+**Planned** (declined on 2026-10-05, reopened as planned work on 2026-10-06: ROADMAP.md Phase 15; whether each lands before 1.0 or in 1.x is Brenno's ruling, item by item):
+
+| Planned | Why v6 did not need it | How it is added without redesign |
+|---------|------------------------|----------------------------------|
+| `rendered_files` opt-in, Nunjucks at vault-visible paths ([#86](https://github.com/breferrari/shardmind/issues/86)) | obsidian-mind personalises `brain/North Star.md` with a post-install hook; no `{{ }}` at vault-visible paths | A new optional field in `shard.yaml`; `renderer.ts` renders the listed files during install. Without the field, behaviour is unchanged |
+| Shard composition, several shards in one vault ([#81](https://github.com/breferrari/shardmind/issues/81)) | One shard per vault | `state.json` extends from `{shard, version}` to `{shards: [...]}`, a new `schema_version` with a forward migration; one shard stays the special case |
+| Dependency fetching ([#82](https://github.com/breferrari/shardmind/issues/82)) | Shards vendor their dependencies (obsidian-mind does) | `shard.yaml`'s `dependencies: []` is fetched on install, with a lock file |
+| Structural variants ([#80](https://github.com/breferrari/shardmind/issues/80)) | obsidian-mind is one shard | Modules gain a `structure` field with purpose-driven variants (ARCHITECTURE §16); orthogonal to the layout |
+| Guided file creation ([#79](https://github.com/breferrari/shardmind/issues/79)) | SOUL ships as an empty template with instructions | A `guided_files` field in `shard-schema.yaml` and a third install phase (ARCHITECTURE §15) |
+| `shardmind init` ([#84](https://github.com/breferrari/shardmind/issues/84)) | The obsidian-mind author already has the shard; copying `examples/minimal-shard/` works | A new command; it does not interact with install or update |
+| `shardmind eject` ([#83](https://github.com/breferrari/shardmind/issues/83)) | Deleting `.shardmind/` and `shard-values.yaml` leaves a working vault (VISION: "ShardMind is additive, not load-bearing") | A new command that does those deletes, with an optional backup |
+
+Also planned in Phase 15, outside the layout contract:
+
+- Named registries in a user config, with `--registry` ([#39](https://github.com/breferrari/shardmind/issues/39)). Today `SHARDMIND_REGISTRY_INDEX_URL` points at another index (docs/OPERATIONS.md), and `github:owner/repo` bypasses the registry.
+- Shard discovery and search, metadata indexing and version history over the registry index, with `shardmind search` ([#89](https://github.com/breferrari/shardmind/issues/89)). A hosted registry with accounts and publishing workflows stays a VISION non-goal.
+- Team features: managed templates, org-level defaults, admin controls, team sync ([#91](https://github.com/breferrari/shardmind/issues/91)).
+- A `SHARDMIND_DEBUG` log of every phase, fetch and write ([#36](https://github.com/breferrari/shardmind/issues/36)).
+- `--skip-hooks` on adopt, install or update ([#199](https://github.com/breferrari/shardmind/issues/199)).
+- A command namespace prefix in the engine ([#25](https://github.com/breferrari/shardmind/issues/25)).
+
+**Superseded**:
+
+- A shared `VaultFS` with built-in rollback for install and update ([#33](https://github.com/breferrari/shardmind/issues/33)), superseded by the vault transaction (`core/vault-transaction.ts`, [#301](https://github.com/breferrari/shardmind/issues/301)): install, update and adopt share one transaction that snapshots each file before its write, rolls back on failure, and writes `state.json` last.
 
 **Declined** (dated; reopen if the reason stops holding):
 
-- A shared `VaultFS` with built-in rollback for install and update (#33), declined 2026-10-04. The two rollbacks are different models: install restores collision backups and removes created paths; update restores a snapshot of touched paths and replays a case-rename journal and a created-folders record. One LIFO undo would express neither without becoming a second copy of both.
-- A `SHARDMIND_DEBUG` log of every phase, fetch and write (#36), declined 2026-10-04. No debugging pain has been reported; an install's failure stays on screen with its code and hint, `--json` and the hook logs already record runs, and a log of every fetch and write adds a redaction surface. The real gap, an unexpected error shown without its stack, is #225.
-- A `--skip-hooks` flag on adopt, install or update (#199), declined 2026-10-05. Hooks are non-fatal and their failures are reported. The case that prompted it was a shard bug (#137, fixed), and a skipped bootstrap would re-run on the next update (Invariant 4).
-- Several shards in one vault (#81), declined 2026-10-05. There is one shard and no request. The cost is a second dimension in state, drift and every pipeline. One vault, one shard.
-- Nunjucks at vault-visible paths (`rendered_files`, #86), declined 2026-10-05. Post-install hooks personalise visible files, as obsidian-mind's do, and a clone stays byte-identical to a defaults install without a render step.
-- Guided file creation at install (#79), declined 2026-10-05. A product feature of the shard (its agent walks the user through it), not the engine's.
-- Folder shapes per purpose inside one shard (#80), declined 2026-10-05. Different purposes are different shards, and modules cover optional parts.
-- Fetching a shard's dependencies (#82), declined 2026-10-05. Shards vendor what they need. A resolver and a lock file add a supply-chain surface no shard has asked for.
-- `shardmind eject` (#83), declined 2026-10-05. Deleting `.shardmind/` and `shard-values.yaml` leaves a working vault, and the README says so.
-- `shardmind init` (#84), declined 2026-10-05. Copy `examples/minimal-shard/`, and `shardmind validate` checks the result.
-- Named registries in a user config with `--registry` (#39), declined 2026-10-05. `SHARDMIND_REGISTRY_INDEX_URL` points at another index (docs/OPERATIONS.md), and `github:owner/repo` bypasses the registry.
 - A published GitHub Action and a separate community listing (#90), declined 2026-10-05. `npx shardmind validate --json` is the CI step, and the registry index is the listing.
-- Team and organisation management (#91), declined 2026-10-05. No team has asked, and the roadmap made it conditional on demand. Reopen on the first real request.
 
 ## Transition
 

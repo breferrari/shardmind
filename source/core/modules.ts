@@ -158,8 +158,8 @@ async function walk(
 
 function isRenderable(relPath: string): boolean {
   // `.njk` suffix is the author-explicit opt-in to Nunjucks rendering, the
-  // same mechanism v5 used. Spec defers `rendered_files` (rendering without
-  // `.njk` suffix at vault-visible paths) to v0.2 (#86); the engine here
+  // same mechanism v5 used. `rendered_files` (rendering without the `.njk`
+  // suffix at vault-visible paths) is planned (#86, Phase 15); the engine here
   // doesn't restrict by path, since iterator templates and any author-tagged
   // `.njk` may legitimately produce vault-visible output.
   return relPath.endsWith('.njk');

@@ -218,7 +218,7 @@ shardmind adopt github:breferrari/obsidian-mind
 
 ### Stop using shardmind on a vault
 
-Delete `.shardmind/` and `shard-values.yaml`. The vault keeps working in Obsidian and your agent exactly as before: shardmind is additive, not load-bearing. There is no `eject` command because those two deletes are all it would do.
+Delete `.shardmind/` and `shard-values.yaml`. The vault keeps working in Obsidian and your agent exactly as before: shardmind is additive, not load-bearing. Until `shardmind eject` lands (planned, [#83](https://github.com/breferrari/shardmind/issues/83)), those two deletes are the way.
 
 Wrapper scripts, CI pipelines, enterprise deployments — see [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for exit codes, environment variables (`GITHUB_TOKEN`, `SHARDMIND_GITHUB_API_BASE`, `SHARDMIND_REGISTRY_INDEX_URL`), file locations, and signal handling. Every typed error code with cause + remedy: [`docs/ERRORS.md`](docs/ERRORS.md).
 
