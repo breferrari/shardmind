@@ -1341,7 +1341,7 @@ type HookResult =
 - Hook hangs past `timeoutMs` → `failed / "timed out after Ns"` with any captured output so far preserved.
 - Parent SIGINT (via caller's AbortSignal) → `failed / "cancelled"`.
 
-**Why a hook failed, as a field (#348).** Every failed hook carries `failure`, one value from a closed list, so a script never parses message text. The list is exhaustive: every way a hook fails maps to exactly one value.
+**Why a hook failed, as a field (#348).** Every failed hook carries `failure`, one value from a closed list, so a script never parses message text. Every way a hook fails maps to exactly one value. The list is closed in each release and open across them: a minor release may add a value, and the `--json` contract tells consumers to tolerate unknown ones (OPERATIONS §JSON documents and semver).
 
 | `failure` | When |
 |---|---|

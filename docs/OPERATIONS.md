@@ -30,7 +30,7 @@ Status in the terminal (`shardmind` / `shardmind --verbose`) deliberately stays 
 Every `--json` document carries `schemaVersion` (`1` today). What it promises:
 
 - A consumer refuses a `schemaVersion` it does not know, rather than guess.
-- Within a `schemaVersion`, things are only added. A new field, a new `classification` or `action` value, or a new `error.details` shape may appear in a minor release, so a consumer ignores what it does not know and checks the values it branches on.
+- Within a `schemaVersion`, things are only added. A new field, a new `classification`, `action` or `outcome` value, a new hook `outcome` or `failure` value, or a new `error.details` shape may appear in a minor release, so a consumer ignores what it does not know and checks the values it branches on.
 - Within a `schemaVersion`, a field is never removed, renamed or retyped. A change that would break a consumer bumps it.
 - Error `code`s come from the registry in [`ERRORS.md`](ERRORS.md) and are stable. A code is never reused for another meaning.
 - `adopt --mode auto-merge` is experimental and outside this promise: its merge results may change in a minor release. The document's shape does not.
@@ -180,6 +180,12 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 | `deleted` | A file the new version dropped |
 | `unchanged` | Nothing to do |
 
+| hook `outcome` | Meaning |
+|---|---|
+| `completed` | It ran and exited 0 |
+| `failed` | It ran and failed, or could not start; `failure` says which way |
+| `skipped` | It was not run. Today that means only `personalize` when the values are the defaults (Invariant 2) |
+
 | hook `failure` (on a failed hook) | Meaning |
 |---|---|
 | `install` | shardmind's own files are missing: reinstall shardmind |
@@ -193,7 +199,7 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 | `timeout` | It ran past `timeout_ms` |
 | `cancelled` | Ctrl+C stopped it |
 
-The list is exhaustive: a failed hook always has exactly one of these.
+Each failed hook has exactly one of these. The file `outcome`, hook `outcome` and hook `failure` lists are open: a later minor release may add a value (for example, #199's `--skip-hooks`). Consumers must tolerate unknown outcome values, and treat an unknown `failure` as a failure.
 
 | adopt `outcome` | Meaning |
 |---|---|
