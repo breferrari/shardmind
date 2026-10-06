@@ -47,12 +47,6 @@ export interface ShardManifest {
     personalize?: string;
     'post-update'?: string;
     /**
-     * Deprecated combined hook (pre-split). Mutually exclusive with
-     * `bootstrap` / `personalize` — `parseManifest` throws
-     * `HOOK_SLOT_CONFLICT` if both are present. Honored ≥1 minor release.
-     */
-    'post-install'?: string;
-    /**
      * Per-shard override for the hook execution timeout (milliseconds).
      * Applies to every slot. Defaults to 30_000 when absent. Valid range:
      * 1_000..600_000. See docs/ARCHITECTURE.md §9.3 for the hook contract.
@@ -355,44 +349,6 @@ export interface MigrationResult {
   warnings: string[];
 }
 
-export interface HookContext {
-  vaultRoot: string;
-  values: Record<string, unknown>;
-  modules: ModuleSelections;
-  shard: { name: string; version: string };
-  previousVersion?: string;
-  /**
-   * True iff every user value equals its schema default (deep-equal,
-   * with computed defaults resolved against the literal-default map
-   * first). Hooks that modify *managed* files must no-op when this is
-   * true — see Invariant 2 in `docs/SHARD-LAYOUT.md`. Hooks that create
-   * *unmanaged* files (QMD indexes, MCP caches, etc.) may run
-   * unconditionally; they don't affect the byte-equivalence invariant.
-   */
-  valuesAreDefaults: boolean;
-  /**
-   * Vault-relative paths of managed files newly added by this run.
-   *
-   * - Empty on a clean install (every file is new — the signal would be
-   *   uninformative).
-   * - Empty for a no-op update.
-   * - Populated for an update with `UpdateAction.kind === 'add'` paths.
-   *   `overwrite`, `auto_merge`, `restore_missing`, and conflict
-   *   resolutions are excluded — those paths were already in state.files.
-   *
-   * Hooks restrict their writes to these paths by default per
-   * Invariant 3 (post-update hooks are additive-only).
-   */
-  newFiles: string[];
-  /**
-   * Vault-relative paths of managed files removed by this run
-   * (`UpdateAction.kind === 'delete'`). On install, the files a reinstall removed because the shard no longer has them (#228); otherwise empty. Hooks use
-   * this to maintain external state — QMD collection refs, MCP
-   * registrations — that referenced now-removed paths.
-   */
-  removedFiles: string[];
-}
-
 /**
  * The three lifecycle hook slots (post the #102 split). The discriminator
  * shared by every slotted hook context and by the orchestrator's outcomes.
@@ -447,33 +403,38 @@ export interface PersonalizeContext extends HookContextBase {
 }
 
 /**
- * `post-update` context — additive managed-file edits on update. Same
- * `newFiles` / `removedFiles` / `previousVersion` semantics the flat
- * `HookContext` documented for the post-update path.
+ * `post-update` context — additive managed-file edits on update.
  */
 export interface PostUpdateContext extends HookContextBase {
   slot: 'post-update';
+  /** The shard version the vault was on before this update. */
   previousVersion?: string;
+  /**
+   * Vault-relative paths of managed files this update added
+   * (`UpdateAction.kind === 'add'`). `overwrite`, `auto_merge`,
+   * `restore_missing` and conflict resolutions are excluded: those paths were
+   * already in state.files. Empty for a no-op update. The hook restricts its
+   * writes to these paths by default (Invariant 3, additive-only).
+   */
   newFiles: string[];
+  /**
+   * Vault-relative paths of managed files this update removed
+   * (`UpdateAction.kind === 'delete'`), for maintaining external state (QMD
+   * collection refs, MCP registrations) that referenced them.
+   */
   removedFiles: string[];
 }
 
 /**
  * Slotted hook context (post-#102). New hooks type their default export
- * against the slot they implement. The legacy combined `HookContext`
- * above is retained for deprecated `post-install` hooks until ≥0.3.0.
+ * against the slot they implement. (The flat `HookContext` went with
+ * `post-install` in 1.0, #357.)
  */
 export type SlottedHookContext =
   | BootstrapContext
   | PersonalizeContext
   | PostUpdateContext;
 
-/**
- * Any shape `executeHook` / `runHook` accept: a slotted context or the
- * legacy flat `HookContext`. The spawn path only reads `vaultRoot` and the
- * slot/previousVersion needed to derive `SHARDMIND_HOOK_PHASE`.
- */
-export type AnyHookContext = SlottedHookContext | HookContext;
 
 // ---------------------------------------------------------------------------
 // Status command (`shardmind` root + `shardmind --verbose`).

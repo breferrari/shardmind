@@ -25,7 +25,7 @@ import type { AdoptBase } from '../core/adopt-planner.js';
  * of how much of their vault is now under engine management. The hook
  * section is delegated to `HookSummarySection` (shared with Install /
  * Update Summary) — adopt fires the install-side slots (bootstrap +
- * personalize, or a lone legacy post-install).
+ * personalize).
  *
  * Adopt success is independent of hook outcome (Helm semantics, per
  * ARCHITECTURE.md §9.3): a failing hook surfaces as a yellow warning in

@@ -14,7 +14,7 @@ import { hookLogRelPath, HOOK_LOGS_DIR, SHARDMIND_DIR } from '../../source/runti
 
 describe('hookLogRelPath — platform-invariant display path', () => {
   it('is always forward-slash, on every OS', () => {
-    for (const slot of ['bootstrap', 'personalize', 'post-update', 'post-install']) {
+    for (const slot of ['bootstrap', 'personalize', 'post-update']) {
       const rel = hookLogRelPath(slot);
       expect(rel).toBe(`.shardmind/logs/${slot}.log`);
       expect(rel).not.toContain('\\'); // never a backslash, even on win32

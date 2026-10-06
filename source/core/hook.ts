@@ -1,22 +1,23 @@
 /**
- * Post-install / post-update hook lookup + execution.
+ * Hook lookup + execution, for any slot.
  *
- * The install and update commands both call into this module after the
- * point-of-no-return (state.json already written). A hook declared in
- * `shard.yaml` under `hooks.post-install` or `hooks.post-update` is:
+ * The install, adopt and update flows call into this module (through the
+ * orchestrator) after the point-of-no-return (state.json already written).
+ * A hook declared in `shard.yaml` under `hooks.bootstrap`, `hooks.personalize`
+ * or `hooks.post-update` is:
  *
  *   1. **Located** — `lookupHook` validates the path against the sandbox
  *      (no traversal out of the shard's temp directory).
  *   2. **Executed** — `executeHook` spawns a subprocess that loads the
- *      TypeScript hook via the bundled `tsx` ESM loader, hands it a typed
- *      `HookContext`, and captures stdout + stderr separately.
+ *      TypeScript hook via the bundled `tsx` ESM loader, hands it its slot's
+ *      context, and captures stdout + stderr separately.
  *
  * Hooks are non-fatal (Helm semantics): a throw / timeout / cancel never
  * rolls back the install or update. It surfaces as a yellow warning in
  * the summary with the captured output and the exit code or reason.
  *
- * Execution is decoupled from lookup. When `runPostInstallHook` /
- * `runPostUpdateHook` are called without a `ctx`, they return `deferred`
+ * Execution is decoupled from lookup. When `runHook` / `runPostUpdateHook`
+ * are called without a `ctx`, they return `deferred`
  * and the caller renders "skipped" — the shape used for `--dry-run`.
  *
  * See:
@@ -33,7 +34,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { AnyHookContext, HookContext, ShardManifest } from '../runtime/types.js';
+import type { PostUpdateContext, ShardManifest, SlottedHookContext } from '../runtime/types.js';
 import { assertNever } from '../runtime/types.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
 import { pathExists } from './fs-utils.js';
@@ -120,9 +121,8 @@ const KILL_GRACE_MS = 2_000;
 /**
  * Which lifecycle slot fired the hook. Exported so the command machines,
  * the HookProgress component, the orchestrator, and the hook-runner can all
- * share one source of truth for the allowed phase strings. `post-install` is
- * the deprecated legacy slot (#102); the three new slots are bootstrap /
- * personalize / post-update.
+ * share one source of truth for the allowed phase strings: bootstrap /
+ * personalize / post-update (`post-install` was removed in 1.0, #357).
  */
 export type HookStage = (typeof HOOK_STAGES)[number];
 
@@ -177,11 +177,6 @@ export interface HookSummary {
    * knows the hook existed but the engine chose not to fire it.
    */
   skipped?: 'values-are-defaults';
-  /**
-   * Set on the outcome of a deprecated legacy `post-install` run so the UI
-   * can surface the migration warning (HOOK_POST_INSTALL_DEPRECATED).
-   */
-  deprecated?: boolean;
   /**
    * A detected write-boundary crossing (detect-and-warn). The bytes were
    * left in place; the UI renders a non-fatal warning naming the paths.
@@ -290,32 +285,18 @@ export interface HookExecOpts {
 }
 
 /**
- * Locate and (when `ctx` is provided) execute the post-install hook
- * declared by the shard manifest. Returns a `HookResult` the command
- * layer can surface. Without `ctx`, execution is suppressed and the
- * result is `deferred` — the shape used for `--dry-run` where we want
- * to report that a hook exists but not fire it.
- */
-export async function runPostInstallHook(
-  tempDir: string,
-  manifest: ShardManifest,
-  ctx?: HookContext,
-  opts?: HookExecOpts,
-): Promise<HookResult> {
-  const lookup = await lookupHook(tempDir, manifest.hooks?.['post-install']);
-  if (lookup.kind !== 'deferred' || ctx === undefined) return lookup;
-  const timeoutMs = manifest.hooks?.timeout_ms ?? DEFAULT_HOOK_TIMEOUT_MS;
-  return executeHook(lookup.hookPath, ctx, { timeoutMs, ...opts });
 }
 
 /**
- * Post-update sibling of `runPostInstallHook`. Same contract and sandbox
- * invariants; `ctx.previousVersion` carries the pre-update shard version.
+ * Locate and (when `ctx` is provided) execute the post-update hook declared
+ * by the shard manifest, reading its timeout from `hooks.timeout_ms`. Without
+ * `ctx`, execution is suppressed and the result is `deferred` (the dry-run
+ * shape). `ctx.previousVersion` carries the pre-update shard version.
  */
 export async function runPostUpdateHook(
   tempDir: string,
   manifest: ShardManifest,
-  ctx?: HookContext,
+  ctx?: PostUpdateContext,
   opts?: HookExecOpts,
 ): Promise<HookResult> {
   const lookup = await lookupHook(tempDir, manifest.hooks?.['post-update']);
@@ -326,12 +307,12 @@ export async function runPostUpdateHook(
 
 /**
  * Slot-agnostic hook runner. Locates `hookRelPath` inside `tempDir` (same
- * traversal sandbox as the wrappers above) and, when `ctx` is provided,
+ * traversal sandbox as `runPostUpdateHook` above) and, when `ctx` is provided,
  * executes it. Which slot fires when is decided by the orchestrator
  * (`source/core/hook-orchestrator.ts`); this function only resolves + runs
  * one hook. Without `ctx`, returns the `deferred` lookup shape (dry-run).
  *
- * Unlike the post-install / post-update wrappers, `runHook` does not read a
+ * Unlike `runPostUpdateHook`, `runHook` does not read a
  * timeout from a manifest — the caller passes `opts.timeoutMs` (the
  * orchestrator computes it once from `hooks.timeout_ms`); absent, `executeHook`
  * falls back to `DEFAULT_HOOK_TIMEOUT_MS`.
@@ -339,7 +320,7 @@ export async function runPostUpdateHook(
 export async function runHook(
   tempDir: string,
   hookRelPath: string | undefined,
-  ctx?: AnyHookContext,
+  ctx?: SlottedHookContext,
   opts?: HookExecOpts,
 ): Promise<HookResult> {
   const lookup = await lookupHook(tempDir, hookRelPath);
@@ -376,7 +357,7 @@ async function lookupHook(tempDir: string, hookRelPath: string | undefined): Pro
 
 /**
  * Spawn the bundled hook-runner in a subprocess, feed it the serialized
- * `HookContext`, and capture stdout + stderr. Returns a `HookResult`
+ * slot context, and capture stdout + stderr. Returns a `HookResult`
  * that `summarizeHook` maps into `HookSummary` for the UI.
  *
  * Never throws — every failure mode (tsx missing, spawn error, timeout,
@@ -386,7 +367,7 @@ async function lookupHook(tempDir: string, hookRelPath: string | undefined): Pro
  */
 export async function executeHook(
   hookPath: string,
-  ctx: AnyHookContext,
+  ctx: SlottedHookContext,
   opts: HookExecOpts = {},
 ): Promise<HookResult> {
   const { timeoutMs = DEFAULT_HOOK_TIMEOUT_MS, onStdout, onStderr, signal } = opts;
@@ -487,15 +468,8 @@ export async function executeHook(
   const offSigint = onSigint(sigintCleanup, { once: true });
 
   try {
-    // The slot drives `SHARDMIND_HOOK_PHASE`. Slotted contexts carry it
-    // directly; the legacy flat `HookContext` (deprecated post-install path)
-    // has no `slot`, so we fall back to the previousVersion heuristic.
-    const phase: string =
-      'slot' in ctx
-        ? ctx.slot
-        : ctx.previousVersion === undefined
-          ? 'post-install'
-          : 'post-update';
+    // The slot drives `SHARDMIND_HOOK_PHASE`.
+    const phase = ctx.slot;
 
     // `node --import file:///.../tsx/dist/loader.mjs runner.js hookPath ctxPath`
     // The `--import` specifier is resolved via file:// URL so Windows

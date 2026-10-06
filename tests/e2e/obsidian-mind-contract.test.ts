@@ -79,8 +79,8 @@ const CUSTOM_VALUES = {
 };
 
 // Values that match the schema's literal defaults exactly. Asserts
-// Invariant 2's positive branch — a post-install hook receiving these
-// must not modify any managed file.
+// Invariant 2's positive branch — the engine skips personalize on these,
+// so no hook modifies a managed file.
 const DEFAULT_VALUES = {
   user_name: '',
   org_name: 'Independent',
@@ -1151,7 +1151,7 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     expect(state.files['brain/North Star.md']?.rendered_hash).toBe(sha256(northStar));
   }, 60_000);
 
-  it('post-install hook exceeding timeout_ms → killed; install completes; summary surfaces a timeout warning', async () => {
+  it('a hook exceeding timeout_ms → killed; install completes; summary surfaces a timeout warning', async () => {
     // Scenario 27 — docs/SHARD-LAYOUT.md §Hooks, state, and re-hash
     // semantics ("Hook timeout stays at the existing
     // DEFAULT_HOOK_TIMEOUT_MS (non-fatal on timeout)"): exceeding

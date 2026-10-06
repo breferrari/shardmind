@@ -11,8 +11,8 @@ import type { HookOutcome } from '../core/hook-orchestrator.js';
  * Final install report.
  *
  * Renders the count of installed files, any pre-install backups that
- * were taken to avoid overwriting user content, and the post-install
- * hook outcome.
+ * were taken to avoid overwriting user content, and the outcome of
+ * its hooks.
  *
  * The hook section is delegated to `HookSummarySection`, which is
  * shared with `UpdateSummary.tsx` so the four-branch rendering

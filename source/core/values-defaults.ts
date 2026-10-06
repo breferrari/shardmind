@@ -2,13 +2,12 @@
  * `valuesAreDefaults` — deep-equal comparison of a user's values map
  * against the schema's would-be-default map.
  *
- * Used by the install / update orchestration to populate
- * `HookContext.valuesAreDefaults`. A `true` answer tells the shard's
- * post-install / post-update hook that the user accepted every default,
- * so any edits to managed files would silently overwrite content the
- * user didn't choose to customize. Per Invariant 2 (`docs/SHARD-LAYOUT.md`),
- * hooks that modify managed files must no-op when this flag is true;
- * unmanaged files are unaffected.
+ * Used by the hook orchestrator to gate `personalize` and to populate
+ * `BootstrapContext.valuesAreDefaults`. A `true` answer means the user
+ * accepted every default, so any edits to managed files would silently
+ * overwrite content the user didn't choose to customize. Per Invariant 2
+ * (`docs/SHARD-LAYOUT.md`), the engine then skips `personalize`, the only
+ * slot that edits managed files; unmanaged files are unaffected.
  *
  * The comparison is strict: `JSON.stringify`-style structural deep-equal,
  * preserving order in arrays. Multiselect order is therefore meaningful

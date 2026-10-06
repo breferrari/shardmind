@@ -4,7 +4,7 @@
  * HookSummarySection renders a list of per-slot hook outcomes, shared by
  * Summary.tsx (install), UpdateSummary.tsx (update), and AdoptSummary.tsx.
  * Tests pin each branch (null / skipped / deferred / ran-success /
- * ran-failure / violation / deprecated) and the multi-outcome rendering
+ * ran-failure / violation) and the multi-outcome rendering
  * (bootstrap + personalize in one run), since that's the spot most at risk
  * of drift across the three call sites.
  */
@@ -186,12 +186,6 @@ describe('HookSummarySection', () => {
     ]).lastFrame() ?? '';
     expect(frame).toContain('Personalize hook created unmanaged file(s): x.json');
     expect(frame).toContain('Could not read .qmd');
-  });
-
-  it('renders a deprecation warning for a legacy post-install run', () => {
-    const frame = out([{ slot: 'post-install', summary: { exitCode: 0, deprecated: true } }]).lastFrame() ?? '';
-    expect(frame).toContain('Post-install hook completed.');
-    expect(frame).toContain('The post-install hook is deprecated');
   });
 
   it('renders multiple outcomes in order (bootstrap then personalize)', () => {

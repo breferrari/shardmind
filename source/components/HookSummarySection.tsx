@@ -19,7 +19,6 @@ import { assertNever } from '../runtime/types.js';
  *   - ran, exit 0     — green "completed" + captured stdout/stderr.
  *   - ran, exit !=0   — yellow warning (exit code) + both streams.
  *   - violation       — yellow non-fatal warning naming the boundary crossing.
- *   - deprecated      — yellow legacy-slot migration note.
  *
  * The parent operation's success is independent of any hook outcome (Helm
  * semantics, ARCHITECTURE.md §9.3) — a failing or out-of-boundary hook never
@@ -30,7 +29,6 @@ const HOOK_NAME: Record<HookStage, string> = {
   bootstrap: 'Bootstrap hook',
   personalize: 'Personalize hook',
   'post-update': 'Post-update hook',
-  'post-install': 'Post-install hook',
 };
 
 interface HookSummarySectionProps {
@@ -88,11 +86,6 @@ function renderOutcome(
           </StatusMessage>
           <Text dimColor>The operation succeeded; the hook's work may be incomplete.</Text>
         </Box>
-      )}
-      {summary.deprecated && (
-        <StatusMessage variant="warning">
-          The post-install hook is deprecated. Split it into bootstrap + personalize before the next minor release — see AUTHORING.md §6.
-        </StatusMessage>
       )}
       {summary.ignoreProblem && (
         <StatusMessage variant="warning">

@@ -1,6 +1,6 @@
 /**
  * Internal hook-runner — the subprocess entry point for executing a shard's
- * post-install / post-update TypeScript hook.
+ * TypeScript hook (bootstrap, personalize or post-update).
  *
  * Shipped as `dist/internal/hook-runner.js`. Not part of the public API
  * surface (`dist/runtime/index.js`), not re-exported, not documented for
@@ -11,7 +11,7 @@
  *
  * Flow:
  *   1. Read the two argv positions (hook path + ctx temp-file path).
- *   2. Parse the JSON-serialized `HookContext` from the ctx file.
+ *   2. Parse the JSON-serialized slot context from the ctx file.
  *   3. Dynamically `import()` the hook module. `--import tsx/...loader.mjs`
  *      registers tsx's ESM loader on the parent node process, so a TS file
  *      resolves and compiles transparently from here.
@@ -33,7 +33,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import type { HookContext } from '../runtime/types.js';
+import type { SlottedHookContext } from '../runtime/types.js';
 
 /**
  * Make writes to stdout and stderr synchronous when they are pipes (#106).
@@ -79,10 +79,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  let ctx: HookContext;
+  let ctx: SlottedHookContext;
   try {
     const raw = await readFile(ctxPath, 'utf-8');
-    ctx = JSON.parse(raw) as HookContext;
+    ctx = JSON.parse(raw) as SlottedHookContext;
   } catch (err) {
     process.stderr.write(`shardmind hook-runner: cannot read ctx (${describe(err)})\n`);
     process.exit(1);
@@ -94,12 +94,12 @@ async function main(): Promise<void> {
   const fn = (mod as { default?: unknown }).default;
   if (typeof fn !== 'function') {
     process.stderr.write(
-      `shardmind hook-runner: ${hookPath} must export a default async function (ctx: HookContext) => Promise<void>.\n`,
+      `shardmind hook-runner: ${hookPath} must export a default async function (ctx) => Promise<void>.\n`,
     );
     process.exit(1);
   }
 
-  await (fn as (c: HookContext) => Promise<void> | void)(ctx);
+  await (fn as (c: SlottedHookContext) => Promise<void> | void)(ctx);
 }
 
 /** What a thrown value says, whatever it is: no part of turning it into text may throw. */

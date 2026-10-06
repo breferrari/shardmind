@@ -19,7 +19,6 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  runPostInstallHook,
   runPostUpdateHook,
   runHook,
   executeHook,
@@ -29,7 +28,7 @@ import {
 } from '../../source/core/hook.js';
 import type {
   BootstrapContext,
-  HookContext,
+  PostUpdateContext,
   ShardManifest,
 } from '../../source/runtime/types.js';
 
@@ -145,7 +144,7 @@ describe('lookupHook — path traversal guards', () => {
     tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'hook-test-'));
     // Stage a legit hook + a sibling file outside the shard.
     await fsp.mkdir(path.join(tempDir, 'hooks'), { recursive: true });
-    await fsp.writeFile(path.join(tempDir, 'hooks', 'post-install.ts'), '// hook\n');
+    await fsp.writeFile(path.join(tempDir, 'hooks', 'bootstrap.ts'), '// hook\n');
     await fsp.writeFile(path.join(tempDir, 'hooks', 'post-update.ts'), '// hook\n');
   });
 
@@ -154,8 +153,7 @@ describe('lookupHook — path traversal guards', () => {
   });
 
   it('resolves a legitimate relative hook path to "deferred" when no ctx given', async () => {
-    const manifest = makeManifest({ 'post-install': 'hooks/post-install.ts' });
-    const result = await runPostInstallHook(tempDir, manifest);
+    const result = await runHook(tempDir, 'hooks/bootstrap.ts');
     expect(result.kind).toBe('deferred');
     if (result.kind !== 'deferred') throw new Error('narrowing');
     expect(result.hookPath).toContain('hooks');
@@ -182,14 +180,14 @@ describe('lookupHook — path traversal guards', () => {
   });
 
   it('returns absent when the hook file does not exist under the shard', async () => {
-    const manifest = makeManifest({ 'post-install': 'hooks/does-not-exist.ts' });
-    const result = await runPostInstallHook(tempDir, manifest);
+    const manifest = makeManifest({ 'post-update': 'hooks/does-not-exist.ts' });
+    const result = await runPostUpdateHook(tempDir, manifest);
     expect(result.kind).toBe('absent');
   });
 
   it('returns absent when no hook is declared', async () => {
     const manifest = makeManifest({});
-    const result = await runPostInstallHook(tempDir, manifest);
+    const result = await runPostUpdateHook(tempDir, manifest);
     expect(result.kind).toBe('absent');
   });
 });
@@ -203,12 +201,12 @@ describe('executeHook — subprocess runtime', () => {
   let scratchDir: string;
   let vaultDir: string;
 
-  const baseCtx = (): HookContext => ({
+  const baseCtx = (): PostUpdateContext => ({
+    slot: 'post-update',
     vaultRoot: vaultDir,
     values: { user_name: 'alice', vault_purpose: 'engineering' },
     modules: { core: 'included', perf: 'excluded' },
     shard: { name: 'test-shard', version: '1.0.0' },
-    valuesAreDefaults: false,
     newFiles: [],
     removedFiles: [],
   });
@@ -435,7 +433,7 @@ describe('executeHook — subprocess runtime', () => {
     if (result.kind === 'ran') expect(result.exitCode).not.toBe(0);
   }, 30_000);
 
-  it('round-trips HookContext fields through the subprocess', async () => {
+  it('round-trips the slot context through the subprocess', async () => {
     const echoed = path.join(vaultDir, 'echoed.json');
     const hookPath = await writeHook(
       'hook.ts',
@@ -446,7 +444,7 @@ describe('executeHook — subprocess runtime', () => {
         }
       `,
     );
-    const ctx: HookContext = {
+    const ctx: PostUpdateContext = {
       ...baseCtx(),
       previousVersion: '0.9.0',
     };
@@ -468,14 +466,17 @@ describe('executeHook — subprocess runtime', () => {
         }
       `,
     );
-    // previousVersion absent ⇒ post-install phase
-    const installResult = await executeHook(hookPath, baseCtx());
-    if (installResult.kind !== 'ran') throw new Error('expected ran');
-    const installEnv = JSON.parse(installResult.stdout.trim());
-    expect(installEnv).toStrictEqual({ hook: '1', phase: 'post-install' });
+    // The slot is the phase, whatever else the ctx carries.
+    const { newFiles: _n, removedFiles: _r, ...base } = baseCtx();
+    const bootstrapResult = await executeHook(hookPath, { ...base, slot: 'bootstrap', valuesAreDefaults: true, removedFiles: [] });
+    if (bootstrapResult.kind !== 'ran') throw new Error('expected ran');
+    expect(JSON.parse(bootstrapResult.stdout.trim())).toStrictEqual({ hook: '1', phase: 'bootstrap' });
 
-    // previousVersion present ⇒ post-update phase
-    const updateResult = await executeHook(hookPath, { ...baseCtx(), previousVersion: '0.9.0' });
+    const personalizeResult = await executeHook(hookPath, { ...base, slot: 'personalize' });
+    if (personalizeResult.kind !== 'ran') throw new Error('expected ran');
+    expect(JSON.parse(personalizeResult.stdout.trim())).toStrictEqual({ hook: '1', phase: 'personalize' });
+
+    const updateResult = await executeHook(hookPath, baseCtx());
     if (updateResult.kind !== 'ran') throw new Error('expected ran');
     const updateEnv = JSON.parse(updateResult.stdout.trim());
     expect(updateEnv).toStrictEqual({ hook: '1', phase: 'post-update' });

@@ -27,7 +27,7 @@ import { removePath } from '../../../source/core/fs-utils.js';
 import { stringify as stringifyYaml } from 'yaml';
 import { spawnCli } from './spawn-cli.js';
 import type { GitHubStub } from './github-stub.js';
-import type { HookContext } from '../../../source/runtime/types.js';
+import type { SlottedHookContext } from '../../../source/runtime/types.js';
 
 export interface Vault {
   /** Absolute path. */
@@ -308,11 +308,11 @@ export async function stripShardmindMetadata(vault: Vault): Promise<void> {
  * `.hook-ctx-{bootstrap,personalize,update}.json`). Scenarios assert what the
  * engine handed each slot (values, newFiles, removedFiles, previousVersion, …).
  *
- * `T` defaults to the engine's `HookContext` (the legacy combined shape).
- * Slotted scenarios pass a tighter T (BootstrapContext / PersonalizeContext /
+ * `T` defaults to the engine's `SlottedHookContext`. Scenarios pass a
+ * tighter T (BootstrapContext / PersonalizeContext /
  * PostUpdateContext) so a typo'd field name trips the type checker.
  */
-export async function readHookContext<T = HookContext>(
+export async function readHookContext<T = SlottedHookContext>(
   vault: Vault,
   phase: 'bootstrap' | 'personalize' | 'update',
 ): Promise<T> {

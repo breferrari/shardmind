@@ -106,7 +106,7 @@ export interface UpdateSummary {
    * `restore_missing` (the file was already managed; user had deleted
    * it on disk). Also excludes a preexisting add-collision the user kept
    * and tracked (`keep_and_track`, `--adopt-preexisting`): its bytes are
-   * the user's, not new shard output. Source for `HookContext.newFiles`. See
+   * the user's, not new shard output. Source for `PostUpdateContext.newFiles`. See
    * docs/SHARD-LAYOUT.md §Hooks, state, and re-hash semantics for the
    * additive-principle invariant the hook ctx encodes.
    */
@@ -420,7 +420,7 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
       ctx.nextFiles[action.path] = buildFileState(action, action.renderedHash, 'managed');
       ctx.summary.wroteFiles.push(action.path);
       // Per the spec's "newly added in the new version" semantics, only
-      // genuine `add` actions count toward `HookContext.newFiles`.
+      // genuine `add` actions count toward `PostUpdateContext.newFiles`.
       // `overwrite` and `restore_missing` were already in state.files
       // (overwrite: managed; restore_missing: managed-but-deleted-on-
       // disk), so a hook's additive-only restriction (Invariant 3) does

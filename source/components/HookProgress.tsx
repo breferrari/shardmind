@@ -23,7 +23,6 @@ const STAGE_LABEL: Record<HookStage, string> = {
   bootstrap: 'bootstrap',
   personalize: 'personalize',
   'post-update': 'post-update',
-  'post-install': 'post-install',
 };
 
 interface HookProgressProps {

@@ -55,7 +55,7 @@ function expectClean(frame: string): void {
 describe.each([0, 1] as const)('hook output control sequences, chalk level %i', (level) => {
   it('HookProgress shows the text and none of the sequences', () => {
     chalk.level = level;
-    const frame = render(<HookProgress stage="post-install" output={HOSTILE} shardLabel="acme/demo" />).lastFrame() ?? '';
+    const frame = render(<HookProgress stage="bootstrap" output={HOSTILE} shardLabel="acme/demo" />).lastFrame() ?? '';
     expectClean(frame);
   });
 
@@ -105,7 +105,7 @@ describe.each([0, 1] as const)('hook output control sequences, chalk level %i', 
 
   it('the live tail skips a line that is only colour codes', () => {
     chalk.level = level;
-    const frame = render(<HookProgress stage="post-install" output={'one\n\x1b[0m\ntwo\n'} shardLabel="acme/demo" />).lastFrame() ?? '';
+    const frame = render(<HookProgress stage="bootstrap" output={'one\n\x1b[0m\ntwo\n'} shardLabel="acme/demo" />).lastFrame() ?? '';
     const lines = frame.split('\n').slice(2);
     expect(lines.filter((l) => l.replace(/\x1b\[[0-9;]*m/g, '').trim() === '')).toHaveLength(0);
   });
