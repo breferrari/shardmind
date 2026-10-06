@@ -157,13 +157,19 @@ shardmind validate [dir|shard]
   --no-update-check                        # Skip the once-a-day check for a newer shardmind on npm
 ```
 
-`--yes` skips every prompt, and each command answers them the way that is safe for it: `install` takes each value's default, `update` keeps your version wherever your edits conflict with the shard's, and `adopt` keeps your version of every file that differs (`keep-all-mine`, unless `--mode` says otherwise). Files you never changed still take the new release (`adopt --from-version`, `update`).
+`--yes` answers the prompts each command can settle safely on its own, and the answer differs by command, by design:
+
+- `install`: each value takes its schema default. A value with no default needs `--values`, else `VALUES_MISSING`. Reinstalling over an existing install still asks, or needs `--force`.
+- `update`: your version wins wherever your edits conflict with the shard's. A new release that adds a required value needs `--values`, else `VALUES_MISSING`.
+- `adopt`: your version of every file that differs is kept (`keep-all-mine`, unless `--mode` says otherwise).
+
+Files you never changed still take the new release (`update`, and `adopt --from-version`).
 
 ### Driving shardmind from a script or agent
 
 `--values <file>` is enough on its own without a terminal: the answers are already on disk, so the wizard is skipped rather than rendered. Without values and without a TTY the command **refuses** (`INSTALL_/ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`) rather than quietly recording schema defaults as though you had chosen them.
 
-`--json` makes `shardmind` (status), `update`, `adopt` and `validate` emit exactly one JSON document on stdout and nothing else, so `JSON.parse(stdout)` needs no stripping. Every document carries `schemaVersion`, `command`, and `ok`; a failure adds `error` (`code`, `message`, `hint`, `stack` for an unexpected bug and otherwise `null`, and `details` where an error carries structured data) and exits non-zero, so `$?` and the body agree. What a document promises across versions is in [`docs/OPERATIONS.md`](docs/OPERATIONS.md#json-documents-and-semver). `install` has no `--json`: run it with `--values` or `--defaults` and read its exit code.
+`--json` makes `shardmind` (status), `update`, `adopt` and `validate` emit exactly one JSON document on stdout and nothing else, so `JSON.parse(stdout)` needs no stripping. Every document carries `schemaVersion`, `command`, and `ok`; a failure adds `error` (`code`, `message`, `hint`, `stack` for an unexpected bug and otherwise `null`, and `details` for a `state.json` from a newer ShardMind) and exits non-zero, so `$?` and the body agree. What a document promises across versions is in [`docs/OPERATIONS.md`](docs/OPERATIONS.md#json-documents-and-semver). `install` has no `--json`: run it with `--values` or `--defaults` and read its exit code.
 
 Paired with `--dry-run` you get the **per-file plan** rather than summary counts — path, action or classification, and both hashes where a file diverges — which is what makes choosing a bulk `--mode` safe to automate:
 
