@@ -15,6 +15,7 @@ import { ShardMindError } from '../runtime/types.js';
 import { gitFiles } from './git-tracked.js';
 import { isTier1Excluded } from './tier1.js';
 import { loadShardmindignore } from './shardmindignore.js';
+import { toPosix } from './fs-utils.js';
 import { exitOnSigint } from './process-control.js';
 
 export interface ValidateReport {
@@ -85,13 +86,24 @@ export async function validateShard(
  * One `LINT_UNTRACKED_FILE` warning per untracked file that would be shard
  * content: it ships only once committed, so it was not validated (#320).
  * Tier 1 paths and `.shardmindignore`d ones are never content, except
- * `.shardmind/`: the release needs its manifest, schema and hooks.
+ * `.shardmind/`: the release needs its manifest, schema and hooks. A wholly
+ * untracked folder (`dir/`) is one warning, when a file in it is content.
  */
 async function untrackedWarnings(dir: string, untracked: readonly string[]): Promise<LintFinding[]> {
   const ignore = await loadShardmindignore(dir);
-  return untracked
-    .filter((rel) => (rel.startsWith('.shardmind/') || !isTier1Excluded(rel)) && !ignore.ignores(rel.replace(/\/$/, ''), rel.endsWith('/')))
-    .map((rel) => ({
+  const isContent = (rel: string): boolean =>
+    (rel.startsWith('.shardmind/') || !isTier1Excluded(rel)) && !ignore.ignores(rel, false);
+  const warned: string[] = [];
+  for (const rel of untracked) {
+    if (!rel.endsWith('/')) {
+      if (isContent(rel)) warned.push(rel);
+      continue;
+    }
+    const files = await fsp.readdir(path.join(dir, rel), { recursive: true, withFileTypes: true }).catch(() => []);
+    const inside = files.filter((f) => !f.isDirectory()).map((f) => toPosix(dir, path.join(f.parentPath, f.name)));
+    if (inside.some(isContent)) warned.push(rel);
+  }
+  return warned.map((rel) => ({
       severity: 'warning' as const,
       code: 'LINT_UNTRACKED_FILE',
       message: `${rel} is not tracked by git, so a release would not ship it; it was not validated`,

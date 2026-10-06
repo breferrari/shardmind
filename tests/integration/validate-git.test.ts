@@ -132,6 +132,26 @@ describe.runIf(gitWorks)('validate in a git work tree (#320)', () => {
     expect(errors(report)).toContainEqual(expect.objectContaining({ code: 'RENDER_TEMPLATE_ERROR', path: 'Included.md' }));
   });
 
+  it('an untracked folder of only Tier 1 files is not warned about', async () => {
+    const shard = await committedShard(work);
+    await fsp.mkdir(path.join(shard, '.obsidian'));
+    await fsp.writeFile(path.join(shard, '.obsidian', 'workspace.json'), '{}');
+    const report = await validateShard(shard, {});
+    expect(report.findings.filter((f) => f.code === 'LINT_UNTRACKED_FILE')).toEqual([]);
+  });
+
+  it('`ignore missing` renders an ignored partial as missing, as the release would', async () => {
+    const shard = await committedShard(work);
+    await fsp.appendFile(path.join(shard, '.gitignore'), '\npartials/\n');
+    await fsp.writeFile(path.join(shard, 'Included.md.njk'), 'body {% include "partials/head.njk" ignore missing %}\n');
+    git(work, 'add', '-A');
+    git(work, 'commit', '-q', '-m', 'include a partial if present');
+    await fsp.mkdir(path.join(shard, 'partials'));
+    await fsp.writeFile(path.join(shard, 'partials', 'head.njk'), '{{ broken(');
+    const report = await validateShard(shard, {});
+    expect(errors(report)).toEqual([]);
+  });
+
   it('a folder the repository ignores is checked whole, as a plain folder', async () => {
     git(work, 'init', '-q');
     await fsp.writeFile(path.join(work, '.gitignore'), 'shard/\n');

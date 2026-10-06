@@ -32,11 +32,14 @@ export function createRenderer(templateDir: string, keep?: (relPath: string) => 
   if (!keep) return nunjucks.configure(templateDir, NUNJUCKS_OPTS);
   const root = path.resolve(templateDir);
   const kept = keep;
+  // A loader with no search path finds nothing: its miss is nunjucks' own
+  // (null at runtime, though the types never say so), so `ignore missing`
+  // renders an untracked partial as empty, as the release would.
+  const nowhere = new nunjucks.FileSystemLoader([]);
   class KeptLoader extends nunjucks.FileSystemLoader {
     override getSource(name: string): nunjucks.LoaderSource {
       const rel = path.relative(root, path.resolve(root, name)).split(path.sep).join('/');
-      if (!kept(rel)) throw new Error(`template not found: ${name} (not tracked by git, so not in a release)`);
-      return super.getSource(name);
+      return kept(rel) ? super.getSource(name) : nowhere.getSource(name);
     }
   }
   return new nunjucks.Environment(new KeptLoader(templateDir), NUNJUCKS_OPTS);
