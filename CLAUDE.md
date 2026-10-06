@@ -133,9 +133,10 @@ shardmind/
 │   │   ├── options/                   # Ink-free zod args/options per command, re-exported by the .tsx (#302)
 │   │   ├── headless/                  # --json runners cli.ts calls before Ink loads: status, adopt, update (#302)
 │   │   └── hooks/                     # State-machine + shared command hooks
-│   │       ├── use-install-machine.ts
-│   │       ├── use-update-machine.ts
-│   │       ├── use-adopt-machine.ts
+│   │       ├── use-install-machine.ts # Ink adapter over core/flows/install.ts (#302)
+│   │       ├── use-update-machine.ts  # Ink adapter over core/flows/update.ts (#302)
+│   │       ├── use-adopt-machine.ts   # Ink adapter over core/flows/adopt.ts (#302)
+│   │       ├── use-flow-run.ts        # What every adapter shares: pending question, run a Ctrl+C stops, lock, end of run (#302)
 │   │       ├── use-status-report.ts   # Async loader for status command
 │   │       ├── use-self-update-check.ts # Cached npm check + detached refresh + suppression rules (#113, #285)
 │   │       ├── use-self-update-banner.tsx # Composed hook: pkg.version + check + <SelfUpdateBanner /> (#113)
@@ -220,7 +221,7 @@ shardmind/
 │   │   ├── vault-transaction.ts       # One vault transaction: snapshot before each write, rollback, state.json last (#301)
 │   │   ├── install-destination.ts     # Where install puts the vault: shard-named folder, [folder] or `.`; refuses a non-empty one (#333)
 │   │   ├── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
-│   │   └── flows/                     # UI-free command runs the Ink machines adapt (§4.30, #302): prepare-shard, values, adopt, update
+│   │   └── flows/                     # UI-free command runs the Ink machines adapt (§4.30, #302): prepare-shard, values, run (the shared write step), install, adopt, update
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   ├── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
 │   │   └── self-update-refresh.ts     # Detached child that refreshes the npm self-update cache (#285)

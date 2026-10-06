@@ -8,6 +8,7 @@
  * record the user's bytes gets a case.
  */
 
+import { wasRolledBack } from '../../source/core/rollback-report.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -911,7 +912,10 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       } catch {
         ctx.skip(); // symlinks need privileges on some Windows setups
       }
-      await expect(update(await withNote('0.2.0'))).rejects.toMatchObject({ code: 'VAULT_PATH_UNSAFE' });
+      const refused = await update(await withNote('0.2.0')).catch((e: unknown) => e);
+      expect(refused).toMatchObject({ code: 'VAULT_PATH_UNSAFE' });
+      // Refused before any transaction: nothing was rolled back, nothing marked.
+      expect(wasRolledBack(refused)).toBe(false);
       expect((await fsp.lstat(path.join(vault, NOTE))).isSymbolicLink()).toBe(true);
       expect(await fsp.readFile(outside, 'utf-8')).toBe(BODY);
     });
@@ -1121,7 +1125,10 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     const valuesPath = path.join(vault, 'shard-values.yaml');
     await fsp.chmod(valuesPath, 0o444);
     try {
-      await expect(update(shard2)).rejects.toThrow();
+      const err = await update(shard2).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      // The executor rolled its transaction back, and says so (§4.30 step 4).
+      expect(wasRolledBack(err)).toBe(true);
     } finally {
       await fsp.chmod(valuesPath, 0o644);
     }

@@ -1023,7 +1023,7 @@ interface InstallTransactionResult extends InstallResult {
 }
 
 runInstallTransaction(opts: InstallTransactionOptions): Promise<InstallTransactionResult>;
-installRolledBack(err: unknown): boolean;          // did the transaction that threw `err` roll back?
+// A failure the transaction rolled back is thrown as rolledBackError(err, …), so wasRolledBack(err) is true (§4.30 step 4).
 ```
 
 **Algorithm**:
@@ -1041,11 +1041,11 @@ installRolledBack(err: unknown): boolean;          // did the transaction that t
    1. Unless dry run, `beginTransaction(vaultRoot, { kind: 'install', noPriorInstall: true, signal })` (§4.28). Install has no snapshot folder.
    2. For each path in `moveAside`, in order: `tx.recordSetAside(abs, keep.has(abs))` (§4.28 step 2d), each after a cancel check. A path in `keep` is a kept backup; every other move is set aside.
    3. `runInstall` with the transaction.
-   4. If anything in 2–3 throws (a failed move, a failure, or `CANCELLED`), `tx.rollback()`: it puts back every move made so far, removes every write, and touches engine entries only once their commit had started, so a reinstall's old install, set aside or not yet, is never deleted. The thrown error is `withRollbackFailures(err, failures)`, and `installRolledBack` returns true for it.
+   4. If anything in 2–3 throws (a failed move, a failure, or `CANCELLED`), `tx.rollback()`: it puts back every move made so far, removes every write, and touches engine entries only once their commit had started, so a reinstall's old install, set aside or not yet, is never deleted. The thrown error is `withRollbackFailures(err, failures)`, thrown through `rolledBackError`, so `wasRolledBack` returns true for it (§4.30 step 4).
    5. Once `runInstall` returns, state.json is on disk and the install is committed: nothing after this rolls back, and an abort is ignored. `tx.commit({ oldStatePath })` (§4.28 step 4a). Its `left` is the result's `left`; its `kept` is `backups`.
    6. Dry run: no transaction, no moves and no commit; the result reports what a real run would do.
-   The machine tracks the returned promise with `trackRun`, as update and adopt do. A Ctrl+C aborts the signal and waits for the promise, the rollback included. A Ctrl+C during step 5 waits for the commit to finish rather than stopping it partway, then reports that the run had already finished.
-3. **Hook hand-off** (in `use-install-machine`): once `runInstallTransaction` returns, the machine drops its run in flight, then `runHooks({ command: 'install', state, … })` (§4.16a), which owns slot selection, write-boundary checks, the post-hook re-hash and the fingerprint. A hook failure is reported in the summary and never rolls the install back.
+   The flow hands the returned promise to `io.onRun`, which the machine tracks with `trackRun`, as update and adopt do. A Ctrl+C aborts the signal and waits for the promise, the rollback included. A Ctrl+C during step 5 waits for the commit to finish rather than stopping it partway, then reports that the run had already finished.
+3. **Hook hand-off** (in the install flow, `core/flows/install.ts`, through `runAndHooks`, §4.30 step 8): once `runInstallTransaction` returns, the run in flight is dropped (`io.onCommitted`), then `runHooks({ command: 'install', state, … })` (§4.16a), which owns slot selection, write-boundary checks, the post-hook re-hash and the fingerprint. A hook failure is reported in the summary and never rolls the install back.
 
 **Rollback semantics**:
 - **The transaction's rollback** (§4.28 step 5) is best effort: it never throws, and it returns what it could not undo (`RollbackFailure[]`): each set-aside path it could not move back, with the backup path that still holds it, each file it wrote but could not remove, and each folder it created that `rmdir` refused for a reason other than holding files (#258). It removes only what this install made (#215): the paths recorded before each write, the folders each write created (`missingFolders`, then `removeCreatedFolders`, deepest first, only when empty), and the engine's `.shardmind/` entries (`removeEngineWrites`) once their commit had started. It never removes `.shardmind/` wholesale, so a user's `.shardmind/boundary-ignore` and folders they made before the install survive. The set-aside paths go back last, so each lands on a path the removals freed.
@@ -1986,7 +1986,7 @@ run<Command>Json(argv: readonly string[], engineVersion: string | undefined, wri
 
 ### 4.30 UI-free flows: `core/flows/`
 
-A command's whole run, from its flags to its summary, as a function of its input and an `io` it is given, with no Ink, React or terminal in it (#302). The Ink machine (`commands/hooks/use-<command>-machine.ts`) becomes an adapter: it renders each question with its prompt component and each phase it is told of, and answers `ask` from the component's handler. A headless `--json` run (§4.29) calls the same flow with an `io` that never prompts. Adopt and update run as flows; install follows.
+A command's whole run, from its flags to its summary, as a function of its input and an `io` it is given, with no Ink, React or terminal in it (#302). The Ink machine (`commands/hooks/use-<command>-machine.ts`) becomes an adapter: it renders each question with its prompt component and each phase it is told of, and answers `ask` from the component's handler. A headless `--json` run (§4.29) calls the same flow with an `io` that never prompts. Install, adopt and update all run as flows.
 
 ```typescript
 // core/flows/prepare-shard.ts
@@ -1999,6 +1999,23 @@ answersWithoutPrompting(schema: ShardSchema, prefill: Record<string, unknown>, y
 validateValues(schema: ShardSchema, values: Record<string, unknown>): Record<string, unknown>
 // core/flows/cancelled.ts
 class FlowCancelled extends Error { readonly reason: string }
+// core/flows/run.ts: what every flow's write step shares
+interface FlowRunIO {
+  hooks: Omit<HookRunUi, 'signal'>;
+  lock(): { release(): void };   // the vault lock; its release, for a transaction that makes its folder
+  onCleanup(cleanup: () => Promise<void>): void;
+  newRunAbort(): AbortController;
+  onRun(abort: AbortController, run: Promise<unknown>): void;
+  onCommitted(): void;
+  onHookAbort(abort: AbortController | null): void;
+}
+runAndHooks<T>(io: FlowRunIO, run: (signal: AbortSignal) => Promise<T>, hooks: (result: T) => HookRunPlan): Promise<{ result: T; hooks: HookOutcome[] }>
+// core/rollback-report.ts
+markRolledBack(err: unknown): void
+wasRolledBack(err: unknown): boolean
+rolledBackError(err: unknown, rollback: () => Promise<RollbackFailure[]>): Promise<unknown>  // what an executor throws after rolling back
+// core/flows/install.ts
+runInstallFlow(input: InstallFlowInput, io: InstallFlowIO): Promise<InstallFlowResult>
 // core/flows/adopt.ts
 runAdoptFlow(input: AdoptFlowInput, io: AdoptFlowIO): Promise<AdoptFlowResult>
 // core/flows/update.ts
@@ -2009,7 +2026,7 @@ readUpdateTarget(vaultRoot: string, opts: { release?: string; includePrerelease?
 1. **`prepareShard`**: the caller's `resolve` (install and adopt: `resolve(ref, { command })`; update: the source recorded in `state.json`, §step 6.2), then `downloadShard`, with the cleanup handed to `onCleanup` before the fetch, so a Ctrl+C during the download removes the temp dir (#57), then `parseManifest`, `assertEngineCompatible` (#121) and `parseSchema`. Each step is announced through `onLoading` ("Resolving …", "Downloading …", then `parseMessage` or "Parsing manifest and schema…").
 2. **`answersWithoutPrompting`**: the prefill merged over the schema's defaults (`mergePrefill`). A required value still missing is `VALUES_MISSING`, whose hint names the way the run got here (`--yes`, or `--values` without a terminal). Then `resolveComputedDefaults` and the schema's validator, with the default module selections.
 3. **The adopt flow**, in the order the machine ran it:
-   1. `--json` without `--dry-run` is `JSON_REQUIRES_DRY_RUN`; `--from-version` is checked (`parseFromVersion`); then, unless dry run, `io.takeLock()` (#253) and `assertAdoptable`; then `prepareShard`. A run whose `input.stop` was aborted meanwhile (an Ink run superseded by a newer one) ends there with `FlowCancelled`. Then the `--values` file.
+   1. `--json` without `--dry-run` is `JSON_REQUIRES_DRY_RUN`; `--from-version` is checked (`parseFromVersion`); then, unless dry run, `io.lock()` (#253) and `assertAdoptable`; then `prepareShard`. A run whose `input.stop` was aborted meanwhile (an Ink run superseded by a newer one) ends there with `FlowCancelled`. Then the `--values` file.
    2. The values: `--yes` → `answersWithoutPrompting`. No terminal (`input.interactive` false) or `--json`: with `--values`, the same; without, `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES` (#139, #198). Otherwise `io.ask({ kind: 'values' })`.
    3. Validate the answers, `checkExternalToolsForRun` (#138), `io.phase({ kind: 'planning' })`, `classifyAdoption` (with the renames since `--from-version`, #179).
    4. `--json --dry-run`: return `{ kind: 'plan', plan, mode }`, before any mode is resolved (#139).
@@ -2018,10 +2035,10 @@ readUpdateTarget(vaultRoot: string, opts: { release?: string; includePrerelease?
    7. `runAdopt` with a signal from `io.newRunAbort()`, the run handed to `io.onRun(abort, run)` so a Ctrl+C waits for its rollback (#249), and its progress to `io.progress`. Once it returns, `io.onCommitted()`: past `state.json`, a Ctrl+C no longer rolls back.
    8. `runHooks({ command: 'adopt' })` (§4.16a) with `io.hooks`, under an abort the flow hands to `io.onHookAbort` and clears after.
    9. Return `{ kind: 'done', … }` with the summary, the hook outcomes and the external-tools lines. The temp dir is removed in a `finally`, whatever the outcome.
-4. **Answers that end the run**: `ask` rejects with `FlowCancelled` (a user cancelling a prompt); the flow lets it through. An executor failure is rethrown marked so that `adoptRolledBack(err)` says the vault was rolled back, as `installRolledBack` does for install.
+4. **Answers that end the run**: `ask` rejects with `FlowCancelled` (a user cancelling a prompt); the flow lets it through. An executor that rolled the vault back throws `rolledBackError(err, rollback)`: the error, with what the rollback could not undo (#247), marked so `wasRolledBack(err)` tells the error view to add the rollback line. A failure before the run's transaction existed rolled nothing back and is not marked. One marker serves install, update and adopt.
 5. **Headless `adopt --json`** (`commands/headless/adopt.ts`): parses with `commands/options/adopt.ts` (§4.29), runs the flow with `interactive: false` and an `ask` that is never called (a dry run stops at the plan, and the values never prompt without a terminal), writes `jsonSuccess('adopt', adoptPlanResult(plan, …))` or `jsonFailure('adopt', err)`. A Ctrl+C during the download removes the temp dir and exits 130, with no document: the cancelled download (`DownloadCancelledError`) is not a failure to report. `validate --json` does the same.
 6. **The update flow**, in the order the machine ran it:
-   1. `--json` without `--dry-run` is `JSON_REQUIRES_DRY_RUN`; then, unless dry run, `io.takeLock()` (#253).
+   1. `--json` without `--dry-run` is `JSON_REQUIRES_DRY_RUN`; then, unless dry run, `io.lock()` (#253).
    2. `readUpdateTarget`: "Reading install state…", `readState` (none: `UPDATE_NO_INSTALL`), `assertFlagsCompatible` (`UPDATE_FLAG_CONFLICT`: `--release` with `--include-prerelease`, or either on a ref install), the source (`<source>#<ref>`, `<source>@<release>`, or the recorded source). Then `prepareShard`, resolving with `resolveRefForUpdate`, which rewrites the registry's hints for a ref read from disk, and announcing "Parsing new manifest and schema…". The update-check cache is primed (`primeLatestVersion`) only for the latest-stable policy, and the flow waits for that write before it returns: a headless run exits right after its document.
    3. Up to date (a ref install: the same commit; a tag install: the same version and tarball): return `{ kind: 'up-to-date', manifest, state }`. A ref install resolved without a ref descriptor is a bug (`REGISTRY_NETWORK`), never "up to date".
    4. "Loading current values…" (`shard-values.yaml`, the cached schema: `UPDATE_CACHE_MISSING`), "Applying migrations…" (`applyMigrations`), the schema's additions (new required values, new optional modules). A run whose `input.stop` was aborted ends here with `FlowCancelled`.
@@ -2029,8 +2046,23 @@ readUpdateTarget(vaultRoot: string, opts: { release?: string; includePrerelease?
    6. `checkExternalToolsForRun` (#138), then the drift and the new render together, the renames (#178), and the removed files the user edited. Under `--json`, the pending modules and those files are one `UPDATE_JSON_NEEDS_ANSWERS` naming both (#230), unless `--yes` answers them. Otherwise the files are asked (`removed-files`), or kept under `--yes`.
    7. "Planning update…", `planUpdate`. `--json --dry-run`: return `{ kind: 'plan', plan }`, before any conflict is asked (#139).
    8. Each pending conflict: `io.ask({ kind: 'conflict', currentIndex, resolutions })`, in order; under `--yes`, `keep_mine` for each. An editor round (#50) is the adapter's: it answers only with the file's final resolution.
-   9. `runUpdate` (`io.newRunAbort`, `io.onRun`, `io.progress`), then `io.onCommitted()`, then `runHooks({ command: 'update', previousVersion })` under the hooks' abort, then `{ kind: 'done', … }` with the summary, the migration warnings, the hooks, the backup folder (vault-relative POSIX, null in a dry run) and the external-tools lines. The temp dir is removed in a `finally`. An executor failure is marked for `updateRolledBack`.
+   9. `runUpdate` through `runAndHooks` (§4.30 step 8), then `{ kind: 'done', … }` with the summary, the migration warnings, the hooks, the backup folder (vault-relative POSIX, null in a dry run) and the external-tools lines. The temp dir is removed in a `finally`.
 7. **Headless `update --json`** (`commands/headless/update.ts`): as adopt's. An up-to-date vault answers `upToDatePlanResult`; a plan answers `updatePlanResult`. With update and adopt headless, no `--json` run mounts Ink, so `cli.ts` no longer marks stdout non-interactive or drops Ink's trailing blank write (§4.23). A root option before the command is passed on to the runner.
+8. **`runAndHooks`**, the write step every flow ends with: a run abort from `io.newRunAbort()` (aborted when the run is superseded: before its first write it stops, as `beginTransaction` checks it first; mid-write it rolls back), the executor started with its signal and handed to `io.onRun(abort, run)` so a Ctrl+C waits for its rollback (#249). A failure is rethrown as the executor threw it (marked, if it rolled back). Once it returns, `io.onCommitted()`: past `state.json`, a Ctrl+C no longer rolls back. Then `runHooks` with the context `hooks(result)` builds, under an abort handed to `io.onHookAbort` and cleared after. The flows' own io extends `FlowRunIO` with their `ask`, `phase` and `progress`.
+9. **The install flow**, in the order the machine ran it:
+   1. `--defaults` with `--values` is `INSTALL_FLAG_CONFLICT`. The destination was decided by the caller (`install-destination.ts`, §4.31): for a folder that exists, `io.lock()` (#253) and `readState`; for one the install will make, neither (there is no folder to lock, and no state in it). An install over an existing one under `--defaults` without `--force` is `INSTALL_DEFAULTS_OVER_EXISTING`.
+   2. `prepareShard` (`resolve(ref, { command: 'install' })`). A run whose `input.stop` was aborted meanwhile ends there with `FlowCancelled`. Then the `--values` file, "Checking the shard…" (`assertShardInstallable`, #35), and the module file counts the wizard shows (`planOutputs` with the default selections).
+   3. An existing install: `--force` reinstalls over it with no question. Without a terminal (`input.interactive` false), `INSTALL_GATE_NON_INTERACTIVE`. Otherwise `io.ask({ kind: 'gate' })`: `reinstall` goes on with the old state as `previous`; `update` and `cancel` end the run with `FlowCancelled`, naming `shardmind update` for the first.
+   4. The values: `--yes` or `--defaults` → `answersWithoutPrompting`. No terminal: with `--values`, the same; without, `INSTALL_NON_INTERACTIVE_WITHOUT_VALUES` (#139). Otherwise `io.ask({ kind: 'values' })` (the wizard), validated.
+   5. `checkExternalToolsForRun` (#138); the outputs planned with the values (`_each`, #214), the stale paths of a reinstall (#228), `assertSafeVaultPaths` (#163), the collisions, split into the user's own and a reinstall's untouched files, and the stale files split the same way.
+   6. The user's own collisions: `--force` overwrites them; with a terminal and no `--yes` / `--defaults`, `io.ask({ kind: 'collision' })`, where `cancel` ends the run with `FlowCancelled`; otherwise they are backed up. (Before #302 a headless `--values` run reached the collision prompt with no terminal to show it on; it now backs up, as `--yes` does.)
+   7. What moves aside, rechecked against edits made while the collision review was open (#55, #228; with no review, nothing changed since the files were classified), then `runInstallTransaction` through `runAndHooks`, with `createRoot` for a folder the install makes, whose lock is `io.lock` (§4.28 step 1a). Then the hooks (`command: 'install'`, the stale files removed as `removedFiles`) and `{ kind: 'done', … }` with the summary fields (vault, folder, file count, backups, replaced, removed, kept-stale, hooks, external tools). The temp dir is removed in a `finally`.
+10. **The adapters' shared part** (`commands/hooks/use-flow-run.ts`): every machine needs the same wiring around its flow, so one hook holds it:
+   - the question the flow waits on, answered only from its own prompt (`settle(kind, outcome, index?)`, keyed by the question's kind and, for an iterated question, its index), and rejected with `FlowCancelled` when the run is superseded;
+   - the run handle a Ctrl+C stops and waits for, and the hooks' abort, each set and cleared only by its own run, the handle dropped once committed; a superseded run's run abort and hooks' abort, aborted, and its lock calls inert (the lock is its successor's); the temp dir's cleanup, run on every Ctrl+C and on supersession (`useSigintRollback`);
+   - the vault lock (`useVaultLock`), released when the run ends;
+   - the hooks' phase and output (`appendHookOutput`), and the error view's rollback line (`wasRolledBack`).
+   Each machine keeps only its questions' mapping to phases and its handlers.
 
 ### 4.31 `install-destination.ts`
 

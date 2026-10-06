@@ -23,10 +23,11 @@ import {
   type AdoptSummary,
 } from '../adopt-executor.js';
 import { checkExternalToolsForRun } from '../external-tools.js';
-import { runHooks, type HookOutcome, type HookRunUi } from '../hook-orchestrator.js';
+import type { HookOutcome } from '../hook-orchestrator.js';
 import { prepareShard, type PreparedShard } from './prepare-shard.js';
 import { answersWithoutPrompting, loadValuesFile, validateValues, type ValueAnswers } from './values.js';
 import { FlowCancelled } from './cancelled.js';
+import { runAndHooks, type FlowRunIO } from './run.js';
 
 /** How the differing files are settled when no per-file answer is given. */
 export type AdoptMode = 'keep-all-mine' | 'use-all-theirs' | 'auto-merge' | 'decide-per-file';
@@ -81,24 +82,10 @@ export type AdoptFlowPhase =
   | { kind: 'planning'; shard: PreparedShard; answers: ValueAnswers }
   | { kind: 'executing' };
 
-export interface AdoptFlowIO {
+export interface AdoptFlowIO extends FlowRunIO {
   ask<Q extends AdoptQuestion>(question: Q): Promise<AdoptAnswer<Q>>;
   phase(phase: AdoptFlowPhase): void;
   progress(event: AdoptProgressEvent): void;
-  /** The hooks' phase and output; the flow supplies the signal. */
-  hooks: Omit<HookRunUi, 'signal'>;
-  /** The vault lock, taken before the vault is read (#253); not under --dry-run. */
-  takeLock(): void;
-  /** The temp dir's cleanup, as soon as it exists (#57). */
-  onCleanup(cleanup: () => Promise<void>): void;
-  /** The abort for the run; aborted already if a Ctrl+C came first (#249). */
-  newRunAbort(): AbortController;
-  /** The run in flight: a Ctrl+C aborts it and waits for its rollback. */
-  onRun(abort: AbortController, run: Promise<unknown>): void;
-  /** state.json is written: a Ctrl+C no longer rolls back. */
-  onCommitted(): void;
-  /** The hooks' abort while they run, or null once they are done. */
-  onHookAbort(abort: AbortController | null): void;
 }
 
 export type AdoptFlowResult =
@@ -112,13 +99,6 @@ export type AdoptFlowResult =
       durationMs: number;
     };
 
-/** The errors the executor threw after rolling the vault back. */
-const rolledBack = new WeakSet<object>();
-
-/** Whether the run that threw `err` rolled the vault back, for the error view's line. */
-export function adoptRolledBack(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && rolledBack.has(err);
-}
 
 export async function runAdoptFlow(input: AdoptFlowInput, io: AdoptFlowIO): Promise<AdoptFlowResult> {
   const { vaultRoot, dryRun, json, yes, mode } = input;
@@ -135,7 +115,7 @@ export async function runAdoptFlow(input: AdoptFlowInput, io: AdoptFlowIO): Prom
   if (input.fromVersion !== undefined) parseFromVersion(input.fromVersion);
   // Before the vault is read: a plan made from a vault another run is
   // changing would be stale (#253). Then the guard, before any download.
-  if (!dryRun) io.takeLock();
+  if (!dryRun) io.lock();
   await assertAdoptable(vaultRoot);
 
   let shard: PreparedShard | undefined;
@@ -275,62 +255,41 @@ async function execute(
 ): Promise<AdoptFlowResult> {
   const start = Date.now();
   io.phase({ kind: 'executing' });
-  const abort = io.newRunAbort();
-  const run = runAdopt({
-    vaultRoot: input.vaultRoot,
-    manifest: shard.manifest,
-    schema: shard.schema,
-    tempDir: shard.tempDir,
-    resolved: shard.resolved,
-    tarballSha256: shard.tarballSha256,
-    values: answers.values,
-    selections: answers.selections,
-    plan,
-    resolutions,
-    dryRun: input.dryRun,
-    signal: abort.signal,
-    onProgress: io.progress,
-  });
-  io.onRun(abort, run);
-  let result;
-  try {
-    result = await run;
-  } catch (err) {
-    // runAdopt rolled the vault back before throwing (a dry run wrote nothing).
-    if (!input.dryRun && typeof err === 'object' && err !== null) rolledBack.add(err);
-    throw err;
-  }
-  // state.json is on disk: past the point of no return, so a Ctrl+C during
-  // the hooks can't walk the adopt back.
-  io.onCommitted();
-
-  // Adopt runs the install-side slots: bootstrap, then personalize (skipped
-  // under Invariant 2), or a lone legacy post-install. newFiles is the
-  // freshly installed shard-only set.
-  const hookAbort = new AbortController();
-  io.onHookAbort(hookAbort);
-  let hooks: HookOutcome[];
-  try {
-    const hookRun = await runHooks(
-      {
-        command: 'adopt',
-        tempDir: shard.tempDir,
+  const { result, hooks } = await runAndHooks(
+    io,
+    (signal) =>
+      runAdopt({
+        vaultRoot: input.vaultRoot,
         manifest: shard.manifest,
         schema: shard.schema,
-        vaultRoot: input.vaultRoot,
-        state: result.state,
+        tempDir: shard.tempDir,
+        resolved: shard.resolved,
+        tarballSha256: shard.tarballSha256,
         values: answers.values,
-        modules: answers.selections,
-        newFiles: result.summary.installedFresh,
-        removedFiles: [],
+        selections: answers.selections,
+        plan,
+        resolutions,
         dryRun: input.dryRun,
-      },
-      { ...io.hooks, signal: hookAbort.signal },
-    );
-    hooks = hookRun.outcomes;
-  } finally {
-    io.onHookAbort(null);
-  }
+        signal,
+        onProgress: io.progress,
+      }),
+    // Adopt runs the install-side slots: bootstrap, then personalize (skipped
+    // under Invariant 2), or a lone legacy post-install. newFiles is the
+    // freshly installed shard-only set.
+    (done) => ({
+      command: 'adopt',
+      tempDir: shard.tempDir,
+      manifest: shard.manifest,
+      schema: shard.schema,
+      vaultRoot: input.vaultRoot,
+      state: done.state,
+      values: answers.values,
+      modules: answers.selections,
+      newFiles: done.summary.installedFresh,
+      removedFiles: [],
+      dryRun: input.dryRun,
+    }),
+  );
 
   return { kind: 'done', shard, summary: result.summary, hooks, externalTools, durationMs: Date.now() - start };
 }

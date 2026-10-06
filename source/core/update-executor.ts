@@ -21,7 +21,7 @@ import type {
   MergeStats,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { attemptRollback, withRollbackFailures } from './rollback-report.js';
+import { rolledBackError } from './rollback-report.js';
 import { beginTransaction, type SnapshotTransaction } from './vault-transaction.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
@@ -365,7 +365,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     return { state: nextState, summary, backupDir: tx?.dir ?? null };
   } catch (err) {
     // A file left unrestored is never reported as rolled back (#247).
-    if (tx) throw withRollbackFailures(err, await attemptRollback(() => tx.rollback()));
+    if (tx) throw await rolledBackError(err, () => tx.rollback());
     throw err;
   }
 }

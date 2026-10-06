@@ -132,6 +132,8 @@ export function beginTransaction(
 ): Promise<SnapshotTransaction>;
 export function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction>;
 export async function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction> {
+  // A run cancelled before it began writes nothing: no snapshot folder, no vault folder.
+  throwIfCancelled(opts.signal);
   const now = opts.now ?? new Date();
   // A `.shardmind/` that was here is the user's (or the old install's): the
   // rollback removes only one this run made, once empty.

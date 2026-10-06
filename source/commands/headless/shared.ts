@@ -36,7 +36,7 @@ export interface HeadlessFlowIO {
   phase: () => void;
   progress: () => void;
   hooks: Omit<HookRunUi, 'signal'>;
-  takeLock: () => void;
+  lock: () => { release(): void };
   onCleanup: (cleanup: () => Promise<void>) => void;
   newRunAbort: () => AbortController;
   onRun: () => void;
@@ -66,7 +66,7 @@ export async function runFlowJson(
       phase: () => {},
       progress: () => {},
       hooks: { setPhase: () => {}, onStdout: () => {}, onStderr: () => {} },
-      takeLock: () => {},
+      lock: () => ({ release: () => {} }),
       onCleanup: (c) => {
         cleanup = c;
       },

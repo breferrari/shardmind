@@ -5,6 +5,7 @@
  * compared byte for byte before and after.
  */
 
+import { wasRolledBack } from '../../source/core/rollback-report.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -23,7 +24,6 @@ import {
 import {
   runInstall,
   runInstallTransaction,
-  installRolledBack,
   type InstallTransactionOptions,
 } from '../../source/core/install-executor.js';
 import type { ResolvedShard } from '../../source/runtime/types.js';
@@ -143,7 +143,7 @@ describe('runInstallTransaction (#300)', () => {
     try {
       const err = await rejection(runInstallTransaction(await options(collisions)));
       expect(code(err)).toBe('BACKUP_FAILED');
-      expect(installRolledBack(err)).toBe(true);
+      expect(wasRolledBack(err)).toBe(true);
     } finally {
       faults.uninstall();
     }
@@ -193,7 +193,7 @@ describe('runInstallTransaction (#300)', () => {
       // A write failure, its errno kept as the cause (#301).
       expect(code(err)).toBe('INSTALL_WRITE_FAILED');
       expect(code((err as { cause?: unknown }).cause)).toBe('EIO');
-      expect(installRolledBack(err)).toBe(true);
+      expect(wasRolledBack(err)).toBe(true);
     } finally {
       faults.uninstall();
     }
@@ -208,7 +208,7 @@ describe('runInstallTransaction (#300)', () => {
     try {
       const err = await rejection(runInstallTransaction(await options(collisions, { signal: abort.signal })));
       expect(code(err)).toBe('CANCELLED');
-      expect(installRolledBack(err)).toBe(true);
+      expect(wasRolledBack(err)).toBe(true);
       expect(faults.writtenAfterHook).toEqual([]);
     } finally {
       faults.uninstall();
@@ -222,7 +222,7 @@ describe('runInstallTransaction (#300)', () => {
     try {
       const err = await rejection(runInstallTransaction(await options(collisions)));
       expect(code(err)).toBe('ROLLBACK_INCOMPLETE');
-      expect(installRolledBack(err)).toBe(true);
+      expect(wasRolledBack(err)).toBe(true);
     } finally {
       faults.uninstall();
     }
@@ -291,7 +291,7 @@ describe('runInstallTransaction (#300)', () => {
     expect(code(err)).toBe('INSTALL_WRITE_FAILED');
     expect((err as Error).message).toBe('.claude/settings.json appeared after the install was planned');
     expect((err as { hint?: string }).hint).toMatch(/Run shardmind install again/);
-    expect(installRolledBack(err)).toBe(true);
+    expect(wasRolledBack(err)).toBe(true);
     expect(await treeOf(vault)).toEqual(before);
   });
 
