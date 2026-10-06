@@ -4,7 +4,7 @@
  *
  * Pure of Ink: the caller releases the terminal's raw mode around
  * `editInEditor` with `withTerminalReleased`, and holds SIGINT with
- * `withSigintHeld`. The vault is never written here; the update executor
+ * `withSigintHeld` (process-control.ts, #303). The vault is never written here; the update executor
  * writes an edit under its snapshot and rollback.
  */
 
@@ -143,41 +143,6 @@ function isReadHandle(handle: unknown): handle is ReadHandle {
   return typeof Reflect.get(handle, 'readStop') === 'function' && typeof Reflect.get(handle, 'readStart') === 'function';
 }
 
-let sigintHeld = false;
-
-/**
- * Run `fn` with SIGINT held: a Ctrl+C in an editor that leaves the terminal
- * cooked also reaches node, queued in libuv while `spawnSync` blocks, and it
- * must cancel the edit, not the update and its choices so far.
- *
- * A no-op listener goes on before the others come off, and the others come
- * back before it goes, so SIGINT always has a listener: with none, Node would
- * close its signal handle and a signal in that window would take the default
- * action and kill the process. The queued signal is delivered in the poll
- * phase of the loop turn after `fn` returns; the restore waits for the check
- * phase after that one (two `setImmediate`s), so the no-op listener takes it.
- * `rawListeners` keeps a `once` listener a `once`. A nested call just runs
- * `fn`. `onRestored` runs once the listeners are back.
- */
-export function withSigintHeld<T>(fn: () => T, onRestored?: () => void): T {
-  if (sigintHeld) return fn();
-  sigintHeld = true;
-  const hold = (): void => {};
-  const listeners = process.rawListeners('SIGINT') as Array<(...args: unknown[]) => void>;
-  process.on('SIGINT', hold);
-  for (const l of listeners) process.removeListener('SIGINT', l);
-  const restore = (): void => {
-    for (const l of listeners) process.on('SIGINT', l);
-    process.removeListener('SIGINT', hold);
-    sigintHeld = false;
-    onRestored?.();
-  };
-  try {
-    return fn();
-  } finally {
-    setImmediate(() => setImmediate(restore));
-  }
-}
 
 function cancelled(detail: string): EditOutcome {
   return { kind: 'cancelled', detail: detail.endsWith('.') ? detail : `${detail}.` };

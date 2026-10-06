@@ -8,6 +8,7 @@ import { resolveEngineVersion } from './hooks/cli-version.js';
 import { useSigintRollback } from './hooks/shared.js';
 import { validateShard, type ValidateReport } from '../core/validate-shard.js';
 import ErrorView from '../components/ErrorView.js';
+import { setExitCode } from '../core/process-control.js';
 
 export const args = zod.tuple([
   zod
@@ -62,12 +63,12 @@ export default function Validate({ args, options }: Props) {
     }).then(
       (report) => {
         if (!live) return;
-        if (report.errors > 0) process.exitCode = 1;
+        if (report.errors > 0) setExitCode(1);
         setPhase({ kind: 'done', report });
       },
       (error: unknown) => {
         if (!live) return;
-        process.exitCode = 1;
+        setExitCode(1);
         setPhase({ kind: 'error', error });
       },
     );

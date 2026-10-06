@@ -38,6 +38,7 @@ import { assertNever } from '../runtime/types.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
 import { pathExists } from './fs-utils.js';
 import type { HOOK_STAGES } from '../runtime/vault-paths.js';
+import { onSigint } from './process-control.js';
 
 /**
  * Maximum captured bytes per stream (stdout / stderr). A pathological hook
@@ -483,7 +484,7 @@ export async function executeHook(
       // swallow — best-effort
     }
   };
-  process.once('SIGINT', sigintCleanup);
+  const offSigint = onSigint(sigintCleanup, { once: true });
 
   try {
     // The slot drives `SHARDMIND_HOOK_PHASE`. Slotted contexts carry it
@@ -684,7 +685,7 @@ export async function executeHook(
     const exitCode = exitInfo.code ?? -1;
     return { kind: 'ran', stdout, stderr, exitCode };
   } finally {
-    process.removeListener('SIGINT', sigintCleanup);
+    offSigint();
     try {
       await fsp.unlink(ctxPath);
     } catch {

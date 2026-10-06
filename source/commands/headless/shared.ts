@@ -10,6 +10,7 @@ import { DownloadCancelledError } from '../../core/download.js';
 import { emitJson, jsonFailure, jsonSuccess, type JsonCommand } from '../../core/json-output.js';
 import type { HookRunUi } from '../../core/hook-orchestrator.js';
 import { ShardMindError } from '../../runtime/types.js';
+import { exitOnSigint } from '../../core/process-control.js';
 
 export type Write = (chunk: string) => void;
 
@@ -57,10 +58,7 @@ export async function runFlowJson(
   run: (io: HeadlessFlowIO) => Promise<unknown>,
 ): Promise<number> {
   let cleanup: (() => Promise<void>) | undefined;
-  const onSigint = (): void => {
-    void (cleanup?.() ?? Promise.resolve()).finally(() => process.exit(130));
-  };
-  process.once('SIGINT', onSigint);
+  const offSigint = exitOnSigint(() => cleanup);
   try {
     const document = await run({
       phase: () => {},
@@ -83,6 +81,6 @@ export async function runFlowJson(
     emitJson(jsonFailure(command, err), write);
     return 1;
   } finally {
-    process.removeListener('SIGINT', onSigint);
+    offSigint();
   }
 }

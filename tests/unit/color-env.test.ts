@@ -76,13 +76,18 @@ describe('load order in source/cli.ts', () => {
 
   it('imports statically only modules that cannot load chalk', () => {
     expect(staticImports('cli.ts').sort()).toEqual(
-      ['./core/cancellation.js', './core/color-env.js', './core/json-run.js', './core/stdout-closed.js', 'node:module'].sort(),
+      ['./core/cancellation.js', './core/color-env.js', './core/json-run.js', './core/process-control.js', './core/stdout-closed.js', 'node:module'].sort(),
     );
   });
 
-  it.each(['core/cancellation.ts', 'core/color-env.ts', 'core/json-run.ts', 'core/stdout-closed.ts'])('%s imports nothing beyond node built-ins', (rel) => {
-    expect(staticImports(rel).filter((spec) => !spec.startsWith('node:'))).toEqual([]);
-  });
+  it.each(['core/cancellation.ts', 'core/color-env.ts', 'core/json-run.ts', 'core/stdout-closed.ts', 'core/process-control.ts'])(
+    '%s imports nothing beyond node built-ins and process-control (#303)',
+    (rel) => {
+      // process-control.ts, the owner of SIGINT and the exit code, is on the
+      // list itself: it imports nothing, so importing it cannot reach chalk.
+      expect(staticImports(rel).filter((spec) => !spec.startsWith('node:') && spec !== './process-control.js')).toEqual([]);
+    },
+  );
 
   it('calls applyNoColor as a top-level statement before any statement that imports', () => {
     // Top level, unconditional, and ahead of every statement holding an

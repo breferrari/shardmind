@@ -4,6 +4,8 @@ import { applyNoColor } from './core/color-env.js';
 import { jsonRunOf } from './core/json-run.js';
 import type { JsonCommand } from './core/json-output.js';
 import { exitQuietlyWhenStdoutCloses } from './core/stdout-closed.js';
+// The one owner of SIGINT, the exit code and this file's startup order (#303).
+import { exitProcess, setExitCode } from './core/process-control.js';
 
 // NO_COLOR turns colour off unless FORCE_COLOR is set (#37). chalk, which Ink
 // colours through, reads the environment once when it is first imported, so
@@ -37,8 +39,8 @@ const crash = {
   // (Windows, macOS). The code is set first, so an exit elsewhere in the
   // meantime still fails.
   exit: (code: number) => {
-    process.exitCode = code;
-    process.stdout.write('', () => process.stderr.write('', () => process.exit(code)));
+    setExitCode(code);
+    process.stdout.write('', () => process.stderr.write('', () => exitProcess(code)));
   },
 };
 const reportCrash = installCrashHandlers(process, crash);
@@ -100,15 +102,15 @@ try {
           ),
         ),
       );
-      process.exitCode = 1;
+      setExitCode(1);
     } else {
       const run = await HEADLESS_JSON[jsonArgs.command]();
-      process.exitCode = await run(jsonArgs.rest, crash.version);
+      setExitCode(await run(jsonArgs.rest, crash.version));
     }
     // A pipe write can still be queued (Windows, macOS): exiting before it
     // drains would cut the document short.
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
-    process.exit();
+    exitProcess();
   }
 
   const { default: Pastel } = await import('./cli-kit/index.js');

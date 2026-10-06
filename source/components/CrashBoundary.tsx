@@ -1,6 +1,7 @@
 import { Component, useEffect, type ReactNode } from 'react';
 import { useApp } from 'ink';
 import ErrorView from './ErrorView.js';
+import { setExitCode } from '../core/process-control.js';
 
 interface Props {
   /** shardmind's version, read only if something crashes. */
@@ -27,7 +28,7 @@ export default class CrashBoundary extends Component<Props, State> {
   }
 
   override componentDidCatch(): void {
-    process.exitCode = 1;
+    setExitCode(1);
   }
 
   override render(): ReactNode {

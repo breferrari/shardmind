@@ -18,17 +18,22 @@ import type { EventEmitter } from 'node:events';
 /** 128 + SIGPIPE: what a shell reports for a process a closed pipe stopped. */
 export const STDOUT_CLOSED_EXIT_CODE = 141;
 
+import { setExitCode } from './process-control.js';
+
 type Write = (chunk: string | Uint8Array, ...rest: unknown[]) => boolean;
 
 function isEpipe(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'EPIPE';
 }
 
-export function exitQuietlyWhenStdoutCloses(proc: {
-  stdout: EventEmitter & { write: Write | NodeJS.WritableStream['write']; errored?: unknown };
-  on(event: 'exit', listener: (code: number) => void): unknown;
-  exitCode?: number | string | null | undefined;
-}): void {
+export function exitQuietlyWhenStdoutCloses(
+  proc: {
+    stdout: EventEmitter & { write: Write | NodeJS.WritableStream['write']; errored?: unknown };
+    on(event: 'exit', listener: (code: number) => void): unknown;
+  },
+  /** The exit code's one writer (#303); a test passes its own. */
+  setCode: (code: number) => void = setExitCode,
+): void {
   let closed = false;
   proc.stdout.on('error', (error: unknown) => {
     // Once closed, the stream reports the rest of its failed writes too.
@@ -51,6 +56,6 @@ export function exitQuietlyWhenStdoutCloses(proc: {
     // stream's recorded error says the pipe closed all the same.
     const pipeClosed = closed || isEpipe(proc.stdout.errored);
     // A run that failed on its own keeps its code.
-    if (pipeClosed && code === 0) proc.exitCode = STDOUT_CLOSED_EXIT_CODE;
+    if (pipeClosed && code === 0) setCode(STDOUT_CLOSED_EXIT_CODE);
   });
 }

@@ -12,6 +12,7 @@ import { loadValuesYaml } from './values-io.js';
 import { errorFindings, lintShard, type LintFinding } from './lint-shard.js';
 import { emitJson, jsonFailure, jsonSuccess } from './json-output.js';
 import { ShardMindError } from '../runtime/types.js';
+import { exitOnSigint } from './process-control.js';
 
 export interface ValidateReport {
   /** What was checked: the absolute directory, or the reference as given. */
@@ -94,10 +95,7 @@ export async function runValidateJson(
 ): Promise<number> {
   let cleanup: (() => Promise<void>) | undefined;
   // Ctrl+C mid-download: remove the temp dir before exiting 130 (#57).
-  const onSigint = (): void => {
-    void (cleanup?.() ?? Promise.resolve()).finally(() => process.exit(130));
-  };
-  process.once('SIGINT', onSigint);
+  const offSigint = exitOnSigint(() => cleanup);
   try {
     const { target, valuesFile } = parseValidateArgv(argv);
     const result = await validateShard(target, {
@@ -116,7 +114,7 @@ export async function runValidateJson(
     emitJson(jsonFailure('validate', err), write);
     return 1;
   } finally {
-    process.removeListener('SIGINT', onSigint);
+    offSigint();
   }
 }
 

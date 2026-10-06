@@ -11,8 +11,8 @@
  * The hook here closes that gap: when the CLI runs non-interactively
  * (stdin is a pipe, not a TTY), we listen for the ETX byte (0x03 — the
  * ASCII form of Ctrl+C) on stdin. A parent that wants clean cancellation
- * writes that byte and we `process.emit('SIGINT')`, which fires every
- * SIGINT listener registered via `process.on('SIGINT', ...)` — the same
+ * writes that byte and we emit SIGINT in-process (`emitSigint`), which runs
+ * every handler on process-control's stack (#303) — the same
  * listeners that already run on a native POSIX signal.
  *
  * A TTY needs the same bridge for a different reason (#155). Ink puts the
@@ -34,8 +34,8 @@
  *
  * Scope: the bridge is installed once at CLI startup. In a pipe the
  * listener stays alive for the lifetime of the process; in a TTY it comes
- * and goes with raw mode. It imports nothing beyond node built-ins, so it
- * loads before chalk (tests/unit/color-env.test.ts); the executors' check
+ * and goes with raw mode. It imports only node built-ins and
+ * process-control.ts, which imports nothing (#303), so it loads before chalk (tests/unit/color-env.test.ts); the executors' check
  * that stops a run once Ctrl+C aborted it is in `run-cancel.ts` (#249).
  *
  * Every Ctrl+C byte emits SIGINT. A repeat during a rollback is absorbed by
@@ -44,6 +44,7 @@
  * cuts the first one short.
  */
 
+import { emitSigint, exitProcess } from './process-control.js';
 
 const ETX = 0x03;
 const ETX_CHAR = String.fromCharCode(ETX);
@@ -56,8 +57,8 @@ export interface CancellationDeps {
 }
 
 const processDeps: CancellationDeps = {
-  emitSigint: () => process.emit('SIGINT'),
-  exit: (code) => process.exit(code),
+  emitSigint,
+  exit: exitProcess,
 };
 
 let installed = false;
