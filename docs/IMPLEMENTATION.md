@@ -898,13 +898,18 @@ interface MigrationResult {
    - `rename`: if `values[old]` present and `values[new]` absent, copy and delete the old key. If the target is already occupied, warn + skip (never overwrite — that would destroy user data). If the source is missing, warn + skip.
    - `added`: if `values[key]` is absent, set to `default`. If already present, no-op (no warning).
    - `removed`: delete `values[key]` and warn (users deserve to know a key they set is being discarded). No-op when already absent.
-   - `type_changed`: evaluate `transform` in a `new Function('value', 'return (<expr>)')` sandbox. Catch and warn on any throw, preserving the original value. Sandboxing untrusted shards is not a goal of this layer — the threat model is "buggy transform", not "hostile transform" (shard authors can already ship arbitrary hook code; see ARCHITECTURE §8).
-4. Return transformed values + changelog + warnings.
+   - `type_changed` (#346): if `values[key]` is absent, warn + skip. Otherwise evaluate `transform`, a JavaScript expression, as `new Function('value', 'return (<expr>)')(values[key])`, and set `key` to whatever it returns. The migrator does not check the result's type: the values check after migration does (step 5), where `undefined` counts as unset (the new schema's default applies, or a required key fails).
+     - It runs synchronously in the shardmind process, with no timeout, and it is **not sandboxed**: `new Function` only gives it a clean scope, not isolation. The threat model is "buggy transform", not "hostile transform" (shard authors can already ship arbitrary hook code; see ARCHITECTURE §8). An expression that never returns hangs the update.
+     - A transform that throws: warn (`type_changed: transform for '<key>' threw (<message>); kept original value.`) and keep the old value.
+     - `from` and `to` are documentation for readers; the engine does not read them.
+4. Return transformed values + changelog + warnings. The warnings appear in the update's summary.
+5. The update then checks the migrated values against the new schema (`validateValues` in `flows/values.ts`) before it writes anything. A transform that returned the wrong type fails there with `VALUES_INVALID`, naming the key and the type it expected, and nothing is written.
 
 **Error cases**:
 - `currentVersion` or `targetVersion` not valid semver → throw `MIGRATION_INVALID_VERSION`.
 - Migration references key that doesn't exist → warning, skip.
 - Transform expression throws → warning, keep original value.
+- Transform returns a value of the wrong type → the update stops at step 5 with `VALUES_INVALID`, before any write.
 - Rename target already has a value → warning, both keys preserved.
 
 **Dependencies**: `semver`.
@@ -2010,7 +2015,8 @@ prepareShard(ref: string, opts: { resolve(): Promise<ResolvedShard>; engineVersi
 interface ValueAnswers { values: Record<string, unknown>; selections: ModuleSelections }
 loadValuesFile(path: string, schema: ShardSchema): Promise<Record<string, unknown>>
 answersWithoutPrompting(schema: ShardSchema, prefill: Record<string, unknown>, yes: boolean): ValueAnswers
-validateValues(schema: ShardSchema, values: Record<string, unknown>): Record<string, unknown>
+type ValuesSource = 'answers' | 'vault'   // install/adopt's answers; update's shard-values.yaml after migrations
+validateValues(schema: ShardSchema, values: Record<string, unknown>, source: ValuesSource): Record<string, unknown>  // VALUES_INVALID naming each key, hint per source (#346)
 // core/flows/cancelled.ts
 class FlowCancelled extends Error { readonly reason: string }
 // core/flows/run.ts: what every flow's write step shares

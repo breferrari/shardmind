@@ -300,9 +300,11 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 
 ### `VALUES_INVALID`
 
-**Meaning (runtime):** `shard-values.yaml` parsed as YAML but isn't a mapping at the top level.
+**Meaning:** The values don't fit the shard's schema, or (runtime) `shard-values.yaml` parsed as YAML but isn't a mapping at the top level. The message names each key and the type it expected.
 
-**Remedy:** Ensure the file is `key: value` entries; not a list, not a scalar.
+**Typical cause:** A wrong-typed value in a `--values` file (install, adopt) or a hand-edited `shard-values.yaml` (update), or an update's `type_changed` migration whose transform returned the wrong type.
+
+**Remedy:** Fix the named keys in the file the hint names. If an update's migration produced the value, the shard's transform is wrong: report it to the shard's author. For the runtime case, make the file `key: value` entries, not a list or a scalar.
 
 ### `VALUES_FILE_READ_FAILED`
 
