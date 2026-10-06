@@ -239,7 +239,7 @@ Install, update and adopt share one write transaction and run without the UI lay
 | ✅ | Drive the rollback contract's install pipeline through runInstallTransaction | [#311](https://github.com/breferrari/shardmind/issues/311) |
 | ✅ | Run install, update and adopt through one vault transaction module | [#301](https://github.com/breferrari/shardmind/issues/301) |
 | ✅ | Run each command as a UI-free flow the Ink machine adapts | [#302](https://github.com/breferrari/shardmind/issues/302) |
-| ⬜ | Remove onBackupReady and onFileTouched from the executor API | [#323](https://github.com/breferrari/shardmind/issues/323) |
+| ✅ | Remove onBackupReady and onFileTouched from the executor API | [#323](https://github.com/breferrari/shardmind/issues/323) |
 | ⬜ | Give process control a single owner | [#303](https://github.com/breferrari/shardmind/issues/303) |
 
 ## Phase 13 — the research-wiki shard

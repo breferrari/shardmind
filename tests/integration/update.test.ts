@@ -618,12 +618,9 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     expect(needing).toContain(modifiedPath);
   });
 
-  it('fires onBackupReady before any writes, once the snapshot is staged', async () => {
-    // Round 4 /harden audit caught that the state machine was
-    // populating its backupDirRef only AFTER runUpdate returned — so
-    // a mid-write Ctrl-C would find the ref null and skip rollback.
-    // The fix exposes `onBackupReady` from the executor. This test
-    // locks the ordering: backup callback fires before any file write.
+  it('stages the snapshot before its first vault write (#301)', async () => {
+    // A Ctrl+C or a failure at the first write must find the snapshot
+    // the rollback restores from (§4.28 step 1).
     const { state, oldValues, newManifest, newSchema } = await setUpUpdate({
       bumpTo: '0.2.0',
       newHomeTemplate: 'Hello {{ user_name }}, v2!\n',
@@ -639,7 +636,19 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       removedFileDecisions: {},
     });
 
-    const events: Array<{ kind: string }> = [];
+    // At the first write outside the snapshot folder, the snapshot is
+    // whole: its marker, written last (§4.28 step 1), is there.
+    const backups = path.join(vault, '.shardmind', 'backups');
+    let snapshotAtFirstWrite: boolean | undefined;
+    const realWrite = fsp.writeFile;
+    const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      if (snapshotAtFirstWrite === undefined && !String(file).startsWith(backups)) {
+        const dirs = await fsp.readdir(backups).catch(() => [] as string[]);
+        snapshotAtFirstWrite =
+          dirs.length === 1 && (await fsp.access(path.join(backups, dirs[0]!, 'templates-snapshot.json')).then(() => true, () => false));
+      }
+      return realWrite(file, data, opts);
+    });
     await runUpdate({
       vaultRoot: vault,
       plan,
@@ -652,14 +661,9 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       resolved: { ...RESOLVED, version: newManifest.version },
       tarballSha256: 'sha-0.2.0',
       newTempDir: newShard,
-      onBackupReady: () => events.push({ kind: 'backup' }),
-      onFileTouched: () => events.push({ kind: 'touched' }),
-    });
+    }).finally(() => writeSpy.mockRestore());
 
-    const backupIdx = events.findIndex((e) => e.kind === 'backup');
-    const firstTouch = events.findIndex((e) => e.kind === 'touched');
-    expect(backupIdx).toBe(0);
-    expect(firstTouch).toBeGreaterThan(backupIdx);
+    expect(snapshotAtFirstWrite).toBe(true);
   });
 
   it('keep_as_user preserves the file on disk and untracks it from state', async () => {
