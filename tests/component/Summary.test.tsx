@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
 import React from 'react';
-import Summary from '../../source/components/Summary.js';
+import Summary, { cdCommand } from '../../source/components/Summary.js';
 import type { ShardManifest } from '../../source/runtime/types.js';
 import type { BackupRecord } from '../../source/core/install-executor.js';
 
@@ -158,5 +158,20 @@ describe('Summary: external tools (#138)', () => {
     const { lastFrame } = render(<Summary {...baseProps} externalTools={[line]} />);
     expect(lastFrame()).toContain('External tools:');
     expect(lastFrame()).toContain(line);
+  });
+});
+
+describe('cdCommand: the cd line is safe to paste (#333)', () => {
+  it.each([
+    ['demo', 'linux', 'cd demo'],
+    ['vaults/my-wiki', 'darwin', 'cd vaults/my-wiki'],
+    ['my wiki', 'linux', "cd 'my wiki'"],
+    ['$HOME-vault', 'darwin', "cd '$HOME-vault'"],
+    ["it's", 'linux', "cd 'it'\\''s'"],
+    ['-vault', 'linux', 'cd ./-vault'],
+    ['my wiki', 'win32', 'cd "my wiki"'],
+    ['-my vault', 'win32', 'cd "./-my vault"'],
+  ] as const)('%s on %s → %s', (folder, platform, line) => {
+    expect(cdCommand(folder, platform)).toBe(line);
   });
 });

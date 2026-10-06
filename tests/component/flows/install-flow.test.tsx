@@ -37,6 +37,7 @@ import {
 } from './helpers.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
 import { resetSigintRollbackForTests } from '../../../source/commands/hooks/shared.js';
+import { cdCommand } from '../../../source/components/Summary.js';
 import { symlinksWork } from '../../helpers/fs-capabilities.js';
 import { tick, waitFor, ENTER, ESC, ARROW_DOWN, SPACE, typeText } from '../helpers.js';
 
@@ -1433,7 +1434,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: cwd, folder: 'vaults/my wiki', options: { defaults: true } });
         const frame = await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 30_000);
         expect(await exists(path.join(cwd, 'vaults', 'my wiki', '.shardmind', 'state.json'))).toBe(true);
-        expect(frame).toContain('cd "vaults/my wiki"');
+        expect(frame).toContain(cdCommand('vaults/my wiki'));
       } finally {
         await cleanupVault(cwd);
       }

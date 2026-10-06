@@ -125,9 +125,16 @@ function PathList({ title, paths }: { title: string; paths: string[] }) {
   );
 }
 
-/** `cd` into the folder as written, quoted when the shell would split it. */
-function cdCommand(folder: string): string {
-  return /^[\w./@+-]+$/.test(folder) ? `cd ${folder}` : `cd "${folder}"`;
+/**
+ * `cd` into the folder as written, safe to paste: bare when the shell would
+ * read it as is, else quoted for the shell the platform runs (POSIX single
+ * quotes; on Windows double quotes, a `"` never being in a Windows name). A
+ * name starting with `-` gets `./`, so `cd` does not read it as an option.
+ */
+export function cdCommand(folder: string, platform: NodeJS.Platform = os.platform()): string {
+  const target = folder.startsWith('-') ? `./${folder}` : folder;
+  if (/^[\w./@+-]+$/.test(target)) return `cd ${target}`;
+  return platform === 'win32' ? `cd "${target}"` : `cd '${target.replace(/'/g, `'\\''`)}'`;
 }
 
 function openCommandForPlatform(vaultRoot: string): string {
