@@ -477,8 +477,8 @@ describe('vault transaction for install (#301)', () => {
   it('a Ctrl+C before a move stops it, and nothing is moved', async () => {
     await fsp.writeFile(at('Home.md'), 'mine\n');
     const abort = new AbortController();
-    abort.abort();
     const tx = await beginInstall(abort.signal);
+    abort.abort();
     await expect(tx.recordSetAside(at('Home.md'), false)).rejects.toMatchObject({ code: 'CANCELLED' });
     expect(await read('Home.md')).toBe('mine\n');
     expect(await tx.rollback()).toEqual([]);
@@ -568,5 +568,23 @@ describe('vault transaction for an install into a folder it creates (#333)', () 
     expect(await tx.rollback()).toEqual([]);
     expect(await exists(levels[0]!)).toBe(true);
     expect(await exists(levels[1]!)).toBe(false);
+  });
+});
+
+describe('a transaction cancelled before it began (#302)', () => {
+  it('writes nothing: no snapshot folder, no vault folder', async () => {
+    const abort = new AbortController();
+    abort.abort();
+    await expect(beginTransaction(vault, { kind: 'update', noPriorInstall: false, signal: abort.signal })).rejects.toMatchObject({ code: 'CANCELLED' });
+    const root = path.join(vault, 'new');
+    await expect(
+      beginTransaction(root, {
+        kind: 'install',
+        noPriorInstall: true,
+        signal: abort.signal,
+        createRoot: { folders: [root], lock: () => acquireVaultLock(root, 'install') },
+      }),
+    ).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(await fsp.readdir(vault)).toEqual([]);
   });
 });
