@@ -53,14 +53,14 @@ export function useFlowRun<P extends { kind: string }>(opts: {
   /** The phases that end the run: the lock is released and the app exits. */
   isFinal: (phase: P) => boolean;
   /** The error view's line when the run rolled the vault back. */
-  rolledBack: string;
+  rolledBackLine: string;
   /**
    * `(p) => p`: compiles only when the machine's phases include the ones
    * every machine has (cancelled, error, a running hook), so none is cast.
    */
   asPhase: (phase: BasePhase) => P;
 }) {
-  const { vaultRoot, command, dryRun, rolledBack, asPhase } = opts;
+  const { vaultRoot, command, dryRun, rolledBackLine, asPhase } = opts;
   const { exit } = useApp();
   const [phase, setPhase] = useState<P>(opts.initial);
   // A prompt's handler reads the phase it answers (the file on screen).
@@ -88,6 +88,8 @@ export function useFlowRun<P extends { kind: string }>(opts: {
         setTimeout(() => exit(), 100);
       }
     },
+    // `isFinal` is a fresh arrow on every render with the same answer; a dep
+    // on it would make `finish`, and so `launch`, change every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [exit, releaseLock],
   );
@@ -191,7 +193,7 @@ export function useFlowRun<P extends { kind: string }>(opts: {
             asPhase({
               kind: 'error',
               error: err as Error,
-              detail: wasRolledBack(err) ? rollbackDetail(err, rolledBack) : undefined,
+              detail: wasRolledBack(err) ? rollbackDetail(err, rolledBackLine) : undefined,
             }),
           );
         },
@@ -207,8 +209,10 @@ export function useFlowRun<P extends { kind: string }>(opts: {
         if (ctxCleanupRef.current) ctxCleanupRef.current().catch(() => {});
       };
     },
+    // `asPhase` is a fresh identity arrow on every render: a dep on it would
+    // change `launch` every render for nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [finish, takeLock, releaseLock, rolledBack],
+    [finish, takeLock, releaseLock, rolledBackLine],
   );
 
   /**

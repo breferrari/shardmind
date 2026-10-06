@@ -43,7 +43,7 @@ export async function runAndHooks<T extends { state: HookRunPlan['state'] }>(
   io.onRun(abort, running);
   const result = await running;
   // state.json is on disk: past the point of no return, so a Ctrl+C during
-  // the hooks can't walk the run back (spec §9.3).
+  // the hooks can't walk the run back (ARCHITECTURE §9.3).
   io.onCommitted();
 
   const hookAbort = new AbortController();

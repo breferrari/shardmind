@@ -133,7 +133,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
     dryRun,
     initial: { kind: 'booting' },
     isFinal: (p) => p.kind === 'summary' || p.kind === 'cancelled' || p.kind === 'error',
-    rolledBack: 'Rolled back partial adopt.',
+    rolledBackLine: 'Rolled back partial adopt.',
     asPhase: (p) => p,
   });
 

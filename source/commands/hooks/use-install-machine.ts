@@ -104,7 +104,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
     dryRun,
     initial: { kind: 'booting' },
     isFinal: (p) => p.kind === 'summary' || p.kind === 'cancelled' || p.kind === 'error',
-    rolledBack: 'Rolled back partial install (including any pre-install backups).',
+    rolledBackLine: 'Rolled back partial install (including any pre-install backups).',
     asPhase: (p) => p,
   });
 

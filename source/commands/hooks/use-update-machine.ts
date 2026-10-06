@@ -136,7 +136,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     initial: { kind: 'booting' },
     // cancelled, up-to-date and summary are all successful outcomes and keep exit 0.
     isFinal: (p) => p.kind === 'summary' || p.kind === 'cancelled' || p.kind === 'error' || p.kind === 'up-to-date',
-    rolledBack: 'Rolled back partial update.',
+    rolledBackLine: 'Rolled back partial update.',
     asPhase: (p) => p,
   });
 
