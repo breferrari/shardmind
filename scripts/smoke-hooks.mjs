@@ -2,7 +2,7 @@
 // npm. Run from a checkout of the repository only, after `npm run build`.
 // Not reachable from a published shardmind install.
 //
-// Smoke driver for the post-install / post-update hook runtime (#30).
+// Smoke driver for the hook runtime (#30), through the bootstrap slot.
 // Stands up three local github-stubs, each serving a custom tarball
 // that embeds a different kind of hook — happy / throwing / hanging —
 // then drives the built CLI against each and asserts on exit code,
@@ -51,7 +51,7 @@ async function buildTarball(scratch, slug, hookSource, { timeoutMs } = {}) {
   const workDir = path.join(workRoot, prefix);
   await copyTree(MINIMAL, workDir);
   await fs.mkdir(path.join(workDir, 'hooks'), { recursive: true });
-  await fs.writeFile(path.join(workDir, 'hooks/post-install.ts'), hookSource, 'utf-8');
+  await fs.writeFile(path.join(workDir, 'hooks/bootstrap.ts'), hookSource, 'utf-8');
   if (timeoutMs !== undefined) {
     const shardYaml = await fs.readFile(path.join(workDir, 'shard.yaml'), 'utf-8');
     await fs.writeFile(
