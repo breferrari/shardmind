@@ -8,6 +8,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (the shardmind/runtime surface pinned for 1.0 — #358)
+
+- **`shardmind/runtime` exports the vault paths** `SHARDMIND_DIR`, `STATE_FILE` and `VALUES_FILE`, which the docs promised. It also exports type-only names for every shape its functions return: `FileState`, `ModuleSelections`, `GroupDefinition`, `Migration` and `MigrationChange`, alongside the types already exported. Every existing export stays.
+- **The runtime's `validateValues` runs the engine's own validator**, so a hook and shardmind always agree on what a valid value is. It used to keep its own copy, which could drift.
+- **The runtime's type declarations always ship.** A race between the parallel builds could delete `dist/runtime/index.d.ts`. `npm run build` now cleans once, before building.
+- A test pins the whole runtime surface, so a future change to it is deliberate.
+
 ### Fixed (a wrong-typed value is reported, not shown as a crash — #346)
 
 - **A value of the wrong type now fails as `VALUES_INVALID`, naming the key and the type it expected.** Before, it showed as "a bug in shardmind" with a stack trace. This covers a `--values` file on install or adopt, a hand-edited `shard-values.yaml` on update, and a shard's `type_changed` migration that returns the wrong type. The hint says where the value came from: your `--values` file or the prompts, or on update `shard-values.yaml`. It adds a note to report it to the shard's author if a migration or the new schema made it invalid.
