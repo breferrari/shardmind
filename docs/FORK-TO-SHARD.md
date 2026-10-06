@@ -78,7 +78,7 @@ Your users then run:
 shardmind install github:your-github-user/my-mind
 ```
 
-People who cloned your fork before it was a shard keep their vault and run `shardmind adopt github:your-github-user/my-mind` in it. Adopt compares their files with yours and asks what to keep ([`AUTHORING.md` §1](AUTHORING.md#1-what-is-a-shard)). If you renamed files since the release they cloned, they add `--from-version <that version>` so their edits follow the new paths.
+People who cloned your fork before it was a shard keep their vault and run `shardmind adopt github:your-github-user/my-mind` in it. Adopt compares their files with yours and asks what to keep ([`AUTHORING.md` §1](AUTHORING.md#1-what-is-a-shard)). They should add `--from-version <the version they cloned>`: their edits then follow any files you renamed, and files they never changed take your newer version instead of being kept as theirs.
 
 ## 8. Keep up with obsidian-mind
 

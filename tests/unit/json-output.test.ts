@@ -113,19 +113,29 @@ describe('adoptPlanResult', () => {
   const plan: AdoptPlan = {
     matches: [matches('z-same.md')],
     differs: [differs('a-mine.md')],
+    behind: [differs('b-old.md')],
     shardOnly: [shardOnly('m-new.md')],
-    totalShardFiles: 3,
+    totalShardFiles: 4,
   };
 
-  it('lists every file across all three buckets', () => {
+  it('lists every file across all four buckets', () => {
     const out = adoptPlanResult(plan, { dryRun: true, mode: null });
-    expect(out.files).toHaveLength(3);
-    expect(out.counts).toEqual({ matches: 1, differs: 1, shardOnly: 1, totalShardFiles: 3 });
+    expect(out.files).toHaveLength(4);
+    expect(out.counts).toEqual({ matches: 1, differs: 1, behind: 1, shardOnly: 1, totalShardFiles: 4 });
+  });
+
+  it('lists a file still at the base release as behind, with both hashes, and the base (#325)', () => {
+    const out = adoptPlanResult({ ...plan, base: { version: '5.1.0' } }, { dryRun: true, mode: null });
+    const file = out.files.find((f) => f.path === 'b-old.md')!;
+    expect(file.classification).toBe('behind');
+    expect(file.userHash).toBeDefined();
+    expect(out.base).toEqual({ version: '5.1.0' });
+    expect(adoptPlanResult(plan, { dryRun: true, mode: null }).base).toBeUndefined();
   });
 
   it('sorts by path so two runs diff cleanly', () => {
     const out = adoptPlanResult(plan, { dryRun: true, mode: null });
-    expect(out.files.map((f) => f.path)).toEqual(['a-mine.md', 'm-new.md', 'z-same.md']);
+    expect(out.files.map((f) => f.path)).toEqual(['a-mine.md', 'b-old.md', 'm-new.md', 'z-same.md']);
   });
 
   it('gives a divergent file both hashes and both sizes', () => {
@@ -173,6 +183,7 @@ describe('adoptPlanResult', () => {
     const many: AdoptPlan = {
       matches: Array.from({ length: 250 }, (_, i) => matches(`f${String(i).padStart(3, '0')}.md`)),
       differs: [],
+      behind: [],
       shardOnly: [],
       totalShardFiles: 250,
     };

@@ -8,6 +8,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (adopt takes the new release for files you never changed — #325)
+
+- **`shardmind adopt --from-version <v>` now gives files you never changed the new release's bytes**, in every mode. Adopt fetches release `<v>`, renders it with the values you adopt with, and a file still byte-for-byte at `<v>` is updated to the shard's version and recorded as managed. It is no longer kept as your edit (under `keep-all-mine` or `--yes`) or offered at the per-file prompt. **This changes what `keep-all-mine` does with `--from-version`:** before, those files kept the old release's bytes and were recorded as yours, so no later `update` changed them. Files you edited are kept as before. `--dry-run --json` lists the updated files as `behind`, with `counts.behind` and `base`.
+- **If release `<v>` cannot be fetched**, adopt goes on as before and says so: every file that differs is treated as yours. A rendered file whose values differ from the ones you cloned with does not match `<v>` and stays yours too.
+
 ### Changed (validate checks what a release ships — #320)
 
 - **`shardmind validate` in a shard's git repository checks the files git tracks**, as the release tarball ships them, instead of the whole working tree. An ignored folder such as `node_modules/` (whose `.bin/` holds symlinks) no longer fails it with `WALK_SYMLINK_REJECTED`. A file not committed yet is a warning, `LINT_UNTRACKED_FILE`, and is not checked until it is. A tracked symlink still fails. Outside git, or without `git` installed, nothing changes.

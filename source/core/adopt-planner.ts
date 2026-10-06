@@ -114,9 +114,23 @@ export function movedFromOf(c: AdoptClassification): string | undefined {
 export interface AdoptPlan {
   matches: AdoptClassification[];
   differs: AdoptClassification[];
+  /**
+   * `--from-version` (#325): files that differ from the shard but equal the
+   * base release's render, so the user never changed them. `differs`-shaped;
+   * they take the shard's bytes in every mode and are never prompted.
+   */
+  behind: AdoptClassification[];
   shardOnly: AdoptClassification[];
   /** Total file count the planner would have written under a clean install. */
   totalShardFiles: number;
+  /** `--from-version`: the base release, and why it could not be used, if so (#325). Set by the flow when a file differs. */
+  base?: AdoptBase;
+}
+
+/** `--from-version`'s base release (#325): its version, and why it could not be read, if so. */
+export interface AdoptBase {
+  version: string;
+  unavailable?: string;
 }
 
 export interface AdoptPlannerInput {
@@ -141,6 +155,9 @@ export interface AdoptPlannerInput {
   renames?: ReadonlyMap<string, string>;
 }
 
+/** What rendering a shard's outputs needs: the planner input without the vault comparison. */
+type RenderInput = Pick<AdoptPlannerInput, 'schema' | 'manifest' | 'tempDir' | 'values' | 'selections' | 'now' | 'vaultRoot'>;
+
 /**
  * Render every shard output, hash, and compare against the user's vault.
  *
@@ -155,35 +172,9 @@ export interface AdoptPlannerInput {
  * budget).
  */
 export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptPlan> {
-  const { vaultRoot, schema, manifest, tempDir, values, selections, now, renames } = input;
+  const { vaultRoot, renames } = input;
 
-  const resolution = await resolveModules(schema, selections, tempDir);
-  // Two outputs naming one vault path are refused before rendering or any
-  // write (#240).
-  assertNoOutputClashes(plannedOutputRefs(resolution, values, tempDir));
-  const env = createRenderer(tempDir);
-  const renderContext = buildRenderContext(manifest, values, selections, now, vaultRoot);
-
-  // `renderFile` reads the source file then runs Nunjucks; `buildItemFromCopy`
-  // reads the source file. Both are independent across entries — fan out to
-  // bounded concurrency so a shard with hundreds of files doesn't serialize
-  // on per-entry I/O. Same budget the user-side classification uses.
-  const renderedGroups = await mapConcurrent(
-    resolution.render,
-    ADOPT_READ_CONCURRENCY,
-    async (entry) => {
-      const rendered = await renderFile(entry, renderContext, env);
-      const outputs = Array.isArray(rendered) ? rendered : [rendered];
-      return outputs.map((file) => buildItemFromRender(entry, file, tempDir));
-    },
-  );
-  const copyItems = await mapConcurrent(
-    resolution.copy,
-    ADOPT_READ_CONCURRENCY,
-    (entry) => buildItemFromCopy(entry, tempDir),
-  );
-
-  const items: ShardOutputItem[] = [...renderedGroups.flat(), ...copyItems];
+  const items = await renderShardOutputs(input, { tolerant: false });
   const movable = renames?.size
     ? movableRenames(renames, new Set(items.map((i) => i.outputPath)))
     : new Map<string, string>();
@@ -214,9 +205,75 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
   return {
     matches,
     differs,
+    behind: [],
     shardOnly,
     totalShardFiles: items.length,
   };
+}
+
+/**
+ * `--from-version` (#325): the differing files whose bytes equal the base
+ * release's output (`baseOutputHashes`) at the path they sit at, or at their
+ * rename's old path, move from `differs` to `behind`: never edited.
+ */
+export function partitionBehind(plan: AdoptPlan, base: ReadonlyMap<string, string>): AdoptPlan {
+  const differs: AdoptClassification[] = [];
+  const behind: AdoptClassification[] = [...plan.behind];
+  for (const c of plan.differs) {
+    if (c.kind === 'differs' && base.get(c.movedFrom ?? c.path) === c.userHash) behind.push(c);
+    else differs.push(c);
+  }
+  return { ...plan, differs, behind };
+}
+
+/**
+ * The base release's outputs as this adopt run would render them, path →
+ * sha256 (`--from-version`, #325): the same values and module selections. An
+ * output that fails to render is left out, so its file stays `differs`.
+ */
+export async function baseOutputHashes(input: RenderInput): Promise<Map<string, string>> {
+  const items = await renderShardOutputs(input, { tolerant: true });
+  return new Map(items.map((i) => [i.outputPath, i.shardHash]));
+}
+
+/**
+ * Every output the shard would write at these values and selections.
+ * `tolerant` (the base release, #325): an entry that fails to render is
+ * dropped, and output clashes are not refused; the target's are.
+ */
+async function renderShardOutputs(input: RenderInput, opts: { tolerant: boolean }): Promise<ShardOutputItem[]> {
+  const { schema, manifest, tempDir, values, selections, now, vaultRoot } = input;
+  const resolution = await resolveModules(schema, selections, tempDir);
+  // Two outputs naming one vault path are refused before rendering or any
+  // write (#240).
+  if (!opts.tolerant) assertNoOutputClashes(plannedOutputRefs(resolution, values, tempDir));
+  const env = createRenderer(tempDir);
+  const renderContext = buildRenderContext(manifest, values, selections, now, vaultRoot);
+
+  // `renderFile` reads the source file then runs Nunjucks; `buildItemFromCopy`
+  // reads the source file. Both are independent across entries — fan out to
+  // bounded concurrency so a shard with hundreds of files doesn't serialize
+  // on per-entry I/O. Same budget the user-side classification uses.
+  const renderedGroups = await mapConcurrent(
+    resolution.render,
+    ADOPT_READ_CONCURRENCY,
+    async (entry) => {
+      try {
+        const rendered = await renderFile(entry, renderContext, env);
+        const outputs = Array.isArray(rendered) ? rendered : [rendered];
+        return outputs.map((file) => buildItemFromRender(entry, file, tempDir));
+      } catch (err) {
+        if (opts.tolerant) return [];
+        throw err;
+      }
+    },
+  );
+  const copyItems = await mapConcurrent(
+    resolution.copy,
+    ADOPT_READ_CONCURRENCY,
+    (entry) => buildItemFromCopy(entry, tempDir),
+  );
+  return [...renderedGroups.flat(), ...copyItems];
 }
 
 /**

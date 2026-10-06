@@ -7,6 +7,7 @@ import MovedFilesList from './MovedFilesList.js';
 import type { ShardManifest } from '../runtime/types.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
 import type { AdoptSummary as AdoptSummaryData } from '../core/adopt-executor.js';
+import type { AdoptBase } from '../core/adopt-planner.js';
 
 /**
  * Final adopt report. Mirrors `Summary.tsx`'s shape (header line,
@@ -17,6 +18,7 @@ import type { AdoptSummary as AdoptSummaryData } from '../core/adopt-executor.js
  *   - adopted as managed (use_shard decisions; user file overwritten)
  *   - kept as managed    (keep_mine decisions; user bytes recorded)
  *   - auto-merged        (#120 auto-merge mode; union bytes written)
+ *   - updated            (#325 still at the `--from-version` base release)
  *   - installed fresh    (shard-only paths; new bytes written)
  *
  * Counts add up to `state.files` length so the user has a precise sense
@@ -38,6 +40,8 @@ interface AdoptSummaryProps {
   /** Unmet optional tools, or the dry-run note (#138); from `checkExternalToolsForRun`. */
   externalTools?: readonly string[];
   dryRun?: boolean;
+  /** `--from-version`'s base release (#325). */
+  base?: AdoptBase;
 }
 
 export default function AdoptSummary({
@@ -48,6 +52,7 @@ export default function AdoptSummary({
   hooks,
   externalTools = [],
   dryRun,
+  base,
 }: AdoptSummaryProps) {
   const seconds = (durationMs / 1000).toFixed(1);
   const openCmd = openCommandForPlatform(vaultRoot);
@@ -87,6 +92,12 @@ export default function AdoptSummary({
             <Text bold>review recommended</Text>)
           </Text>
         )}
+        {summary.updatedBehind.length > 0 && (
+          <Text>
+            <Text color="green">  ↑ </Text>
+            {summary.updatedBehind.length} {dryRun ? 'would be updated' : 'updated'} to {manifest.version}: unchanged since {base?.version ?? 'the release you cloned'}
+          </Text>
+        )}
         {summary.installedFresh.length > 0 && (
           <Text>
             <Text color="blue">  + </Text>
@@ -97,6 +108,12 @@ export default function AdoptSummary({
           <Text dimColor>  (no files adopted — empty plan)</Text>
         )}
       </Box>
+
+      {base?.unavailable !== undefined && (
+        <StatusMessage variant="warning">
+          {`Could not read ${base.version}, the release the vault was cloned from (${base.unavailable}). Every file that differs from ${manifest.version} was treated as yours, including any only the shard changed.`}
+        </StatusMessage>
+      )}
 
       <MovedFilesList moves={summary.renamedFiles} dryRun={dryRun} />
 

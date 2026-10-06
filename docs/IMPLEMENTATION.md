@@ -1428,7 +1428,13 @@ classifyAdoption(input: {
   values: Record<string, unknown>;    // wizard answers; required for .njk render
   selections: ModuleSelections;
   now?: Date;                         // pin clock for deterministic tests
-}): Promise<AdoptPlan>;
+  renames?: ReadonlyMap<string, string>;  // --from-version renames, old → new (#179)
+}): Promise<AdoptPlan>;               // `behind` is empty here
+
+// --from-version (#325): the base release's outputs, path → sha256, rendered
+// with the run's values; and the plan with base-equal differs moved to `behind`.
+baseOutputHashes(input: { schema; manifest; tempDir; values; selections; now?; vaultRoot }): Promise<Map<string, string>>;
+partitionBehind(plan: AdoptPlan, base: ReadonlyMap<string, string>): AdoptPlan;
 
 type AdoptClassification =
   | { kind: 'matches';     path; templateKey; shardHash; iteratorKey?; volatile }
@@ -1440,8 +1446,10 @@ type AdoptClassification =
 interface AdoptPlan {
   matches: AdoptClassification[];
   differs: AdoptClassification[];
+  behind: AdoptClassification[];      // kind 'differs', bytes equal to the base release's (#325)
   shardOnly: AdoptClassification[];
   totalShardFiles: number;
+  base?: { version: string; unavailable?: string };  // set by the flow under --from-version when a file differs (#325)
   // No userOnly bucket: classification is shard-source-driven; the user's
   // tree is never recursively walked, so paths in the vault but not in
   // the shard are silently left untouched and never enter the planner's
@@ -1459,6 +1467,8 @@ interface AdoptPlan {
    - `sha256(userBuf) === item.shardHash` → `matches`.
    - Otherwise → `differs` with `isBinary = looksBinary(userBuf) || looksBinary(item.shardContent)` (8 KB NUL-byte sniff, same heuristic git uses).
    - Non-ENOENT read error → `COLLISION_CHECK_FAILED` (mirrors install's collision-detection error code; user permissions / EACCES surface here).
+
+**Behind the target (#325)**: with `--from-version <X>` (normalized: `v5.1.0` is `5.1.0`), once `classifyAdoption` has found at least one `differs` file, the adopt flow (§4.30) prepares the base release, `<resolved.source>@<X>`, as it prepared the target, and renders its outputs with the same values and module selections (`baseOutputHashes`; `renderShardOutputs` is shared with the target's render), keeping `path → sha256`. With nothing differing, the base is never fetched. `partitionBehind` moves each `differs` file whose user bytes equal the base's output at its path, or at its rename's old path (`movedFrom`), into `behind`: the user never changed it, and it differs from the target because the shard moved on. Volatile outputs are unchanged (`matches`). A base output that fails to render is left out of the map, so its file stays `differs`. A Ctrl+C or a superseded run during the base download stops the run as during the target's. A base that cannot be resolved, downloaded or parsed (a missing tag, no network) does not fail the run: the flow sets `plan.base = { version: X, unavailable: <reason> }`, passes no base, and the plan is what it was before #325; the summary and the `--json` plan carry the reason. A key the base needs and the target's values lack renders empty, so the file matches neither side and stays `differs`, the behaviour before #325.
 
 **Symlink handling**: source-side rejection delegates to `walkShardSource` (`WALK_SYMLINK_REJECTED`). User-side classification is per-shard-output-path — only one specific path is stat'd per shard file, so a symlink under the user's vault is never followed by adopt classification.
 
@@ -1495,7 +1505,7 @@ runAdopt(opts: {
 }): Promise<{
   state: ShardState;
   summary: AdoptSummary;     // matchedAuto / adoptedMine / adoptedShard /
-                             // installedFresh / totalManaged
+                             // updatedBehind (#325) / installedFresh / totalManaged
 }>;
 
 assertAdoptable(vaultRoot: string): Promise<void>;
@@ -1511,6 +1521,7 @@ assertAdoptable(vaultRoot: string): Promise<void>;
    - `differs+keep_mine` → record `ownership: 'modified'` with `rendered_hash = shardHash`. No write. Recording the user's hash would make the next update's drift read their bytes as engine-owned and overwrite them (#150); the shard's hash makes them an edit, three-way merged against the adopt-time cache.
    - `differs+merged` → `writeFile(union bytes)`; record `rendered_hash = shardHash`, for the same reason, with `ownership: 'modified'` — or `'managed'` when the union is byte-identical to the shard's bytes (it holds no user line).
    - `differs+use_shard` → `writeFile(shardContent)`; record `ownership: 'managed'` with `rendered_hash = shardHash`.
+   - `behind` (#325) → as `differs+use_shard`, whatever the mode: the user never changed it, so it takes the target's bytes, as an update would. Listed in `summary.updatedBehind`, never in `resolutions`; the mode picker and per-file prompts see only `differs`.
 5. `commitEngineMetadata`: the engine entries already there set aside (a clone of the shard repo ships `.shardmind/shard.yaml` and `shard-schema.yaml`, §4.28 step 4), `initShardDir`, `cacheTemplates(tempDir)`, `cacheManifest(manifest, schema)`, `writeValuesFile(values, { flag: 'wx' })`, then `writeState(state)` last; then `tx.commit()` discards what was set aside. The `wx` flag is a belt-and-braces second defense against a values file appearing between guard and write.
 6. Any throw between (3) and (5) lands in the catch and runs the transaction's `rollback()` (§4.28). Best-effort; when it returns failures, the catch throws `ROLLBACK_INCOMPLETE` naming each one and its snapshot copy (§4.11b, #247).
 
@@ -2029,7 +2040,7 @@ readUpdateTarget(vaultRoot: string, opts: { release?: string; includePrerelease?
 3. **The adopt flow**, in the order the machine ran it:
    1. `--json` without `--dry-run` is `JSON_REQUIRES_DRY_RUN`; `--from-version` is checked (`parseFromVersion`); then, unless dry run, `io.lock()` (#253) and `assertAdoptable`; then `prepareShard`. A run whose `input.stop` was aborted meanwhile (an Ink run superseded by a newer one) ends there with `FlowCancelled`. Then the `--values` file.
    2. The values: `--yes` → `answersWithoutPrompting`. No terminal (`input.interactive` false) or `--json`: with `--values`, the same; without, `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES` (#139, #198). Otherwise `io.ask({ kind: 'values' })`.
-   3. Validate the answers, `checkExternalToolsForRun` (#138), `io.phase({ kind: 'planning' })`, `classifyAdoption` (with the renames since `--from-version`, #179).
+   3. Validate the answers, `checkExternalToolsForRun` (#138), `io.phase({ kind: 'planning' })`, `classifyAdoption` (with the renames since `--from-version`, #179, and, when a file differs, the base release's: `loadBase` prepares `<resolved.source>@<from-version>`, renders it with `baseOutputHashes`, removes it, and `partitionBehind` moves the base-equal files to `behind`; a failure becomes `plan.base.unavailable`, never an error, §4.17, #325).
    4. `--json --dry-run`: return `{ kind: 'plan', plan, mode }`, before any mode is resolved (#139).
    5. The mode: none needed when nothing differs; else `--mode`, or `keep-all-mine` under `--yes`, or `io.ask({ kind: 'mode' })`. `keep-all-mine` / `use-all-theirs` decide every file; `decide-per-file` asks about each; `auto-merge` merges each differing file two ways (`twoWayUnionMerge`) and asks about the conflicting ones, or keeps the user's under a mode given without a prompt.
    6. Each file left to decide: `io.ask({ kind: 'per-file', queue, currentIndex, resolutions })`, in order.
