@@ -294,6 +294,7 @@ Defects found after the 1.0 contract was settled, fixed in 1.0.x patches without
 | | Task | Issue |
 |---|---|---|
 | ⬜ | Report a failed shardmind/runtime mapping accurately, not as a context failure | [#377](https://github.com/breferrari/shardmind/issues/377) |
+| ⬜ | Update RELEASE-SMOKE's adopt recipe for the bulk-resolution picker | [#379](https://github.com/breferrari/shardmind/issues/379) |
 
 ## Shelf (retired 2026-10-04)
 
