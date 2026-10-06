@@ -92,8 +92,8 @@ export type Phase =
       label: string;
       history: string[];
     }
-  | RunningHookPhase // a lifecycle hook (bootstrap / personalize / legacy
-      // post-install) is streaming output. We are already past the
+  | RunningHookPhase // a lifecycle hook (bootstrap / personalize) is
+      // streaming output. We are already past the
       // point-of-no-return (state.json written by `runAdopt`); a Ctrl+C here
       // kills the child but does NOT roll the adopt back. Helm semantics,
       // docs/ARCHITECTURE.md §9.3. Shape shared with install/update.

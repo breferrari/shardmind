@@ -17,7 +17,7 @@ import {
 } from '../../source/core/install-planner.js';
 import { runInstall } from '../../source/core/install-executor.js';
 import { beginTransaction, type VaultTransaction } from '../../source/core/vault-transaction.js';
-import { runPostInstallHook } from '../../source/core/hook.js';
+import { runHook } from '../../source/core/hook.js';
 import type { ResolvedShard, ShardState } from '../../source/runtime/types.js';
 import { makeShardSource } from '../helpers/make-shard-source.js';
 
@@ -465,7 +465,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     await tx.recordSetAside(original, true);
     await installOn(tx);
 
-    // Simulate a post-install failure and roll back
+    // Simulate a failure after install and roll back
     expect(await tx.rollback()).toEqual([]);
 
     expect(await fsp.readFile(original, 'utf-8')).toBe('user content');
@@ -556,7 +556,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
 
 /**
  * Hook integration: verify that a full install followed by a real
- * post-install hook execution produces the expected combined effect —
+ * bootstrap hook execution produces the expected combined effect —
  * files rendered AND hook-produced artifacts present. The unit tests in
  * `tests/unit/hook.test.ts` cover executeHook in isolation; this test
  * pins the timing contract (state.json already on disk when the hook
@@ -566,7 +566,7 @@ describe('install pipeline (against examples/minimal-shard)', () => {
  * the minimal-shard fixture stays hook-file-free (its shard.yaml
  * declares a hook for contract-testing purposes, but no file on disk).
  */
-describe('install + post-install hook integration', () => {
+describe('install + bootstrap hook integration', () => {
   let vault: string;
   let shardDir: string;
 
@@ -589,11 +589,11 @@ describe('install + post-install hook integration', () => {
     await fsp.rm(shardDir, rmOpts);
   });
 
-  it('runs the post-install hook after state.json is written', async () => {
+  it('runs the bootstrap hook after state.json is written', async () => {
     // Hook writes a marker AND a side-file containing the serialized
-    // HookContext it received — asserts the full ctx shape round-trips.
+    // BootstrapContext it received — asserts the full ctx shape round-trips.
     await fsp.writeFile(
-      path.join(shardDir, 'hooks', 'post-install.ts'),
+      path.join(shardDir, 'hooks', 'bootstrap.ts'),
       `
         import { writeFile } from 'node:fs/promises';
         import { join } from 'node:path';
@@ -602,7 +602,7 @@ describe('install + post-install hook integration', () => {
           // point-of-no-return contract that the command machine relies on.
           const { access } = await import('node:fs/promises');
           await access(join(ctx.vaultRoot, '.shardmind', 'state.json'));
-          await writeFile(join(ctx.vaultRoot, 'post-install-marker.txt'), 'ran');
+          await writeFile(join(ctx.vaultRoot, 'bootstrap-marker.txt'), 'ran');
           await writeFile(
             join(ctx.vaultRoot, '.hook-ctx.json'),
             JSON.stringify(ctx),
@@ -629,16 +629,16 @@ describe('install + post-install hook integration', () => {
       selections,
     });
 
-    const hookResult = await runPostInstallHook(
+    const hookResult = await runHook(
       shardDir,
-      manifest,
+      manifest.hooks.bootstrap?.script,
       {
+        slot: 'bootstrap',
         vaultRoot: vault,
         values,
         modules: selections,
         shard: { name: manifest.name, version: manifest.version },
         valuesAreDefaults: false,
-        newFiles: [],
         removedFiles: [],
       },
     );
@@ -647,10 +647,10 @@ describe('install + post-install hook integration', () => {
     expect(hookResult.exitCode).toBe(0);
 
     // Marker confirms hook side effects landed.
-    const marker = await fsp.readFile(path.join(vault, 'post-install-marker.txt'), 'utf-8');
+    const marker = await fsp.readFile(path.join(vault, 'bootstrap-marker.txt'), 'utf-8');
     expect(marker).toBe('ran');
 
-    // HookContext fields round-tripped through the subprocess. The hook
+    // BootstrapContext fields round-tripped through the subprocess. The hook
     // asserted state.json existed at call time; its own write of
     // .hook-ctx.json completing without throwing proves that.
     const echoed = JSON.parse(await fsp.readFile(path.join(vault, '.hook-ctx.json'), 'utf-8'));
@@ -664,7 +664,7 @@ describe('install + post-install hook integration', () => {
     // on disk), the hook's throw surfaces as a `failed`-shape result, and
     // NO rollback happens. Matches Helm semantics.
     await fsp.writeFile(
-      path.join(shardDir, 'hooks', 'post-install.ts'),
+      path.join(shardDir, 'hooks', 'bootstrap.ts'),
       `
         export default async function () {
           throw new Error('hook bombed');
@@ -690,13 +690,13 @@ describe('install + post-install hook integration', () => {
       selections,
     });
 
-    const hookResult = await runPostInstallHook(shardDir, manifest, {
+    const hookResult = await runHook(shardDir, manifest.hooks.bootstrap?.script, {
+      slot: 'bootstrap',
       vaultRoot: vault,
       values,
       modules: selections,
       shard: { name: manifest.name, version: manifest.version },
       valuesAreDefaults: false,
-      newFiles: [],
       removedFiles: [],
     });
     // A thrown hook exits 1 — the runner catches, writes stack to stderr,

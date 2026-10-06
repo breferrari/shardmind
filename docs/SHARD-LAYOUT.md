@@ -121,7 +121,7 @@ Enforced by a CI E2E test. The `tests/e2e/helpers/invariant1.ts` helper encapsul
 
 ### Invariant 2 — Default-value installs touch no managed files (engine-enforced)
 
-A `--defaults` install must stay byte-equivalent to clone, so **no hook may edit a managed file when the user accepted every default**. As of the hook lifecycle split this is *engine-enforced*, not hook-checked: the engine computes `valuesAreDefaults` (deep-equal each user value against its schema default) and, when true, **does not invoke the `personalize` hook at all**. The `personalize` slot is the only hook permitted to write managed files, and it runs solely on first install/adopt with non-default values — so a defaults install has no code path that can mutate a managed file. Authors no longer write `if (!ctx.valuesAreDefaults) …`; the gate moved into the engine. (Legacy `post-install` hooks keep the old self-check — see [§Hook lifecycle](#hook-lifecycle-state-and-re-hash-semantics).)
+A `--defaults` install must stay byte-equivalent to clone, so **no hook may edit a managed file when the user accepted every default**. As of the hook lifecycle split this is *engine-enforced*, not hook-checked: the engine computes `valuesAreDefaults` (deep-equal each user value against its schema default) and, when true, **does not invoke the `personalize` hook at all**. The `personalize` slot is the only hook permitted to write managed files, and it runs solely on first install/adopt with non-default values — so a defaults install has no code path that can mutate a managed file. Authors no longer write `if (!ctx.valuesAreDefaults) …`; the gate moved into the engine. (`post-install`, which self-checked, was removed in 1.0.)
 
 ### Invariant 3 — Post-update hooks are additive-only by default
 
@@ -198,11 +198,9 @@ The ctx is slotted — each hook receives only the fields meaningful to it (`sou
 - **`.shardmind/hooks/` is source-side only.** The installed-side `.shardmind/` holds `state.json` + cached `shard.yaml` + cached `shard-schema.yaml` + `templates/` cache — not hooks. (User's `shard-values.yaml` lives at vault root, not inside `.shardmind/`.) Engine reads hook scripts from the extracted source tarball during install/update; hook scripts never get copied into the installed vault.
 - **Hook timeout** stays at the existing `DEFAULT_HOOK_TIMEOUT_MS` (non-fatal on timeout); `hooks.timeout_ms` applies per slot.
 
-### Legacy `post-install` (deprecated)
+### `post-install` (removed in 1.0)
 
-A shard declaring the old `hooks.post-install` slot keeps working: the engine runs it **once** on install/adopt with the **legacy combined context** (the old flat `HookContext`, including `valuesAreDefaults` so existing `if (!ctx.valuesAreDefaults)` self-gating still fires) and **no write-boundary enforcement** (the old contract had none). Each run surfaces a `HOOK_POST_INSTALL_DEPRECATED` warning. Legacy `post-update` continues unchanged.
-
-Declaring `post-install` *together with* `bootstrap` or `personalize` is rejected at parse time (`HOOK_SLOT_CONFLICT`) — a half-migrated manifest is a mistake, not a merge. The legacy slot is honored for at least one minor release (deprecated in 0.2.0; removed no earlier than 0.3.0). Migration guide: [`docs/AUTHORING.md §6`](AUTHORING.md).
+The single `post-install` hook from before the split was removed in 1.0 (#357), once the slots carried everything it did (#356: `bootstrap` gets `valuesAreDefaults` and a reinstall's `removedFiles`). A manifest that declares `hooks.post-install` fails to parse with `HOOK_SLOT_REMOVED`, whose message names `bootstrap` (unmanaged setup) and `personalize` (managed edits on install) and points at AUTHORING's worked split. `HOOK_SLOT_CONFLICT` (`post-install` beside the slots) and the `HOOK_POST_INSTALL_DEPRECATED` warning are no longer raised.
 
 ## Update semantics — spec rules
 
@@ -326,7 +324,7 @@ Paths reference current code. Detail to land in `ARCHITECTURE.md §3` + `IMPLEME
 
 ### Hooks + state
 
-10. `source/runtime/types.ts` — extend `HookContext` with `valuesAreDefaults: boolean`, `newFiles: string[]`, `removedFiles: string[]`.
+10. `source/runtime/types.ts` — extend `HookContext` (the flat context, since split into the slot contexts and removed in 1.0) with `valuesAreDefaults: boolean`, `newFiles: string[]`, `removedFiles: string[]`.
 11. **Engine plumbing for the new ctx fields + post-hook re-hash** — split across:
     - `source/core/values-defaults.ts` (new) — pure `valuesAreDefaults(values, schema)` for Invariant 2; deep-equal user values against the would-be-default map (literal defaults + computed defaults resolved against the literal-default map).
     - `source/core/update-executor.ts` — surface `addedFiles: string[]` (paths from `UpdateAction.kind === 'add'`) and the existing `deletedFiles: string[]` on `UpdateSummary` so the update machine can wire `newFiles` / `removedFiles` without re-deriving from the plan.
@@ -442,7 +440,7 @@ Criterion: **obsidian-mind v6 does not need these to install, configure, or upgr
 
 | Planned | Why v6 did not need it | How it is added without redesign |
 |---------|------------------------|----------------------------------|
-| `rendered_files` opt-in, Nunjucks at vault-visible paths ([#86](https://github.com/breferrari/shardmind/issues/86)) | obsidian-mind personalises `brain/North Star.md` with a post-install hook; no `{{ }}` at vault-visible paths | A new optional field in `shard.yaml`; `renderer.ts` renders the listed files during install. Without the field, behaviour is unchanged |
+| `rendered_files` opt-in, Nunjucks at vault-visible paths ([#86](https://github.com/breferrari/shardmind/issues/86)) | obsidian-mind personalises `brain/North Star.md` with a `personalize` hook; no `{{ }}` at vault-visible paths | A new optional field in `shard.yaml`; `renderer.ts` renders the listed files during install. Without the field, behaviour is unchanged |
 | Shard composition, several shards in one vault ([#81](https://github.com/breferrari/shardmind/issues/81)) | One shard per vault | `state.json` extends from `{shard, version}` to `{shards: [...]}`, a new `schema_version` with a forward migration; one shard stays the special case |
 | Dependency fetching ([#82](https://github.com/breferrari/shardmind/issues/82)) | Shards vendor their dependencies (obsidian-mind does) | `shard.yaml`'s `dependencies: []` is fetched on install, with a lock file |
 | Structural variants ([#80](https://github.com/breferrari/shardmind/issues/80)) | obsidian-mind is one shard | Modules gain a `structure` field with purpose-driven variants (ARCHITECTURE §16); orthogonal to the layout |

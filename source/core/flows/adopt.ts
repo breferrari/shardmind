@@ -350,7 +350,7 @@ async function execute(
         onProgress: io.progress,
       }),
     // Adopt runs the install-side slots: bootstrap, then personalize (skipped
-    // under Invariant 2), or a lone legacy post-install. newFiles is the
+    // under Invariant 2). newFiles is the
     // freshly installed shard-only set.
     (done) => ({
       command: 'adopt',

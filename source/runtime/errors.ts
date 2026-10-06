@@ -22,6 +22,8 @@ export type ErrorCode =
   | 'MANIFEST_READ_FAILED'
   | 'MANIFEST_INVALID_YAML'
   | 'MANIFEST_VALIDATION_FAILED'
+  | 'HOOK_SLOT_REMOVED'
+  // No longer raised since 1.0: any post-install is HOOK_SLOT_REMOVED (#357).
   | 'HOOK_SLOT_CONFLICT'
 
   // Engine compatibility (requires.shardmind vs. running engine, #121)

@@ -3,8 +3,8 @@
  * for the contract acceptance suite (issue #92).
  *
  * The fixture is the v6 contract's behavioral matrix in concrete form:
- * three vault content modules, three agent modules, post-install +
- * post-update hooks, mixed-default-type schema. This helper produces
+ * three vault content modules, three agent modules, bootstrap +
+ * personalize + post-update hooks, mixed-default-type schema. This helper produces
  * three versioned tarballs the github-stub serves so the suite can
  * exercise install / update / adopt across realistic shard movement.
  *

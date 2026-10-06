@@ -111,7 +111,7 @@ hooks:
 | `hooks.bootstrap` | no | Path string, or `{ script, fingerprint? }`. Unmanaged-path setup. Runs on install/adopt + on update when `fingerprint` changes. See §6. |
 | `hooks.personalize` | no | Path relative to shard root. Managed-file edits. Runs on install/adopt only; skipped when values are defaults. See §6. |
 | `hooks.post-update` | no | Path relative to shard root. Additive managed-file edits on update (`ctx.newFiles`). See §6. |
-| `hooks.post-install` | no | **Deprecated** — legacy combined hook. Mutually exclusive with the slots above (`HOOK_SLOT_CONFLICT`). Honored until ≥0.3.0; migrate to `bootstrap` + `personalize`. |
+| `hooks.post-install` | — | **Removed in 1.0** (#357). A manifest that declares it fails to load (`HOOK_SLOT_REMOVED`). Split it into `bootstrap` + `personalize`: see §6, "`post-install` was removed in 1.0". |
 | `hooks.timeout_ms` | no | Per-slot timeout in ms. Default 30000; range 1000–600000. |
 | `migrations` | no | Path renames between releases: `[{ from, to, renames: { "<old path>": "<new path>" } }]`. `shardmind update` (and `adopt --from-version`) carries the user's edits to the new path. See below. |
 
@@ -415,9 +415,9 @@ export default async function (ctx: BootstrapContext): Promise<void> {
 }
 ```
 
-### What changed from `post-install` (and why)
+### Why three slots
 
-The old single `post-install` hook bundled three jobs with different lifecycles — unmanaged setup, managed-file personalization, and one-time conversions — and you had to hand-gate the personalization on `ctx.valuesAreDefaults` to keep Invariant 1. That gate is now the engine's job. The slots make each job's contract explicit and machine-checked:
+The old single `post-install` hook (removed in 1.0) bundled three jobs with different lifecycles — unmanaged setup, managed-file personalization, and one-time conversions — and you had to hand-gate the personalization on `ctx.valuesAreDefaults` to keep Invariant 1. That gate is now the engine's job. The slots make each job's contract explicit and machine-checked:
 
 - **You no longer write `if (!ctx.valuesAreDefaults) …`.** The engine simply doesn't invoke `personalize` on a defaults install. `PersonalizeContext` has no `valuesAreDefaults` field — if your `personalize` hook runs, values are non-default by construction.
 - **The write boundary is checked.** If `bootstrap` edits a managed file or `personalize` creates an unmanaged one, the engine surfaces a non-fatal warning naming the paths (it does not undo the write). This catches a mis-placed responsibility during your dev loop instead of silently breaking Invariant 1 in the field.
@@ -440,13 +440,22 @@ The old single `post-install` hook bundled three jobs with different lifecycles 
 
 `bootstrap` is for unmanaged artifacts that don't change often. By default it runs once (install/adopt) and never re-runs on update. If a new version changes an artifact's schema — say the QMD index format — add or bump `hooks.bootstrap.fingerprint`. The engine records the fingerprint in `state.json` at each successful bootstrap and re-runs `bootstrap` on update whenever the manifest's fingerprint differs from the recorded one. The string is opaque to the engine (compared with `!==`); use anything stable per artifact version (`"qmd-v1"`, `"index-2026.01"`).
 
-### Worked migration: splitting an old `post-install.ts`
+### `post-install` was removed in 1.0
 
-Old combined hook:
+The single `post-install` hook from before the slot split was deprecated in 0.2 and **removed in 1.0** (#357). A `shard.yaml` that still declares `hooks.post-install` fails to load with `HOOK_SLOT_REMOVED`, and `shardmind validate` reports the same. Everything it did, the slots do:
+
+- **Unmanaged setup** (`git init`, building an index, registering a tool) goes in **`bootstrap`**. It always runs on install and adopt, and it gets `valuesAreDefaults` and a reinstall's `removedFiles`, the two things only `post-install` used to get.
+- **Managed-file personalization** goes in **`personalize`**. The engine runs it only when the user changed a default, so drop your own `if (!ctx.valuesAreDefaults)` gate.
+
+The split, worked:
 
 ```ts
-// hooks/post-install.ts  (deprecated)
-export default async function (ctx: HookContext): Promise<void> {
+// hooks/post-install.ts  (removed in 1.0)
+export default async function (ctx: {
+  vaultRoot: string;
+  values: Record<string, unknown>;
+  valuesAreDefaults: boolean;
+}): Promise<void> {
   await ensureGitRepo(ctx.vaultRoot);              // unmanaged — .git/
   await bootstrapQmd(ctx.vaultRoot, ctx.values);   // unmanaged — .qmd/
   if (!ctx.valuesAreDefaults) {                    // hand-gated managed edit
@@ -470,7 +479,7 @@ export default async function (ctx: PersonalizeContext): Promise<void> {
 }
 ```
 
-and the manifest moves from `hooks.post-install: hooks/post-install.ts` to the three-slot form above. Declaring `post-install` alongside `bootstrap`/`personalize` is rejected at parse time (`HOOK_SLOT_CONFLICT`) — finish the migration in one step. The legacy slot is honored until at least 0.3.0; migrate before then.
+and the manifest moves from `hooks.post-install: hooks/post-install.ts` to the slot form above (`hooks.bootstrap` and `hooks.personalize`).
 
 Once your shard relies on the new lifecycle, declare the engine that introduced it so older engines refuse cleanly instead of mis-running the hook:
 
@@ -510,7 +519,7 @@ The child process receives:
 - `cwd` = `ctx.vaultRoot` (so `git init` / `qmd setup` act on the installed vault).
 - The parent's environment, plus:
   - `SHARDMIND_HOOK=1` — tag for "running under shardmind" detection.
-  - `SHARDMIND_HOOK_PHASE=bootstrap` | `personalize` | `post-update` (or `post-install` for a legacy hook) — the slot currently running.
+  - `SHARDMIND_HOOK_PHASE=bootstrap` | `personalize` | `post-update` — the slot currently running.
 - `ctx` (the slot-specific context above) as the single argument to your default export.
 
 ### Timeouts

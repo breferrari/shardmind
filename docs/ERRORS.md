@@ -155,9 +155,19 @@ Thrown by `source/core/manifest.ts`.
 
 **Remedy:** Check the error details and consult [`docs/AUTHORING.md`](AUTHORING.md) §3 or [`schemas/shard.schema.json`](../schemas/shard.schema.json).
 
+### `HOOK_SLOT_REMOVED`
+
+**Meaning:** `shard.yaml` declares `hooks.post-install`, which was removed in 1.0 (#357).
+
+**Typical cause:** A shard written before the `bootstrap` / `personalize` split.
+
+**Remedy:** Split the hook. Unmanaged setup (`git init`, indexes, registrations) goes in `hooks.bootstrap`, which always runs and gets `valuesAreDefaults` and a reinstall's `removedFiles`. Managed-file edits go in `hooks.personalize`, which the engine runs only when the user changed a default. Then remove `hooks.post-install`. The worked split is in [`docs/AUTHORING.md` §6, "`post-install` was removed in 1.0"](AUTHORING.md#post-install-was-removed-in-10).
+
 ### `HOOK_SLOT_CONFLICT`
 
-**Meaning:** `shard.yaml` declares the deprecated `hooks.post-install` slot *together with* `hooks.bootstrap` or `hooks.personalize`. The legacy combined hook and the new named slots are mutually exclusive — a manifest carrying both is a half-finished migration, not a valid configuration.
+**No longer raised since 1.0:** any `hooks.post-install` is now `HOOK_SLOT_REMOVED`. The code stays declared so a script that matches on it keeps working.
+
+**Meaning (before 1.0):** `shard.yaml` declares the deprecated `hooks.post-install` slot *together with* `hooks.bootstrap` or `hooks.personalize`. The legacy combined hook and the new named slots are mutually exclusive — a manifest carrying both is a half-finished migration, not a valid configuration.
 
 **Typical cause:** Adding `bootstrap`/`personalize` while leaving the old `post-install` line in place.
 
@@ -685,7 +695,9 @@ These are **not** thrown `ShardMindError`s — they don't appear in the `ErrorCo
 
 ### `HOOK_POST_INSTALL_DEPRECATED`
 
-**Meaning:** The shard declares the deprecated combined `hooks.post-install` slot. It still runs (once, on install/adopt, with the legacy context and no boundary enforcement), but the slot is on a deprecation path.
+**No longer raised since 1.0:** `post-install` was removed, so a manifest that declares it fails with [`HOOK_SLOT_REMOVED`](#hook_slot_removed) instead of warning.
+
+**Meaning (before 1.0):** The shard declares the deprecated combined `hooks.post-install` slot. It still runs (once, on install/adopt, with the legacy context and no boundary enforcement), but the slot is on a deprecation path.
 
 **Typical cause:** A shard authored before the `bootstrap` / `personalize` split.
 
@@ -700,7 +712,7 @@ If you're a shard author and hit a code that feels authoring-side, the specifica
 - `COMPUTED_DEFAULT_FAILED`, `COMPUTED_DEFAULT_INVALID`
 - `RENDER_FAILED`, `RENDER_FRONTMATTER_ERROR`, `RENDER_ITERATOR_ERROR`, `RENDER_ITERATOR_NAME_CLASH`, `OUTPUT_PATH_CLASH`
 - `DOWNLOAD_MISSING_MANIFEST`, `DOWNLOAD_MISSING_SCHEMA`
-- `HOOK_SLOT_CONFLICT` (thrown), plus the non-fatal hook warnings `HOOK_BOOTSTRAP_MANAGED_WRITE`, `HOOK_PERSONALIZE_UNMANAGED_CREATE`, `HOOK_BOUNDARY_INCOMPLETE`, `HOOK_BOUNDARY_IGNORE_INVALID`, `HOOK_POST_INSTALL_DEPRECATED`
+- `HOOK_SLOT_REMOVED` (thrown), plus the non-fatal hook warnings `HOOK_BOOTSTRAP_MANAGED_WRITE`, `HOOK_PERSONALIZE_UNMANAGED_CREATE`, `HOOK_BOUNDARY_INCOMPLETE`, `HOOK_BOUNDARY_IGNORE_INVALID` (`HOOK_SLOT_CONFLICT` and `HOOK_POST_INSTALL_DEPRECATED` are no longer raised since 1.0)
 
 If you're an end user, the most common ones you'll see are:
 - `SHARD_NOT_FOUND`, `VERSION_NOT_FOUND`, `REGISTRY_NETWORK`

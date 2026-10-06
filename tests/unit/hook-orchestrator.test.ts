@@ -451,27 +451,24 @@ describe('runHooks — update bootstrap fingerprint (Invariant 4)', () => {
   }, 30_000);
 });
 
-describe('runHooks — legacy + resilience', () => {
-  it('runs a lone legacy post-install once with a deprecation flag (A9)', async () => {
+describe('runHooks — removed slot + resilience', () => {
+  it('never runs a post-install key that reaches it (#357)', async () => {
+    // parseManifest refuses post-install (HOOK_SLOT_REMOVED); a manifest built
+    // without it must not bring the removed slot back either.
     await hook('post-install.ts', `
       import { writeFile } from 'node:fs/promises';
       import { join } from 'node:path';
-      export default async function (ctx) {
-        await writeFile(join(ctx.vaultRoot, 'legacy.txt'), String(ctx.valuesAreDefaults));
-      }
+      export default async function (ctx) { await writeFile(join(ctx.vaultRoot, 'legacy.txt'), 'ran'); }
     `);
     const result = await runHooks(
       installPlan({
-        manifest: manifest({ 'post-install': '.shardmind/hooks/post-install.ts' }),
-        values: { user_name: 'default' },
+        manifest: manifest({ 'post-install': '.shardmind/hooks/post-install.ts' } as ShardManifest['hooks']),
+        values: { user_name: 'Alice' },
       }),
       NOOP_UI,
     );
-    // Legacy ctx still carries valuesAreDefaults (true here).
-    expect(await fsp.readFile(path.join(vault, 'legacy.txt'), 'utf-8')).toBe('true');
-    const outcome = result.outcomes.find((o) => o.slot === 'post-install');
-    expect(outcome?.summary?.deprecated).toBe(true);
-    expect(result.outcomes.map((o) => o.slot)).toEqual(['post-install']);
+    await expect(fsp.access(path.join(vault, 'legacy.txt'))).rejects.toBeTruthy();
+    expect(result.outcomes).toEqual([]);
   }, 30_000);
 
   it('a thrown bootstrap is non-fatal and personalize still runs (A16)', async () => {
@@ -527,28 +524,6 @@ describe('runHooks — legacy + resilience', () => {
     expect(result.outcomes.find((o) => o.slot === 'personalize')?.summary).toEqual({
       skipped: 'values-are-defaults',
     });
-  }, 30_000);
-
-  it('a lone legacy post-install that writes a managed file is NOT boundary-flagged', async () => {
-    // Legacy hooks predate the write boundaries; the engine must not retrofit
-    // a violation onto them (SHARD-LAYOUT.md §Legacy).
-    const stateFiles = { 'Home.md': await managed('Home.md', 'home\n') };
-    await hook('post-install.ts', `
-      import { writeFile } from 'node:fs/promises';
-      import { join } from 'node:path';
-      export default async function (ctx) { await writeFile(join(ctx.vaultRoot, 'Home.md'), 'EDITED\\n'); }
-    `);
-    const result = await runHooks(
-      installPlan({
-        manifest: manifest({ 'post-install': '.shardmind/hooks/post-install.ts' }),
-        state: makeShardState({ files: stateFiles }),
-        values: { user_name: 'Alice' },
-      }),
-      NOOP_UI,
-    );
-    const outcome = result.outcomes.find((o) => o.slot === 'post-install');
-    expect(outcome?.summary?.violation).toBeUndefined();
-    expect(outcome?.summary?.deprecated).toBe(true);
   }, 30_000);
 
   it('stops launching slots once the run is aborted during bootstrap (A5)', async () => {
@@ -769,7 +744,7 @@ describe('runHooks — user edits made before the hook phase (#150)', () => {
 });
 
 // #356: bootstrap carries a reinstall's removed files and the defaults flag,
-// which only the deprecated post-install context had on install.
+// which only the post-install context (removed in 1.0, #357) had on install.
 describe('runHooks — the bootstrap context (#356)', () => {
   const dumpCtx = `
     import { writeFile } from 'node:fs/promises';

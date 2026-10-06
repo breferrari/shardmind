@@ -36,7 +36,6 @@ const TYPE_EXPORTS = [
   'FrontmatterRule',
   'FrontmatterValidationResult',
   'GroupDefinition',
-  'HookContext',
   'HookContextBase',
   'HookSlot',
   'Migration',

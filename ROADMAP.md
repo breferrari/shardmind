@@ -185,6 +185,7 @@ The release pipeline, dependencies and test harness are settled: built, or decli
 | ✅ | Reach the unexercised rollback failure arms | [#292](https://github.com/breferrari/shardmind/issues/292) |
 | ✅ | Make the coverage run report reliably and include subprocess coverage | [#293](https://github.com/breferrari/shardmind/issues/293) |
 | ✅ | Typecheck the test files in CI | [#352](https://github.com/breferrari/shardmind/issues/352) |
+| ⬜ | Run the hook smoke script outside vitest | [#372](https://github.com/breferrari/shardmind/issues/372) |
 
 ## Phase 9 — the second shard
 
@@ -255,7 +256,7 @@ Everything 1.0 freezes is either decided or built: the contract review's behavio
 | ✅ | Document the reserved transform error code and report invalid values clearly | [#346](https://github.com/breferrari/shardmind/issues/346) |
 | ✅ | Mark adopt --mode auto-merge experimental | [#347](https://github.com/breferrari/shardmind/issues/347) |
 | ✅ | Give the slotted hooks a reinstall's removed files and the defaults flag | [#356](https://github.com/breferrari/shardmind/issues/356) |
-| ⬜ | Remove the deprecated post-install hook | [#357](https://github.com/breferrari/shardmind/issues/357) |
+| ✅ | Remove the deprecated post-install hook | [#357](https://github.com/breferrari/shardmind/issues/357) |
 | ✅ | Make the runtime's loadState version-aware and reserve composition's paths | [#368](https://github.com/breferrari/shardmind/issues/368) |
 | ✅ | Define and validate shard.yaml dependencies | [#369](https://github.com/breferrari/shardmind/issues/369) |
 | ✅ | Require requires.shardmind for shards that use post-1.0 fields | [#370](https://github.com/breferrari/shardmind/issues/370) |

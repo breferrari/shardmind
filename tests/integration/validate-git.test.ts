@@ -107,7 +107,7 @@ describe.runIf(gitWorks)('validate in a git work tree (#320)', () => {
   it('an untracked .shardmind/ file is warned about: the release needs it', async () => {
     const shard = await committedShard(work);
     await fsp.mkdir(path.join(shard, '.shardmind', 'hooks'), { recursive: true });
-    await fsp.writeFile(path.join(shard, '.shardmind', 'hooks', 'post-install.ts'), 'export default async () => {};\n');
+    await fsp.writeFile(path.join(shard, '.shardmind', 'hooks', 'bootstrap.ts'), 'export default async () => {};\n');
     const report = await validateShard(shard, {});
     expect(report.findings).toContainEqual(expect.objectContaining({ code: 'LINT_UNTRACKED_FILE', path: '.shardmind/hooks/' }));
   });

@@ -13,8 +13,6 @@
  *   - install / adopt: bootstrap → personalize (personalize skipped entirely
  *     when valuesAreDefaults — engine-enforced Invariant 2).
  *   - update: bootstrap (only if its fingerprint changed) → post-update.
- *   - legacy: a lone `post-install` runs once on install/adopt with the flat
- *     legacy context and no boundary enforcement, plus a deprecation warning.
  *
  * Spec: docs/SHARD-LAYOUT.md §Hook lifecycle; docs/IMPLEMENTATION.md §4.16a.
  */
@@ -22,11 +20,11 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type {
-  AnyHookContext,
   ModuleSelections,
   ShardManifest,
   ShardSchema,
   ShardState,
+  SlottedHookContext,
 } from '../runtime/types.js';
 import { HOOK_LOGS_DIR, hookLogRelPath } from '../runtime/vault-paths.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
@@ -66,7 +64,7 @@ export interface HookRunPlan {
   modules: ModuleSelections;
   /** Set on update (and adopt-from-install); carried into ctx.previousVersion. */
   previousVersion?: string;
-  /** Managed paths newly added — `[]` on install, summary.addedFiles on update. */
+  /** Managed paths newly added: summary.addedFiles on update, for post-update; `[]` on install and adopt. */
   newFiles: string[];
   /** Managed paths removed: a reinstall's removals on install (#228), `[]` on adopt, summary.deletedFiles on update. bootstrap and post-update receive it (#356). */
   removedFiles: string[];
@@ -96,30 +94,22 @@ export interface HookRunResult {
 interface SlotJob {
   slot: HookStage;
   relPath: string | undefined;
-  makeCtx: () => AnyHookContext;
+  makeCtx: () => SlottedHookContext;
   boundary: 'managed-write' | 'unmanaged-create' | 'none';
   /** When false, the hook is declared but the engine chooses not to run it. */
   willRun: boolean;
   skippedReason?: 'values-are-defaults';
-  deprecated?: boolean;
 }
 
 export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRunResult> {
   const { manifest } = plan;
   const hooks = manifest.hooks ?? {};
   const shardLabel = `${manifest.namespace}/${manifest.name}`;
-  const shard = { name: manifest.name, version: manifest.version };
   const timeoutMs = hooks.timeout_ms ?? DEFAULT_HOOK_TIMEOUT_MS;
-
-  const isLegacyInstall =
-    plan.command !== 'update' &&
-    Boolean(hooks['post-install']) &&
-    !hooks.bootstrap &&
-    !hooks.personalize;
 
   const defaults = valuesAreDefaultsSafe(plan.values, plan.schema);
 
-  const jobs = buildJobs(plan, { isLegacyInstall, defaults, shard });
+  const jobs = buildJobs(plan, defaults);
 
   // Slots that actually spawn a subprocess — drives the "(N of M)" markers.
   const runnableCount = jobs.filter((j) => j.willRun && j.relPath !== undefined).length;
@@ -243,7 +233,6 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
 
     const summary = summarize(result, {
       violation,
-      deprecated: job.deprecated,
       ignoreProblem: job.boundary === 'unmanaged-create' ? ignoreProblem : undefined,
     });
     // Persist the full output (and attach the pointer) when the hook crashed or
@@ -287,15 +276,14 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
 /** Build the ordered slot jobs for this command. */
 function buildJobs(
   plan: HookRunPlan,
-  ctx: { isLegacyInstall: boolean; defaults: boolean; shard: { name: string; version: string } },
+  defaults: boolean,
 ): SlotJob[] {
   const hooks = plan.manifest.hooks ?? {};
-  const { shard } = ctx;
   const base = {
     vaultRoot: plan.vaultRoot,
     values: plan.values,
     modules: plan.modules,
-    shard,
+    shard: { name: plan.manifest.name, version: plan.manifest.version },
   };
 
   if (plan.command === 'update') {
@@ -309,7 +297,7 @@ function buildJobs(
         slot: 'bootstrap',
         ...base,
         previousVersion: plan.previousVersion,
-        valuesAreDefaults: ctx.defaults,
+        valuesAreDefaults: defaults,
         removedFiles: plan.removedFiles,
       }),
     });
@@ -330,41 +318,21 @@ function buildJobs(
   }
 
   // install / adopt
-  if (ctx.isLegacyInstall) {
-    return [
-      {
-        slot: 'post-install',
-        relPath: hooks['post-install'],
-        boundary: 'none',
-        willRun: true,
-        deprecated: true,
-        // Legacy flat context: keep valuesAreDefaults + file lists so existing
-        // self-gating hooks behave exactly as before.
-        makeCtx: () => ({
-          ...base,
-          valuesAreDefaults: ctx.defaults,
-          newFiles: plan.newFiles,
-          removedFiles: plan.removedFiles,
-        }),
-      },
-    ];
-  }
-
   return [
     {
       slot: 'bootstrap',
       relPath: hooks.bootstrap?.script,
       boundary: 'managed-write',
       willRun: true,
-      makeCtx: () => ({ slot: 'bootstrap', ...base, valuesAreDefaults: ctx.defaults, removedFiles: plan.removedFiles }),
+      makeCtx: () => ({ slot: 'bootstrap', ...base, valuesAreDefaults: defaults, removedFiles: plan.removedFiles }),
     },
     {
       slot: 'personalize',
       relPath: hooks.personalize,
       boundary: 'unmanaged-create',
       // Invariant 2: engine skips personalize entirely on a defaults install.
-      willRun: !ctx.defaults,
-      skippedReason: ctx.defaults ? 'values-are-defaults' : undefined,
+      willRun: !defaults,
+      skippedReason: defaults ? 'values-are-defaults' : undefined,
       makeCtx: () => ({ slot: 'personalize', ...base }),
     },
   ];
@@ -378,22 +346,21 @@ export function bootstrapShouldRerun(
   return installed !== target;
 }
 
-/** Merge a boundary violation / deprecation flag into a HookResult summary. */
+/** Merge a boundary violation into a HookResult summary. */
 function summarize(
   result: HookResult,
-  extra: { violation: HookViolation | null; deprecated?: boolean; ignoreProblem?: string },
+  extra: { violation: HookViolation | null; ignoreProblem?: string },
 ): HookSummary | null {
   const summary = summarizeHook(result);
   // Nothing to render: the hook produced no summary (e.g. the script vanished
-  // between lookup and run → `absent`) and there's no violation/deprecation
-  // note to surface on its own.
-  if (!summary && !extra.violation && !extra.deprecated) return null;
+  // between lookup and run → `absent`) and there's no violation to surface
+  // on its own.
+  if (!summary && !extra.violation) return null;
   const merged: HookSummary = summary ? { ...summary } : {};
   if (extra.violation) {
     merged.violation = { kind: extra.violation.kind, paths: extra.violation.paths };
     if (extra.violation.unreadable) merged.violation.unreadable = extra.violation.unreadable;
   }
-  if (extra.deprecated) merged.deprecated = true;
   // Only beside a hook that ran: a vanished script has no walk to qualify.
   if (extra.ignoreProblem && summary) merged.ignoreProblem = extra.ignoreProblem;
   return merged;

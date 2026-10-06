@@ -69,7 +69,7 @@ beforeAll(async () => {
   const workDir = path.join(workRoot, prefix);
   await copyTree(fileURLToPath(new URL('../../examples/minimal-shard', import.meta.url)), workDir);
   await fs.mkdir(path.join(workDir, 'hooks'), { recursive: true });
-  await fs.writeFile(path.join(workDir, 'hooks', 'post-install.ts'), HOOK_SOURCE, 'utf-8');
+  await fs.writeFile(path.join(workDir, 'hooks', 'bootstrap.ts'), HOOK_SOURCE, 'utf-8');
   const tarball = path.join(scratch, `${prefix}.tar.gz`);
   await tar.c({ file: tarball, gzip: true, cwd: workRoot }, [prefix]);
   stub = await createGitHubStub({

@@ -18,7 +18,6 @@ export type {
   FrontmatterRule,
   ValidationResult,
   FrontmatterValidationResult,
-  HookContext,
   HookSlot,
   HookContextBase,
   BootstrapContext,

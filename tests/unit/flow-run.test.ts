@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 
-const runHooks = vi.fn(async () => ({ outcomes: [{ stage: 'post-install' }], finalState: {} }));
+const runHooks = vi.fn(async () => ({ outcomes: [{ slot: 'bootstrap' }], finalState: {} }));
 vi.mock('../../source/core/hook-orchestrator.js', () => ({ runHooks }));
 
 const { runAndHooks } = await import('../../source/core/flows/run.js');
@@ -46,7 +46,7 @@ describe('runAndHooks (#302)', () => {
     expect(seen).toBeInstanceOf(AbortSignal);
     expect(calls).toEqual(['newRunAbort', 'run', 'onRun', 'onCommitted', 'hookAbort set', 'hookAbort cleared']);
     expect(result).toEqual({ state: { v: 1 } });
-    expect(hooks).toEqual([{ stage: 'post-install' }]);
+    expect(hooks).toEqual([{ slot: 'bootstrap' }]);
     expect(runHooks).toHaveBeenCalledWith(expect.objectContaining({ state: { v: 1 } }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 

@@ -18,12 +18,12 @@ afterEach(() => {
 });
 
 describe('HookProgress', () => {
-  it('renders a post-install heading with the shard label', () => {
+  it('renders a bootstrap heading with the shard label', () => {
     const { lastFrame } = render(
-      <HookProgress stage="post-install" output="" shardLabel="acme/demo" />,
+      <HookProgress stage="bootstrap" output="" shardLabel="acme/demo" />,
     );
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('Running post-install hook for acme/demo');
+    expect(frame).toContain('Running bootstrap hook for acme/demo');
   });
 
   it('renders a post-update heading with the shard label', () => {
@@ -58,11 +58,11 @@ describe('HookProgress', () => {
 
   it('renders only spinner + heading when output is empty', () => {
     const emptyOutput = render(
-      <HookProgress stage="post-install" output="" shardLabel="acme/demo" />,
+      <HookProgress stage="bootstrap" output="" shardLabel="acme/demo" />,
     );
     const withOutput = render(
       <HookProgress
-        stage="post-install"
+        stage="bootstrap"
         output="cloning repo\npatching files"
         shardLabel="acme/demo"
       />,
@@ -71,8 +71,8 @@ describe('HookProgress', () => {
     // strictly longer (multi-line tail renders added lines).
     const emptyFrame = emptyOutput.lastFrame() ?? '';
     const populatedFrame = withOutput.lastFrame() ?? '';
-    expect(emptyFrame).toContain('Running post-install hook');
-    expect(populatedFrame).toContain('Running post-install hook');
+    expect(emptyFrame).toContain('Running bootstrap hook');
+    expect(populatedFrame).toContain('Running bootstrap hook');
     expect(populatedFrame).toContain('cloning repo');
     expect(populatedFrame).toContain('patching files');
     // Absence assertion: the empty-output frame doesn't include any of
@@ -83,7 +83,7 @@ describe('HookProgress', () => {
   it('tails the last 12 lines when output exceeds 12 lines', () => {
     const lines = Array.from({ length: 20 }, (_, i) => `line-${i}`).join('\n');
     const { lastFrame } = render(
-      <HookProgress stage="post-install" output={lines} shardLabel="acme/demo" />,
+      <HookProgress stage="bootstrap" output={lines} shardLabel="acme/demo" />,
     );
     const frame = lastFrame() ?? '';
     // Lines 0-7 must have been dropped (keep only the last 12: 8..19).
@@ -98,7 +98,7 @@ describe('HookProgress', () => {
     // CRLF) must not have their tail collapse to a single unwrapped line.
     const output = 'alpha\r\nbeta\r\ngamma';
     const { lastFrame } = render(
-      <HookProgress stage="post-install" output={output} shardLabel="acme/demo" />,
+      <HookProgress stage="bootstrap" output={output} shardLabel="acme/demo" />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('alpha');
@@ -111,7 +111,7 @@ describe('HookProgress', () => {
     // consume a render slot. Assert the tail stays at the real last line.
     const output = 'only line\n';
     const { lastFrame } = render(
-      <HookProgress stage="post-install" output={output} shardLabel="acme/demo" />,
+      <HookProgress stage="bootstrap" output={output} shardLabel="acme/demo" />,
     );
     const frame = lastFrame() ?? '';
     expect(frame).toContain('only line');
@@ -127,7 +127,7 @@ describe('HookProgress', () => {
     it("strips the hook's own colour codes when colour is off", () => {
       chalk.level = 0;
       const frame = render(
-        <HookProgress stage="post-install" output={'\x1b[32mcloned\x1b[0m\n'} shardLabel="acme/demo" />,
+        <HookProgress stage="bootstrap" output={'\x1b[32mcloned\x1b[0m\n'} shardLabel="acme/demo" />,
       ).lastFrame() ?? '';
       expect(frame).toContain('cloned');
       expect(frame).not.toContain('\x1b[32m');
@@ -136,7 +136,7 @@ describe('HookProgress', () => {
     it("keeps the hook's colour codes when colour is on", () => {
       chalk.level = 1;
       const frame = render(
-        <HookProgress stage="post-install" output={'\x1b[32mcloned\x1b[0m\n'} shardLabel="acme/demo" />,
+        <HookProgress stage="bootstrap" output={'\x1b[32mcloned\x1b[0m\n'} shardLabel="acme/demo" />,
       ).lastFrame() ?? '';
       expect(frame).toContain('\x1b[32mcloned');
     });

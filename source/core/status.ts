@@ -237,7 +237,17 @@ async function loadCachedManifest(
 ): Promise<ShardManifest | null> {
   const filePath = path.join(vaultRoot, CACHED_MANIFEST);
   try {
-    return await parseManifest(filePath);
+    return await parseManifest(filePath, {
+      installedCopy: true,
+      // Informational: nothing to fix in the vault, but an update to a shard
+      // release that still declares it is refused until the author migrates.
+      onRemovedSlot: () =>
+        warnings.push({
+          severity: 'info',
+          message: 'The shard release this vault was installed from declares a post-install hook, which ShardMind 1.0 removed.',
+          hint: 'HOOK_SLOT_REMOVED: nothing to change in this vault. An update installs once the shard publishes a release without post-install.',
+        }),
+    });
   } catch (err) {
     warnings.push({
       severity: 'warning',

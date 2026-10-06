@@ -50,8 +50,8 @@ export type Phase =
   | { kind: 'wizard'; ctx: InstallShard }
   | { kind: 'collision'; collisions: Collision[]; ctx: InstallShard }
   | { kind: 'installing'; total: number; current: number; label: string; history: string[] }
-  | RunningHookPhase // a lifecycle hook (bootstrap / personalize / legacy
-      // post-install) is streaming output. We are already past the
+  | RunningHookPhase // a lifecycle hook (bootstrap / personalize) is
+      // streaming output. We are already past the
       // point-of-no-return (state.json written); a Ctrl+C here kills the child
       // but does NOT roll the install back. See docs/ARCHITECTURE.md §9.3 for
       // the Helm-style contract.

@@ -24,15 +24,15 @@ export const HOOK_LOGS_DIR = path.join(SHARDMIND_DIR, 'logs');
 /** The vault owner's list of folders the personalize boundary walk skips (#190). Never shipped, never written by the engine. */
 export const BOUNDARY_IGNORE_FILE = path.join(SHARDMIND_DIR, 'boundary-ignore');
 
+/** Every hook slot a shard can declare in `shard.yaml`; `HookSlot` is derived from it. */
+export const HOOK_STAGES = ['bootstrap', 'personalize', 'post-update'] as const;
+
 /**
  * Vault-relative path of one slot's full hook log, e.g.
  * `.shardmind/logs/bootstrap.log`. Returned with forward slashes — it doubles
  * as a user-facing pointer in the Summary, and `path.join(vaultRoot, …)`
  * resolves a posix-style relative path correctly on every platform.
  */
-/** Every hook slot a shard can declare in `shard.yaml`. */
-export const HOOK_STAGES = ['bootstrap', 'personalize', 'post-update', 'post-install'] as const;
-
 export function hookLogRelPath(slot: string): string {
   return `${SHARDMIND_DIR}/logs/${slot}.log`;
 }

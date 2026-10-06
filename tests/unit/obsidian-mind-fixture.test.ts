@@ -37,8 +37,8 @@ describe('obsidian-mind-like fixture', () => {
     });
     expect(manifest.hooks.personalize).toBe('.shardmind/hooks/personalize.ts');
     expect(manifest.hooks['post-update']).toBe('.shardmind/hooks/post-update.ts');
-    // No legacy post-install slot — the fixture is migrated.
-    expect(manifest.hooks['post-install']).toBeUndefined();
+    // No post-install slot (removed in 1.0, #357).
+    expect(manifest.hooks).not.toHaveProperty('post-install');
     // timeout_ms must round-trip — the hook-failure scenarios bump it
     // down to a tiny value to force a timeout, and a misparse would
     // silently fall back to the 30s default.
@@ -72,7 +72,7 @@ describe('obsidian-mind-like fixture', () => {
         existsSync(path.join(FIXTURE_DIR, '.shardmind', 'hooks', hook)),
       ).toBe(true);
     }
-    // The legacy combined hook is gone (migrated to bootstrap + personalize).
+    // The combined post-install hook is gone (split into bootstrap + personalize).
     expect(
       existsSync(path.join(FIXTURE_DIR, '.shardmind', 'hooks', 'post-install.ts')),
     ).toBe(false);

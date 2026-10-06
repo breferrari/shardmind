@@ -1019,7 +1019,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
    * Pin `summary.addedFiles` semantics: only `UpdateAction.kind === 'add'`
    * paths are surfaced. `summary.wroteFiles` (which lumps add + overwrite
    * + auto_merge + accept_new together) is the wrong source for
-   * `HookContext.newFiles` per Invariant 3 (post-update hooks are
+   * `PostUpdateContext.newFiles` per Invariant 3 (post-update hooks are
    * additive-only). This test bumps the shard with a new file, runs
    * update, and asserts the carve-out matches.
    */
@@ -1073,7 +1073,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     expect(result.summary.deletedFiles).toEqual([]);
     // wroteFiles includes Changelog.md (add) + Home.md (overwrite); the
     // carve-out keeps only the former. This is the assertion that pins
-    // `HookContext.newFiles` does not silently include overwrites.
+    // `PostUpdateContext.newFiles` does not silently include overwrites.
     expect(result.summary.wroteFiles).toContain('Home.md');
     expect(result.summary.wroteFiles).toContain('Changelog.md');
     expect(result.summary.addedFiles).not.toContain('Home.md');
@@ -1091,7 +1091,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     const shardDir = path.join(os.tmpdir(), `shardmind-shard-${crypto.randomUUID()}`);
     await fsp.mkdir(vault, { recursive: true });
     await cloneShard(MINIMAL_SHARD, shardDir);
-    // The minimal-shard fixture only declares a post-install hook; the
+    // The minimal-shard fixture only declares a bootstrap hook; the
     // update-path test needs a post-update declaration too. Append it
     // to the copied shard.yaml so the lookup finds the file below.
     const shardYamlInit = await fsp.readFile(path.join(shardDir, '.shardmind', 'shard.yaml'), 'utf-8');
@@ -1159,12 +1159,12 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       });
 
       const hookResult = await runPostUpdateHook(shardDir, newManifest, {
+        slot: 'post-update',
         vaultRoot: vault,
         values,
         modules: selections,
         shard: { name: newManifest.name, version: newManifest.version },
         previousVersion: state.version,
-        valuesAreDefaults: false,
         newFiles: [],
         removedFiles: [],
       });

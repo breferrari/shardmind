@@ -124,8 +124,8 @@
           "type": "string"
         },
         "post-install": {
-          "description": "DEPRECATED — legacy combined hook. Mutually exclusive with `bootstrap`/`personalize` (HOOK_SLOT_CONFLICT). Honored until at least 0.3.0; migrate to the named slots.",
-          "type": "string"
+          "description": "REMOVED in 1.0 (HOOK_SLOT_REMOVED): a shard.yaml that declares it fails to load. Move unmanaged setup to `bootstrap` (always runs) and managed-file edits to `personalize` (runs only on non-default values). Worked split: https://github.com/breferrari/shardmind/blob/main/docs/AUTHORING.md#post-install-was-removed-in-10",
+          "not": {}
         },
         "timeout_ms": {
           "description": "Per-slot hook execution timeout in milliseconds. Default 30000; valid range 1000–600000.",
