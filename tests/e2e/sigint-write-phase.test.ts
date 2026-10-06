@@ -113,6 +113,15 @@ describe('SIGINT while the executor writes the vault (#186)', () => {
     expect(await snapshot(vault.root)).toEqual(before);
   }, 90_000);
 
+  it('install into a folder it makes (#333): exits 130 and leaves no folder', async () => {
+    const vault = await createEmptyVault('sigint-write-install-new');
+    vaults.push(vault);
+    const { result, held } = await interruptMidWrite(vault, ['install', REF, 'fresh vault', '--yes', '--values', await valuesFile('install-new')]);
+
+    expectCancelled(result, held);
+    expect(await fs.readdir(vault.root)).toEqual([]);
+  }, 90_000);
+
   it('update: exits 130 and restores every file, state.json and the template cache', async () => {
     const vault = await createInstalledVault({ stub, shardRef: REF, values: VALUES, prefix: 'sigint-write-update' });
     vaults.push(vault);

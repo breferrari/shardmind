@@ -1388,4 +1388,138 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       await vault.cleanup();
     }
   }, 90_000);
+
+  // ───── Install into a new folder (#333) ─────
+  // The cwd is a temp dir; SHARD_SLUG's name is `demo`.
+
+  describe('into a new folder (#333)', () => {
+    const exists = (p: string) => fs.access(p).then(() => true, () => false);
+
+    /** Fails every Markdown write under `under`, as a full disk would. */
+    function failWritesUnder(under: string) {
+      const realWrite = fs.writeFile.bind(fs);
+      return vi.spyOn(fs, 'writeFile').mockImplementation((async (file: unknown, ...rest: unknown[]) => {
+        if (typeof file === 'string' && file.startsWith(under) && file.endsWith('.md')) {
+          throw Object.assign(new Error('EIO: injected'), { code: 'EIO' });
+        }
+        return (realWrite as (...a: unknown[]) => Promise<void>)(file, ...rest);
+      }) as typeof fs.writeFile);
+    }
+
+    it('by default makes a folder named after the shard, installs into it and says how to get there', async () => {
+      const { stub, fixtures } = getCtx();
+      stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+      const cwd = await makeVaultDir('new-folder-default');
+      try {
+        const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: cwd, folder: undefined, options: { defaults: true } });
+        const frame = await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 30_000);
+        expect(await exists(path.join(cwd, 'demo', '.shardmind', 'state.json'))).toBe(true);
+        expect(await exists(path.join(cwd, '.shardmind'))).toBe(false);
+        expect(frame).toContain('cd demo');
+        expect(frame.replace(/\s+/g, ' ')).toContain('Your vault is in');
+      } finally {
+        await cleanupVault(cwd);
+      }
+    }, 45_000);
+
+    it('a nested folder with a space makes every level, and quotes the cd line', async () => {
+      const { stub, fixtures } = getCtx();
+      stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+      const cwd = await makeVaultDir('new-folder-nested');
+      try {
+        const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: cwd, folder: 'vaults/my wiki', options: { defaults: true } });
+        const frame = await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 30_000);
+        expect(await exists(path.join(cwd, 'vaults', 'my wiki', '.shardmind', 'state.json'))).toBe(true);
+        expect(frame).toContain('cd "vaults/my wiki"');
+      } finally {
+        await cleanupVault(cwd);
+      }
+    }, 45_000);
+
+    it('a non-empty folder is refused before any network call, and left as it was', async () => {
+      const { stub } = getCtx();
+      const cwd = await makeVaultDir('new-folder-taken');
+      try {
+        await fs.mkdir(path.join(cwd, 'demo'));
+        await fs.writeFile(path.join(cwd, 'demo', 'mine.md'), 'mine\n');
+        const before = stub.requestedPaths().length;
+        const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: cwd, folder: undefined, options: { defaults: true } });
+        await waitFor(r.lastFrame, (f) => f.includes('INSTALL_DESTINATION_NOT_EMPTY'), 15_000);
+        expect(stub.requestedPaths().length).toBe(before);
+        expect(await fs.readdir(path.join(cwd, 'demo'))).toEqual(['mine.md']);
+        expect(process.exitCode).toBe(1);
+      } finally {
+        process.exitCode = undefined;
+        await cleanupVault(cwd);
+      }
+    }, 30_000);
+
+    it('a cancel at the confirm screen leaves no folder behind', async () => {
+      const { stub, fixtures } = getCtx();
+      stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+      const cwd = await makeVaultDir('new-folder-cancel');
+      try {
+        const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: cwd, folder: undefined });
+        await driveMinimalWizard(r, 'Dana');
+        r.stdin.write(ENTER); // modules → confirm
+        await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+        r.stdin.write(ARROW_DOWN);
+        await tick(40);
+        r.stdin.write(ARROW_DOWN);
+        await tick(40);
+        r.stdin.write(ENTER);
+        await waitFor(r.lastFrame, (f) => f.includes('Cancelled'), 15_000);
+        expect(await fs.readdir(cwd)).toEqual([]);
+      } finally {
+        await cleanupVault(cwd);
+      }
+    }, 45_000);
+
+    it('a failed write removes the folders the install made', async () => {
+      const { stub, fixtures } = getCtx();
+      stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+      const cwd = await makeVaultDir('new-folder-fail');
+      const spy = failWritesUnder(path.join(cwd, 'a'));
+      try {
+        const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: cwd, folder: 'a/b', options: { defaults: true } });
+        await waitFor(r.lastFrame, (f) => /EIO: injected/.test(f), 30_000);
+        expect(await fs.readdir(cwd)).toEqual([]);
+      } finally {
+        spy.mockRestore();
+        process.exitCode = undefined;
+        await cleanupVault(cwd);
+      }
+    }, 45_000);
+
+    it('a failed write into an existing empty folder keeps the folder', async () => {
+      const { stub, fixtures } = getCtx();
+      stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+      const cwd = await makeVaultDir('new-folder-existing-fail');
+      await fs.mkdir(path.join(cwd, 'demo'));
+      const spy = failWritesUnder(path.join(cwd, 'demo'));
+      try {
+        const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: cwd, folder: undefined, options: { defaults: true } });
+        await waitFor(r.lastFrame, (f) => /EIO: injected/.test(f), 30_000);
+        expect(await fs.readdir(cwd)).toEqual(['demo']);
+        expect(await fs.readdir(path.join(cwd, 'demo'))).toEqual([]);
+      } finally {
+        spy.mockRestore();
+        process.exitCode = undefined;
+        await cleanupVault(cwd);
+      }
+    }, 45_000);
+
+    it('--dry-run makes no folder, and says where the vault would go', async () => {
+      const { stub, fixtures } = getCtx();
+      stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+      const cwd = await makeVaultDir('new-folder-dry');
+      try {
+        const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: cwd, folder: undefined, options: { defaults: true, dryRun: true } });
+        await waitFor(r.lastFrame, (f) => /would be written into demo/.test(f), 30_000);
+        expect(await fs.readdir(cwd)).toEqual([]);
+      } finally {
+        await cleanupVault(cwd);
+      }
+    }, 45_000);
+  });
 });

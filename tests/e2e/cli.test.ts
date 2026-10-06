@@ -412,6 +412,32 @@ describe('shardmind install', () => {
     expect(home).toContain('Alice');
   });
 
+  it('with no folder, installs into a new folder named after the shard (#333)', async () => {
+    vault = await createEmptyVault('install-new-folder');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(['install', SHARD_REF, '--yes', '--values', valuesPath], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    expect(await vault.exists('demo/.shardmind/state.json')).toBe(true);
+    expect(await vault.exists('demo/Home.md')).toBe(true);
+    expect(await vault.exists('.shardmind')).toBe(false);
+    expect(result.stdout).toContain('cd demo');
+  });
+
+  it('refuses a non-empty destination before any request (#333)', async () => {
+    vault = await createEmptyVault('install-taken');
+    await fs.mkdir(path.join(vault.root, 'demo'));
+    await fs.writeFile(path.join(vault.root, 'demo', 'mine.md'), 'mine\n');
+    const before = stub.requestedPaths().length;
+    const result = await spawnCli(['install', SHARD_REF, '--defaults'], { cwd: vault.root, env: envWithStub() });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain('INSTALL_DESTINATION_NOT_EMPTY');
+    expect(stub.requestedPaths().length).toBe(before);
+    expect(await fs.readdir(path.join(vault.root, 'demo'))).toEqual(['mine.md']);
+  });
+
   it('state.files keys use forward-slashes on every platform', async () => {
     vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'install-slashes' });
     const stateRaw = await vault.readFile('.shardmind/state.json');
