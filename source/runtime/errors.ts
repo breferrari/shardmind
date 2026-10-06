@@ -119,12 +119,11 @@ export type ErrorCode =
   | 'ADOPT_NON_INTERACTIVE_WITHOUT_VALUES'
   | 'ADOPT_WRITE_FAILED'
   | 'MIGRATION_INVALID_VERSION'
-  // Reserved for the v0.2 sandboxed-transform path: currently migrator.ts
-  // swallows `type_changed` transform exceptions and records a warning
-  // (best-effort posture), so this code is declared but unthrown. When
-  // the sandboxed evaluator lands it will fire this code so the command
-  // layer can distinguish "transform crashed" from "transform returned
-  // the wrong shape". See IMPLEMENTATION.md §7.
+  // Reserved for a `type_changed` transform failure; not raised yet. Today
+  // migrator.ts records a warning and keeps the old value when a transform
+  // throws, and a wrong-typed result fails the values check as
+  // VALUES_INVALID (#346). Kept so a later stricter transform path can raise
+  // it without adding a code. See docs/ERRORS.md.
   | 'MIGRATION_TRANSFORM_FAILED'
 
   // Update-check cache (status command + update command share this)

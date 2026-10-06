@@ -2294,7 +2294,7 @@ Update + migration codes (added in Milestone 4):
 | `UPDATE_CACHE_MISSING` | update-planner (drift references a path absent from `state.files`, OR a `drift.modified` file vanishes between drift scan and merge planning), use-update-machine (cached schema missing) | "State and drift report disagree — re-install the shard." / "Vault contents changed during `shardmind update`. Re-run." |
 | `UPDATE_WRITE_FAILED` | update-executor | OS error message + permission / space hint |
 | `MIGRATION_INVALID_VERSION` | migrator | "currentVersion and targetVersion must be valid semver." |
-| `MIGRATION_TRANSFORM_FAILED` | reserved for sandbox-enforcement path | — |
+| `MIGRATION_TRANSFORM_FAILED` | reserved for a transform failure; not raised (a throw warns and keeps the old value, a wrong type is `VALUES_INVALID`) | — |
 
 Commands catch errors and render them in Ink with `StatusMessage variant="error"`.
 

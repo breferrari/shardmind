@@ -573,9 +573,11 @@ The run writes this as its one JSON failure document and exits 1, instead of wri
 
 ### `MIGRATION_TRANSFORM_FAILED`
 
-**Meaning:** Reserved for the v0.2 sandboxed-transform path. Currently `migrator.ts` catches `type_changed` transform exceptions and records a warning (best-effort posture), so this code is declared but not thrown in v0.1.
+**Meaning:** Reserved for a `type_changed` migration transform that fails. shardmind does not raise it yet.
 
-**Remedy:** N/A in v0.1. When the sandboxed evaluator lands (v0.2), this code will surface if a transform crashes and the command layer will distinguish it from "transform returned the wrong shape."
+**What happens today instead:** a transform that throws keeps the old value and adds a warning to the update's summary; a transform that returns the wrong type fails the values check as [`VALUES_INVALID`](#values_invalid) before anything is written (IMPLEMENTATION §4.10).
+
+**Remedy:** None needed while it is unraised. A script that switches on codes can treat it as a migration failure.
 
 ## Adopt
 
