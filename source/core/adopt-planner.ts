@@ -123,7 +123,7 @@ export interface AdoptPlan {
   shardOnly: AdoptClassification[];
   /** Total file count the planner would have written under a clean install. */
   totalShardFiles: number;
-  /** `--from-version`: the base release, and why it could not be used, if so (#325). Set by the flow. */
+  /** `--from-version`: the base release, and why it could not be used, if so (#325). Set by the flow when a file differs. */
   base?: AdoptBase;
 }
 
@@ -153,12 +153,6 @@ export interface AdoptPlannerInput {
    * shard's version, old path → new path (`adopt --from-version`, #179).
    */
   renames?: ReadonlyMap<string, string>;
-  /**
-   * The base release's outputs, path → sha256, from `baseOutputHashes`
-   * (`adopt --from-version`, #325). A differing file equal to its base
-   * output is `behind`.
-   */
-  base?: ReadonlyMap<string, string>;
 }
 
 /** What rendering a shard's outputs needs: the planner input without the vault comparison. */
@@ -178,7 +172,7 @@ type RenderInput = Pick<AdoptPlannerInput, 'schema' | 'manifest' | 'tempDir' | '
  * budget).
  */
 export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptPlan> {
-  const { vaultRoot, renames, base } = input;
+  const { vaultRoot, renames } = input;
 
   const items = await renderShardOutputs(input, { tolerant: false });
   const movable = renames?.size
@@ -191,16 +185,12 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
 
   const matches: AdoptClassification[] = [];
   const differs: AdoptClassification[] = [];
-  const behind: AdoptClassification[] = [];
   const shardOnly: AdoptClassification[] = [];
 
   for (const c of classifications) {
     if (c.kind === 'matches') matches.push(c);
-    else if (c.kind === 'differs') {
-      // Equal to the base release at the path it sits at: never edited (#325).
-      if (base?.get(c.movedFrom ?? c.path) === c.userHash) behind.push(c);
-      else differs.push(c);
-    } else shardOnly.push(c);
+    else if (c.kind === 'differs') differs.push(c);
+    else shardOnly.push(c);
   }
 
   // Refuse before any prompt or `--json` plan (#163); the executor checks
@@ -215,10 +205,25 @@ export async function classifyAdoption(input: AdoptPlannerInput): Promise<AdoptP
   return {
     matches,
     differs,
-    behind,
+    behind: [],
     shardOnly,
     totalShardFiles: items.length,
   };
+}
+
+/**
+ * `--from-version` (#325): the differing files whose bytes equal the base
+ * release's output (`baseOutputHashes`) at the path they sit at, or at their
+ * rename's old path, move from `differs` to `behind`: never edited.
+ */
+export function partitionBehind(plan: AdoptPlan, base: ReadonlyMap<string, string>): AdoptPlan {
+  const differs: AdoptClassification[] = [];
+  const behind: AdoptClassification[] = [...plan.behind];
+  for (const c of plan.differs) {
+    if (c.kind === 'differs' && base.get(c.movedFrom ?? c.path) === c.userHash) behind.push(c);
+    else differs.push(c);
+  }
+  return { ...plan, differs, behind };
 }
 
 /**

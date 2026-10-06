@@ -23,6 +23,7 @@ import { waitFor } from '../helpers.js';
 import { buildObsidianMindTarballs, type ObsidianMindTarballs } from '../../e2e/helpers/obsidian-mind-tarball.js';
 import { runAdoptFlow, type AdoptFlowInput, type AdoptFlowIO, type AdoptQuestion } from '../../../source/core/flows/adopt.js';
 import { readState } from '../../../source/core/state.js';
+import { FlowCancelled } from '../../../source/core/flows/cancelled.js';
 import { adoptPlanResult } from '../../../source/core/json-output.js';
 
 const OM_SLUG = 'acme/om';
@@ -163,6 +164,73 @@ describe('adopt --from-version: files still at the base release (#325)', () => {
       expect(asked).toContain('AGENTS.md');
       expect(asked).not.toContain('CLAUDE.md');
       expect(result.summary.updatedBehind).toEqual(['CLAUDE.md']);
+    } finally {
+      await cleanupVault(vault);
+    }
+  });
+
+  it('auto-merge never merges a behind file: it takes 6.1.0 whole', async () => {
+    serve();
+    const vault = await clonedAt600();
+    try {
+      const result = await runAdoptFlow(input(vault, { mode: 'auto-merge' }), scriptedIO(() => 'keep_mine').io);
+      if (result.kind !== 'done') throw new Error('expected done');
+      expect(result.summary.updatedBehind).toEqual(['CLAUDE.md']);
+      expect(result.summary.adoptedMerged).not.toContain('CLAUDE.md');
+      expect(await fs.readFile(path.join(vault, 'CLAUDE.md'), 'utf-8')).toBe(await targetClaude());
+    } finally {
+      await cleanupVault(vault);
+    }
+  });
+
+  it('--from-version v6.0.0 is read as 6.0.0', async () => {
+    serve();
+    const vault = await clonedAt600();
+    try {
+      const result = await runAdoptFlow(input(vault, { fromVersion: 'v6.0.0' }), scriptedIO(() => 'keep_mine').io);
+      if (result.kind !== 'done') throw new Error('expected done');
+      expect(result.base).toEqual({ version: '6.0.0' });
+      expect(result.summary.updatedBehind).toEqual(['CLAUDE.md']);
+    } finally {
+      await cleanupVault(vault);
+    }
+  });
+
+  it('nothing differs: the base release is never fetched', async () => {
+    serve();
+    const vault = await makeVaultDir('adopt-behind-pristine');
+    try {
+      await fs.cp(FIXTURE_DIR, vault, { recursive: true });
+      const { stub } = getCtx();
+      const tarballRequests = async (dir: string, fromVersion: string | undefined) => {
+        const before = stub.requestedPaths().length;
+        // The clone is at 6.0.0 and so is the target: every plain file matches.
+        const result = await runAdoptFlow(input(dir, { shardRef: `${OM_REF}@6.0.0`, fromVersion, dryRun: true }), scriptedIO(() => 'keep_mine').io);
+        if (result.kind !== 'done') throw new Error('expected done');
+        expect(result.base).toBeUndefined();
+        return stub.requestedPaths().slice(before).filter((p) => p.includes('tarball')).length;
+      };
+      // As many tarball requests as a run without --from-version: the target's only.
+      expect(await tarballRequests(vault, '6.0.0')).toBe(await tarballRequests(vault, undefined));
+    } finally {
+      await cleanupVault(vault);
+    }
+  });
+
+  it('a run superseded before the base download stops, and never fetches it', async () => {
+    serve();
+    const vault = await clonedAt600();
+    try {
+      const { stub } = getCtx();
+      const stop = new AbortController();
+      const s = scriptedIO((q) => {
+        // Superseded while the values were asked: after the target's download.
+        if (q.kind === 'values') stop.abort();
+        return q.kind === 'values' ? { values: { user_name: 'Alice' }, selections: {} } : 'keep_mine';
+      });
+      const before = stub.requestedPaths().length;
+      await expect(runAdoptFlow(input(vault, { yes: false, mode: 'keep-all-mine', stop: stop.signal }), s.io)).rejects.toBeInstanceOf(FlowCancelled);
+      expect(stub.requestedPaths().slice(before).some((p) => p.includes('v6.0.0'))).toBe(false);
     } finally {
       await cleanupVault(vault);
     }

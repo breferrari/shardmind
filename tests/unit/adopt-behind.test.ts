@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-import { baseOutputHashes, classifyAdoption } from '../../source/core/adopt-planner.js';
+import { baseOutputHashes, classifyAdoption, partitionBehind } from '../../source/core/adopt-planner.js';
 import type { ShardManifest, ShardSchema } from '../../source/runtime/types.js';
 import { makeShardSource } from '../helpers/index.js';
 import { sha256 } from '../../source/core/fs-utils.js';
@@ -54,10 +54,13 @@ async function vaultFiles(files: Record<string, string | Buffer>): Promise<void>
   }
 }
 
-const classify = (opts: { base?: ReadonlyMap<string, string>; renames?: ReadonlyMap<string, string> } = {}) =>
-  classifyAdoption({ vaultRoot: vault, schema, manifest, tempDir: shard, values: {}, selections: {}, now: FIXED_DATE, ...opts });
+const classify = async (opts: { base?: ReadonlyMap<string, string>; renames?: ReadonlyMap<string, string> } = {}) => {
+  const { base, renames } = opts;
+  const plan = await classifyAdoption({ vaultRoot: vault, schema, manifest, tempDir: shard, values: {}, selections: {}, now: FIXED_DATE, ...(renames ? { renames } : {}) });
+  return base ? partitionBehind(plan, base) : plan;
+};
 
-describe('classifyAdoption with a base release (#325)', () => {
+describe('partitionBehind: classifying against a base release (#325)', () => {
   it('a file equal to the base and not the target is behind, not differs', async () => {
     await makeShardSource(shard, { 'a.md': 'new\n' });
     await vaultFiles({ 'a.md': 'old\n' });
@@ -152,7 +155,10 @@ describe('baseOutputHashes (#325)', () => {
     // Cloned with name Ada; this adopt resolves name Bob.
     await vaultFiles({ 'Home.md': 'Hi Ada\n' });
     const base = await baseOutputHashes({ schema, manifest, tempDir: baseShard, values: { name: 'Bob' }, selections: {}, now: FIXED_DATE, vaultRoot: vault });
-    const plan = await classifyAdoption({ vaultRoot: vault, schema, manifest, tempDir: shard, values: { name: 'Bob' }, selections: {}, now: FIXED_DATE, base });
+    const plan = partitionBehind(
+      await classifyAdoption({ vaultRoot: vault, schema, manifest, tempDir: shard, values: { name: 'Bob' }, selections: {}, now: FIXED_DATE }),
+      base,
+    );
     expect(plan.differs.map((c) => c.path)).toEqual(['Home.md']);
     expect(plan.behind).toEqual([]);
   });

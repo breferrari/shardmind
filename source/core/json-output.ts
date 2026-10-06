@@ -176,7 +176,7 @@ export interface AdoptPlanResult {
     readonly shardOnly: number;
     readonly totalShardFiles: number;
   };
-  /** With `--from-version`: the base release, and why it could not be read, if so (#325). */
+  /** With `--from-version` and a file that differs: the base release, and why it could not be read, if so (#325). */
   readonly base?: { readonly version: string; readonly unavailable?: string };
   /** Every file, uncapped — sorted by path so diffs between runs are stable. */
   readonly files: readonly AdoptPlanFile[];
