@@ -82,8 +82,9 @@ try {
   const subcommand = subcommandOf(argv);
   const isRoot = subcommand === undefined;
   const command = isRoot ? 'status' : subcommand === argv[0] ? subcommand : undefined;
-  // An own key only: `constructor` is not a command.
-  const headless = command !== undefined && Object.hasOwn(HEADLESS_JSON, command) ? HEADLESS_JSON[command] : undefined;
+  // jsonRun admits only the commands in json-run.ts, so `constructor --json`
+  // never reaches this lookup.
+  const headless = command === undefined ? undefined : HEADLESS_JSON[command];
   if (headless && jsonRun) {
     const run = await headless();
     process.exitCode = await run(isRoot ? argv : argv.slice(1), crash.version);
