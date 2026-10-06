@@ -2082,6 +2082,24 @@ shardNameOf(shardRef: string): string  // the <name> of <namespace>/<name>, from
 3. The vault folder itself, when it exists: empty (one entry read, not the listing), it is installed into (`create: []`); not empty, `INSTALL_DESTINATION_NOT_EMPTY`, naming it and suggesting another name or `.`.
 4. With `create` non-empty, the install takes no lock at plan time (there is no folder to hold it), reads no state (there is none), and hands `create` to its transaction (`createRoot`, §4.28 step 1a), which makes the folders when the install writes. `--dry-run` never does.
 
+### 4.32 `process-control.ts`
+
+The one owner of the CLI process's SIGINT handling, its exit code and its startup order (#303). Every other module goes through it; a scan test fails a `process.on('SIGINT', …)`, `process.exitCode =` or `process.exit(` anywhere else in `source/`, except `internal/` (child processes with their own exit) and `cli-kit/` (vendored).
+
+```typescript
+onSigint(handler: () => void | Promise<void>, opts?: { once?: boolean }): () => void
+emitSigint(): boolean
+withSigintHeld<T>(fn: () => T, onRestored?: () => void): T
+setExitCode(code: number): void
+exitProcess(code?: number): void
+STARTUP_STEPS: readonly ['applyNoColor', 'exitQuietlyWhenStdoutCloses', 'installCrashHandlers', 'installStdinCancellation']
+```
+
+1. **The SIGINT stack.** `onSigint` adds a handler and returns its removal; `once` removes it before it runs. One process listener runs the handlers in the order they were added, as Node runs its listeners. It is installed while any handler is registered and removed when none is, so `emitSigint()` (the stdin bridge, #155) is still false with nothing to run, and the bridge exits 130 itself. A handler's rejection is swallowed: every one runs.
+2. **`withSigintHeld`** (#50, #282): while an editor owns the terminal, a Ctrl+C must cancel the edit, not the run. Every raw SIGINT listener (the stack's, and Ink's own `signal-exit` one) comes off behind a no-op listener and goes back two `setImmediate`s after `fn` returns, so the queued signal lands on the no-op. A nested call just runs `fn`.
+3. **The exit code.** `setExitCode` writes `process.exitCode`; `exitProcess` calls `process.exit`. Nothing else does.
+4. **Startup order.** `cli.ts` runs `STARTUP_STEPS` in that order, before anything loads Ink: colour first, since chalk reads the environment once on import (#37); the closed-stdout handler before anything writes (#252); the crash handlers before the first dynamic import (#225); the stdin Ctrl+C bridge before any headless runner or Pastel (#155, #302). A unit test reads `cli.ts` and asserts the calls in that order.
+
 ## 5. Runtime Module: `shardmind/runtime`
 
 ### 5.1 `resolveVaultRoot()`
