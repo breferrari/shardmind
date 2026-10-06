@@ -15,7 +15,7 @@ import type { ShardState } from './types.js';
 import { ShardMindError } from './types.js';
 import { SHARDMIND_DIR, STATE_FILE } from './vault-paths.js';
 import { isEnoent } from './errno.js';
-import { parseShardState, STATE_CORRUPT_HINT } from './state-schema.js';
+import { newerStateError, parseShardState, STATE_CORRUPT_HINT, STATE_SCHEMA_VERSION } from './state-schema.js';
 
 const MAX_DEPTH = 20;
 
@@ -70,6 +70,7 @@ export function resolveVaultRoot(): string {
  * @throws ShardMindError `VAULT_NOT_FOUND` if no vault in the ancestor chain.
  * @throws ShardMindError `STATE_READ_FAILED` on I/O errors.
  * @throws ShardMindError `STATE_CORRUPT` if state.json is not valid JSON, or does not match the `ShardState` contract (#343).
+ * @throws ShardMindError `STATE_UNSUPPORTED_VERSION` if a newer ShardMind wrote it (#368).
  *
  * @example
  * ```ts
@@ -101,8 +102,29 @@ export async function loadState(): Promise<ShardState | null> {
   } catch {
     throw new ShardMindError(`Corrupt state.json: ${filePath}`, 'STATE_CORRUPT', STATE_CORRUPT_HINT);
   }
-  // The same contract the engine reads with (#343). No version check here:
-  // a hook runs only after the engine has read, and migrated, this file.
+  // The version first, as the engine reads it (#368): a hook can run a
+  // vendored runtime older than the engine that wrote this file, and a newer
+  // state is refused as such, not misread as corrupt. An older one (v1) has
+  // the current shape, so the contract check reads it as it is.
+  const version = parsed && typeof parsed === 'object' ? (parsed as { schema_version?: unknown }).schema_version : undefined;
+  if (!Number.isInteger(version)) {
+    throw new ShardMindError(
+      `Corrupt state.json: ${filePath}: schema_version: missing, or not an integer`,
+      'STATE_CORRUPT',
+      STATE_CORRUPT_HINT,
+    );
+  }
+  if ((version as number) > STATE_SCHEMA_VERSION) throw newerStateError(version as number);
+  // Below the first schema there is nothing to read it as: unsupported, as
+  // the engine's readState answers (no migration reaches it).
+  if ((version as number) < 1) {
+    throw new ShardMindError(
+      `Unsupported state schema_version: ${version as number}`,
+      'STATE_UNSUPPORTED_VERSION',
+      `This version of shardmind reads schema_version 1 to ${STATE_SCHEMA_VERSION}.`,
+    );
+  }
+  // The same contract the engine reads with (#343).
   return parseShardState(parsed, filePath);
 }
 
