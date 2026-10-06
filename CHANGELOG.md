@@ -21,6 +21,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **`MIGRATION_TRANSFORM_FAILED` is documented as what it is:** reserved for a transform failure and not raised yet. It used to promise a sandboxed evaluator that was never built.
 - **What a `type_changed` transform does is documented** in AUTHORING and IMPLEMENTATION §4.10. It runs as a JavaScript expression inside shardmind, with no timeout and no sandbox. A throw keeps the old value and adds a warning to the update's summary.
 
+### Changed (thirteen engine features planned again — Phase 15)
+
+- Docs: the engine features declined on 2026-10-05 are planned work again (ROADMAP Phase 15): shard composition, `init`, dependency fetching, structural variants, guided files, `eject`, `rendered_files`, named registries, registry search and indexing, teams, debug logging, `--skip-hooks` and a command namespace prefix. VISION, ARCHITECTURE §15/§16/§21, SHARD-LAYOUT's "Out of scope and planned", AUTHORING and the README say so, with their designs. Whether each lands before 1.0 or in 1.x is still to be ruled. A hosted registry with accounts stays a non-goal.
+
 ### Changed (status on a vault from a newer ShardMind — #344)
 
 - **`shardmind` on a vault whose `state.json` a newer ShardMind wrote shows a notice instead of an error**: which schema the file has, which this ShardMind reads, and the upgrade command. It exits 0, as status does for anything it can show. `shardmind --json` answers `ok: false` with `STATE_UNSUPPORTED_VERSION` and a new `error.details` field holding both numbers, exit 1. `update`, `adopt` and `install` still refuse, with the clearer message.
