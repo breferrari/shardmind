@@ -84,12 +84,13 @@ export async function validateShard(
 /**
  * One `LINT_UNTRACKED_FILE` warning per untracked file that would be shard
  * content: it ships only once committed, so it was not validated (#320).
- * Tier 1 paths and `.shardmindignore`d ones are never content.
+ * Tier 1 paths and `.shardmindignore`d ones are never content, except
+ * `.shardmind/`: the release needs its manifest, schema and hooks.
  */
 async function untrackedWarnings(dir: string, untracked: readonly string[]): Promise<LintFinding[]> {
   const ignore = await loadShardmindignore(dir);
   return untracked
-    .filter((rel) => !isTier1Excluded(rel) && !ignore.ignores(rel, false))
+    .filter((rel) => (rel.startsWith('.shardmind/') || !isTier1Excluded(rel)) && !ignore.ignores(rel.replace(/\/$/, ''), rel.endsWith('/')))
     .map((rel) => ({
       severity: 'warning' as const,
       code: 'LINT_UNTRACKED_FILE',

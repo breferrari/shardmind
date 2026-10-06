@@ -51,7 +51,7 @@ export async function resolveModules(
   schema: ShardSchema,
   selections: ModuleSelections,
   rootDir: string,
-  opts: { tracked?: ReadonlySet<string> } = {},
+  opts: { tracked?: (relPath: string) => boolean } = {},
 ): Promise<ModuleResolution> {
   const ignoreFilter = await loadShardmindignore(rootDir);
   const files = await walkShardSource(rootDir, ignoreFilter, opts.tracked);
@@ -94,29 +94,20 @@ export interface WalkedFile {
  * by `resolveModules` (install/update planning) and `state.ts:cacheTemplates`
  * (merge-base cache) so both layers honor the exact same source-side filter.
  *
- * `tracked` (#320): `validate` in a git work tree passes the tracked files,
- * as a release tarball holds them. An entry that is neither one of them nor
- * a folder holding one is skipped before any check, so an ignored
- * `node_modules/.bin/` symlink is never seen; a tracked symlink still fails.
+ * `tracked` (#320): `validate` in a git work tree passes whether a path is
+ * tracked, as a release tarball holds it (`gitFiles`). An entry that is
+ * neither tracked nor a folder holding a tracked file is skipped before any
+ * check, so an ignored `node_modules/.bin/` symlink is never seen; a tracked
+ * symlink still fails.
  */
 export async function walkShardSource(
   rootDir: string,
   ignoreFilter: IgnoreFilter,
-  tracked?: ReadonlySet<string>,
+  tracked?: (relPath: string) => boolean,
 ): Promise<WalkedFile[]> {
   const out: WalkedFile[] = [];
-  const keep = tracked ? trackedFilter(tracked) : undefined;
-  await walk(rootDir, '', ignoreFilter, out, keep);
+  await walk(rootDir, '', ignoreFilter, out, tracked);
   return out;
-}
-
-/** Whether a path is tracked, or a folder holding a tracked path. */
-function trackedFilter(tracked: ReadonlySet<string>): (relPath: string) => boolean {
-  const folders = new Set<string>();
-  for (const file of tracked) {
-    for (let at = file.lastIndexOf('/'); at > 0; at = file.lastIndexOf('/', at - 1)) folders.add(file.slice(0, at));
-  }
-  return (relPath) => tracked.has(relPath) || folders.has(relPath);
 }
 
 async function walk(
