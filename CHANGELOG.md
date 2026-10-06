@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (the runtime reads a newer state.json as newer — #368)
+
+- **A hook's `loadState()` on a vault whose `state.json` a newer ShardMind wrote now fails with `STATE_UNSUPPORTED_VERSION`, naming both schema versions**, as the engine does, instead of `STATE_CORRUPT`. A hook imports `shardmind/runtime` from the copy its shard ships, which can be older than the engine. SHARD-LAYOUT reserves the paths shard composition will use (`.shardmind/shards/`, `shard-values.<namespace>.<name>.yaml`), and states that composition bumps the state schema, so it can land in 1.x without a breaking change.
+
 ### Changed (internal: the tests are typechecked — #352)
 
 - Internal: `npm run typecheck` now typechecks `tests/` too (`tsconfig.tests.json`, the source's options), so a test object missing a member its interface requires fails before any test runs, locally and in CI. The first sweep fixed about 140 errors in the existing tests without loosening a type.
