@@ -208,6 +208,11 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       if (!disposed) setPhase(next);
     };
     const history: string[] = [];
+    // This run's handle: a superseded run never clears its successor's.
+    let mine: RunInFlight | null = null;
+    const dropMine = () => {
+      if (runRef.current === mine) runRef.current = null;
+    };
 
     const ask = <Q extends UpdateQuestion>(question: Q): Promise<UpdateAnswer<Q>> =>
       new Promise<UpdateAnswer<Q>>((resolve, reject) => {
@@ -290,13 +295,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       },
       newRunAbort,
       onRun: (abort, run) => {
-        runRef.current = trackRun(abort, run);
+        mine = trackRun(abort, run);
+        runRef.current = mine;
       },
       // state.json is on disk: drop the run before the hooks, so a Ctrl+C
       // during them can't walk the update back.
-      onCommitted: () => {
-        runRef.current = null;
-      },
+      onCommitted: dropMine,
       onHookAbort: (abort) => {
         hookAbortRef.current = abort;
       },
@@ -339,12 +343,10 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         });
       },
       (err: unknown) => {
-        // A superseded run leaves the ref to the run that replaced it.
-        if (disposed) return;
-        runRef.current = null;
+        dropMine();
         // A Ctrl+C mid-download stops the fetch; the command is exiting, so
         // that is not an error to render.
-        if (err instanceof DownloadCancelledError) return;
+        if (disposed || err instanceof DownloadCancelledError) return;
         if (err instanceof FlowCancelled) {
           finish({ kind: 'cancelled', reason: err.reason });
           return;

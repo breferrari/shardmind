@@ -134,6 +134,8 @@ export interface UseAdoptMachineOutput {
 /** The question the flow is waiting on, answered from its prompt's handler only. */
 interface PendingAnswer {
   kind: AdoptQuestion['kind'];
+  /** A per-file question's file: consecutive ones share their kind. */
+  index?: number;
   resolve: (answer: unknown) => void;
   reject: (err: Error) => void;
 }
@@ -148,6 +150,9 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
   const { isRawModeSupported } = useStdin();
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
+  // The per-file prompt's answers name the file on screen.
+  const phaseRef = useRef<Phase>(phase);
+  phaseRef.current = phase;
 
   const ctxCleanupRef = useRef<(() => Promise<void>) | null>(null);
   // The adopt in flight, which a Ctrl+C stops and waits for (#249).
@@ -195,6 +200,11 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
     let prefillValues: Record<string, unknown> = {};
     const ctxOf = (shard: PreparedShard): PreparedContext => ({ ...shard, prefillValues });
     const history: string[] = [];
+    // This run's handle: a superseded run never clears its successor's.
+    let mine: RunInFlight | null = null;
+    const dropMine = () => {
+      if (runRef.current === mine) runRef.current = null;
+    };
 
     const ask = <Q extends AdoptQuestion>(question: Q): Promise<AdoptAnswer<Q>> =>
       new Promise<AdoptAnswer<Q>>((resolve, reject) => {
@@ -202,7 +212,12 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           reject(new FlowCancelled('Superseded by a newer run.'));
           return;
         }
-        pendingRef.current = { kind: question.kind, resolve: resolve as (answer: unknown) => void, reject };
+        pendingRef.current = {
+          kind: question.kind,
+          index: question.kind === 'per-file' ? question.currentIndex : undefined,
+          resolve: resolve as (answer: unknown) => void,
+          reject,
+        };
         switch (question.kind) {
           case 'values':
             prefillValues = question.prefill;
@@ -264,13 +279,12 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
       },
       newRunAbort,
       onRun: (abort, run) => {
-        runRef.current = trackRun(abort, run);
+        mine = trackRun(abort, run);
+        runRef.current = mine;
       },
       // state.json is on disk: drop the run before the hooks, so a Ctrl+C
       // during them can't walk the adopt back.
-      onCommitted: () => {
-        runRef.current = null;
-      },
+      onCommitted: dropMine,
       onHookAbort: (abort) => {
         hookAbortRef.current = abort;
       },
@@ -311,7 +325,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         });
       },
       (err: unknown) => {
-        runRef.current = null;
+        dropMine();
         // A Ctrl+C mid-download stops the fetch; the command is exiting, so
         // that is not an error to render.
         if (disposed || err instanceof DownloadCancelledError) return;
@@ -350,9 +364,9 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
    * Settle the question the flow waits on, if it is the one this prompt
    * answers: a late or doubled handler never answers the next question.
    */
-  const settle = useCallback((kind: AdoptQuestion['kind'], outcome: { value: unknown } | { error: Error }) => {
+  const settle = useCallback((kind: AdoptQuestion['kind'], outcome: { value: unknown } | { error: Error }, index?: number) => {
     const pending = pendingRef.current;
-    if (pending?.kind !== kind) return;
+    if (pending?.kind !== kind || pending.index !== index) return;
     pendingRef.current = null;
     if ('error' in outcome) pending.reject(outcome.error);
     else pending.resolve(outcome.value);
@@ -362,7 +376,15 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
   const onWizardCancel = useCallback(() => settle('values', { error: new FlowCancelled('User cancelled in wizard.') }), [settle]);
   const onWizardError = useCallback((err: Error) => settle('values', { error: err }), [settle]);
   const onModeSelect = useCallback((selected: AdoptMode) => settle('mode', { value: selected }), [settle]);
-  const onDiffChoice = useCallback((action: AdoptFileChoice) => settle('per-file', { value: action }), [settle]);
+  // The file on screen: a choice made before the next file renders answers
+  // only its own file, never the next one's question.
+  const onDiffChoice = useCallback(
+    (action: AdoptFileChoice) => {
+      const current = phaseRef.current;
+      if (current.kind === 'diff-review') settle('per-file', { value: action }, current.currentIndex);
+    },
+    [settle],
+  );
 
   return {
     phase,
