@@ -183,8 +183,8 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
         cleanup = c;
         io.onCleanup(c);
       },
-      resolve: async () => {
-        const resolved = await resolveRefForUpdate(source, { includePrerelease: input.includePrerelease });
+      resolve: async (ref) => {
+        const resolved = await resolveRefForUpdate(ref, { includePrerelease: input.includePrerelease });
         // The update-check cache stores "latest stable" for the status
         // command: primed only when the run resolved through that policy.
         if (!state.ref && !input.release && !input.includePrerelease) {

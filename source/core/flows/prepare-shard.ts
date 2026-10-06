@@ -20,8 +20,8 @@ export interface PreparedShard {
 }
 
 export interface PrepareShardOptions {
-  /** The release to fetch: `resolve(ref, { command })`, or update's resolve from state.json. */
-  resolve: () => Promise<ResolvedShard>;
+  /** The release `ref` names: `resolve(ref, { command })`, or update's resolve from state.json. */
+  resolve: (ref: string) => Promise<ResolvedShard>;
   engineVersion: string | undefined;
   /** Each step's message ("Resolving …", "Downloading …", …). */
   onLoading: (message: string) => void;
@@ -34,7 +34,7 @@ export interface PrepareShardOptions {
 /** Resolve, download, parse the manifest, check the engine range (#121), parse the schema. */
 export async function prepareShard(ref: string, opts: PrepareShardOptions): Promise<PreparedShard> {
   opts.onLoading(`Resolving ${ref}…`);
-  const resolved = await opts.resolve();
+  const resolved = await opts.resolve(ref);
 
   opts.onLoading(`Downloading ${resolved.namespace}/${resolved.name}@${resolved.version}…`);
   // The cleanup is handed over before the fetch, so a Ctrl+C during the

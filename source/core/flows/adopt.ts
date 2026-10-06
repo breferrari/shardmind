@@ -141,7 +141,7 @@ export async function runAdoptFlow(input: AdoptFlowInput, io: AdoptFlowIO): Prom
   let shard: PreparedShard | undefined;
   try {
     shard = await prepareShard(input.shardRef, {
-      resolve: () => resolveRef(input.shardRef, { command: 'adopt' }),
+      resolve: (ref) => resolveRef(ref, { command: 'adopt' }),
       engineVersion: input.engineVersion,
       onLoading: (message) => io.phase({ kind: 'loading', message }),
       onCleanup: io.onCleanup,
