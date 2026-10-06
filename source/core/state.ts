@@ -26,7 +26,7 @@ import {
 } from '../runtime/vault-paths.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { migrateState } from './state-migrator.js';
-import { parseShardState } from '../runtime/state-schema.js';
+import { parseShardState, STATE_CORRUPT_HINT } from '../runtime/state-schema.js';
 import { walkShardSource } from './modules.js';
 import { loadShardmindignore } from './shardmindignore.js';
 import { mapConcurrent, removePath, sha256 } from './fs-utils.js';
@@ -74,13 +74,11 @@ export async function readState(vaultRoot: string): Promise<ShardState | null> {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new ShardMindError(
-      `Corrupt state.json: ${filePath}`,
-      'STATE_CORRUPT',
-      'Delete .shardmind/ and reinstall, or fix the JSON manually.',
-    );
+    throw new ShardMindError(`Corrupt state.json: ${filePath}`, 'STATE_CORRUPT', STATE_CORRUPT_HINT);
   }
 
+  // The version is read before the schema runs: a newer state must be
+  // refused as unsupported, not judged against this engine's contract.
   if (
     !parsed ||
     typeof parsed !== 'object' ||
@@ -89,7 +87,7 @@ export async function readState(vaultRoot: string): Promise<ShardState | null> {
     throw new ShardMindError(
       `Corrupt state.json: ${filePath}: schema_version: missing, or not an integer`,
       'STATE_CORRUPT',
-      'Restore .shardmind/state.json from version control, or delete .shardmind/ and reinstall (shard-values.yaml is kept).',
+      STATE_CORRUPT_HINT,
     );
   }
 
@@ -122,6 +120,9 @@ export async function writeState(vaultRoot: string, state: ShardState): Promise<
     );
   }
 
+  // The contract checked on the way out too: a writer's bug fails here,
+  // before it reaches disk, not at the next read (#343).
+  parseShardState(state, filePath);
   const serialized = JSON.stringify(state, null, 2) + '\n';
   await fsp.writeFile(filePath, serialized, 'utf-8');
 }

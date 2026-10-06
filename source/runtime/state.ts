@@ -15,7 +15,7 @@ import type { ShardState } from './types.js';
 import { ShardMindError } from './types.js';
 import { SHARDMIND_DIR, STATE_FILE } from './vault-paths.js';
 import { isEnoent } from './errno.js';
-import { parseShardState } from './state-schema.js';
+import { parseShardState, STATE_CORRUPT_HINT } from './state-schema.js';
 
 const MAX_DEPTH = 20;
 
@@ -99,13 +99,10 @@ export async function loadState(): Promise<ShardState | null> {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new ShardMindError(
-      `Corrupt state.json: ${filePath}`,
-      'STATE_CORRUPT',
-      'Delete .shardmind/ and reinstall, or fix the JSON manually.',
-    );
+    throw new ShardMindError(`Corrupt state.json: ${filePath}`, 'STATE_CORRUPT', STATE_CORRUPT_HINT);
   }
-  // The same contract the engine reads with (#343).
+  // The same contract the engine reads with (#343). No version check here:
+  // a hook runs only after the engine has read, and migrated, this file.
   return parseShardState(parsed, filePath);
 }
 

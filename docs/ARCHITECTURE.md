@@ -564,7 +564,7 @@ Key fields:
 
 ### 8.2 Schema migrations
 
-`state.json` outlives the engine that wrote it: a vault installed by an older shardmind is read by a newer one. `readState` compares the file's `schema_version` with `STATE_SCHEMA_VERSION` (`source/core/state.ts`) and, when they differ, runs the chain in `source/core/state-migrator.ts`, one `StateMigration` per bump. The first rule, v1 → v2, came with the hook lifecycle split (#102) and only stamps the version, because the new `bootstrap_fingerprint` field is optional. A version with no chain to the current one fails with `STATE_UNSUPPORTED_VERSION`, and the engine never migrates downward.
+`state.json` is a contract (#343): `ShardState` and `FileState` (`source/runtime/types.ts`) say what it holds, and the engine checks every read and every write against them, refusing a mismatch with `STATE_CORRUPT` naming the field. Within a major version a field is only ever added; a field the check does not know is kept. `state.json` outlives the engine that wrote it: a vault installed by an older shardmind is read by a newer one. `readState` compares the file's `schema_version` with `STATE_SCHEMA_VERSION` (`source/core/state.ts`) and, when they differ, runs the chain in `source/core/state-migrator.ts`, one `StateMigration` per bump. The first rule, v1 → v2, came with the hook lifecycle split (#102) and only stamps the version, because the new `bootstrap_fingerprint` field is optional. A version with no chain to the current one fails with `STATE_UNSUPPORTED_VERSION`, and the engine never migrates downward.
 
 A future shape change slots in the same way:
 

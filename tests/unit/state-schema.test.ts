@@ -127,6 +127,14 @@ describe('readState validates state.json (#343)', () => {
   });
 });
 
+describe('writeState checks the contract before writing (#343)', () => {
+  it('refuses a state that breaks it, and writes nothing', async () => {
+    const bad = { ...valid(), files: { 'Home.md': { template: null, rendered_hash: 'a', ownership: 'mine' } } };
+    await expect(writeState(vault, bad as never)).rejects.toMatchObject({ code: 'STATE_CORRUPT' });
+    await expect(fsp.access(path.join(vault, '.shardmind', 'state.json'))).rejects.toThrow();
+  });
+});
+
 describe('loadState (runtime) validates the same way (#343)', () => {
   it('refuses a state with a bad field, naming it', async () => {
     vi.spyOn(process, 'cwd').mockReturnValue(vault);

@@ -36,7 +36,15 @@ const ShardStateSchema = z.looseObject({
   bootstrap_fingerprint: z.string().optional(),
 });
 
-/** `value` as a `ShardState`, or `STATE_CORRUPT` naming the first field that does not match. */
+/** What to do about a `STATE_CORRUPT` state.json, wherever it is found. */
+export const STATE_CORRUPT_HINT =
+  'Restore .shardmind/state.json from version control, or delete .shardmind/ and reinstall (shard-values.yaml is kept).';
+
+/**
+ * `value` as a `ShardState`, or `STATE_CORRUPT` naming the first field that
+ * does not match. The return type keeps the schema honest: a required field
+ * added to `ShardState` and not here fails typecheck.
+ */
 export function parseShardState(value: unknown, filePath: string): ShardState {
   const result = ShardStateSchema.safeParse(value);
   if (result.success) return result.data;
@@ -44,7 +52,7 @@ export function parseShardState(value: unknown, filePath: string): ShardState {
   throw new ShardMindError(
     `Corrupt state.json: ${filePath}: ${fieldPath(issue.path)}: ${issue.message}`,
     'STATE_CORRUPT',
-    'Restore .shardmind/state.json from version control, or delete .shardmind/ and reinstall (shard-values.yaml is kept).',
+    STATE_CORRUPT_HINT,
   );
 }
 

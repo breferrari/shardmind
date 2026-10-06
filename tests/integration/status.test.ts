@@ -151,6 +151,17 @@ describe('status pipeline (against examples/minimal-shard)', () => {
     ).rejects.toMatchObject({ code: 'STATE_CORRUPT' });
   });
 
+  it('surfaces a state.json that breaks its contract as STATE_CORRUPT naming the field (#343)', async () => {
+    await installMinimal(vault);
+    const file = path.join(vault, '.shardmind', 'state.json');
+    const state = JSON.parse(await fsp.readFile(file, 'utf-8')) as Record<string, unknown>;
+    await fsp.writeFile(file, JSON.stringify({ ...state, modules: { brain: 'maybe' } }), 'utf-8');
+
+    await expect(
+      buildStatusReport(vault, { verbose: false, skipUpdateCheck: true }),
+    ).rejects.toMatchObject({ code: 'STATE_CORRUPT', message: expect.stringContaining('modules["brain"]') });
+  });
+
   it('invalidates the cache when the source changed between runs', async () => {
     await installMinimal(vault);
     // Prime with an older cached entry keyed to a DIFFERENT source.
