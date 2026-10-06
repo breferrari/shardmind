@@ -32,4 +32,14 @@ describe('headless --json dispatch (#302)', () => {
     // --json without --dry-run: the headless runner's refusal, as one document.
     expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, command: 'adopt', error: { code: 'JSON_REQUIRES_DRY_RUN' } });
   }, 60_000);
+
+  it('an option of the subcommand before it is refused as a document, as Pastel refuses it (#302)', async () => {
+    const result = await spawnCli(['--dry-run', 'update', '--json'], { cwd: os.tmpdir() });
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      command: 'update',
+      error: { code: 'ARGS_INVALID', message: "error: unknown option '--dry-run'" },
+    });
+  }, 60_000);
 });

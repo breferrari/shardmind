@@ -1,7 +1,8 @@
 import { createRequire } from 'node:module';
 import { installStdinCancellation } from './core/cancellation.js';
 import { applyNoColor } from './core/color-env.js';
-import { jsonRunOf, type JsonRunCommand } from './core/json-run.js';
+import { jsonRunOf } from './core/json-run.js';
+import type { JsonCommand } from './core/json-output.js';
 import { exitQuietlyWhenStdoutCloses } from './core/stdout-closed.js';
 
 // NO_COLOR turns colour off unless FORCE_COLOR is set (#37). chalk, which Ink
@@ -57,6 +58,17 @@ if (jsonArgs) {
 }
 
 try {
+  // Windows doesn't deliver parent→child SIGINT via child_process.kill() — Node
+  // emulates SIGINT/SIGTERM as TerminateProcess, which skips every registered
+  // handler. When the CLI is invoked non-interactively (stdin is a pipe), we
+  // listen for the ETX byte (0x03, the ASCII form of Ctrl+C) on stdin and
+  // `process.emit('SIGINT')` to trigger `useSigintRollback`, or a headless
+  // `--json` run's own handler, which removes its download (#57, #302). Wrapper scripts
+  // and test harnesses get one cross-platform way to cancel cleanly. In a
+  // terminal, Ink's prompts hold raw mode, where Ctrl+C is that same byte
+  // rather than a signal; the bridge observes it there too (#155).
+  installStdinCancellation();
+
   // `<command> --json` for the commands listed here runs before Pastel loads
   // Ink: a mounted Ink app writes terminal control codes around the document
   // even when it renders nothing (#198), and the JSON must be one clean
@@ -64,15 +76,35 @@ try {
   // (a root option before it is passed on, #147) and returns the exit code.
   // `--help` and `--version` still go to Pastel.
   // The status command (the root, no subcommand), adopt and update run headless too (#302).
-  const HEADLESS_JSON: Record<JsonRunCommand, () => Promise<(argv: readonly string[], engineVersion: string | undefined) => Promise<number>>> = {
+  const HEADLESS_JSON: Record<JsonCommand, () => Promise<(argv: readonly string[], engineVersion: string | undefined) => Promise<number>>> = {
     validate: async () => (await import('./core/validate-shard.js')).runValidateJson,
     status: async () => (await import('./commands/headless/status.js')).runStatusJson,
     adopt: async () => (await import('./commands/headless/adopt.js')).runAdoptJson,
     update: async () => (await import('./commands/headless/update.js')).runUpdateJson,
   };
   if (jsonArgs) {
-    const run = await HEADLESS_JSON[jsonArgs.command]();
-    process.exitCode = await run(jsonArgs.rest, crash.version);
+    if (jsonArgs.misplaced !== undefined) {
+      // Pastel refuses an option of the subcommand written before it; a
+      // --json caller gets that refusal as a document.
+      const [{ emitJson, jsonFailure }, { ShardMindError }] = await Promise.all([
+        import('./core/json-output.js'),
+        import('./runtime/types.js'),
+      ]);
+      emitJson(
+        jsonFailure(
+          jsonArgs.command,
+          new ShardMindError(
+            `error: unknown option '${jsonArgs.misplaced}'`,
+            'ARGS_INVALID',
+            `Write it after the command: shardmind ${jsonArgs.command} … ${jsonArgs.misplaced}.`,
+          ),
+        ),
+      );
+      process.exitCode = 1;
+    } else {
+      const run = await HEADLESS_JSON[jsonArgs.command]();
+      process.exitCode = await run(jsonArgs.rest, crash.version);
+    }
     // A pipe write can still be queued (Windows, macOS): exiting before it
     // drains would cut the document short.
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
@@ -80,16 +112,6 @@ try {
   }
 
   const { default: Pastel } = await import('./cli-kit/index.js');
-
-  // Windows doesn't deliver parent→child SIGINT via child_process.kill() — Node
-  // emulates SIGINT/SIGTERM as TerminateProcess, which skips every registered
-  // handler. When the CLI is invoked non-interactively (stdin is a pipe), we
-  // listen for the ETX byte (0x03, the ASCII form of Ctrl+C) on stdin and
-  // `process.emit('SIGINT')` to trigger `useSigintRollback`. Wrapper scripts
-  // and test harnesses get one cross-platform way to cancel cleanly. In a
-  // terminal, Ink's prompts hold raw mode, where Ctrl+C is that same byte
-  // rather than a signal; the bridge observes it there too (#155).
-  installStdinCancellation();
 
   // Read the version from package.json at runtime so `npm version <bump>` is
   // the single source of truth. Hardcoding here drifted silently between

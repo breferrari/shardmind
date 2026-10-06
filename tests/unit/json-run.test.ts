@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { jsonRunOf } from '../../source/core/json-run.js';
+import { jsonRunOf, ROOT_OPTIONS } from '../../source/core/json-run.js';
 
 const isJsonRun = (argv: readonly string[]) => jsonRunOf(argv) !== undefined;
 
@@ -94,10 +94,20 @@ describe('every command with --json goes through the gate', () => {
 });
 
 describe('root options before the subcommand', () => {
-  // jsonRunOf and jsonCommandOf take the first non-option argument as the
+  // jsonRunOf takes the first non-option argument as the
   // subcommand. That holds while every root option is a boolean flag: an
   // option that took a value (`--profile work update --json`) would make the
   // value look like the subcommand.
+  it('are the status command\'s options, as ROOT_OPTIONS names them', async () => {
+    const { options } = await import('../../source/commands/options/status.js');
+    // A boolean that defaults to true is written as its --no- form (updateCheck → --no-update-check).
+    const flags = Object.entries(options.shape).map(([name, schema]) => {
+      const kebab = name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+      return schema.parse(undefined) === true ? `--no-${kebab}` : `--${kebab}`;
+    });
+    expect([...flags].sort()).toEqual([...ROOT_OPTIONS].sort());
+  });
+
   it('are all boolean flags', async () => {
     const { options } = await import('../../source/commands/index.js');
     for (const [name, schema] of Object.entries(options.shape)) {
@@ -125,6 +135,27 @@ describe('jsonRunOf: the command and the arguments its runner takes (#302)', () 
     '%j is not a JSON run',
     (argv) => {
       expect(jsonRunOf(argv)).toBeUndefined();
+    },
+  );
+});
+
+describe('an option of the subcommand written before it (#302)', () => {
+  // Pastel refuses it (its root command does not take it); the headless run
+  // refuses it too, as a document, instead of running with it.
+  it.each([
+    [['--dry-run', 'update', '--json'], '--dry-run'],
+    [['--yes', 'adopt', 'github:a/b', '--dry-run', '--json'], '--yes'],
+    [['--verbose', '--release', 'update', '--json'], '--release'],
+  ])('%j is misplaced: %s', (argv, option) => {
+    expect(jsonRunOf(argv)?.misplaced).toBe(option);
+  });
+
+  it.each([[['--verbose', 'update', '--json']], [['--json', 'adopt', 'x', '--dry-run']], [['--no-update-check', 'validate', '--json']], [['update', '--dry-run', '--json']]])(
+    '%j has nothing misplaced',
+    (argv) => {
+      const run = jsonRunOf(argv);
+      expect(run).toBeDefined();
+      expect(run?.misplaced).toBeUndefined();
     },
   );
 });
