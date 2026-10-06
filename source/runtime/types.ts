@@ -435,7 +435,6 @@ export type SlottedHookContext =
   | PersonalizeContext
   | PostUpdateContext;
 
-
 // ---------------------------------------------------------------------------
 // Status command (`shardmind` root + `shardmind --verbose`).
 // Produced by `core/status.ts`, rendered by `components/StatusView.tsx` and

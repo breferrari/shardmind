@@ -105,12 +105,11 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   const { manifest } = plan;
   const hooks = manifest.hooks ?? {};
   const shardLabel = `${manifest.namespace}/${manifest.name}`;
-  const shard = { name: manifest.name, version: manifest.version };
   const timeoutMs = hooks.timeout_ms ?? DEFAULT_HOOK_TIMEOUT_MS;
 
   const defaults = valuesAreDefaultsSafe(plan.values, plan.schema);
 
-  const jobs = buildJobs(plan, { defaults, shard });
+  const jobs = buildJobs(plan, defaults);
 
   // Slots that actually spawn a subprocess — drives the "(N of M)" markers.
   const runnableCount = jobs.filter((j) => j.willRun && j.relPath !== undefined).length;
@@ -277,15 +276,14 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
 /** Build the ordered slot jobs for this command. */
 function buildJobs(
   plan: HookRunPlan,
-  ctx: { defaults: boolean; shard: { name: string; version: string } },
+  defaults: boolean,
 ): SlotJob[] {
   const hooks = plan.manifest.hooks ?? {};
-  const { shard } = ctx;
   const base = {
     vaultRoot: plan.vaultRoot,
     values: plan.values,
     modules: plan.modules,
-    shard,
+    shard: { name: plan.manifest.name, version: plan.manifest.version },
   };
 
   if (plan.command === 'update') {
@@ -299,7 +297,7 @@ function buildJobs(
         slot: 'bootstrap',
         ...base,
         previousVersion: plan.previousVersion,
-        valuesAreDefaults: ctx.defaults,
+        valuesAreDefaults: defaults,
         removedFiles: plan.removedFiles,
       }),
     });
@@ -326,15 +324,15 @@ function buildJobs(
       relPath: hooks.bootstrap?.script,
       boundary: 'managed-write',
       willRun: true,
-      makeCtx: () => ({ slot: 'bootstrap', ...base, valuesAreDefaults: ctx.defaults, removedFiles: plan.removedFiles }),
+      makeCtx: () => ({ slot: 'bootstrap', ...base, valuesAreDefaults: defaults, removedFiles: plan.removedFiles }),
     },
     {
       slot: 'personalize',
       relPath: hooks.personalize,
       boundary: 'unmanaged-create',
       // Invariant 2: engine skips personalize entirely on a defaults install.
-      willRun: !ctx.defaults,
-      skippedReason: ctx.defaults ? 'values-are-defaults' : undefined,
+      willRun: !defaults,
+      skippedReason: defaults ? 'values-are-defaults' : undefined,
       makeCtx: () => ({ slot: 'personalize', ...base }),
     },
   ];

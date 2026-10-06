@@ -285,9 +285,6 @@ export interface HookExecOpts {
 }
 
 /**
-}
-
-/**
  * Locate and (when `ctx` is provided) execute the post-update hook declared
  * by the shard manifest, reading its timeout from `hooks.timeout_ms`. Without
  * `ctx`, execution is suppressed and the result is `deferred` (the dry-run
