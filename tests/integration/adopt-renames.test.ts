@@ -136,7 +136,8 @@ describe('adopt --from-version applies rename migrations (#179)', () => {
     await cloneOfV1();
     const before = await read(COPY);
     const { plan, result } = await adopt(await shardV2(), '0.1.0');
-    expect(movedFromOf(plan.matches.find((c) => c.path === 'AGENTS.md')!)).toBe(COPY);
+    const moved = plan.matches.find((c) => c.path === 'AGENTS.md');
+    expect(moved && movedFromOf(moved)).toBe(COPY);
     expect(await exists(COPY)).toBe(false);
     expect(await read('AGENTS.md')).toBe(before);
     expect((await files())['AGENTS.md']?.ownership).toBe('managed');

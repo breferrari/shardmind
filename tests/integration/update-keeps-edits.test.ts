@@ -156,11 +156,11 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
     });
   }
 
-  /** One full update, drift to state write, resolving every conflict as `resolution`. */
   /** One resolution for every conflict (a choice, or an edit), not a map of them by path. */
   const isOneResolution = (r: ConflictResolution | Record<string, ConflictResolution>): r is ConflictResolution =>
     typeof r === 'string' || ('kind' in r && r.kind === 'edited');
 
+  /** One full update, drift to state write, resolving every conflict as `resolution`. */
   async function update(
     shardDir: string,
     resolution: ConflictResolution | Record<string, ConflictResolution> = 'keep_mine',
