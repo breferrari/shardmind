@@ -282,6 +282,14 @@ async function resolveRefInstall(
   };
 }
 
+/**
+ * The `<name>` of `<namespace>/<name>` as the ref is written, for every ref
+ * form: install's default folder (#333). `REGISTRY_INVALID_REF` otherwise.
+ */
+export function shardNameOf(shardRef: string): string {
+  return parseRef(shardRef).name;
+}
+
 function parseRef(shardRef: string): ParsedRef {
   const match = SHARD_REF_RE.exec(shardRef.trim());
   if (!match) {
