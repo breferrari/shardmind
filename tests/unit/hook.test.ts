@@ -18,6 +18,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   runPostUpdateHook,
   runHook,
@@ -936,6 +937,24 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
     const read = await run(file);
     expect(read.vendored).toBe(false);
     expect(read.version).toBe('4.5.6');
+  }, 30_000);
+
+  // The CommonJS path require()s the engine's ESM runtime. Node made native
+  // require(esm) unflagged only in 22.12, and engines allows 22.0, so it must
+  // work without it: tsx's CommonJS loader transforms the runtime itself.
+  // Turning native require(esm) off simulates 22.0-22.11. Skipped on a Node
+  // without the flag, which has no native require(esm) to turn off.
+  const flagOk = spawnSync(process.execPath, ['--no-experimental-require-module', '-e', '0']).status === 0;
+  it.skipIf(!flagOk)('reads through the runtime on the CommonJS path without native require(esm)', async () => {
+    const previous = process.env['NODE_OPTIONS'];
+    process.env['NODE_OPTIONS'] = `${previous ?? ''} --no-experimental-require-module`.trim();
+    try {
+      const read = await run('hook.ts');
+      expect(read).toEqual({ version: '4.5.6', user: 'Ada', valid: true, badValid: false, vendored: false });
+    } finally {
+      if (previous === undefined) delete process.env['NODE_OPTIONS'];
+      else process.env['NODE_OPTIONS'] = previous;
+    }
   }, 30_000);
 
   it('leaves every other bare specifier to normal resolution', async () => {
