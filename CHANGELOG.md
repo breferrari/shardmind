@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (internal: the executors' unused callbacks removed — #323)
+
+- Internal: `runUpdate` and `runAdopt` no longer take `onBackupReady` / `onFileTouched`. Nothing in the engine passed them since the rollback became the executor's own (#249, #301); the tests that used them as timing hooks now use the `fsp` seam.
+
 ### Changed (install makes a new folder, as git clone does — #333)
 
 - **`shardmind install <shard>` now installs into a new folder named after the shard**, where it used to install into the current folder. `shardmind install breferrari/wiki-mind` makes `./wiki-mind`. A second argument names the folder (`shardmind install <shard> my-vault`, a nested path too), and `.` installs into the current folder exactly as before, collision review included. **This changes the default:** a script or README that runs `mkdir my-vault && cd my-vault && shardmind install <shard>` now gets `my-vault/<name>`; add `.` to keep installing in place. Ships in the next minor release (0.3.0).
