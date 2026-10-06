@@ -77,8 +77,9 @@ function toJsonError(error: unknown): JsonErrorPayload {
   // `code` stays a registry code or null: an environment error's errno code
   // is in its message, and its hint says what to do.
   if (d.kind === 'bug') return { code: null, message: d.message, hint: null, stack: d.stack };
+  const code = d.kind === 'known' ? d.code : null;
   const newer = newerStateOf(error);
-  return { code: d.kind === 'known' ? d.code : null, message: d.message, hint: d.hint, stack: null, ...(newer ? { details: newer } : {}) };
+  return { code, message: d.message, hint: d.hint, stack: null, ...(newer ? { details: newer } : {}) };
 }
 
 let emitted = false;

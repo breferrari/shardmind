@@ -57,12 +57,6 @@ const REHASH_CONCURRENCY = 16;
  */
 export const STATE_SCHEMA_VERSION = 2;
 
-/**
- * `onContractError` (status only): a state.json that breaks the contract
- * (#343) is handed to it and read as it is, unchecked, so the ambient status
- * report keeps degrading field by field over a hand-broken file instead of
- * failing. Every other reader leaves it out and gets `STATE_CORRUPT`.
- */
 /** A state.json from a newer ShardMind (#344): its schema version, and the newest this engine reads. */
 export interface NewerState {
   stateSchemaVersion: number;
@@ -72,8 +66,9 @@ export interface NewerState {
 /**
  * `STATE_UNSUPPORTED_VERSION` for a state.json above this engine's schema:
  * a newer ShardMind wrote it. The two numbers ride on the error, read back
- * by `newerStateOf` (by code and fields: each bundle has its own
- * `ShardMindError` class, so a subclass check would not hold).
+ * by `newerStateOf` from the code and those fields. Not a subclass:
+ * `ShardMindError`'s `instanceof` is a brand check every subclass inherits,
+ * so `instanceof` could not tell a subclass from its parent.
  */
 export function newerStateError(stateSchemaVersion: number): ShardMindError {
   const err = new ShardMindError(
@@ -93,6 +88,12 @@ export function newerStateOf(err: unknown): NewerState | null {
   return { stateSchemaVersion, supportedSchemaVersion };
 }
 
+/**
+ * `onContractError` (status only): a state.json that breaks the contract
+ * (#343) is handed to it and read as it is, unchecked, so the ambient status
+ * report keeps degrading field by field over a hand-broken file instead of
+ * failing. Every other reader leaves it out and gets `STATE_CORRUPT`.
+ */
 export async function readState(
   vaultRoot: string,
   opts: { onContractError?: (err: ShardMindError) => void } = {},

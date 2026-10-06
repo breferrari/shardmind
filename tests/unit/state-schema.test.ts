@@ -125,6 +125,13 @@ describe('readState validates state.json (#343)', () => {
     expect(jsonFailure('status', err).error!.details).toEqual({ stateSchemaVersion: 99, supportedSchemaVersion: 2 });
   });
 
+  it('an older schema_version with no migration keeps the unsupported wording, without the numbers (#344)', async () => {
+    await writeRaw({ ...valid(), schema_version: 0 });
+    const err = await readState(vault).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'STATE_UNSUPPORTED_VERSION', message: expect.stringContaining('Unsupported state schema_version: 0') });
+    expect(newerStateOf(err)).toBeNull();
+  });
+
   it('newerStateOf is null for any other error, and the JSON error has no details then', () => {
     const other = new ShardMindError('x', 'STATE_UNSUPPORTED_VERSION', 'y');
     expect(newerStateOf(other)).toBeNull();
