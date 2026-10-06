@@ -34,11 +34,10 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { PostUpdateContext, ShardManifest, SlottedHookContext } from '../runtime/types.js';
+import type { HookSlot, PostUpdateContext, ShardManifest, SlottedHookContext } from '../runtime/types.js';
 import { assertNever } from '../runtime/types.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
 import { pathExists } from './fs-utils.js';
-import type { HOOK_STAGES } from '../runtime/vault-paths.js';
 import { onSigint } from './process-control.js';
 
 /**
@@ -124,7 +123,7 @@ const KILL_GRACE_MS = 2_000;
  * share one source of truth for the allowed phase strings: bootstrap /
  * personalize / post-update (`post-install` was removed in 1.0, #357).
  */
-export type HookStage = (typeof HOOK_STAGES)[number];
+export type HookStage = HookSlot;
 
 /**
  * The shape of a command-machine `Phase` variant while a hook subprocess
