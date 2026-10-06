@@ -7,9 +7,11 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isJsonRun, jsonRunOf, subcommandOf } from '../../source/core/json-run.js';
+import { jsonRunOf } from '../../source/core/json-run.js';
 
-describe('isJsonRun', () => {
+const isJsonRun = (argv: readonly string[]) => jsonRunOf(argv) !== undefined;
+
+describe('which runs are --json runs', () => {
   it.each([
     [['--json']],
     [['--json', '--verbose']],
@@ -44,18 +46,18 @@ describe('--version goes to Pastel, as --help does (#302)', () => {
   });
 });
 
-describe('subcommandOf (#302)', () => {
+describe('the subcommand of a --json run (#302)', () => {
   it.each([
-    [['--json'], undefined],
-    [['--verbose', '--json'], undefined],
+    [['--json'], 'status'],
+    [['--verbose', '--json'], 'status'],
     [['adopt', 'github:a/b', '--json'], 'adopt'],
     [['--verbose', 'adopt', '--json'], 'adopt'],
-    // A value of a root option reads as the subcommand: the run is not the status command.
-    [['--values', 'x', '--json'], 'x'],
+    // A value of a root option reads as the subcommand: not the status command, so no JSON run.
+    [['--values', 'x', '--json'], undefined],
     // Nothing after `--` is a subcommand.
-    [['--json', '--', 'adopt'], undefined],
+    [['--json', '--', 'adopt'], 'status'],
   ])('%j → %s', (argv, expected) => {
-    expect(subcommandOf(argv)).toBe(expected);
+    expect(jsonRunOf(argv)?.command).toBe(expected);
   });
 });
 
@@ -92,7 +94,7 @@ describe('every command with --json goes through the gate', () => {
 });
 
 describe('root options before the subcommand', () => {
-  // isJsonRun and jsonCommandOf take the first non-option argument as the
+  // jsonRunOf and jsonCommandOf take the first non-option argument as the
   // subcommand. That holds while every root option is a boolean flag: an
   // option that took a value (`--profile work update --json`) would make the
   // value look like the subcommand.
