@@ -18,7 +18,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { asShown } from '../helpers/index.js';
 import fsp from 'node:fs/promises';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -637,13 +636,16 @@ describe('update pipeline (against examples/minimal-shard)', () => {
       removedFileDecisions: {},
     });
 
-    // At the first write outside the snapshot folder, the snapshot exists.
+    // At the first write outside the snapshot folder, the snapshot is
+    // whole: its marker, written last (§4.28 step 1), is there.
     const backups = path.join(vault, '.shardmind', 'backups');
     let snapshotAtFirstWrite: boolean | undefined;
     const realWrite = fsp.writeFile;
     const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
       if (snapshotAtFirstWrite === undefined && !String(file).startsWith(backups)) {
-        snapshotAtFirstWrite = fs.existsSync(backups) && fs.readdirSync(backups).length > 0;
+        const dirs = await fsp.readdir(backups).catch(() => [] as string[]);
+        snapshotAtFirstWrite =
+          dirs.length === 1 && (await fsp.access(path.join(backups, dirs[0]!, 'templates-snapshot.json')).then(() => true, () => false));
       }
       return realWrite(file, data, opts);
     });

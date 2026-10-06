@@ -130,7 +130,6 @@ export type AdoptProgressEvent =
 export interface AdoptResult {
   state: ShardState;
   summary: AdoptSummary;
-  backupDir: string | null;
 }
 
 export interface AdoptSummary {
@@ -405,7 +404,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
       await tx.commit();
     }
 
-    return { state, summary, backupDir: tx?.dir ?? null };
+    return { state, summary };
   } catch (err) {
     if (tx) {
       // A file left unrestored is never reported as rolled back (#247).

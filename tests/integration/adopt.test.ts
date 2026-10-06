@@ -12,6 +12,7 @@
  * stay in `tests/unit/adopt-planner.test.ts`.
  */
 
+import { abortAfterWrite } from '../helpers/abort-after-write.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { asShown } from '../helpers/index.js';
 import fsp from 'node:fs/promises';
@@ -114,6 +115,13 @@ async function adopt(vaultRoot: string, resolutions: AdoptResolutions = {}, now?
       now,
     }),
   };
+}
+
+
+/** The adopt snapshot folders under `.shardmind/backups/`, absolute, in name order. */
+async function snapshotsOf(vault: string): Promise<string[]> {
+  const backups = path.join(vault, '.shardmind', 'backups');
+  return (await fsp.readdir(backups)).sort().map((name) => path.join(backups, name));
 }
 
 describe('adopt pipeline (against examples/minimal-shard)', () => {
@@ -740,7 +748,8 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
   it('two adopts started at the same instant snapshot to two folders (#248)', async () => {
     const now = new Date('2026-10-04T12:00:00.000Z');
     await fsp.writeFile(path.join(vault, 'Home.md'), 'first\n', 'utf-8');
-    const first = (await adopt(vault, { 'Home.md': 'use_shard' }, now)).result.backupDir!;
+    await adopt(vault, { 'Home.md': 'use_shard' }, now);
+    const [first] = await snapshotsOf(vault);
     // Make the vault adoptable again: only the first snapshot under
     // .shardmind/ and a Home.md with different user bytes.
     for (const name of await fsp.readdir(vault)) {
@@ -750,7 +759,8 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
       if (name !== 'backups') await fsp.rm(path.join(vault, '.shardmind', name), { recursive: true });
     }
     await fsp.writeFile(path.join(vault, 'Home.md'), 'second\n', 'utf-8');
-    const second = (await adopt(vault, { 'Home.md': 'use_shard' }, now)).result.backupDir!;
+    await adopt(vault, { 'Home.md': 'use_shard' }, now);
+    const second = (await snapshotsOf(vault)).find((dir) => dir !== first)!;
 
     expect(second).not.toBe(first);
     // The first snapshot still holds the first run's copy.
@@ -761,7 +771,8 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
   it("a failed adopt's clean rollback keeps an earlier snapshot from the same instant (#248)", async () => {
     const now = new Date('2026-10-04T12:00:00.000Z');
     await fsp.writeFile(path.join(vault, 'Home.md'), 'first\n', 'utf-8');
-    const first = (await adopt(vault, { 'Home.md': 'use_shard' }, now)).result.backupDir!;
+    await adopt(vault, { 'Home.md': 'use_shard' }, now);
+    const [first] = await snapshotsOf(vault);
     for (const name of await fsp.readdir(vault)) {
       if (name !== '.shardmind') await fsp.rm(path.join(vault, name), { recursive: true });
     }
@@ -865,14 +876,10 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     });
     const lastShardOnly = adoptPlan.shardOnly[adoptPlan.shardOnly.length - 1]!.path;
     const abort = new AbortController();
-    const realWrite = fsp.writeFile;
     let writesAfterAbort = 0;
     // Ctrl+C lands right after the last shard-only file is written.
-    const lastShardOnlyAbs = path.join(vault, lastShardOnly);
-    const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+    const seam = abortAfterWrite(path.join(vault, lastShardOnly), abort, () => {
       if (abort.signal.aborted) writesAfterAbort++;
-      await realWrite(file, data, opts);
-      if (String(file) === lastShardOnlyAbs) abort.abort();
     });
     const err = await runAdopt({
       vaultRoot: vault,
@@ -887,7 +894,8 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
       resolutions: { 'Home.md': 'use_shard' },
       signal: abort.signal,
     }).catch((e: unknown) => e);
-    writeSpy.mockRestore();
+    seam.restore();
+    expect(seam.fired(), 'the last shard-only file was written').toBe(true);
     expect(err).toMatchObject({ code: 'CANCELLED' });
     expect(writesAfterAbort).toBe(0);
     expect(await fsp.readFile(path.join(vault, 'Home.md'), 'utf-8')).toBe('mine\n');
@@ -908,12 +916,7 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     const abort = new AbortController();
     // shard-values.yaml is the last write before state.json: Ctrl+C lands
     // right after it.
-    const valuesAbs = path.join(vault, 'shard-values.yaml');
-    const realWrite = fsp.writeFile;
-    const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
-      await realWrite(file, data, opts);
-      if (String(file) === valuesAbs) abort.abort();
-    });
+    const seam = abortAfterWrite(path.join(vault, 'shard-values.yaml'), abort);
     const err = await runAdopt({
       vaultRoot: vault,
       manifest,
@@ -927,8 +930,8 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
       resolutions: {},
       signal: abort.signal,
     }).catch((e: unknown) => e);
-    writeSpy.mockRestore();
-    expect(abort.signal.aborted, 'the values file was written').toBe(true);
+    seam.restore();
+    expect(seam.fired(), 'the values file was written').toBe(true);
     expect(err).toMatchObject({ code: 'CANCELLED' });
     expect(await readState(vault)).toBeNull();
     // Every file it wrote is gone, and so is every folder it made (#258).

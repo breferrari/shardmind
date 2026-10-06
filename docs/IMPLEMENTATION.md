@@ -1495,7 +1495,6 @@ runAdopt(opts: {
   state: ShardState;
   summary: AdoptSummary;     // matchedAuto / adoptedMine / adoptedShard /
                              // installedFresh / totalManaged
-  backupDir: string | null;
 }>;
 
 assertAdoptable(vaultRoot: string): Promise<void>;

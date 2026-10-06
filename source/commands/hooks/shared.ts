@@ -102,9 +102,9 @@ export function useSigintRollback(opts: {
   rollback: () => Promise<readonly RollbackFailure[] | void>;
   cleanup?: () => Promise<void>;
 }): void {
-  // Refs hold the latest callbacks; the handler reads through them so
-  // it always sees current vaultRoot / backupDir / addedPaths state
-  // even though the handler itself is registered only once.
+  // Refs hold the latest callbacks; the handler reads through them so it
+  // always sees the run in flight, though it is registered only once. The
+  // rollback itself is the executor's (#249, #301).
   const isActiveRef = useRef(opts.isActive);
   const rollbackRef = useRef(opts.rollback);
   const cleanupRef = useRef(opts.cleanup);
