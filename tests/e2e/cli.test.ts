@@ -1335,6 +1335,30 @@ describe('shardmind update', () => {
     expect(state.version).toBe('0.2.0');
   });
 
+  it('updates a vault whose cached shard.yaml still declares post-install (#357)', async () => {
+    // A vault installed from a pre-1.0 release of a shard that declared
+    // post-install keeps that shard.yaml cached. The new release uses the
+    // slots, so the cached copy must not block the update.
+    vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-cached-post-install' });
+    for (const rel of ['.shardmind/shard.yaml', '.shardmind/templates/.shardmind/shard.yaml']) {
+      if (!(await vault.exists(rel))) continue;
+      const yaml = await vault.readFile(rel);
+      await vault.writeFile(rel, yaml.replace(/hooks:[\s\S]*$/, 'hooks:\n  post-install: hooks/post-install.ts\n'));
+    }
+    stub.setLatest(SHARD_SLUG, '0.2.0');
+    const result = await spawnCli(['update', '--yes'], {
+      cwd: vault.root,
+      env: envWithStub(),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toMatch(/HOOK_SLOT_REMOVED/);
+    expect(await vault.exists('brain/Changelog.md')).toBe(true);
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as { version: string };
+    expect(state.version).toBe('0.2.0');
+    // The update replaced the cached copy with the new release's, which uses the slots.
+    expect(await vault.readFile('.shardmind/shard.yaml')).not.toContain('post-install');
+  });
+
   it('auto-merges a non-conflicting user edit on bump', async () => {
     vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'update-merge' });
     // User-owned addition at the top of Home.md — doesn't collide with
