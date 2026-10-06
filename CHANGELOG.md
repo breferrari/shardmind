@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (`dependencies` in shard.yaml is defined and validated — #369)
+
+- **`shard.yaml`'s `dependencies` now has a defined meaning and is validated**: it names other shards this shard needs installed alongside it. Each entry's `name` and `namespace` follow the manifest's own rule (lowercase letters, digits, hyphens), and its `version` must be a semver range such as `^1.0.0`. An entry that breaks these is refused (`MANIFEST_VALIDATION_FAILED`, naming it), where before any strings were accepted and ignored. The engine still does not fetch them; fetching is planned (#82), and defining the field now means it gains no new meaning when that lands. No published shard declares `dependencies`.
+
 ### Changed (the runtime reads a newer state.json as newer — #368)
 
 - **A hook's `loadState()` on a vault whose `state.json` a newer ShardMind wrote now fails with `STATE_UNSUPPORTED_VERSION`, naming both schema versions**, as the engine does, instead of `STATE_CORRUPT`. A hook imports `shardmind/runtime` from the copy its shard ships, which can be older than the engine. SHARD-LAYOUT reserves the paths shard composition will use (`.shardmind/shards/`, `shard-values.<namespace>.<name>.yaml`), and states that composition bumps the state schema, so it can land in 1.x without a breaking change.
