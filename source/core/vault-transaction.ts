@@ -132,8 +132,6 @@ export function beginTransaction(
 ): Promise<SnapshotTransaction>;
 export function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction>;
 export async function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction> {
-  // Before anything reads the vault: it does not exist yet (§4.28 step 0).
-  const createdRoot = opts.createRoot ? await createVaultRoot(vaultRoot, opts.createRoot) : null;
   const now = opts.now ?? new Date();
   // A `.shardmind/` that was here is the user's (or the old install's): the
   // rollback removes only one this run made, once empty.
@@ -217,6 +215,11 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
     return result;
   }
 
+  // Last, so nothing in begin can fail after the vault folder and its lock
+  // exist with no rollback to remove them (§4.28 step 0). The steps above
+  // read a folder that does not exist yet, or keep their record in memory.
+  const createdRoot = opts.createRoot ? await createVaultRoot(vaultRoot, opts.createRoot) : null;
+
   return {
     dir,
     introduced,
@@ -269,8 +272,7 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
           await fsp.rm(abs, { force: true });
         } catch (err) {
           // A folder there is the user's, made during the run: left.
-          const isFolder = await fsp.lstat(abs).then((st) => st.isDirectory(), () => false);
-          if (!isFolder) failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
+          if (!(await isFolder(abs))) failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
         }
       }
       if (dir !== null && filesDir !== null) {
