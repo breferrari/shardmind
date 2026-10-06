@@ -131,7 +131,7 @@ shardmind/
 │   │   ├── adopt.tsx                  # shardmind adopt <shard>
 │   │   ├── validate.tsx               # shardmind validate [dir|shard] — author-facing check (#34)
 │   │   ├── options/                   # Ink-free zod args/options per command, re-exported by the .tsx (#302)
-│   │   ├── headless/                  # --json runners cli.ts calls before Ink loads: status (#302)
+│   │   ├── headless/                  # --json runners cli.ts calls before Ink loads: status, adopt (#302)
 │   │   └── hooks/                     # State-machine + shared command hooks
 │   │       ├── use-install-machine.ts
 │   │       ├── use-update-machine.ts
@@ -218,7 +218,8 @@ shardmind/
 │   │   ├── created-folders.ts         # The folders a run created, removed by its rollback (#258)
 │   │   ├── external-tools.ts          # Check external_tools against their ranges; no-shell probe (#138)
 │   │   ├── vault-transaction.ts       # One vault transaction: snapshot before each write, rollback, state.json last (#301)
-│   │   └── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
+│   │   ├── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
+│   │   └── flows/                     # UI-free command runs the Ink machines adapt (§4.30, #302): prepare-shard, values, adopt
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   ├── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
 │   │   └── self-update-refresh.ts     # Detached child that refreshes the npm self-update cache (#285)

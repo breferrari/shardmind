@@ -1,9 +1,5 @@
-import { Box, Text, useApp } from 'ink';
-import { useEffect } from 'react';
-import zod from 'zod';
-import { updateCheckOption } from './hooks/update-check-option.js';
-
-import { emitJson, jsonFailure } from '../core/json-output.js';
+import { Box, Text } from 'ink';
+import type zod from 'zod';
 
 import { assertNever } from '../runtime/types.js';
 import ErrorView from '../components/ErrorView.js';
@@ -21,43 +17,10 @@ import HookProgress from '../components/HookProgress.js';
 import { useAdoptMachine } from './hooks/use-adopt-machine.js';
 import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 
-export const args = zod.tuple([
-  zod
-    .string()
-    .describe(
-      'Shard reference, e.g. "breferrari/obsidian-mind" or "github:owner/repo"',
-    ),
-]);
+// Ink-free, so the headless `--json` run parses with the same args and options (#302).
+import { args, options } from './options/adopt.js';
 
-export const options = zod.object({
-  values: zod.string().optional().describe('Path to a YAML file prefilling value answers'),
-  yes: zod
-    .boolean()
-    .default(false)
-    .describe('Skip prompts; auto-keep your version on every differs decision'),
-  mode: zod
-    .enum(['keep-all-mine', 'use-all-theirs', 'auto-merge', 'decide-per-file'])
-    .optional()
-    .describe(
-      'Resolve divergent files in bulk, skipping the mode picker. keep-all-mine/use-all-theirs/auto-merge are non-interactive (auto-merge still prompts on conflicts unless --yes); decide-per-file is the per-file prompt. auto-merge is best-effort (keeps your bytes, ignores shard deletions, may duplicate — review after)',
-    ),
-  fromVersion: zod
-    .string()
-    .optional()
-    .describe(
-      "The shard release the vault was cloned from; adopt applies the shard's renames since then, so files at old paths are adopted at their new ones",
-    ),
-  verbose: zod.boolean().default(false).describe('Show per-file action history during adopt'),
-  dryRun: zod
-    .boolean()
-    .default(false)
-    .describe('Preview classification + plan without writing'),
-  updateCheck: updateCheckOption,
-  json: zod
-    .boolean()
-    .default(false)
-    .describe('Emit machine-readable JSON instead of the TUI'),
-});
+export { args, options };
 
 type Props = {
   args: zod.infer<typeof args>;
@@ -66,8 +29,8 @@ type Props = {
 
 export default function Adopt({ args, options }: Props) {
   const [shardRef] = args;
-  const { values: valuesFile, yes, mode, fromVersion, verbose, dryRun, updateCheck, json } = options;
-  const { exit: exitApp } = useApp();
+  // `--json` never reaches this component: cli.ts answers it headless (#302).
+  const { values: valuesFile, yes, mode, fromVersion, verbose, dryRun, updateCheck } = options;
 
   const {
     phase,
@@ -85,28 +48,9 @@ export default function Adopt({ args, options }: Props) {
     verbose,
     dryRun,
     vaultRoot: process.cwd(),
-    json,
   });
 
-  // The banner is chrome; suppress it under --json so stdout is exactly one
-  // JSON document.
-  const { banner } = useSelfUpdateBanner({ updateCheck: updateCheck && !json });
-
-  // A --json run must answer with a document on failure too, not a rendered
-  // error box (which returns null here) and certainly not a stack trace. The
-  // machine's `finish` already sets a non-zero exit code; this supplies the
-  // parseable body to go with it (#139 finding 3).
-  useEffect(() => {
-    if (!json) return;
-    if (phase.kind !== 'error') return;
-    emitJson(jsonFailure('adopt', phase.error));
-    process.exitCode = 1;
-    exitApp();
-  }, [json, phase, exitApp]);
-
-  // Render nothing under --json: the machine writes the document straight to
-  // stdout, and an Ink frame would wrap it at the terminal width.
-  if (json) return null;
+  const { banner } = useSelfUpdateBanner({ updateCheck });
 
   // Exhaustive switch: adding a new Phase variant without a case here is
   // a compile error, not a silent render-nothing bug.

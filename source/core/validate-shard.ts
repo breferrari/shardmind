@@ -6,7 +6,7 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { downloadShard } from './download.js';
+import { downloadShard, DownloadCancelledError } from './download.js';
 import { resolve as resolveRef } from './registry.js';
 import { loadValuesYaml } from './values-io.js';
 import { errorFindings, lintShard, type LintFinding } from './lint-shard.js';
@@ -110,6 +110,9 @@ export async function runValidateJson(
     emitJson(jsonSuccess('validate', result), write);
     return result.errors > 0 ? 1 : 0;
   } catch (err) {
+    // A Ctrl+C stopped the download: the SIGINT handler exits 130, and the
+    // caller gets no document for a run it cancelled.
+    if (err instanceof DownloadCancelledError) return 130;
     emitJson(jsonFailure('validate', err), write);
     return 1;
   } finally {

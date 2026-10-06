@@ -70,10 +70,11 @@ try {
   // even when it renders nothing (#198), and the JSON must be one clean
   // document (#34). Each runner takes the arguments after the command and
   // returns the exit code. `--help` still goes to Pastel.
-  // The status command (the root, no subcommand) runs headless too (#302).
+  // The status command (the root, no subcommand) and adopt run headless too (#302).
   const HEADLESS_JSON: Record<string, () => Promise<(argv: readonly string[], engineVersion: string | undefined) => Promise<number>>> = {
     validate: async () => (await import('./core/validate-shard.js')).runValidateJson,
     status: async () => (await import('./commands/headless/status.js')).runStatusJson,
+    adopt: async () => (await import('./commands/headless/adopt.js')).runAdoptJson,
   };
   const argv = process.argv.slice(2);
   // The subcommand as isJsonRun reads it; none is the status command. A named

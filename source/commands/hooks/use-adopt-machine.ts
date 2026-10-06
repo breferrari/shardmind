@@ -1,71 +1,49 @@
 /**
- * State machine + async orchestration for the adopt command.
+ * The adopt command's Ink adapter over its UI-free flow (#302).
  *
- * Sibling of `use-install-machine.ts` and `use-update-machine.ts`. Adopt
- * fetches a shard, reads the user's vault as it exists today, lets the
- * user reconcile differences via a 2-way diff, then writes the engine
- * metadata an install would have produced.
+ * `core/flows/adopt.ts` runs the adopt: it fetches the shard, reads the
+ * vault, settles the differing files, writes the engine metadata and runs
+ * the hooks. This hook renders what the flow reports as phases and answers
+ * the flow's questions from the prompts:
+ *   values   → `wizard` (AdoptValuesGate, #104)
+ *   mode     → `mode-select` (AdoptModePicker)
+ *   per-file → `diff-review` (AdoptDiffView), once per file
  *
- * Phase ordering (see docs/IMPLEMENTATION.md §3.5 — Data Flow: Adopt):
+ * Phase ordering (see docs/IMPLEMENTATION.md §3.5 and §4.30):
  *   booting → loading → wizard → planning →
- *   diff-review (loop over `differs`) → executing →
- *   running-hook → summary
+ *   mode-select → diff-review (loop) → executing → running-hook → summary
  *
- * The `wizard` phase renders `AdoptValuesGate` (not `InstallWizard`
- * directly): adopt opens on a values confirm-or-override page (#104) since
- * the user already has a populated vault. The phase still means "collect
- * values interactively", and the `onWizard*` callbacks are unchanged — the
- * gate's "Override individually" path renders `InstallWizard` and returns
- * the same `WizardResult`.
- *
- * Reuses `useSigintRollback` and `appendHookOutput` from `shared.ts`, and
- * the hook orchestrator from `core`, so install / update / adopt can't
- * drift on any of those concerns.
+ * `--json` never reaches this hook: cli.ts answers it headless
+ * (`commands/headless/adopt.ts`). Reuses `useSigintRollback` and
+ * `appendHookOutput` from `shared.ts`, so install / update / adopt can't
+ * drift on either.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp, useStdin } from 'ink';
 
-
-import type {
-  ResolvedShard,
-  ShardManifest,
-  ShardSchema,
-} from '../../runtime/types.js';
 import { ShardMindError } from '../../runtime/types.js';
-import { adoptPlanResult, emitJson, jsonSuccess } from '../../core/json-output.js';
-import { resolve as resolveRef } from '../../core/registry.js';
-import { downloadShard, DownloadCancelledError } from '../../core/download.js';
-import { parseManifest, assertEngineCompatible } from '../../core/manifest.js';
+import { DownloadCancelledError } from '../../core/download.js';
 import { resolveEngineVersion } from './cli-version.js';
 import { useVaultLock } from './use-vault-lock.js';
-import { parseSchema, buildValuesValidator } from '../../core/schema.js';
-import { loadValuesYaml } from '../../core/values-io.js';
-import {
-  classifyAdoption,
-  type AdoptPlan,
-  type AdoptClassification,
-} from '../../core/adopt-planner.js';
-import { twoWayUnionMerge } from '../../core/adopt-merge.js';
-import { parseFromVersion, renamesBetween } from '../../core/rename-migrations.js';
-import { sha256 } from '../../core/fs-utils.js';
-import {
-  assertAdoptable,
-  runAdopt,
-  type AdoptApplyKind,
-  type AdoptResolutions,
-  type AdoptSummary as AdoptSummaryData,
-} from '../../core/adopt-executor.js';
-import { checkExternalToolsForRun } from '../../core/external-tools.js';
-import {
-  defaultModuleSelections,
-  mergePrefill,
-  missingValueKeys,
-  resolveComputedDefaults,
-} from '../../core/install-planner.js';
+import type { AdoptPlan, AdoptClassification } from '../../core/adopt-planner.js';
+import type { AdoptApplyKind, AdoptResolutions, AdoptSummary as AdoptSummaryData } from '../../core/adopt-executor.js';
+import type { ShardManifest } from '../../runtime/types.js';
 import { type RunningHookPhase } from '../../core/hook.js';
-import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
+import { type HookOutcome } from '../../core/hook-orchestrator.js';
 import { rollbackDetail } from '../../core/rollback-report.js';
+import {
+  runAdoptFlow,
+  adoptRolledBack,
+  FlowCancelled,
+  type AdoptAnswer,
+  type AdoptFileChoice,
+  type AdoptFlowIO,
+  type AdoptMode,
+  type AdoptQuestion,
+} from '../../core/flows/adopt.js';
+import type { PreparedShard } from '../../core/flows/prepare-shard.js';
+import type { ValueAnswers } from '../../core/flows/values.js';
 import {
   appendHookOutput,
   useSigintRollback,
@@ -75,10 +53,6 @@ import {
   trackRun,
   type RunInFlight,
 } from './shared.js';
-
-import type { WizardResult } from '../../components/InstallWizard.js';
-import type { AdoptDiffAction } from '../../components/AdoptDiffView.js';
-import type { AdoptMode } from '../../components/AdoptModePicker.js';
 
 export interface UseAdoptMachineInput {
   shardRef: string;
@@ -91,23 +65,10 @@ export interface UseAdoptMachineInput {
   verbose: boolean;
   dryRun: boolean;
   vaultRoot: string;
-  /**
-   * `--json`. With `--dry-run`, emits the per-file plan as one JSON document
-   * and stops before resolving a mode. The command renders nothing in this
-   * mode, so stdout carries the document alone.
-   */
-  json: boolean;
 }
 
-export interface PreparedContext {
-  resolved: ResolvedShard;
-  manifest: ShardManifest;
-  schema: ShardSchema;
-  tempDir: string;
-  tarballSha256: string;
-  cleanup: () => Promise<void>;
-  prefillValues: Record<string, unknown>;
-}
+/** The prepared shard, with the `--values` prefill the values page shows. */
+export type PreparedContext = PreparedShard & { prefillValues: Record<string, unknown> };
 
 export type Phase =
   | { kind: 'booting' }
@@ -116,18 +77,18 @@ export type Phase =
   | {
       kind: 'planning';
       ctx: PreparedContext;
-      result: WizardResult;
+      result: ValueAnswers;
     }
   | {
       kind: 'mode-select';
       ctx: PreparedContext;
-      result: WizardResult;
+      result: ValueAnswers;
       plan: AdoptPlan;
     }
   | {
       kind: 'diff-review';
       ctx: PreparedContext;
-      result: WizardResult;
+      result: ValueAnswers;
       plan: AdoptPlan;
       // The files that still need a per-file decision. For `decide-per-file`
       // this is every `differs`; for `auto-merge` it's only the conflicting
@@ -163,33 +124,36 @@ export type Phase =
 
 export interface UseAdoptMachineOutput {
   phase: Phase;
-  onWizardComplete: (result: WizardResult) => void;
+  onWizardComplete: (result: ValueAnswers) => void;
   onWizardCancel: () => void;
   onWizardError: (err: Error) => void;
   onModeSelect: (mode: AdoptMode) => void;
-  onDiffChoice: (action: AdoptDiffAction) => void;
+  onDiffChoice: (action: AdoptFileChoice) => void;
+}
+
+/** The question the flow is waiting on, answered from its prompt's handler only. */
+interface PendingAnswer {
+  kind: AdoptQuestion['kind'];
+  resolve: (answer: unknown) => void;
+  reject: (err: Error) => void;
 }
 
 export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOutput {
-  const { shardRef, valuesFile, yes, mode, fromVersion, verbose, dryRun, vaultRoot, json } = input;
+  const { shardRef, valuesFile, yes, mode, fromVersion, verbose, dryRun, vaultRoot } = input;
   const { exit } = useApp();
 
-  // See use-install-machine.ts for the full rationale. Short version: without
-  // this gate a non-TTY run renders the wizard, Ink throws "Raw mode is not
-  // supported" from inside its own render tree, and the process adopts NOTHING
-  // while exiting 0. Adopt is the command #139 was actually filed from.
+  // Without a terminal the flow never prompts: it takes `--values`, or
+  // refuses (#139). Ink would otherwise throw "Raw mode is not supported"
+  // from inside its own render tree and adopt NOTHING while exiting 0.
   const { isRawModeSupported } = useStdin();
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
-  const phaseRef = useRef<Phase>(phase);
-  phaseRef.current = phase;
 
   const ctxCleanupRef = useRef<(() => Promise<void>) | null>(null);
   // The adopt in flight, which a Ctrl+C stops and waits for (#249).
   const runRef = useRef<RunInFlight | null>(null);
   const hookAbortRef = useRef<AbortController | null>(null);
-  // The external-tools check's summary lines (#138).
-  const externalToolsRef = useRef<string[]>([]);
+  const pendingRef = useRef<PendingAnswer | null>(null);
 
   // One run per vault (#253); --dry-run writes nothing and takes no lock.
   const { take: takeLock, release: releaseLock } = useVaultLock(vaultRoot, 'adopt', !dryRun);
@@ -197,11 +161,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
   const finish = useCallback(
     (next: Phase) => {
       setPhase(next);
-      if (
-        next.kind === 'summary' ||
-        next.kind === 'cancelled' ||
-        next.kind === 'error'
-      ) {
+      if (next.kind === 'summary' || next.kind === 'cancelled' || next.kind === 'error') {
         if (next.kind === 'error') process.exitCode = 1;
         // The run is over: the next one may start (#253).
         releaseLock();
@@ -211,12 +171,11 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
     [exit, releaseLock],
   );
 
-  // Mid-write SIGINT: walk the executor's snapshot back. Tempdir cleanup
-  // fires on every Ctrl+C so we don't leak the extracted shard under
-  // /tmp/. Mirrors `useUpdateMachine`'s rollback wiring.
+  // Mid-write SIGINT: the flow's executor rolls back once the abort stops
+  // it. Tempdir cleanup fires on every Ctrl+C so we don't leak the
+  // extracted shard. Mirrors `useUpdateMachine`'s rollback wiring.
   useSigintRollback({
     isActive: () => !dryRun && runRef.current !== null,
-    // runAdopt rolls back in its own catch once the abort stops it.
     rollback: () => stopRun(runRef.current),
     cleanup: async () => {
       hookAbortRef.current?.abort();
@@ -224,324 +183,142 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
     },
   });
 
-  // Boot pipeline: guard → resolve → download → parse → wizard.
   useEffect(() => {
     let disposed = false;
+    // Stops this run if the effect is superseded before it writes.
+    const stop = new AbortController();
+    // A superseded run's reports go nowhere.
+    const show = (next: Phase | ((prev: Phase) => Phase)) => {
+      if (!disposed) setPhase(next);
+    };
+    // The `--values` prefill the values page shows; known once asked.
+    let prefillValues: Record<string, unknown> = {};
+    const ctxOf = (shard: PreparedShard): PreparedContext => ({ ...shard, prefillValues });
+    const history: string[] = [];
 
-    (async () => {
-      try {
-        // `--json` is currently the PLAN surface only: the document is emitted
-        // at the dry-run decision point, before any prompt. Allowing it on a
-        // real run renders nothing (the command returns null under --json) and
-        // emits nothing, so the process sits at a prompt with no UI — a silent
-        // no-op that exits 0, which is the exact failure #146 just removed.
-        // Refuse loudly instead of half-supporting it.
-        if (json && !dryRun) {
-          throw new ShardMindError(
-            '--json is only supported together with --dry-run',
-            'JSON_REQUIRES_DRY_RUN',
-            'Add --dry-run to get the machine-readable plan. Executing with --json is not supported yet — run without --json to execute.',
+    const ask = <Q extends AdoptQuestion>(question: Q): Promise<AdoptAnswer<Q>> =>
+      new Promise<AdoptAnswer<Q>>((resolve, reject) => {
+        if (disposed) {
+          reject(new FlowCancelled('Superseded by a newer run.'));
+          return;
+        }
+        pendingRef.current = { kind: question.kind, resolve: resolve as (answer: unknown) => void, reject };
+        switch (question.kind) {
+          case 'values':
+            prefillValues = question.prefill;
+            show({ kind: 'wizard', ctx: ctxOf(question.shard) });
+            return;
+          case 'mode':
+            show({ kind: 'mode-select', ctx: ctxOf(question.shard), result: question.answers, plan: question.plan });
+            return;
+          case 'per-file':
+            show({
+              kind: 'diff-review',
+              ctx: ctxOf(question.shard),
+              result: question.answers,
+              plan: question.plan,
+              queue: question.queue,
+              currentIndex: question.currentIndex,
+              resolutions: question.resolutions,
+            });
+            return;
+        }
+      });
+
+    const io: AdoptFlowIO = {
+      ask,
+      phase: (p) => {
+        if (p.kind === 'loading') show({ kind: 'loading', message: p.message });
+        else if (p.kind === 'planning') show({ kind: 'planning', ctx: ctxOf(p.shard), result: p.answers });
+        else show({ kind: 'executing', total: 0, current: 0, label: 'Preparing…', history });
+      },
+      progress: (ev) => {
+        if (ev.kind === 'start') {
+          show((prev) => (prev.kind === 'executing' ? { ...prev, total: ev.total, current: 0, label: 'Starting…' } : prev));
+        } else if (ev.kind === 'file') {
+          if (verbose) {
+            history.push(`${labelForAction(ev.action)} ${ev.outputPath}`);
+            if (history.length > 5) history.shift();
+          }
+          show((prev) =>
+            prev.kind === 'executing'
+              ? { ...prev, current: ev.index, total: ev.total, label: ev.label, history: verbose ? [...history] : prev.history }
+              : prev,
           );
         }
+      },
+      hooks: {
+        setPhase: (p) => show(p),
+        onStdout: (chunk) => {
+          if (!disposed) appendHookOutput(setPhase, chunk);
+        },
+        onStderr: (chunk) => {
+          if (!disposed) appendHookOutput(setPhase, chunk);
+        },
+      },
+      takeLock,
+      onCleanup: (cleanup) => {
+        // A superseded run removes its own dir instead of taking the ref.
+        if (disposed) void cleanup().catch(() => {});
+        else ctxCleanupRef.current = cleanup;
+      },
+      newRunAbort,
+      onRun: (abort, run) => {
+        runRef.current = trackRun(abort, run);
+      },
+      // state.json is on disk: drop the run before the hooks, so a Ctrl+C
+      // during them can't walk the adopt back.
+      onCommitted: () => {
+        runRef.current = null;
+      },
+      onHookAbort: (abort) => {
+        hookAbortRef.current = abort;
+      },
+    };
 
-        // Refused before the network call: nothing downloaded can fix it.
-        if (fromVersion !== undefined) parseFromVersion(fromVersion);
-
-        // Pre-flight guard runs FIRST, before any network call. Saves
-        // the user a multi-second wait on a downloads-and-then-rejects
-        // path that's deterministically wrong from byte zero.
-        // Before the vault is read: a plan made from a vault another run is
-        // changing would be stale (#253).
-        takeLock();
-        await assertAdoptable(vaultRoot);
-
-        setPhase({ kind: 'loading', message: `Resolving ${shardRef}…` });
-        const resolved = await resolveRef(shardRef, { command: 'adopt' });
-
-        setPhase({
-          kind: 'loading',
-          message: `Downloading ${resolved.namespace}/${resolved.name}@${resolved.version}…`,
-        });
-        // The cleanup is registered before the fetch, so a Ctrl+C during the
-        // download removes the temp dir too (#57).
-        const temp = await downloadShard(resolved.tarballUrl, (cleanup) => {
-          // A superseded run removes its own dir instead of taking the ref.
-          if (disposed) void cleanup().catch(() => {});
-          else ctxCleanupRef.current = cleanup;
-        });
-
-        setPhase({ kind: 'loading', message: 'Parsing manifest and schema…' });
-        const manifest = await parseManifest(temp.manifest);
-        // Refuse before any vault write if this engine can't satisfy the
-        // shard's declared requires.shardmind range (#121).
-        assertEngineCompatible(manifest, resolveEngineVersion());
-        const schema = await parseSchema(temp.schema);
-
-        const prefill = valuesFile ? await loadValuesFile(valuesFile, schema) : {};
-
-        const ctx: PreparedContext = {
-          resolved,
-          manifest,
-          schema,
-          tempDir: temp.tempDir,
-          tarballSha256: temp.tarball_sha256,
-          cleanup: temp.cleanup,
-          prefillValues: prefill,
-        };
-
+    runAdoptFlow(
+      {
+        shardRef,
+        valuesFile,
+        yes,
+        mode,
+        fromVersion,
+        dryRun,
+        json: false,
+        interactive: isRawModeSupported,
+        vaultRoot,
+        engineVersion: resolveEngineVersion(),
+        stop: stop.signal,
+      },
+      io,
+    ).then(
+      (result) => {
         if (disposed) return;
-        if (yes) {
-          await runNonInteractive(ctx);
-        } else if (!isRawModeSupported || json) {
-          // `--json` never prompts: the command renders nothing under it, so
-          // a wizard would wait unseen. It takes the no-terminal path, as a
-          // piped run does (#198).
-          // `--values` prefills the wizard rather than replacing it, which is
-          // right with a terminal and impossible without one. Every answer is
-          // already on disk, so skip the wizard instead of failing on it.
-          if (valuesFile !== undefined) {
-            await runNonInteractive(ctx);
-          } else {
-            // Refusing beats recording values nobody chose. Adopting headless
-            // without `--values` previously wrote `user_name: ""` into
-            // shard-values.yaml as though it had been answered (#139).
-            throw new ShardMindError(
-              'No interactive terminal, and no values were supplied',
-              'ADOPT_NON_INTERACTIVE_WITHOUT_VALUES',
-              'Pass --values <file> to supply answers, or --yes to accept schema defaults deliberately.',
-            );
-          }
-        } else {
-          setPhase({ kind: 'wizard', ctx });
+        // A plan comes back only under --json, which runs headless.
+        if (result.kind === 'plan') {
+          finish({ kind: 'cancelled', reason: 'Plan only (--json).' });
+          return;
         }
-      } catch (err) {
+        finish({
+          kind: 'summary',
+          manifest: result.shard.manifest,
+          vaultRoot,
+          summary: result.summary,
+          durationMs: result.durationMs,
+          hooks: result.hooks,
+          dryRun,
+          externalTools: result.externalTools,
+        });
+      },
+      (err: unknown) => {
+        runRef.current = null;
         // A Ctrl+C mid-download stops the fetch; the command is exiting, so
         // that is not an error to render.
         if (disposed || err instanceof DownloadCancelledError) return;
-        finish({ kind: 'error', error: err as Error });
-      }
-    })();
-
-    return () => {
-      disposed = true;
-      if (ctxCleanupRef.current) {
-        ctxCleanupRef.current().catch(() => {});
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shardRef, valuesFile, yes, vaultRoot, isRawModeSupported, json, dryRun, fromVersion]);
-
-  const runNonInteractive = useCallback(
-    async (ctx: PreparedContext) => {
-      const merged = mergePrefill(ctx.schema, ctx.prefillValues);
-      const missing = missingValueKeys(ctx.schema, merged);
-      if (missing.length > 0) {
-        // The hint has to match how we got here. This path is reachable two
-        // ways now: `--yes` (defaults accepted, a required value has no
-        // usable default) and a headless `--values` run. Telling the latter
-        // to "drop --yes" is advice it cannot follow.
-        throw new ShardMindError(
-          `Missing required values: ${missing.join(', ')}`,
-          'VALUES_MISSING',
-          yes
-            ? 'Provide them via --values <file> or drop --yes to prompt interactively.'
-            : 'Add them to your --values file, or run in an interactive terminal to be prompted.',
-        );
-      }
-      const validator = buildValuesValidator(ctx.schema);
-      const validated = validator.parse(
-        resolveComputedDefaults(ctx.schema, merged),
-      ) as Record<string, unknown>;
-      await runPlanning(ctx, {
-        values: validated,
-        selections: defaultModuleSelections(ctx.schema),
-      });
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [yes],
-  );
-
-  const runPlanning = useCallback(
-    async (ctx: PreparedContext, result: WizardResult) => {
-      try {
-        const validator = buildValuesValidator(ctx.schema);
-        const validated = validator.parse(result.values) as Record<string, unknown>;
-        const validatedResult: WizardResult = {
-          values: validated,
-          selections: result.selections,
-        };
-
-        // With the values final, before the plan and any diff prompt (#138).
-        externalToolsRef.current = await checkExternalToolsForRun({ manifest: ctx.manifest, values: validated, dryRun: Boolean(dryRun) });
-        setPhase({ kind: 'planning', ctx, result: validatedResult });
-
-        const plan = await classifyAdoption({
-          vaultRoot,
-          schema: ctx.schema,
-          manifest: ctx.manifest,
-          tempDir: ctx.tempDir,
-          values: validated,
-          selections: validatedResult.selections,
-          // Rename migrations since the cloned release (#179).
-          renames:
-            fromVersion === undefined
-              ? undefined
-              : renamesBetween(ctx.manifest.migrations, fromVersion, ctx.manifest.version),
-        });
-
-        // `--json --dry-run` is the agent's decision step: emit the per-file
-        // classification and stop, BEFORE any mode is resolved. Choosing a
-        // `--mode` is exactly what this document exists to inform, so running
-        // one first would answer the question with itself. Emitted even when
-        // nothing differs, so a caller always gets a document back (#139).
-        if (json && dryRun) {
-          emitJson(
-            jsonSuccess('adopt', adoptPlanResult(plan, { dryRun: true, mode: mode ?? null })),
-          );
-          finish({ kind: 'cancelled', reason: 'Plan emitted as JSON (--dry-run).' });
+        if (err instanceof FlowCancelled) {
+          finish({ kind: 'cancelled', reason: err.reason });
           return;
         }
-
-        if (plan.differs.length === 0) {
-          await executeAdopt(ctx, validatedResult, plan, {});
-          return;
-        }
-
-        // `--mode` overrides the picker; `--yes` is shorthand for
-        // keep-all-mine (preserve the user's bytes — the safe default for
-        // retroactive adoption). With neither, prompt for the mode.
-        const effectiveMode: AdoptMode | undefined =
-          mode ?? (yes ? 'keep-all-mine' : undefined);
-        if (effectiveMode) {
-          await applyMode(effectiveMode, ctx, validatedResult, plan, false);
-          return;
-        }
-
-        setPhase({ kind: 'mode-select', ctx, result: validatedResult, plan });
-      } catch (err) {
-        finish({ kind: 'error', error: err as Error });
-      }
-    },
-    // References `applyMode` + `executeAdopt` via closure (defined below);
-    // both are stable across a session (their own deps — vaultRoot, dryRun,
-    // verbose, finish — are fixed CLI flags / process.cwd), so a captured
-    // binding is never stale. Listing them here would be a TDZ ref.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [vaultRoot, yes, mode, fromVersion, finish],
-  );
-
-  const executeAdopt = useCallback(
-    async (
-      ctx: PreparedContext,
-      result: WizardResult,
-      plan: AdoptPlan,
-      resolutions: AdoptResolutions,
-    ) => {
-      const start = Date.now();
-      const history: string[] = [];
-
-      setPhase({
-        kind: 'executing',
-        total: 0,
-        current: 0,
-        label: 'Preparing…',
-        history,
-      });
-
-      try {
-        const abort = newRunAbort();
-        const run = runAdopt({
-          vaultRoot,
-          manifest: ctx.manifest,
-          schema: ctx.schema,
-          tempDir: ctx.tempDir,
-          resolved: ctx.resolved,
-          tarballSha256: ctx.tarballSha256,
-          values: result.values,
-          selections: result.selections,
-          plan,
-          resolutions,
-          dryRun,
-          signal: abort.signal,
-          onProgress: (ev) => {
-            if (ev.kind === 'start') {
-              setPhase((prev) =>
-                prev.kind === 'executing'
-                  ? { ...prev, total: ev.total, current: 0, label: 'Starting…' }
-                  : prev,
-              );
-            } else if (ev.kind === 'file') {
-              if (verbose) {
-                history.push(`${labelForAction(ev.action)} ${ev.outputPath}`);
-                if (history.length > 5) history.shift();
-              }
-              setPhase((prev) => {
-                if (prev.kind !== 'executing') return prev;
-                return {
-                  ...prev,
-                  current: ev.index,
-                  total: ev.total,
-                  label: ev.label,
-                  history: verbose ? [...history] : prev.history,
-                };
-              });
-            }
-          },
-        });
-
-        runRef.current = trackRun(abort, run);
-        const runResult = await run;
-
-        // State.json is now on disk — past the point-of-no-return.
-        // Drop the run BEFORE firing the hook so a SIGINT during hook
-        // execution can't walk the adopt back. Mirrors install/update.
-        runRef.current = null;
-
-        // Adopt runs the install-side slots: bootstrap → personalize (skipped
-        // under Invariant 2), or a lone legacy post-install. newFiles is the
-        // freshly-installed shard-only set. Orchestrator owns ordering,
-        // boundary checks, re-hash, and fingerprint persistence.
-        hookAbortRef.current = new AbortController();
-        let hookOutcomes: HookOutcome[];
-        try {
-          const hookRun = await runHooks(
-            {
-              command: 'adopt',
-              tempDir: ctx.tempDir,
-              manifest: ctx.manifest,
-              schema: ctx.schema,
-              vaultRoot,
-              state: runResult.state,
-              values: result.values,
-              modules: result.selections,
-              newFiles: runResult.summary.installedFresh,
-              removedFiles: [],
-              dryRun: Boolean(dryRun),
-            },
-            {
-              setPhase: (p) => setPhase(p),
-              onStdout: (chunk) => appendHookOutput(setPhase, chunk),
-              onStderr: (chunk) => appendHookOutput(setPhase, chunk),
-              signal: hookAbortRef.current.signal,
-            },
-          );
-          hookOutcomes = hookRun.outcomes;
-        } finally {
-          hookAbortRef.current = null;
-        }
-
-        finish({
-          kind: 'summary',
-          manifest: ctx.manifest,
-          vaultRoot,
-          summary: runResult.summary,
-          durationMs: Date.now() - start,
-          hooks: hookOutcomes,
-          dryRun: Boolean(dryRun),
-          externalTools: externalToolsRef.current,
-        });
-      } catch (err) {
-        runRef.current = null;
         if (isCancelledRun(err)) {
           // The Ctrl+C handler reports any rollback failure and exits 130.
           finish({ kind: 'cancelled', reason: 'Cancelled with Ctrl+C.' });
@@ -550,135 +327,42 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         finish({
           kind: 'error',
           error: err as Error,
-          detail: dryRun ? undefined : rollbackDetail(err, 'Rolled back partial adopt.'),
+          detail: adoptRolledBack(err) ? rollbackDetail(err, 'Rolled back partial adopt.') : undefined,
         });
+      },
+    );
+
+    return () => {
+      disposed = true;
+      stop.abort();
+      // A question the superseded run waits on ends it.
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      pending?.reject(new FlowCancelled('Superseded by a newer run.'));
+      if (ctxCleanupRef.current) {
+        ctxCleanupRef.current().catch(() => {});
       }
-    },
-    [vaultRoot, dryRun, verbose, finish],
-  );
-
-  // Resolve the `differs` set according to a batch mode, then either execute
-  // directly or drop into the per-file prompt for whatever's left.
-  const applyMode = useCallback(
-    async (
-      selected: AdoptMode,
-      ctx: PreparedContext,
-      result: WizardResult,
-      plan: AdoptPlan,
-      interactive: boolean,
-    ) => {
-      const enterDiffReview = (
-        queue: AdoptClassification[],
-        resolutions: AdoptResolutions,
-      ) =>
-        setPhase({ kind: 'diff-review', ctx, result, plan, queue, currentIndex: 0, resolutions });
-
-      try {
-        if (selected === 'keep-all-mine' || selected === 'use-all-theirs') {
-          const decision = selected === 'keep-all-mine' ? 'keep_mine' : 'use_shard';
-          await executeAdopt(
-            ctx,
-            result,
-            plan,
-            Object.fromEntries(plan.differs.map((c) => [c.path, decision])),
-          );
-          return;
-        }
-
-        if (selected === 'decide-per-file') {
-          enterDiffReview(plan.differs, {});
-          return;
-        }
-
-        // auto-merge: two-way-union each differs file; non-conflicting files
-        // resolve to their merged bytes, conflicting files queue for a prompt.
-        const resolutions: AdoptResolutions = {};
-        const queue: AdoptClassification[] = [];
-        for (const c of plan.differs) {
-          if (c.kind !== 'differs') continue;
-          const merged = twoWayUnionMerge(c.userContent, c.shardContent, c.isBinary);
-          if (merged.hasConflict) {
-            queue.push(c);
-          } else {
-            resolutions[c.path] = {
-              kind: 'merged',
-              content: merged.content,
-              hash: sha256(merged.content),
-            };
-          }
-        }
-
-        if (queue.length === 0) {
-          await executeAdopt(ctx, result, plan, resolutions);
-          return;
-        }
-
-        if (interactive) {
-          enterDiffReview(queue, resolutions);
-          return;
-        }
-
-        // Non-interactive auto-merge (`--mode=auto-merge` with no prompts):
-        // conflicting files fall back to keep_mine (preserve the user's
-        // bytes). They still surface in the summary's adoptedMine bucket.
-        for (const c of queue) resolutions[c.path] = 'keep_mine';
-        await executeAdopt(ctx, result, plan, resolutions);
-      } catch (err) {
-        finish({ kind: 'error', error: err as Error });
-      }
-    },
-    // `executeAdopt` + `finish` are the only non-stable values applyMode
-    // calls. `setPhase` is a stable useState setter; `twoWayUnionMerge` /
-    // `sha256` are module imports. `ctx`/`result`/`plan` are arguments. The
-    // deps cover the closure; the lint rule can't see callbacks-as-args.
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [executeAdopt, finish],
-  );
+  }, [shardRef, valuesFile, yes, vaultRoot, isRawModeSupported, dryRun, fromVersion]);
 
-  const onWizardComplete = useCallback(
-    (result: WizardResult) => {
-      const current = phaseRef.current;
-      if (current.kind !== 'wizard') return;
-      void runPlanning(current.ctx, result);
-    },
-    [runPlanning],
-  );
+  /**
+   * Settle the question the flow waits on, if it is the one this prompt
+   * answers: a late or doubled handler never answers the next question.
+   */
+  const settle = useCallback((kind: AdoptQuestion['kind'], outcome: { value: unknown } | { error: Error }) => {
+    const pending = pendingRef.current;
+    if (pending?.kind !== kind) return;
+    pendingRef.current = null;
+    if ('error' in outcome) pending.reject(outcome.error);
+    else pending.resolve(outcome.value);
+  }, []);
 
-  const onWizardCancel = useCallback(
-    () => finish({ kind: 'cancelled', reason: 'User cancelled in wizard.' }),
-    [finish],
-  );
-
-  const onWizardError = useCallback(
-    (err: Error) => finish({ kind: 'error', error: err }),
-    [finish],
-  );
-
-  const onModeSelect = useCallback(
-    (selected: AdoptMode) => {
-      const current = phaseRef.current;
-      if (current.kind !== 'mode-select') return;
-      void applyMode(selected, current.ctx, current.result, current.plan, true);
-    },
-    [applyMode],
-  );
-
-  const onDiffChoice = useCallback(
-    (action: AdoptDiffAction) => {
-      const current = phaseRef.current;
-      if (current.kind !== 'diff-review') return;
-      const target = current.queue[current.currentIndex];
-      if (!target) return;
-      const next = { ...current.resolutions, [target.path]: action };
-      const nextIndex = current.currentIndex + 1;
-      if (nextIndex < current.queue.length) {
-        setPhase({ ...current, currentIndex: nextIndex, resolutions: next });
-        return;
-      }
-      void executeAdopt(current.ctx, current.result, current.plan, next);
-    },
-    [executeAdopt],
-  );
+  const onWizardComplete = useCallback((result: ValueAnswers) => settle('values', { value: result }), [settle]);
+  const onWizardCancel = useCallback(() => settle('values', { error: new FlowCancelled('User cancelled in wizard.') }), [settle]);
+  const onWizardError = useCallback((err: Error) => settle('values', { error: err }), [settle]);
+  const onModeSelect = useCallback((selected: AdoptMode) => settle('mode', { value: selected }), [settle]);
+  const onDiffChoice = useCallback((action: AdoptFileChoice) => settle('per-file', { value: action }), [settle]);
 
   return {
     phase,
@@ -688,17 +372,6 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
     onModeSelect,
     onDiffChoice,
   };
-}
-
-async function loadValuesFile(
-  filePath: string,
-  schema: ShardSchema,
-): Promise<Record<string, unknown>> {
-  return loadValuesYaml(filePath, {
-    label: '--values file',
-    schemaFilter: schema,
-    errors: { readFailed: 'VALUES_FILE_READ_FAILED', invalid: 'VALUES_FILE_INVALID' },
-  });
 }
 
 function labelForAction(kind: AdoptApplyKind): string {
