@@ -97,14 +97,14 @@ The `shardmind/runtime` module is used by hook scripts, and hooks are a Claude C
 - 17 fixture-driven merge tests (TDD)
 - npm publish
 
-**Deferred from v0.1, then declined on 2026-10-05** (reasons in [`docs/SHARD-LAYOUT.md` §Out of scope](docs/SHARD-LAYOUT.md#out-of-scope--deferred-to-v02); reopen if one stops holding):
+**Deferred from v0.1, and planned** (Phase 15 in [`ROADMAP.md`](ROADMAP.md); designs in [`docs/SHARD-LAYOUT.md` §Out of scope and planned](docs/SHARD-LAYOUT.md#out-of-scope-and-planned); whether each lands before 1.0 or in 1.x is the maintainer's ruling, item by item):
 
-- Dependency fetching (shard authors vendor deps)
-- Shard composition (one shard per vault)
-- Structural variants (different purposes = different shards)
-- SOUL guided creation (the shard's agent does it)
-- `shardmind init` for shard authors (copy `examples/minimal-shard/`, then `shardmind validate`)
-- `shardmind eject` (delete `.shardmind/` and `shard-values.yaml`)
+- Dependency fetching (until then, shard authors vendor deps)
+- Shard composition (until then, one shard per vault)
+- Structural variants (until then, different purposes are different shards)
+- SOUL guided creation (until then, an empty template with instructions)
+- `shardmind init` for shard authors (until then, copy `examples/minimal-shard/`, then `shardmind validate`)
+- `shardmind eject` (until then, delete `.shardmind/` and `shard-values.yaml`)
 
 ## Technology
 
@@ -117,10 +117,10 @@ The `shardmind/runtime` module is a separately bundled export (~30KB) with zero 
 ## What We Will Not Build (For Now)
 
 - A GUI or web interface for shard management
-- A hosted registry with accounts and publishing workflows (reaffirmed 2026-10-05, #89: the git-based registry index is the discovery path)
+- A hosted registry with accounts and publishing workflows (the git-based registry index is the discovery path; search, indexing and version history over it are planned, #89)
 - First-class support for non-Obsidian markdown tools (Logseq, Notion, etc.)
 - A plugin system within ShardMind itself (shards ARE the extension mechanism)
-- Template inheritance across shards (composition was declined on 2026-10-05, #81; each shard is self-contained)
+- Template inheritance across shards (each shard is self-contained; composition, several shards side by side in one vault, is planned, #81)
 - AI-powered migration that reads note content to classify it (that's `/vault-upgrade` in obsidian-mind, not ShardMind's job — ShardMind is a package manager, not an AI)
 
 This list is a scope guardrail, not permanent.
