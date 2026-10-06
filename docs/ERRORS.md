@@ -253,7 +253,7 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 
 ### `STATE_UNSUPPORTED_VERSION`
 
-**Meaning:** `state.json` uses a schema version this engine doesn't know how to read, and no migration rule handles the jump.
+**Meaning:** `state.json` uses a schema version this engine doesn't know how to read, and no migration rule handles the jump. A version above this engine's means a newer ShardMind wrote it: the message says so with both numbers (#344). update, adopt and install refuse; `shardmind` (status) shows it as a notice and exits 0, and `shardmind --json` answers `ok: false` with `error.details` `{ stateSchemaVersion, supportedSchemaVersion }`, exit 1.
 
 **Typical cause:** A newer version of shardmind wrote the state, then you downgraded.
 

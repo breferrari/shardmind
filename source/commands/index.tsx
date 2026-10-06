@@ -24,13 +24,14 @@
 import { Box, Text } from 'ink';
 import type zod from 'zod';
 
-import { Spinner } from '../components/ui.js';
+import { Spinner, StatusMessage } from '../components/ui.js';
 import StatusView from '../components/StatusView.js';
 import VerboseView from '../components/VerboseView.js';
-import { assertNever } from '../runtime/types.js';
+import { assertNever, ShardMindError } from '../runtime/types.js';
 import ErrorView from '../components/ErrorView.js';
 import { resolveEngineVersion } from './hooks/cli-version.js';
 import { useStatusReport } from './hooks/use-status-report.js';
+import { newerStateOf } from '../core/state.js';
 import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 // Ink-free, so the headless `--json` run parses with the same options (#302).
 import { options } from './options/status.js';
@@ -65,8 +66,12 @@ export default function Index({ options }: Props) {
         );
       case 'not-in-vault':
         return <NotInVault />;
-      case 'error':
+      case 'error': {
+        // A newer ShardMind's vault is not a failure here: say so, and how to
+        // manage it (#344).
+        if (newerStateOf(phase.error)) return <NewerStateNotice error={phase.error} />;
         return <ErrorView error={phase.error} version={resolveEngineVersion()} />;
+      }
       case 'ready':
         return verbose ? (
           <VerboseView report={phase.report} />
@@ -105,6 +110,17 @@ function NotInVault() {
           <Text bold>shardmind install breferrari/obsidian-mind</Text>
         </Text>
       </Box>
+    </Box>
+  );
+}
+
+/** The error's own message and hint, as a notice: not a failure of this command. */
+function NewerStateNotice({ error }: { error: Error }) {
+  const hint = error instanceof ShardMindError ? error.hint : undefined;
+  return (
+    <Box flexDirection="column">
+      <StatusMessage variant="warning">{error.message}</StatusMessage>
+      {hint && <Text>  {hint}</Text>}
     </Box>
   );
 }

@@ -269,6 +269,20 @@ describe('shardmind (status)', () => {
     expect(result.stdout).toMatch(/STATE_CORRUPT/);
   });
 
+  it('a state.json from a newer ShardMind: a notice and exit 0; --json ok false with error.details and exit 1 (#344)', async () => {
+    vault = await createEmptyVault('status-newer-state');
+    await vault.writeFile('.shardmind/state.json', JSON.stringify({ schema_version: 9 }));
+    const human = await spawnCli([], { cwd: vault.root, env: envWithStub() });
+    expect(human.exitCode).toBe(0);
+    expect(human.stdout).toMatch(/written by a newer ShardMind/);
+    const json = await spawnCli(['--json'], { cwd: vault.root, env: envWithStub() });
+    expect(json.exitCode).toBe(1);
+    const doc = JSON.parse(json.stdout) as { ok: boolean; error: { code: string; details: unknown } };
+    expect(doc.ok).toBe(false);
+    expect(doc.error.code).toBe('STATE_UNSUPPORTED_VERSION');
+    expect(doc.error.details).toEqual({ stateSchemaVersion: 9, supportedSchemaVersion: 2 });
+  });
+
   describe('--json (#139, ARCHITECTURE §10.3a)', () => {
     type StatusDoc = {
       schemaVersion: number;

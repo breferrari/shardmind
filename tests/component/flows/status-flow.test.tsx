@@ -147,4 +147,56 @@ describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)'
       if (vault) await vault.cleanup();
     }
   }, 60_000);
+
+  // ───── #344: a state.json from a newer ShardMind ─────
+
+  async function newerStateVault(prefix: string): Promise<Vault> {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix });
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as Record<string, unknown>;
+    await vault.writeFile('.shardmind/state.json', JSON.stringify({ ...state, schema_version: 9, shape: 'from the future' }));
+    return vault;
+  }
+
+  it('a state.json from a newer ShardMind: a notice with both schema numbers and the upgrade, not an error (#344)', async () => {
+    let vault: Vault | null = null;
+    try {
+      vault = await newerStateVault('s344-newer-human');
+      const r = mountStatus({ vaultRoot: vault.root });
+      // The notice wraps at the terminal's width: compare with whitespace folded.
+      const frame = (await waitFor(r.lastFrame, (f) => f.includes('newer ShardMind'), 30_000)).replace(/\s+/g, ' ');
+      expect(frame).toContain('state schema 9; this ShardMind reads up to 2');
+      expect(frame).toContain('npm install -g shardmind@latest');
+      expect(frame).not.toContain('STATE_UNSUPPORTED_VERSION');
+    } finally {
+      if (vault) await vault.cleanup();
+    }
+  }, 60_000);
+
+  it('`shardmind --json` on a newer state.json: ok false, the code, error.details with both numbers, exit 1 (#344)', async () => {
+    let vault: Vault | null = null;
+    const written: string[] = [];
+    const cwd = process.cwd();
+    try {
+      vault = await newerStateVault('s344-newer-json');
+      process.chdir(vault.root);
+      const code = await runStatusJson(['--json'], undefined, (chunk) => void written.push(chunk));
+      expect(code).toBe(1);
+      const doc = JSON.parse(written[0]!) as {
+        ok: boolean;
+        result?: unknown;
+        error: { code: string; message: string; hint: string; details?: { stateSchemaVersion: number; supportedSchemaVersion: number } };
+      };
+      expect(doc.ok).toBe(false);
+      expect(doc.result).toBeUndefined();
+      expect(doc.error.code).toBe('STATE_UNSUPPORTED_VERSION');
+      expect(doc.error.details).toEqual({ stateSchemaVersion: 9, supportedSchemaVersion: 2 });
+      expect(doc.error.hint).toContain('npm install -g shardmind@latest');
+    } finally {
+      process.chdir(cwd);
+      if (vault) await vault.cleanup();
+    }
+  }, 60_000);
 });

@@ -9,7 +9,9 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-import { readState, writeState } from '../../source/core/state.js';
+import { newerStateOf, readState, writeState } from '../../source/core/state.js';
+import { jsonFailure } from '../../source/core/json-output.js';
+import { ShardMindError } from '../../source/runtime/types.js';
 import { loadState } from '../../source/runtime/state.js';
 import { makeShardState } from '../helpers/index.js';
 
@@ -112,6 +114,29 @@ describe('readState validates state.json (#343)', () => {
   it('a newer schema_version is STATE_UNSUPPORTED_VERSION, whatever else it holds', async () => {
     await writeRaw({ schema_version: 99, shape: 'unknown' });
     await expect(readState(vault)).rejects.toMatchObject({ code: 'STATE_UNSUPPORTED_VERSION' });
+  });
+
+  it('a newer schema_version says a newer ShardMind wrote it, and carries both numbers (#344)', async () => {
+    await writeRaw({ schema_version: 99 });
+    const err = await readState(vault).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ShardMindError);
+    expect((err as Error).message).toContain('newer ShardMind (state schema 99; this ShardMind reads up to 2)');
+    expect(newerStateOf(err)).toEqual({ stateSchemaVersion: 99, supportedSchemaVersion: 2 });
+    expect(jsonFailure('status', err).error!.details).toEqual({ stateSchemaVersion: 99, supportedSchemaVersion: 2 });
+  });
+
+  it('an older schema_version with no migration keeps the unsupported wording, without the numbers (#344)', async () => {
+    await writeRaw({ ...valid(), schema_version: 0 });
+    const err = await readState(vault).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'STATE_UNSUPPORTED_VERSION', message: expect.stringContaining('Unsupported state schema_version: 0') });
+    expect(newerStateOf(err)).toBeNull();
+  });
+
+  it('newerStateOf is null for any other error, and the JSON error has no details then', () => {
+    const other = new ShardMindError('x', 'STATE_UNSUPPORTED_VERSION', 'y');
+    expect(newerStateOf(other)).toBeNull();
+    expect(newerStateOf(new Error('x'))).toBeNull();
+    expect(jsonFailure('status', other).error).not.toHaveProperty('details');
   });
 
   it('an unknown field, top level or in a file, is kept through a read and a write', async () => {
