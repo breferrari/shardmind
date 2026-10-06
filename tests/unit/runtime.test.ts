@@ -24,6 +24,7 @@ async function createMockVault(): Promise<string> {
     shard: 'shardmind/minimal',
     source: 'github:shardmind/minimal',
     version: '0.1.0',
+    tarball_sha256: 'f'.repeat(64),
     installed_at: '2026-04-01T00:00:00Z',
     updated_at: '2026-04-01T00:00:00Z',
     values_hash: 'abc123',

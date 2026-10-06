@@ -26,6 +26,7 @@ import {
 } from '../runtime/vault-paths.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { migrateState } from './state-migrator.js';
+import { parseShardState } from '../runtime/state-schema.js';
 import { walkShardSource } from './modules.js';
 import { loadShardmindignore } from './shardmindignore.js';
 import { mapConcurrent, removePath, sha256 } from './fs-utils.js';
@@ -83,22 +84,22 @@ export async function readState(vaultRoot: string): Promise<ShardState | null> {
   if (
     !parsed ||
     typeof parsed !== 'object' ||
-    typeof (parsed as { schema_version?: unknown }).schema_version !== 'number'
+    !Number.isInteger((parsed as { schema_version?: unknown }).schema_version)
   ) {
     throw new ShardMindError(
-      `Corrupt state.json: ${filePath}`,
+      `Corrupt state.json: ${filePath}: schema_version: missing, or not an integer`,
       'STATE_CORRUPT',
-      'Missing or invalid schema_version field.',
+      'Restore .shardmind/state.json from version control, or delete .shardmind/ and reinstall (shard-values.yaml is kept).',
     );
   }
 
+  // The version first: a newer state is refused before its shape is judged.
+  // Then the contract, on the migrated object (#343).
   const version = (parsed as { schema_version: number }).schema_version;
-  if (version === STATE_SCHEMA_VERSION) {
-    return parsed as ShardState;
-  }
+  if (version === STATE_SCHEMA_VERSION) return parseShardState(parsed, filePath);
 
   const migrated = migrateState(parsed, version, STATE_SCHEMA_VERSION);
-  if (migrated) return migrated;
+  if (migrated) return parseShardState(migrated, filePath);
 
   throw new ShardMindError(
     `Unsupported state schema_version: ${version}`,
