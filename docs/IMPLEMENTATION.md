@@ -501,6 +501,7 @@ resolveModules(
 walkShardSource(                             // shared with state.ts:cacheTemplates
   rootDir: string,
   ignoreFilter: IgnoreFilter,
+  tracked?: ReadonlySet<string>,             // validate in a git work tree (#320): only these files
 ): Promise<WalkedFile[]>
 ```
 
@@ -1673,17 +1674,20 @@ Check a shard directory the way install would, collecting every finding (#34). I
 
 ```typescript
 interface LintFinding { severity: 'error' | 'warning'; code: string; message: string; hint?: string; path?: string }
-lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: string }): Promise<{ findings: LintFinding[] }>
+lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: string; tracked?: ReadonlySet<string> }): Promise<{ findings: LintFinding[] }>
+// core/git-tracked.ts
+gitFiles(dir: string): Promise<{ tracked: Set<string>; untracked: string[] } | null>
 ```
 
 1. `parseManifest`; on a `ShardMindError`, record it and stop (nothing after can run). Steps 3 and 4 stop the same way after a failed computed default or invalid values, so one root cause is not echoed as an error per template. With `engineVersion`, `assertEngineCompatible`, recorded.
 2. `parseSchema`; on error, record and stop.
 3. Values: `opts.values` over each value's default, then `resolveComputedDefaults`. Every value declares a default (`parseSchema` refuses one that does not), so no value is made up. `buildValuesValidator(schema)` on the result; failures recorded.
-4. `resolveModules(schema, every module included, shardDir)`; on error, record and stop.
+4. `resolveModules(schema, every module included, shardDir, { tracked })`; on error, record and stop. With `tracked`, the walk sees only those files (§4.5).
 5. `renderFile` for every render entry with `buildRenderContext(manifest, values, selections)`; each failure is recorded with the entry's output path.
 6. `findOutputClashes` over `plannedOutputRefs` (`output-clash.ts`), with `_each` lists expanded with these values (#240). Every clash is reported: across two different modules as the warning `LINT_OUTPUT_CLASH_ACROSS_MODULES` (they may be alternatives a user picks between), otherwise as an `OUTPUT_PATH_CLASH` error. #35's install check counts a clash, like an invalid value, as the prefill's when it disappears with the defaults alone.
 7. Warnings: a module whose paths match no file in the walk; a group no value belongs to.
 8. `external_tools`: a `when` that names no `boolean` value in the schema is an `EXTERNAL_TOOL_WHEN_INVALID` error. Checked right after step 2, so a step that stops later cannot hide it. No tool is ever run (#138).
+9. **A shard directory inside a git work tree** (#320): `validate` checks what the release tarball would hold, the tracked files, not the working tree. `gitFiles(dir)` runs `git rev-parse --is-inside-work-tree`, then `git ls-files -z` (tracked) and `git ls-files -z --others --exclude-standard` (untracked, not ignored), with `cwd: dir`, so paths are relative to the shard root even in a subfolder of a repository, and with no shell. It is `null` outside a work tree or without `git` on PATH, and the walk is then the working tree's, as before. With a set, `lintShard` passes `tracked`, so an ignored `node_modules/.bin/` symlink is never seen, while a tracked symlink still fails `WALK_SYMLINK_REJECTED`. Each untracked file that would be shard content (not Tier 1, not `.shardmindignore`d) is a `LINT_UNTRACKED_FILE` warning naming it: it ships only once committed, so it is not validated. A downloaded shard (a ref target), install, update and adopt walk as before: a tarball holds only what was tracked.
 
 
 ### 4.23 `json-run.ts`

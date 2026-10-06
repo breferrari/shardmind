@@ -518,7 +518,7 @@ On Windows, `SIGTERM` is emulated as `TerminateProcess`, which skips the hook's 
 
 ### Validate before you push
 
-`shardmind validate` (in the shard's directory, or `shardmind validate <path>`) runs the checks an install would: it parses `shard.yaml` and `shard-schema.yaml`, checks the engine-version requirement and the values, resolves every module, and renders every template, then lists every problem it found with its error code, not just the first. It exits 1 when there is an error, so it fits a pre-push hook or CI. It never runs your hooks.
+`shardmind validate` (in the shard's directory, or `shardmind validate <path>`) runs the checks an install would: it parses `shard.yaml` and `shard-schema.yaml`, checks the engine-version requirement and the values, resolves every module, and renders every template, then lists every problem it found with its error code, not just the first. It exits 1 when there is an error, so it fits a pre-push hook or CI. It never runs your hooks. In a git repository it checks the files git tracks, as your release tarball ships them: ignored folders such as `node_modules/` never fail it, and a file you have not committed yet is a warning (`LINT_UNTRACKED_FILE`), not checked until you commit it.
 
 It renders with your schema's defaults; pass `--values <file>` to check the templates against other values, such as the ones a user would type. `shardmind validate github:<user>/<shard>#<branch>` checks what a user would download. `--json` gives the findings as one document.
 
