@@ -400,7 +400,7 @@ Thrown during install's pre-flight, before any network call: by the install flow
 
 ### `INSTALL_FLAG_CONFLICT`
 
-**Meaning:** Two install flags would resolve through different policies and the engine refuses to silently pick one. Currently rejected: `--defaults` + `--values <file>` — `--defaults` uses schema defaults for every value; `--values` would override them.
+**Meaning:** Two install flags would resolve through different policies and the engine refuses to silently pick one. The pair refused: `--defaults` with `--values <file>`. `--defaults` uses schema defaults for every value, and `--values` would override them.
 
 **Remedy:** Drop one of the two flags. Use `--values` for non-default scripted installs; use `--defaults` for the deterministic Invariant 1 mode.
 

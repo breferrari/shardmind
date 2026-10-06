@@ -103,7 +103,7 @@ hooks:
 | `persona` | no | Shown in the header as "for <persona>". |
 | `license` | no | SPDX identifier. |
 | `homepage` | no | URL. |
-| `requires.obsidian` | no | Semver range. Advisory only in v0.1. |
+| `requires.obsidian` | no | Semver range. Advisory: it tells readers which Obsidian the shard is built for. The engine checks that it is a string and never enforces it: it cannot see which Obsidian opens the vault. |
 | `requires.node` | no | Semver range. Applied when hooks run. |
 | `requires.shardmind` | no | Semver range the running engine must satisfy. **Enforced** — install/update/adopt refuse with `SHARDMIND_VERSION_MISMATCH` before any vault write when the engine is older. Absent → no check. Declare it once your shard depends on an engine feature (e.g. the post-#102 hook lifecycle). See §6. |
 | `external_tools` | no | Command-line tools the shard needs, each with a version range. Checked before install, adopt and update write anything; a required one that is unmet refuses with `EXTERNAL_TOOL_UNMET`. See [Declaring the command-line tools your shard needs](#declaring-the-command-line-tools-your-shard-needs). |
