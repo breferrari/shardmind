@@ -43,6 +43,12 @@ export function holdWrite(opts: HoldWriteOptions): void {
       under: process.cwd(),
       hook: () => {
         fs.writeFileSync(opts.marker, '');
+        // A real write holds an I/O handle while it runs; the held promise
+        // holds none. Without one, a run with no other handle (a headless
+        // --json run: no Ink, stdin unref'd) would exit before the Ctrl+C
+        // arrives (#348).
+        const keepAlive = setInterval(() => {}, 1000);
+        void released.finally(() => clearInterval(keepAlive));
         return released;
       },
     },
