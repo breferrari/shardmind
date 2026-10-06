@@ -216,7 +216,7 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
   }
 
   // Last, so nothing in begin can fail after the vault folder and its lock
-  // exist with no rollback to remove them (§4.28 step 0). The steps above
+  // exist with no rollback to remove them (§4.28 step 1a). The steps above
   // read a folder that does not exist yet, or keep their record in memory.
   const createdRoot = opts.createRoot ? await createVaultRoot(vaultRoot, opts.createRoot) : null;
 
@@ -365,7 +365,8 @@ async function createVaultRoot(vaultRoot: string, root: CreateRoot): Promise<Cre
         },
       );
       if (created) made.push(folder);
-      else if (folder === vaultRoot || !(await isFolder(folder))) {
+      // As the destination walk sees a level: a link to a folder is one.
+      else if (folder === vaultRoot || !(await fsp.stat(folder).then((st) => st.isDirectory(), () => false))) {
         throw destinationTaken(vaultRoot, folder, 'appeared after this install planned');
       }
     }

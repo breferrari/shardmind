@@ -112,12 +112,30 @@ describe('resolveInstallDestination (#333)', () => {
     expect(dest.create).toEqual([path.join(cwd, 'linked', 'vault')]);
   });
 
+  it.runIf(canSymlink)('a link to nothing at the path is refused when planning, not taken for a folder to make', async () => {
+    await fsp.symlink(path.join(cwd, 'gone'), path.join(cwd, 'wiki-mind'), 'junction');
+    const err = await refusal(resolveInstallDestination(cwd, 'acme/wiki-mind'));
+    expect(err.code).toBe('INSTALL_DESTINATION_NOT_EMPTY');
+    expect(err.message).toContain('is a link to nothing');
+    expect(err.hint).toMatch(/Check the path/);
+  });
+
+  it('a level it cannot read (a link loop, no permission, an unreachable share) is refused, naming the error', async () => {
+    vi.spyOn(fsp, 'stat').mockRejectedValue(Object.assign(new Error('ELOOP'), { code: 'ELOOP' }));
+    const err = await refusal(resolveInstallDestination(cwd, 'acme/wiki-mind', 'loop/vault'));
+    expect(err.code).toBe('INSTALL_DESTINATION_NOT_EMPTY');
+    expect(err.message).toContain('cannot be reached (ELOOP)');
+  });
+
   it('a path whose drive or share does not exist is refused, not walked forever', async () => {
     // Every level is missing, the top included: an unmapped drive (`Q:\\vault`).
-    vi.spyOn(fsp, 'stat').mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    vi.spyOn(fsp, 'stat').mockRejectedValue(enoent);
+    vi.spyOn(fsp, 'lstat').mockRejectedValue(enoent);
     const err = await refusal(resolveInstallDestination(cwd, 'acme/wiki-mind', 'vault'));
     expect(err.code).toBe('INSTALL_DESTINATION_NOT_EMPTY');
     expect(err.message).toContain('does not exist');
+    expect(err.hint).toMatch(/Check the path/);
   });
 
   it('the refusal points at `cd` before `.`, and at update for a vault', async () => {

@@ -157,7 +157,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
   const { shardRef, valuesFile, yes, defaults, force, verbose, dryRun, destination } = input;
   const vaultRoot = destination.root;
   // A folder this run makes is locked by its transaction, from the moment it
-  // exists (§4.28 step 0); there is none to lock while the run plans.
+  // exists (§4.28 step 1a); there is none to lock while the run plans.
   const creating = destination.create.length > 0;
   const { exit } = useApp();
 
