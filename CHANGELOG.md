@@ -8,12 +8,12 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
-### Changed (status and adopt --json run without the terminal UI — #302)
+### Changed (status, adopt and update --json run without the terminal UI — #302)
 
 - **`shardmind --json` with a flag it does not take now answers with a document.** It used to print the error on stderr and write nothing to stdout. It now writes a failure document with the code `ARGS_INVALID` and the same message, and exits 1, so a `--json` caller always gets a document.
-- **`shardmind adopt --dry-run --json` with a flag it does not take answers with a document too**, `ARGS_INVALID`, where it printed the error and wrote nothing.
-- **A Ctrl+C while `adopt --json` or `validate --json` downloads the shard writes no document.** It exits 130 with nothing on stdout, where a failure document could slip out before the exit.
-- Internal: `shardmind --json` and `shardmind adopt --dry-run --json` are answered before the terminal UI loads, as `validate --json` is: they parse their flags with the same rules as the interactive run (`cli-kit/parse.ts`). Adopt runs as a UI-free flow (`core/flows/adopt.ts`) that the terminal UI adapts. Update and install follow.
+- **`shardmind adopt --dry-run --json` and `shardmind update --dry-run --json` with a flag they do not take answer with a document too**, `ARGS_INVALID`, where they printed the error and wrote nothing.
+- **A Ctrl+C while `adopt --json`, `update --json` or `validate --json` downloads the shard writes no document.** It exits 130 with nothing on stdout, where a failure document could slip out before the exit.
+- Internal: `shardmind --json`, `shardmind adopt --dry-run --json` and `shardmind update --dry-run --json` are answered before the terminal UI loads, as `validate --json` is: they parse their flags with the same rules as the interactive run (`cli-kit/parse.ts`). Adopt and update run as UI-free flows (`core/flows/`) that the terminal UI adapts. With no `--json` run left in the terminal UI, the two workarounds that made one behave as piped (stdout marked non-interactive, Ink's trailing blank line dropped) are gone. Install follows.
 
 ### Changed (install owns its rollback, as update and adopt do — #300)
 
