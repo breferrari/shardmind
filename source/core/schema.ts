@@ -16,6 +16,10 @@ import { z } from 'zod';
 import type { ShardSchema, FrontmatterRule } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
+import { buildValuesValidator, isComputedDefault } from '../runtime/values-validator.js';
+
+// One values validator, shared with `shardmind/runtime` so the two cannot drift (#358).
+export { buildValuesValidator, isComputedDefault };
 
 const OptionSchema = z.object({
   value: z.string(),
@@ -176,9 +180,6 @@ const ShardSchemaFileSchema = z.object({
   migrations: z.array(MigrationSchema).default([]),
 });
 
-export function isComputedDefault(value: unknown): boolean {
-  return typeof value === 'string' && value.trimStart().startsWith('{{');
-}
 
 /**
  * Keys provided by the render context. Shard authors cannot declare
@@ -416,59 +417,3 @@ export async function parseSchema(filePath: string): Promise<ShardSchema> {
   } as ShardSchema;
 }
 
-// Note: `any` is used here per spec — zod dynamic generation requires it
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function buildValuesValidator(schema: ShardSchema): z.ZodObject<any> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const shape: Record<string, z.ZodTypeAny> = {};
-
-  for (const [key, val] of Object.entries(schema.values)) {
-    let field: z.ZodTypeAny;
-
-    switch (val.type) {
-      case 'string':
-        field = z.string();
-        break;
-      case 'boolean':
-        field = z.boolean();
-        break;
-      case 'number': {
-        let num = z.number();
-        if (val.min !== undefined) num = num.min(val.min);
-        if (val.max !== undefined) num = num.max(val.max);
-        field = num;
-        break;
-      }
-      case 'select': {
-        const values = val.options!.map(o => o.value) as [string, ...string[]];
-        field = z.enum(values);
-        break;
-      }
-      case 'multiselect': {
-        const values = val.options!.map(o => o.value) as [string, ...string[]];
-        let arr = z.array(z.enum(values));
-        if (val.min !== undefined) arr = arr.min(val.min);
-        if (val.max !== undefined) arr = arr.max(val.max);
-        field = arr;
-        break;
-      }
-      case 'list':
-        field = z.array(z.any());
-        break;
-    }
-
-    // Apply .optional() if not required
-    if (!val.required) {
-      field = field.optional();
-    }
-
-    // Apply .default() if default is set and not computed
-    if (val.default !== undefined && !isComputedDefault(val.default)) {
-      field = field.default(val.default);
-    }
-
-    shape[key] = field;
-  }
-
-  return z.object(shape);
-}

@@ -1,12 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { z } from 'zod';
 import type { ShardSchema, ValidationResult } from './types.js';
 import { ShardMindError } from './types.js';
 import { resolveVaultRoot } from './state.js';
 import { VALUES_FILE } from './vault-paths.js';
 import { errnoCode } from './errno.js';
+import { buildValuesValidator } from './values-validator.js';
 
 /**
  * Load `shard-values.yaml` from the current vault.
@@ -62,64 +62,6 @@ export async function loadValues(): Promise<Record<string, unknown>> {
   }
 
   return parsed as Record<string, unknown>;
-}
-
-function isComputedDefault(value: unknown): boolean {
-  return typeof value === 'string' && value.trimStart().startsWith('{{');
-}
-
-// Duplicated from core/schema.ts — runtime can't import from core
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildValuesValidator(schema: ShardSchema): z.ZodObject<any> {
-  const shape: Record<string, z.ZodTypeAny> = {};
-
-  for (const [key, val] of Object.entries(schema.values)) {
-    let field: z.ZodTypeAny;
-
-    switch (val.type) {
-      case 'string':
-        field = z.string();
-        break;
-      case 'boolean':
-        field = z.boolean();
-        break;
-      case 'number': {
-        let num = z.number();
-        if (val.min !== undefined) num = num.min(val.min);
-        if (val.max !== undefined) num = num.max(val.max);
-        field = num;
-        break;
-      }
-      case 'select': {
-        const values = val.options!.map(o => o.value) as [string, ...string[]];
-        field = z.enum(values);
-        break;
-      }
-      case 'multiselect': {
-        const values = val.options!.map(o => o.value) as [string, ...string[]];
-        let arr = z.array(z.enum(values));
-        if (val.min !== undefined) arr = arr.min(val.min);
-        if (val.max !== undefined) arr = arr.max(val.max);
-        field = arr;
-        break;
-      }
-      case 'list':
-        field = z.array(z.any());
-        break;
-    }
-
-    if (!val.required) {
-      field = field.optional();
-    }
-
-    if (val.default !== undefined && !isComputedDefault(val.default)) {
-      field = field.default(val.default);
-    }
-
-    shape[key] = field;
-  }
-
-  return z.object(shape);
 }
 
 /**
