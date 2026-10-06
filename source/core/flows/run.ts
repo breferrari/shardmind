@@ -30,8 +30,9 @@ export interface FlowRunIO {
 }
 
 /**
- * Run the executor, then the hooks. A failed executor has rolled the vault
- * back and marked its error (`rolledBackError`) before it throws.
+ * Run the executor, then the hooks. A failure is rethrown as the executor
+ * threw it: marked (`rolledBackError`) only when it rolled a transaction
+ * back, not when it failed before one existed or in a dry run.
  */
 export async function runAndHooks<T extends { state: HookRunPlan['state'] }>(
   io: FlowRunIO,

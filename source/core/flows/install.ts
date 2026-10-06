@@ -66,7 +66,7 @@ export interface InstallShard extends PreparedShard {
 export type InstallQuestion =
   | { kind: 'gate'; state: ShardState; shard: InstallShard }
   | { kind: 'values'; shard: InstallShard }
-  | { kind: 'collision'; collisions: Collision[]; shard: InstallShard; answers: ValueAnswers };
+  | { kind: 'collision'; collisions: Collision[]; shard: InstallShard };
 
 export type InstallAnswer<Q extends InstallQuestion> = Q extends { kind: 'gate' }
   ? 'reinstall' | 'update' | 'cancel'
@@ -74,7 +74,7 @@ export type InstallAnswer<Q extends InstallQuestion> = Q extends { kind: 'gate' 
     ? ValueAnswers
     : 'backup' | 'overwrite' | 'cancel';
 
-export type InstallFlowPhase = { kind: 'loading'; message: string } | { kind: 'installing'; shard: InstallShard; answers: ValueAnswers };
+export type InstallFlowPhase = { kind: 'loading'; message: string } | { kind: 'installing' };
 
 export interface InstallFlowIO extends FlowRunIO {
   ask<Q extends InstallQuestion>(question: Q): Promise<InstallAnswer<Q>>;
@@ -238,7 +238,7 @@ async function planAndInstall(input: InstallFlowInput, io: InstallFlowIO, shard:
   const plan: InstallPlan = { own, untouched, policy: 'backup', stale, prompted: false, externalTools };
   if (own.length > 0 && input.force) plan.policy = 'overwrite';
   else if (own.length > 0 && input.interactive && !input.yes && !input.defaults) {
-    const action = await io.ask({ kind: 'collision', collisions: own, shard, answers });
+    const action = await io.ask({ kind: 'collision', collisions: own, shard });
     if (action === 'cancel') throw new FlowCancelled('User cancelled at collision review.');
     plan.policy = action;
     plan.prompted = true;
@@ -269,11 +269,15 @@ async function execute(
   // Classified before a prompt that may have stayed open: a file edited
   // since is the user's now, so check the untouched ones again. With no
   // prompt, nothing changed since.
-  const recheck = plan.prompted ? await splitByOwnContent(plan.untouched, previous) : { own: [], untouched: plan.untouched };
+  // A stale file edited during the review is the user's now: kept (#228).
+  const [recheck, staleNow] = plan.prompted
+    ? await Promise.all([splitByOwnContent(plan.untouched, previous), splitByOwnContent(stale.untouched, previous)])
+    : [
+        { own: [], untouched: plan.untouched },
+        { own: [], untouched: stale.untouched },
+      ];
   const ownNow = [...own, ...recheck.own];
   const replaced = policy === 'overwrite' ? ownNow.map((c) => c.outputPath) : [];
-  // A stale file edited during the prompts is the user's now: kept (#228).
-  const staleNow = plan.prompted ? await splitByOwnContent(stale.untouched, previous) : { own: [], untouched: stale.untouched };
   const removed = staleNow.untouched.map((c) => c.outputPath);
   // Only files still there are reported as kept: a folder at the path, or a
   // file deleted meanwhile, is not one the user edited.
@@ -283,14 +287,17 @@ async function execute(
   ]);
   const oldStatePath = oldInstall.find((c) => c.outputPath === SHARDMIND_DIR)?.absolutePath;
   // A stale file whose set-aside copy could not be deleted is still in the
-  // vault under its backup name: listed as such, never as removed.
-  const removedNow = (left: BackupRecord[]): string[] => {
+  // vault under its backup name: listed as such, never as removed. Known
+  // once the transaction returns, before the hooks run.
+  let removedNow = removed;
+  const removedAfter = (left: BackupRecord[]): string[] => {
     const leftPaths = new Set(left.map((r) => toPosix(vaultRoot, r.originalPath)));
-    return removed.filter((rel) => !leftPaths.has(rel));
+    removedNow = removed.filter((rel) => !leftPaths.has(rel));
+    return removedNow;
   };
 
   const start = Date.now();
-  io.phase({ kind: 'installing', shard, answers });
+  io.phase({ kind: 'installing' });
   const { result, hooks } = await runAndHooks(
     io,
     (signal) =>
@@ -322,7 +329,7 @@ async function execute(
       modules: answers.selections,
       newFiles: [],
       // A reinstall removes the files the shard no longer has (#228).
-      removedFiles: dryRun ? [] : removedNow(done.left),
+      removedFiles: dryRun ? [] : removedAfter(done.left),
       dryRun,
     }),
   );
@@ -337,7 +344,7 @@ async function execute(
     durationMs: Date.now() - start,
     backups: [...result.backups, ...leftBackups],
     replaced,
-    removed: dryRun ? removed : removedNow(result.left),
+    removed: removedNow,
     keptStale,
     hooks,
     dryRun,
