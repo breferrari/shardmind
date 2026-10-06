@@ -1,6 +1,6 @@
 # Shard Layout (v6 contract)
 
-> **Status**: Design resolved for v0.1. All rules binding. Folds into [`ARCHITECTURE.md §3`](ARCHITECTURE.md) + [`AUTHORING.md §2`](AUTHORING.md) once implementation lands; until then this is the source of truth.
+> **Status**: The shard-layout contract. All rules binding, and authoritative over [`ARCHITECTURE.md §3`](ARCHITECTURE.md) and [`AUTHORING.md §2`](AUTHORING.md) where they differ. Designed for v0.1 and implemented; changes since are dated in place.
 > Discussion thread: [#70](https://github.com/breferrari/shardmind/issues/70).
 
 ## Guiding principle

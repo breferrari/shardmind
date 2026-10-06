@@ -14,12 +14,20 @@ See also:
 
 | Code | When |
 |------|------|
-| `0` | Success, user cancellation, already-up-to-date, or `shardmind` status (any phase). |
-| `1` | `install` or `update` failed — the CLI renders the error message, code, and hint on stdout, then exits non-zero so CI / scripts can branch on it. |
+| `0` | Success, user cancellation, already-up-to-date, or `shardmind` status in the terminal (any phase). |
+| `1` | `install`, `update` or `adopt` failed. The CLI renders the error message, code and hint on stdout, then exits non-zero so CI and scripts can branch on it. |
 | `1` (validate) | `shardmind validate` found at least one error, or could not read or fetch its target. Warnings alone exit `0`. |
+| `1` (`--json`) | Any `--json` document with `ok: false`, status included: the body and `$?` agree. |
+| `1` (arguments) | An unknown option or an invalid argument: the message is printed (a `--json` run answers an `ARGS_INVALID` document), and nothing runs. |
+| `1` (crash) | An unexpected error no view caught: the plain-text report goes to stderr (and, under `--json`, a failure document with its `stack` to stdout). |
 | `130` | Interrupted by SIGINT (Ctrl+C in a terminal, or the ETX byte `0x03` on stdin when invoked non-interactively). Any in-flight writes are rolled back and temp files cleaned up before exit. |
+| `141` | A reader closed stdout early (`shardmind --json \| head`). Later writes are dropped, the run finishes or rolls back as it would have, then exits `141` without a stack trace, as `SIGPIPE` exits do. |
 
-Status (`shardmind` / `shardmind --verbose`) deliberately stays at `0` on every phase — including when it surfaces a corrupt `state.json`. It's an ambient read-only report, never a gate. The typed error code still appears in stdout, so a script that wants to assert "status ran clean" can grep for the absence of `code: ` lines rather than reading the exit code.
+Status in the terminal (`shardmind` / `shardmind --verbose`) deliberately stays at `0` on every phase, including when it surfaces a corrupt `state.json` or one from a newer ShardMind. It's an ambient read-only report, never a gate. The typed error code still appears in stdout, so a script that wants to assert "status ran clean" can grep for the absence of `code: ` lines. `shardmind --json` is the exception, by design (ARCHITECTURE §10.3a): a document that says `ok: false` exits `1`, so a script reading the document and one reading `$?` agree.
+
+## JSON documents and semver
+
+Every `--json` document carries `schemaVersion` (`1` today). A consumer refuses a `schemaVersion` it does not know rather than guess. Within a `schemaVersion`, fields are only added: a field, a `classification` or `action` value, or an `error.details` shape may appear in a minor release, so a consumer ignores what it does not know and checks the values it branches on. A field is never removed, renamed or retyped within a `schemaVersion`; a change that would break a consumer bumps it. Error `code`s come from the registry in [`ERRORS.md`](ERRORS.md) and are stable: a code is never reused for another meaning. `adopt --mode auto-merge` is experimental and outside this promise: its merge results may change in a minor release (the document's shape does not).
 
 ### Scripting idioms
 

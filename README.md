@@ -108,7 +108,7 @@ Classification signals define how the vault routes content. Core signals (DECISI
 
 ## Commands
 
-Four commands. Three that write, one that reads. Status-first — `shardmind` with no args is the diagnostic, not a menu.
+Five commands. Three that write (`install`, `update`, `adopt`), two that read (status, `validate`). Status-first: `shardmind` with no args is the diagnostic, not a menu.
 
 ```bash
 # Status (read-only, default)
@@ -121,7 +121,7 @@ shardmind --version                      # Print package version
 shardmind install <shard> [folder]
   --values <file>                          # Prefill answers from YAML
   --defaults                               # Use schema defaults; skip wizard (Invariant 1 mode)
-  --yes                                    # Accept defaults for every prompt
+  --yes                                    # Skip every prompt and accept its default
   --dry-run                                # Show plan, write nothing
   --verbose                                # Per-file rendering progress
   --force                                  # Reinstall over an existing install; overwrite colliding files, no backup
@@ -130,7 +130,8 @@ shardmind install <shard> [folder]
 shardmind update
   --release <tag>                          # Pin to a specific release tag (stable or prerelease)
   --include-prerelease                     # Widen latest-release resolution to prereleases
-  --yes                                    # Auto-keep on every conflict
+  --yes                                    # Skip every prompt; keep your version on every conflict
+  --adopt-preexisting                      # Track a file you keep at a path the new version adds, as your modified copy
   --dry-run                                # Plan without writing
   --verbose                                # Per-file action history
   --json                                   # Machine-readable output; with --dry-run, the per-file plan
@@ -138,17 +139,31 @@ shardmind update
 # Retrofit shardmind into an existing shard clone (pre-shardmind era)
 shardmind adopt <shard>
   --values <file>                          # Prefill answers from YAML
-  --yes                                    # Auto-keep your version on every differs decision
+  --yes                                    # Skip every prompt; keep your version of every differing file
+  --mode <mode>                            # Settle differing files in bulk: keep-all-mine, use-all-theirs,
+                                           #   auto-merge (experimental), decide-per-file
+  --from-version <v>                       # The release you cloned: follow its renames, and update files you never changed
   --dry-run                                # Preview classification + plan
   --verbose                                # Per-file action history
   --json                                   # Machine-readable output; with --dry-run, the per-file plan
+
+# Check a shard before you publish it (author-facing, read-only)
+shardmind validate [dir|shard]
+  --values <file>                          # Render the templates with these values
+  --json                                   # The findings as one JSON document
+  --verbose                                # Each finding's hint
+
+# On every command
+  --no-update-check                        # Skip the once-a-day check for a newer shardmind on npm
 ```
+
+`--yes` skips every prompt, and each command answers them the way that is safe for it: `install` takes each value's default, `update` keeps your version wherever your edits conflict with the shard's, and `adopt` keeps your version of every file that differs (`keep-all-mine`, unless `--mode` says otherwise). Files you never changed still take the new release (`adopt --from-version`, `update`).
 
 ### Driving shardmind from a script or agent
 
 `--values <file>` is enough on its own without a terminal: the answers are already on disk, so the wizard is skipped rather than rendered. Without values and without a TTY the command **refuses** (`INSTALL_/ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`) rather than quietly recording schema defaults as though you had chosen them.
 
-`--json` makes `shardmind` (status), `update` and `adopt` emit exactly one JSON document on stdout and nothing else, so `JSON.parse(stdout)` needs no stripping. Every document carries `schemaVersion`, `command`, and `ok`; a failure adds `error` (`code`, `message`, `hint`) and exits non-zero, so `$?` and the body agree.
+`--json` makes `shardmind` (status), `update`, `adopt` and `validate` emit exactly one JSON document on stdout and nothing else, so `JSON.parse(stdout)` needs no stripping. Every document carries `schemaVersion`, `command`, and `ok`; a failure adds `error` (`code`, `message`, `hint`, `stack` for an unexpected bug and otherwise `null`, and `details` where an error carries structured data) and exits non-zero, so `$?` and the body agree. What a document promises across versions is in [`docs/OPERATIONS.md`](docs/OPERATIONS.md#json-documents-and-semver). `install` has no `--json`: run it with `--values` or `--defaults` and read its exit code.
 
 Paired with `--dry-run` you get the **per-file plan** rather than summary counts — path, action or classification, and both hashes where a file diverges — which is what makes choosing a bulk `--mode` safe to automate:
 
@@ -168,7 +183,7 @@ On `update` and `adopt`, `--json` currently requires `--dry-run` and refuses oth
 ### Shard references
 
 ```
-breferrari/obsidian-mind                  # Registry, latest stable      (index not published yet: the error prints the github: command)
+breferrari/obsidian-mind                  # Registry, latest stable
 breferrari/obsidian-mind@6.0.0            # Registry, exact version
 github:breferrari/obsidian-mind           # Direct GitHub, latest stable release
 github:breferrari/obsidian-mind@6.0.0     # Direct GitHub, exact tag
@@ -268,7 +283,7 @@ Shard authors choose which agents to support. A shard can ship `CLAUDE.md` only,
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Exit codes, env vars (`GITHUB_TOKEN`, `SHARDMIND_GITHUB_API_BASE`, `SHARDMIND_REGISTRY_INDEX_URL`), file locations, signal handling. |
 | [`docs/ERRORS.md`](docs/ERRORS.md) | Every `ShardMindError` code: meaning, cause, remedy. |
 | [`VISION.md`](VISION.md) | Origin story, architectural bets, scope guardrails, competitive moat. |
-| [`ROADMAP.md`](ROADMAP.md) | v0.1 milestones (linked to issues), v0.2 deferred, v1.0 ecosystem. |
+| [`ROADMAP.md`](ROADMAP.md) | The build order in phases, each linked to its issues, and the history of what shipped. |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The what and why. 22 sections. Ownership model, values layer, modules, signals. |
 | [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) | The how, exactly. 10 modules with TypeScript signatures, 17 merge fixtures, 6-day build plan. |
 | [`CLAUDE.md`](CLAUDE.md) | Spec-driven development guide for building ShardMind with AI agents. |
@@ -298,7 +313,7 @@ The `shardmind/runtime` module is available to any TypeScript hook script. Claud
 
 ## Status
 
-**v0.1.0 shipped on npm** (April 2026). Install with `npm install -g shardmind`. The engine is complete: install (with `--defaults` byte-equivalence guarantee), update (three-way merge + migrations + `--release` / `--include-prerelease`), adopt, status, and the `shardmind/runtime` module are all covered end-to-end (862 tests). Flagship-shard conversion (obsidian-mind v6) and the shard registry index land in 0.1.x point releases.
+**Published on npm**: `npm install -g shardmind`. The engine installs, updates (three-way merge, migrations, `--release` / `--include-prerelease`), adopts, validates and reports status, and exports `shardmind/runtime` for hook scripts. The shard registry index is published, and lists [obsidian-mind](https://github.com/breferrari/obsidian-mind) and [wiki-mind](https://github.com/breferrari/wiki-mind): two shards of different shapes on the same engine. What is next is in [`ROADMAP.md`](ROADMAP.md).
 
 ---
 
