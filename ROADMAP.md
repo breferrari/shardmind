@@ -187,6 +187,7 @@ The release pipeline, dependencies and test harness are settled: built, or decli
 | ✅ | Vendor Pastel and drop @inkjs/ui from the dependency tree | [#277](https://github.com/breferrari/shardmind/issues/277) |
 | ✅ | Reach the unexercised rollback failure arms | [#292](https://github.com/breferrari/shardmind/issues/292) |
 | ✅ | Make the coverage run report reliably and include subprocess coverage | [#293](https://github.com/breferrari/shardmind/issues/293) |
+| ⬜ | Typecheck the test files in CI | [#352](https://github.com/breferrari/shardmind/issues/352) |
 
 ## Phase 9 — the second shard
 
