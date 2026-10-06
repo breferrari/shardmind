@@ -409,6 +409,8 @@ export default async function (ctx: BootstrapContext): Promise<void> {
   // ctx.modules         — { moduleId: 'included' | 'excluded' }
   // ctx.shard           — { name, version }
   // ctx.previousVersion — set only on an update re-bootstrap
+  // ctx.valuesAreDefaults — the user took every default
+  // ctx.removedFiles     — managed files this run removed (a reinstall's, or the update's)
   await runQmdBootstrap(ctx.vaultRoot);   // touches .qmd/ — unmanaged. Fine.
 }
 ```
@@ -426,7 +428,9 @@ The old single `post-install` hook bundled three jobs with different lifecycles 
 
 ### Per-slot context
 
-- **`BootstrapContext`** → `{ slot: 'bootstrap', vaultRoot, values, modules, shard, previousVersion? }`. No `valuesAreDefaults`, no file lists.
+- **`BootstrapContext`** → `{ slot: 'bootstrap', vaultRoot, values, modules, shard, previousVersion?, valuesAreDefaults, removedFiles }`.
+  - **`valuesAreDefaults: boolean`** — the user's values equal the defaults of the version being installed (on an update re-bootstrap, the new version's: a changed default makes it `false`). Bootstrap always runs, so unmanaged setup can differ on a defaults install. (Managed files are `personalize`'s job, which the engine skips on defaults.)
+  - **`removedFiles: string[]`** — managed paths this run removed. On install, the files a reinstall dropped because your shard no longer has them (empty on a first install); on adopt, empty; on an update re-bootstrap, the update's deletions. Clean up external state that pointed at them. On an update, `post-update` gets the same list, so make the cleanup idempotent (or do it in one slot). The list is this run's only: a re-bootstrap after a failed one doesn't repeat the earlier run's removals.
 - **`PersonalizeContext`** → `{ slot: 'personalize', vaultRoot, values, modules, shard }`. Write only managed files (e.g. `brain/North Star.md`). Runs only with non-default values.
 - **`PostUpdateContext`** → `{ slot: 'post-update', vaultRoot, values, modules, shard, previousVersion, newFiles, removedFiles }`.
   - **`newFiles: string[]`** — managed paths added this update (`UpdateAction.kind === 'add'`; excludes `overwrite`, `auto_merge`, `restore_missing`, conflict resolutions). Restrict writes to these — clobbering an existing managed file risks overwriting the three-way-merge resolution that just ran.
