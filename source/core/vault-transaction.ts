@@ -34,7 +34,8 @@ import { restoreDirExactly, restoreTree } from './restore-tree.js';
 import { caseJournal, sameFile, undoCaseHops, type CaseJournal } from './rename-migrations.js';
 import { throwIfCancelled } from './run-cancel.js';
 import { pathExists, removePath, settleAll, toPosix } from './fs-utils.js';
-import { isEnoent } from '../runtime/errno.js';
+import { errnoCode, isEnoent } from '../runtime/errno.js';
+import { acquireVaultLock, type VaultLock } from './vault-lock.js';
 import { ShardMindError } from '../runtime/types.js';
 import { wrapWriteError } from './bug-report.js';
 import { ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
@@ -60,6 +61,12 @@ export interface TransactionOptions {
    * rollback, and the snapshot is kept: the update summary points at it.
    */
   noPriorInstall: boolean;
+  /**
+   * Install into a folder it creates (#333): the missing levels, outermost
+   * first (`install-destination.ts`). Begin makes them and takes the vault
+   * lock; the rollback releases it and removes them, once empty.
+   */
+  createRoot?: { folders: readonly string[]; command: 'install' };
 }
 
 /** A path moved out of the way under a backup name (absolute paths). */
@@ -123,6 +130,8 @@ export function beginTransaction(
 ): Promise<SnapshotTransaction>;
 export function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction>;
 export async function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction> {
+  // Before anything reads the vault: it does not exist yet (§4.28 step 0).
+  const createdRoot = opts.createRoot ? await createVaultRoot(vaultRoot, opts.createRoot) : null;
   const now = opts.now ?? new Date();
   // A `.shardmind/` that was here is the user's (or the old install's): the
   // rollback removes only one this run made, once empty.
@@ -305,10 +314,13 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
           failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
         }
       }
+      // The vault this run made goes last, lock first: it lives inside it.
+      if (createdRoot) failures.push(...(await removeVaultRoot(createdRoot)));
       return failures;
     },
 
     async commit({ oldStatePath } = {}) {
+      createdRoot?.lock.release();
       const kept = setAside.filter((m) => m.keep).map(({ originalPath, backupPath }) => ({ originalPath, backupPath }));
       const left = await discardSetAside(
         setAside.filter((m) => !m.keep),
@@ -318,6 +330,60 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
       return { kept, left };
     },
   };
+}
+
+interface CreatedRoot {
+  /** The levels this begin made, outermost first. */
+  made: string[];
+  lock: VaultLock;
+}
+
+/**
+ * Make the vault folder and its missing parents, then lock it (#333). The
+ * vault folder is made with a plain `mkdir`, so of two runs racing for one
+ * name one wins; the other is refused, as is a file at any level. A parent
+ * another run made meanwhile is a folder all the same, and not ours.
+ */
+async function createVaultRoot(vaultRoot: string, root: { folders: readonly string[]; command: 'install' }): Promise<CreatedRoot> {
+  const made: string[] = [];
+  try {
+    for (const folder of root.folders) {
+      try {
+        await fsp.mkdir(folder);
+        made.push(folder);
+      } catch (err) {
+        const isFolder = await fsp.lstat(folder).then((st) => st.isDirectory(), () => false);
+        if (folder === vaultRoot || !isFolder) {
+          if (errnoCode(err) !== 'EEXIST') throw wrapWriteError('INSTALL_WRITE_FAILED', `Could not create ${folder}`, err);
+          throw new ShardMindError(
+            `Cannot install into ${vaultRoot}: ${folder} appeared after this install planned`,
+            'INSTALL_DESTINATION_NOT_EMPTY',
+            'Another run, or another program, took that folder. Give another folder name, or install into the current folder with `.`.',
+          );
+        }
+      }
+    }
+    return { made, lock: acquireVaultLock(vaultRoot, root.command) };
+  } catch (err) {
+    for (const folder of [...made].reverse()) await fsp.rmdir(folder).catch(() => {});
+    throw err;
+  }
+}
+
+/** The rollback's last step for a vault it made: release the lock, then remove the folders, once empty. */
+async function removeVaultRoot(root: CreatedRoot): Promise<RollbackFailure[]> {
+  root.lock.release();
+  const failures: RollbackFailure[] = [];
+  for (const folder of [...root.made].reverse()) {
+    try {
+      await fsp.rmdir(folder);
+    } catch (err) {
+      // Something else put a file there during the run: left, and named.
+      if (!isEnoent(err)) failures.push({ path: folder, reason: `remove failed: ${reasonOf(err)}` });
+      break;
+    }
+  }
+  return failures;
 }
 
 async function uniqueBackupPath(absolutePath: string, stamp: string): Promise<string> {

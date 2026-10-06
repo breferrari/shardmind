@@ -483,3 +483,86 @@ describe('vault transaction for install (#301)', () => {
     expect(await tx.rollback()).toEqual([]);
   });
 });
+
+describe('vault transaction for an install into a folder it creates (#333)', () => {
+  // `vault` is the cwd here: the install's vault is a folder inside it.
+  const lockOf = (root: string) => path.join(root, '.shardmind.lock');
+  const beginInto = (folders: string[], root = folders[folders.length - 1]!) =>
+    beginTransaction(root, { kind: 'install', noPriorInstall: true, createRoot: { folders, command: 'install' } });
+
+  it('makes the folder and holds its lock; commit keeps the folder and releases the lock', async () => {
+    const root = path.join(vault, 'wiki-mind');
+    const tx = await beginInto([root]);
+    expect(await exists(lockOf(root))).toBe(true);
+    await tx.recordWrite('Home.md');
+    await fsp.writeFile(path.join(root, 'Home.md'), '# Home\n');
+    await tx.commit();
+    expect(await exists(lockOf(root))).toBe(false);
+    expect(await fsp.readFile(path.join(root, 'Home.md'), 'utf-8')).toBe('# Home\n');
+  });
+
+  it('the rollback removes what the run wrote, the lock and every level it made', async () => {
+    const levels = [path.join(vault, 'a'), path.join(vault, 'a', 'b'), path.join(vault, 'a', 'b', 'c')];
+    const root = levels[2]!;
+    const tx = await beginInto(levels);
+    await tx.recordWrite('brain/Note.md');
+    await fsp.mkdir(path.join(root, 'brain'));
+    await fsp.writeFile(path.join(root, 'brain', 'Note.md'), 'x');
+    expect(await tx.rollback()).toEqual([]);
+    expect(await exists(levels[0]!)).toBe(false);
+    expect(await fsp.readdir(vault)).toEqual([]);
+  });
+
+  it('a level that existed is never removed', async () => {
+    await fsp.mkdir(path.join(vault, 'a'));
+    const root = path.join(vault, 'a', 'b');
+    const tx = await beginInto([root]);
+    expect(await tx.rollback()).toEqual([]);
+    expect(await exists(root)).toBe(false);
+    expect(await exists(path.join(vault, 'a'))).toBe(true);
+  });
+
+  it('a file something else put in the folder during the run keeps it, named as a failure', async () => {
+    const root = path.join(vault, 'wiki-mind');
+    const tx = await beginInto([root]);
+    await fsp.writeFile(path.join(root, 'theirs.md'), 'not the run’s');
+    const failures = await tx.rollback();
+    expect(failures).toEqual([expect.objectContaining({ path: root, reason: expect.stringMatching(/^remove failed:/) })]);
+    expect(await fsp.readFile(path.join(root, 'theirs.md'), 'utf-8')).toBe('not the run’s');
+    expect(await exists(lockOf(root))).toBe(false);
+  });
+
+  it('a folder that appeared after planning is refused before anything is written, and left alone', async () => {
+    const root = path.join(vault, 'wiki-mind');
+    await fsp.mkdir(root);
+    await fsp.writeFile(path.join(root, 'theirs.md'), 'x');
+    await expect(beginInto([root])).rejects.toMatchObject({ code: 'INSTALL_DESTINATION_NOT_EMPTY' });
+    expect(await fsp.readdir(root)).toEqual(['theirs.md']);
+  });
+
+  it('a refused vault folder removes the parent levels this begin made, once empty: one holding what is in the way stays', async () => {
+    const levels = [path.join(vault, 'a'), path.join(vault, 'a', 'b')];
+    // The vault folder's path is taken by a file once the parent exists.
+    const realMkdir = fsp.mkdir.bind(fsp);
+    vi.spyOn(fsp, 'mkdir').mockImplementation((async (p: string, opts?: unknown) => {
+      if (p === levels[1]) {
+        await fsp.writeFile(levels[1]!, 'x');
+        throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+      }
+      return realMkdir(p, opts as undefined);
+    }) as typeof fsp.mkdir);
+    await expect(beginInto(levels)).rejects.toMatchObject({ code: 'INSTALL_DESTINATION_NOT_EMPTY' });
+    vi.restoreAllMocks();
+    expect(await fsp.readdir(path.join(vault, 'a'))).toEqual(['b']);
+    expect((await fsp.lstat(path.join(vault, 'a', 'b'))).isFile()).toBe(true);
+  });
+
+  it('a parent level another run made meanwhile is used, and not removed', async () => {
+    const levels = [path.join(vault, 'a'), path.join(vault, 'a', 'b')];
+    await fsp.mkdir(levels[0]!);
+    const tx = await beginInto(levels);
+    expect(await tx.rollback()).toEqual([]);
+    expect(await exists(levels[0]!)).toBe(true);
+    expect(await exists(levels[1]!)).toBe(false);
+  });
+});
