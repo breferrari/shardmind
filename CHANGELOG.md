@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (validate checks what a release ships — #320)
+
+- **`shardmind validate` in a shard's git repository checks the files git tracks**, as the release tarball ships them, instead of the whole working tree. An ignored folder such as `node_modules/` (whose `.bin/` holds symlinks) no longer fails it with `WALK_SYMLINK_REJECTED`. A file not committed yet is a warning, `LINT_UNTRACKED_FILE`, and is not checked until it is. A tracked symlink still fails. Outside git, or without `git` installed, nothing changes.
+
 ### Changed (internal: one owner for process control — #303)
 
 - Internal: SIGINT handling, the exit code and the CLI's startup order go through one module, `core/process-control.ts`, instead of a dozen call sites; a scan test keeps it that way. Ctrl+C, exit codes and the closed-stdout and crash behaviour are unchanged.

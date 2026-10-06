@@ -43,6 +43,8 @@ export async function lintShard(
     vaultRoot?: string;
     /** Throw an error that is not a ShardMindError (an engine bug, an I/O failure) instead of listing it. */
     rethrowUnexpected?: boolean;
+    /** Whether git tracks a path (#320): only those are walked or included, as the release tarball holds them. */
+    tracked?: (relPath: string) => boolean;
   },
 ): Promise<LintResult> {
   const findings: LintFinding[] = [];
@@ -137,14 +139,14 @@ export async function lintShard(
   const selections: ModuleSelections = Object.fromEntries(Object.keys(schema.modules).map((id) => [id, 'included']));
   let resolution;
   try {
-    resolution = await resolveModules(schema, selections, shardDir);
+    resolution = await resolveModules(schema, selections, shardDir, { tracked: opts.tracked });
   } catch (err) {
     error(err);
     return done();
   }
 
   const context = buildRenderContext(manifest, values, selections, new Date(), opts.vaultRoot);
-  const env = createRenderer(shardDir);
+  const env = createRenderer(shardDir, opts.tracked);
   // A rendered `.gitignore.njk`, kept for the hook-log check below (#201).
   let renderedGitignore: string | undefined;
   for (const entry of resolution.render) {

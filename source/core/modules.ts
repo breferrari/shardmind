@@ -51,9 +51,10 @@ export async function resolveModules(
   schema: ShardSchema,
   selections: ModuleSelections,
   rootDir: string,
+  opts: { tracked?: (relPath: string) => boolean } = {},
 ): Promise<ModuleResolution> {
   const ignoreFilter = await loadShardmindignore(rootDir);
-  const files = await walkShardSource(rootDir, ignoreFilter);
+  const files = await walkShardSource(rootDir, ignoreFilter, opts.tracked);
 
   const render: FileEntry[] = [];
   const copy: FileEntry[] = [];
@@ -92,13 +93,20 @@ export interface WalkedFile {
  * Tier 1 exclusion + `.shardmindignore` filtering + symlink rejection. Shared
  * by `resolveModules` (install/update planning) and `state.ts:cacheTemplates`
  * (merge-base cache) so both layers honor the exact same source-side filter.
+ *
+ * `tracked` (#320): `validate` in a git work tree passes whether a path is
+ * tracked, as a release tarball holds it (`gitFiles`). An entry that is
+ * neither tracked nor a folder holding a tracked file is skipped before any
+ * check, so an ignored `node_modules/.bin/` symlink is never seen; a tracked
+ * symlink still fails.
  */
 export async function walkShardSource(
   rootDir: string,
   ignoreFilter: IgnoreFilter,
+  tracked?: (relPath: string) => boolean,
 ): Promise<WalkedFile[]> {
   const out: WalkedFile[] = [];
-  await walk(rootDir, '', ignoreFilter, out);
+  await walk(rootDir, '', ignoreFilter, out, tracked);
   return out;
 }
 
@@ -107,6 +115,7 @@ async function walk(
   relDir: string,
   ignoreFilter: IgnoreFilter,
   out: WalkedFile[],
+  keep: ((relPath: string) => boolean) | undefined,
 ): Promise<void> {
   const dirAbs = relDir === '' ? rootAbs : path.join(rootAbs, relDir);
   const entries = await fsp.readdir(dirAbs, { withFileTypes: true });
@@ -114,6 +123,8 @@ async function walk(
   for (const entry of entries) {
     const relPath = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
     const entryAbs = path.join(dirAbs, entry.name);
+    // Not in the release tarball: never checked (#320).
+    if (keep && !keep(relPath)) continue;
 
     if (entry.isSymbolicLink()) {
       throw new ShardMindError(
@@ -138,7 +149,7 @@ async function walk(
     if (ignoreFilter.ignores(relPath, isDir)) continue;
 
     if (isDir) {
-      await walk(rootAbs, relPath, ignoreFilter, out);
+      await walk(rootAbs, relPath, ignoreFilter, out, keep);
     } else {
       out.push({ relPath, absPath: entryAbs });
     }

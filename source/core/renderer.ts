@@ -23,8 +23,26 @@ const NUNJUCKS_OPTS = {
   lstripBlocks: true,
 } as const;
 
-export function createRenderer(templateDir: string): nunjucks.Environment {
-  return nunjucks.configure(templateDir, NUNJUCKS_OPTS);
+/**
+ * `keep` (validate in a git work tree, #320): a template includes only the
+ * files it holds true for, so an include of an uncommitted or ignored partial
+ * fails as it would from the release tarball.
+ */
+export function createRenderer(templateDir: string, keep?: (relPath: string) => boolean): nunjucks.Environment {
+  if (!keep) return nunjucks.configure(templateDir, NUNJUCKS_OPTS);
+  const root = path.resolve(templateDir);
+  const kept = keep;
+  // A loader with no search path finds nothing: its miss is nunjucks' own
+  // (null at runtime, though the types never say so), so `ignore missing`
+  // renders an untracked partial as empty, as the release would.
+  const nowhere = new nunjucks.FileSystemLoader([]);
+  class KeptLoader extends nunjucks.FileSystemLoader {
+    override getSource(name: string): nunjucks.LoaderSource {
+      const rel = path.relative(root, path.resolve(root, name)).split(path.sep).join('/');
+      return kept(rel) ? super.getSource(name) : nowhere.getSource(name);
+    }
+  }
+  return new nunjucks.Environment(new KeptLoader(templateDir), NUNJUCKS_OPTS);
 }
 
 /**
