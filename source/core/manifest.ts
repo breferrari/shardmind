@@ -145,6 +145,8 @@ export interface ParseManifestOptions {
    * migration is the author's, so it is dropped instead of refused (#357).
    */
   installedCopy?: boolean;
+  /** Called with `'post-install'` when `installedCopy` dropped it, so status can say so. */
+  onRemovedSlot?: (slot: 'post-install') => void;
 }
 
 export async function parseManifest(
@@ -199,7 +201,9 @@ export async function parseManifest(
   // did. Refuse it whatever else is declared, and say how to split it.
   // HOOK_SLOT_CONFLICT (post-install beside the slots) is no longer raised.
   const { 'post-install': postInstall, ...hooks } = result.data.hooks;
-  if (postInstall !== undefined && !opts.installedCopy) {
+  if (postInstall !== undefined && opts.installedCopy) {
+    opts.onRemovedSlot?.('post-install');
+  } else if (postInstall !== undefined) {
     throw new ShardMindError(
       'shard.yaml declares hooks.post-install, which was removed in 1.0.',
       'HOOK_SLOT_REMOVED',

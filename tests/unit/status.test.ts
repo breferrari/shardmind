@@ -101,9 +101,10 @@ describe('buildStatusReport', () => {
     expect(report!.warnings).toEqual([]);
   });
 
-  it('reads a cached shard.yaml that still declares post-install without a warning (#357)', async () => {
+  it('reads a cached shard.yaml that still declares post-install, with an info note, not a warning (#357)', async () => {
     // A vault installed from a pre-1.0 shard keeps that shard.yaml cached.
-    // The removed slot is the author's to migrate, not the user's.
+    // The removed slot is the author's to migrate, not the user's; the note
+    // says why an update could refuse that shard until it does.
     await installMinimal(vault);
     await primeLatestVersion(vault, RESOLVED.source, '0.1.0');
     const cached = path.join(vault, '.shardmind', 'shard.yaml');
@@ -111,7 +112,9 @@ describe('buildStatusReport', () => {
     await fsp.writeFile(cached, yaml.replace(/hooks:[\s\S]*$/, 'hooks:\n  post-install: hooks/post-install.ts\n'));
 
     const report = await buildStatusReport(vault, { verbose: false });
-    expect(report!.warnings).toEqual([]);
+    expect(report!.warnings).toHaveLength(1);
+    expect(report!.warnings[0]).toMatchObject({ severity: 'info' });
+    expect(report!.warnings[0]!.message).toContain('post-install');
   });
 
   it('flags drift when a managed file is edited by the user', async () => {
