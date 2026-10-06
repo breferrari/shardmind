@@ -23,6 +23,8 @@ const CTX: RenderContext = {
   shard: { name: 'test', version: '0.1.0' },
   install_date: '2026-04-19',
   year: '2026',
+  vault_name: '',
+  vault_slug: '',
 };
 
 describe('merge adversarial — control characters in line content', () => {

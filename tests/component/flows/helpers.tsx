@@ -18,8 +18,11 @@
  * would have been caught here).
  */
 
-import { render, type RenderResult } from 'ink-testing-library';
+import { render } from 'ink-testing-library';
 import { vi, beforeAll, afterAll, afterEach } from 'vitest';
+
+/** What `render` returns; ink-testing-library does not export the type by name. */
+export type RenderResult = ReturnType<typeof render>;
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -254,6 +257,7 @@ export function mountUpdate(opts: {
         includePrerelease: false,
         adoptPreexisting: false,
         updateCheck: true,
+        json: false,
         ...opts.options,
       }}
     />,
@@ -284,6 +288,7 @@ export function mountAdopt(opts: {
         verbose: false,
         dryRun: false,
         updateCheck: true,
+        json: false,
         ...opts.options,
       }}
     />,

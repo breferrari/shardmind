@@ -15,6 +15,8 @@ const RENDER_CTX: RenderContext = {
   shard: { name: 'test-shard', version: '0.1.0' },
   install_date: '2026-04-01',
   year: '2026',
+  vault_name: '',
+  vault_slug: '',
 };
 
 describe('threeWayMerge — stats accounting', () => {

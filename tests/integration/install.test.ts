@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
+import type { PathLike } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -498,9 +499,9 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     await fsp.mkdir(path.join(vault, 'made'));
     const madeAbs = path.join(vault, 'made');
     const realRmdir = fsp.rmdir;
-    const spy = vi.spyOn(fsp, 'rmdir').mockImplementation(async (p, o) => {
+    const spy = vi.spyOn(fsp, 'rmdir').mockImplementation(async (p: PathLike) => {
       if (p === madeAbs) throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
-      return realRmdir(p, o);
+      return realRmdir(p);
     });
     try {
       const failures = await tx.rollback();

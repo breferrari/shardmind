@@ -62,6 +62,8 @@ function renderCtx(
     shard: { name: 'test', version: '1.0.0' },
     install_date: NOW.toISOString(),
     year: '2026',
+    vault_name: '',
+    vault_slug: '',
   };
 }
 

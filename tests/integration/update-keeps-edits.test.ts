@@ -157,6 +157,10 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
   }
 
   /** One full update, drift to state write, resolving every conflict as `resolution`. */
+  /** One resolution for every conflict (a choice, or an edit), not a map of them by path. */
+  const isOneResolution = (r: ConflictResolution | Record<string, ConflictResolution>): r is ConflictResolution =>
+    typeof r === 'string' || ('kind' in r && r.kind === 'edited');
+
   async function update(
     shardDir: string,
     resolution: ConflictResolution | Record<string, ConflictResolution> = 'keep_mine',
@@ -181,7 +185,7 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
       removedFileDecisions: {},
     });
     const conflictResolutions = Object.fromEntries(
-      plan.pendingConflicts.map((c) => [c.path, typeof resolution === 'string' ? resolution : (resolution[c.path] ?? 'keep_mine')]),
+      plan.pendingConflicts.map((c) => [c.path, isOneResolution(resolution) ? resolution : (resolution[c.path] ?? 'keep_mine')]),
     );
     const result = await runUpdate({
       vaultRoot: vault,
@@ -310,7 +314,7 @@ describe('update keeps the user\'s edits across updates (#150)', () => {
 
     // 0.2.0 changes neither file, and runs a post-update hook.
     const first = await update(await shardAt('0.2.0', IDLE_POST_UPDATE));
-    expect(first.hooks.outcomes.map((o) => o.slot)).toContain('post-update');
+    expect(first.hooks?.outcomes.map((o) => o.slot)).toContain('post-update');
 
     await update(await shardAt('0.3.0', IDLE_POST_UPDATE));
     expect(await read(HOME)).toContain('My own welcome line.');

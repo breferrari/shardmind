@@ -56,6 +56,7 @@ function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
       orphanedPaths: [],
       missingPaths: [],
       truncated: false,
+      failed: false,
     },
     update: { kind: 'up-to-date', current: '3.5.0' },
     modules: { included: ['brain', 'work', 'reference'], excluded: ['perf'] },
@@ -65,6 +66,7 @@ function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
       invalidKeys: [],
       invalidCount: 0,
       fileMissing: false,
+      checked: true,
     },
     frontmatter: {
       valid: 44,
@@ -107,6 +109,7 @@ describe('VerboseView', () => {
             invalidKeys: ['qmd_enabled', 'vault_purpose'],
             invalidCount: 2,
             fileMissing: false,
+            checked: true,
           },
         })}
       />,
@@ -126,6 +129,7 @@ describe('VerboseView', () => {
             invalidKeys: [],
             invalidCount: 0,
             fileMissing: true,
+            checked: true,
           },
         })}
       />,
@@ -144,6 +148,7 @@ describe('VerboseView', () => {
             invalidKeys: shown,
             invalidCount: 25,
             fileMissing: false,
+            checked: true,
           },
         })}
       />,
@@ -215,6 +220,7 @@ describe('VerboseView', () => {
             modifiedPaths,
             modifiedChanges,
             truncated: true,
+            failed: false,
           },
         })}
       />,

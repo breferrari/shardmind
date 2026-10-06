@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
+import type { PathLike } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -62,9 +63,9 @@ describe('created folders (#258)', () => {
   it('returns a folder it could not remove for another reason', async () => {
     await fsp.mkdir(path.join(vault, 'busy'));
     const realRmdir = fsp.rmdir;
-    vi.spyOn(fsp, 'rmdir').mockImplementation(async (p, o) => {
+    vi.spyOn(fsp, 'rmdir').mockImplementation(async (p: PathLike) => {
       if (p === path.join(vault, 'busy')) throw Object.assign(new Error('simulated EBUSY'), { code: 'EBUSY' });
-      return realRmdir(p, o);
+      return realRmdir(p);
     });
     const failures = await removeCreatedFolders(vault, ['busy']);
     expect(failures).toEqual([{ path: 'busy', reason: 'remove failed: simulated EBUSY' }]);
