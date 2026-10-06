@@ -396,7 +396,7 @@ A Ctrl+C rollback that could not restore everything prints the same list to stde
 
 ## Install command flags
 
-Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-flight, before any network call.
+Thrown during install's pre-flight, before any network call: by the install flow (`source/core/flows/install.ts`), or, for where the vault goes (`INSTALL_DESTINATION_NOT_EMPTY`, `INSTALL_INSIDE_VAULT`), by `source/core/install-destination.ts` before the run starts.
 
 ### `INSTALL_FLAG_CONFLICT`
 
@@ -420,7 +420,7 @@ Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-fl
 
 **Meaning:** `shardmind install <shard>` with no folder argument installs into a new folder named after the shard (#333). It was run from inside an existing vault: the current folder, or a folder above it, holds `.shardmind/state.json` (a shardmind vault) or `.obsidian/` (an Obsidian vault). A second vault nested inside the first is almost never what was meant (#337). Refused before any download or prompt; the message names the vault found.
 
-**Remedy:** To install into a new folder anyway, name it: `shardmind install <shard> my-vault` (a folder argument skips the check). To install into the current folder in place, as before #333, use `.`: `shardmind install <shard> .`, which keeps the existing-install gate and collision review. To upgrade the vault you are in, run `shardmind update`.
+**Remedy:** To install into a new folder anyway, name it: `shardmind install <shard> my-vault` (a folder argument skips the check). To install into the vault in place, `cd` to the vault the message names (it can be above the current folder) and run `shardmind install <shard> .`, which keeps the existing-install gate and collision review. To upgrade it, `cd` there and run `shardmind update` for a shardmind vault, or `shardmind adopt <shard>` for an Obsidian vault with no shard yet. Also raised when a folder on the way up cannot be read: the check cannot tell whether it is a vault, and naming the folder skips it. An empty folder argument (an unset `$DEST`) counts as none.
 
 ### `JSON_REQUIRES_DRY_RUN`
 
