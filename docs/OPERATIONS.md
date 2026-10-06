@@ -126,6 +126,8 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 
 ShardMind's own version is semver-pinned. Shards are semver-pinned by their GitHub tags (the `v` prefix is stripped before parsing).
 
+**Experimental, outside the semver promise:** `adopt --mode auto-merge` (#347). Its two-way union merge may change in a minor release. Using it prints a one-line warning on stderr.
+
 - Latest stable: `shardmind install acme/demo` (omits `@version`; resolves the newest `prerelease: false` entry from `/releases?per_page=100`).
 - Pinned tag: `shardmind install acme/demo@1.2.3` (exact tag).
 - Pre-release: `shardmind install acme/demo@1.2.3-beta.1` for an explicit prerelease pin. On update, `shardmind update --include-prerelease` widens latest-resolution to all releases; `shardmind update --release 1.2.3-beta.1` pins. Beta-only repos throw `NO_RELEASES_PUBLISHED` with a `--include-prerelease` hint.
