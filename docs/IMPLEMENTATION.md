@@ -1691,32 +1691,30 @@ lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: st
 
 ### 4.23 `json-run.ts`
 
-Makes a `--json` run in a terminal behave exactly as piped (#198).
+Says which runs are `--json` runs, so a `--json` run in a terminal behaves exactly as piped (#198).
 
 ```typescript
-export function isJsonRun(argv: readonly string[]): boolean;
-export function markNonInteractive(stream: { isTTY?: boolean }): void;
-export function dropTrailingBlankWrites(stream: Pick<NodeJS.WritableStream, 'write'>): void;
+export const ROOT_OPTIONS: readonly string[]; // '--verbose', '--json', '--no-update-check'
+export function jsonRunOf(argv: readonly string[]): { command: JsonCommand; rest: readonly string[]; misplaced?: string } | undefined;
 ```
 
 A mounted Ink app in a TTY did two things under `--json` that a pipe never sees:
-- it wrote synchronized-output and cursor codes around its frame even when the command rendered nothing (`\x1b[?2026h\x1b[?25l` before the document, `\x1b[?25h` after);
+- it wrote synchronized-output and cursor codes around its frame even when the command rendered nothing (`\x1b[?2026h\x1b[?25l` before the document, `\x1b[?25h` after), and at unmount a blank line after the document (#231);
 - it offered prompts, because stdin was a TTY, which `--json` renders as nothing. `adopt --dry-run --json` without `--yes` or `--values` waited in an invisible wizard where the piped run refused with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`. This predates #198.
 
-Ink decides the first from `stdout.isTTY` (`interactive` defaults to `!isInCi && stdout.isTTY`), and Pastel passes no render options. So for a run `isJsonRun` accepts, `cli.ts` marks stdout non-interactive right after `applyNoColor`, before Pastel or any component loads.
+Every command with a `--json` now answers it headless, before anything loads Ink (§4.29, #302), so neither can happen: no Ink app is mounted, and the flows refuse a prompt under `--json` themselves (§4.30). Until #302, `cli.ts` marked stdout non-interactive and dropped Ink's trailing blank write for these runs; both workarounds are gone.
 
-1. `isJsonRun`: `--json` appears before any `--`, there is no `-h` or `--help`, and the first non-option argument is `update`, `adopt`, `validate` or absent (the status command). `--json=true` is not a form Commander accepts for a boolean flag. `validate --json` and the status command's `--json` run headless without Ink (§4.29, #34, #302), so marking stdout changes nothing there; they are JSON runs for the crash answer below. Install has no `--json`. A unit test ties the accepted commands to every command file under `source/commands/` that declares a `json` option.
-2. `markNonInteractive` defines `isTTY` as `false` on stdout. The only readers of `stdout.isTTY` are Ink's interactive decision (and its synchronized-output check) and the self-update banner, which is already off under `--json`.
+1. A `--json` run (`jsonRunOf` answers one): `--json` appears before any `--`, there is no `-h`, `--help`, `-v` or `--version` (Pastel answers those), and the subcommand is `update`, `adopt`, `validate` or absent (the status command). `--json=true` is not a form Commander accepts for a boolean flag. Install has no `--json`. A unit test ties the accepted commands to every command file under `source/commands/` that declares a `json` option.
+2. The subcommand is the first argument before any `--` that is not an option. Every root option is a boolean flag, so no option value is read as the subcommand.
+3. `jsonRunOf` returns the command (`status` without a subcommand) and the arguments its runner takes, which are `argv` with that one subcommand removed: a root option before it (`shardmind --verbose adopt --json`) is passed on, as Pastel passes it on (#147). Any other option before the subcommand (`shardmind --dry-run update --json`) is `misplaced`: Pastel refuses it, since its root command does not take it, and `cli.ts` answers the same refusal as a document (`ARGS_INVALID`, `error: unknown option '<flag>'`) instead of running with it. `ROOT_OPTIONS` are the status command's options, which a unit test ties to `commands/options/status.ts`. `cli.ts` keys its headless runners on `JsonCommand` (`json-output.ts`), so a command with a `--json` and no runner is a type error, and its crash answer names the same command.
 
-The second is decided where the prompt is decided, not by faking stdin. Ink derives `isRawModeSupported` from `stdin.isTTY`, but marking stdin non-interactive would send the stdin SIGINT bridge (`core/cancellation.ts`) down its pipe path on a real terminal. A backgrounded run would then get SIGTTIN and stop, and type-ahead would be swallowed. Instead, a machine with a `--json` mode treats `json` like a missing terminal at its prompt decision:
-- adopt: `!isRawModeSupported || json` refuses with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`, or uses `--values`, exactly as piped;
+The prompt is decided in the flow, not by faking stdin. Ink derives `isRawModeSupported` from `stdin.isTTY`, but marking stdin non-interactive would send the stdin SIGINT bridge (`core/cancellation.ts`) down its pipe path on a real terminal. A backgrounded run would then get SIGTTIN and stop, and type-ahead would be swallowed. Instead:
+- adopt: no terminal, or `--json`, refuses with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`, or uses `--values`, exactly as piped;
 - update: a prompt it would show (a new required value, a new optional module, a removed file to keep or delete) refuses with `UPDATE_JSON_NEEDS_ANSWERS`, naming every pending decision. `--yes` answers the module and removed-file decisions as it does piped; a new required value has to be added to `shard-values.yaml` (#230).
 
-A throw that escapes every command (#225) also answers on stdout under `--json`. The top-level crash handler in `cli.ts` is given `writeJson` for a run `isJsonRun` accepts, and it writes one failure document (`ok: false`, `code: null`, the `stack`) before the plain-text report on stderr. The exit waits for both streams to drain. `json-output.ts` is loaded after the handlers are installed, and a failure to load it, or a throw while writing, still leaves the stderr report and exit 1. A run that already wrote its document (`jsonEmitted()`) gets no second one. For `validate --json` this covers a crash outside its runner, which catches its own errors. A `--json` caller never gets an empty stdout, and a terminal gets the same document as a pipe.
+A throw that escapes every command (#225) also answers on stdout under `--json`. The top-level crash handler in `cli.ts` is given `writeJson` for a run `jsonRunOf` accepts, and it writes one failure document, under the command `jsonRunOf` named, (`ok: false`, `code: null`, the `stack`) before the plain-text report on stderr. The exit waits for both streams to drain. `json-output.ts` is loaded after the handlers are installed, and a failure to load it, or a throw while writing, still leaves the stderr report and exit 1. A run that already wrote its document (`jsonEmitted()`) gets no second one. This covers a crash outside a runner, which catches its own errors. A `--json` caller never gets an empty stdout, and a terminal gets the same document as a pipe.
 
-stdin and stderr are never touched.
-
-The same gate keeps the document's single trailing newline (#231). At unmount, Ink in non-interactive mode writes its last frame plus `'\n'`. Under `--json` the frame is empty, so every document ended in `}\n\n`, piped too, against `emitJson`'s one-newline contract. `dropTrailingBlankWrites(process.stdout)` drops a write of exactly `'\n'` once a write has carried content, and still calls that write's callback, because Ink's exit barrier waits on it. Every other write passes through untouched. `validate --json` writes its own document without Ink and is not affected.
+stdin, stdout and stderr are never touched.
 
 ---
 
@@ -1976,7 +1974,7 @@ parseCommandArgv<A, O>(argv: readonly string[], schemas: { args?: ZodTuple; opti
 run<Command>Json(argv: readonly string[], engineVersion: string | undefined, write?: (chunk: string) => void): Promise<number>; // the exit code
 ```
 
-1. **Dispatch.** `cli.ts` runs a headless runner when the run is a JSON run (`isJsonRun`: `--json` before any `--`, no `-h` / `--help` and no `-v` / `--version`, which still go to Pastel) and its command, read with `subcommandOf` as `isJsonRun` reads it, is in `HEADLESS_JSON`. A named command must be the first argument, as before; a run with no subcommand at all is the status command. It passes the arguments after the command name (status: all of them).
+1. **Dispatch.** `cli.ts` runs a headless runner when `jsonRunOf` (§4.23) answers a JSON run: `--json` before any `--`, no `-h` / `--help` and no `-v` / `--version`, which still go to Pastel, and a subcommand that has a `--json`, or none (the status command). `HEADLESS_JSON` is keyed on `JsonCommand`, so every such command has a runner. The runner gets the arguments without the subcommand; a root option before it (`--verbose adopt`) is passed on (#147), and any other option before it is refused as `ARGS_INVALID`. The stdin Ctrl+C bridge (`installStdinCancellation`) is installed before the dispatch, so on Windows an ETX on a piped stdin reaches a runner's SIGINT handler too.
 2. **Parse.** `parseCommandArgv` builds one Commander command from the command's schemas with the kit's `generateOptions` / `generateArguments`, parses with `exitOverride` so Commander throws instead of exiting, and runs the schemas' `safeParse`. A Commander error (an unknown option, a missing value) and a zod failure both throw an error whose message is what the Pastel run prints (`fromZodError`, one issue). The schemas come from `commands/options/<command>.ts`, the Ink-free modules the `.tsx` command files re-export for Pastel.
 3. **Run.** The runner calls the command's core directly: status calls `buildStatusReport(cwd, { verbose, skipUpdateCheck: false, uncapped: true })`.
 4. **Answer.** One document through `emitJson`: `jsonSuccess(command, result)` and exit 0, or `jsonFailure(command, err)` and exit 1. A parse error is a failure document too, as `ARGS_INVALID` with the parser's message, where the Ink run printed the message and wrote no document: a `--json` caller never gets an empty stdout (§4.23). Status answers `statusResult(null)` (`{ installed: false }`) outside a vault, exit 0, as before.
@@ -1984,21 +1982,27 @@ run<Command>Json(argv: readonly string[], engineVersion: string | undefined, wri
 
 ### 4.30 UI-free flows: `core/flows/`
 
-A command's whole run, from its flags to its summary, as a function of its input and an `io` it is given, with no Ink, React or terminal in it (#302). The Ink machine (`commands/hooks/use-<command>-machine.ts`) becomes an adapter: it renders each question with its prompt component and each phase it is told of, and answers `ask` from the component's handler. A headless `--json` run (§4.29) calls the same flow with an `io` that never prompts. Adopt is the first; update and install follow.
+A command's whole run, from its flags to its summary, as a function of its input and an `io` it is given, with no Ink, React or terminal in it (#302). The Ink machine (`commands/hooks/use-<command>-machine.ts`) becomes an adapter: it renders each question with its prompt component and each phase it is told of, and answers `ask` from the component's handler. A headless `--json` run (§4.29) calls the same flow with an `io` that never prompts. Adopt and update run as flows; install follows.
 
 ```typescript
 // core/flows/prepare-shard.ts
 interface PreparedShard { resolved: ResolvedShard; manifest: ShardManifest; schema: ShardSchema; tempDir: string; tarballSha256: string; cleanup(): Promise<void> }
-prepareShard(ref: string, opts: { command: 'install' | 'adopt'; engineVersion: string | undefined; onLoading(message: string): void; onCleanup(cleanup: () => Promise<void>): void }): Promise<PreparedShard>
+prepareShard(ref: string, opts: { resolve(): Promise<ResolvedShard>; engineVersion: string | undefined; onLoading(message: string): void; onCleanup(cleanup: () => Promise<void>): void; parseMessage?: string }): Promise<PreparedShard>
 // core/flows/values.ts
 interface ValueAnswers { values: Record<string, unknown>; selections: ModuleSelections }
 loadValuesFile(path: string, schema: ShardSchema): Promise<Record<string, unknown>>
 answersWithoutPrompting(schema: ShardSchema, prefill: Record<string, unknown>, yes: boolean): ValueAnswers
+validateValues(schema: ShardSchema, values: Record<string, unknown>): Record<string, unknown>
+// core/flows/cancelled.ts
+class FlowCancelled extends Error { readonly reason: string }
 // core/flows/adopt.ts
 runAdoptFlow(input: AdoptFlowInput, io: AdoptFlowIO): Promise<AdoptFlowResult>
+// core/flows/update.ts
+runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): Promise<UpdateFlowResult>
+readUpdateTarget(vaultRoot: string, opts: { release?: string; includePrerelease?: boolean }): Promise<{ state: ShardState; source: string }>
 ```
 
-1. **`prepareShard`**: `resolve(ref, { command })`, then `downloadShard`, with the cleanup handed to `onCleanup` before the fetch, so a Ctrl+C during the download removes the temp dir (#57), then `parseManifest`, `assertEngineCompatible` (#121) and `parseSchema`. Each step is announced through `onLoading` ("Resolving …", "Downloading …", "Parsing manifest and schema…").
+1. **`prepareShard`**: the caller's `resolve` (install and adopt: `resolve(ref, { command })`; update: the source recorded in `state.json`, §step 6.2), then `downloadShard`, with the cleanup handed to `onCleanup` before the fetch, so a Ctrl+C during the download removes the temp dir (#57), then `parseManifest`, `assertEngineCompatible` (#121) and `parseSchema`. Each step is announced through `onLoading` ("Resolving …", "Downloading …", then `parseMessage` or "Parsing manifest and schema…").
 2. **`answersWithoutPrompting`**: the prefill merged over the schema's defaults (`mergePrefill`). A required value still missing is `VALUES_MISSING`, whose hint names the way the run got here (`--yes`, or `--values` without a terminal). Then `resolveComputedDefaults` and the schema's validator, with the default module selections.
 3. **The adopt flow**, in the order the machine ran it:
    1. `--json` without `--dry-run` is `JSON_REQUIRES_DRY_RUN`; `--from-version` is checked (`parseFromVersion`); then, unless dry run, `io.takeLock()` (#253) and `assertAdoptable`; then `prepareShard`. A run whose `input.stop` was aborted meanwhile (an Ink run superseded by a newer one) ends there with `FlowCancelled`. Then the `--values` file.
@@ -2012,6 +2016,17 @@ runAdoptFlow(input: AdoptFlowInput, io: AdoptFlowIO): Promise<AdoptFlowResult>
    9. Return `{ kind: 'done', … }` with the summary, the hook outcomes and the external-tools lines. The temp dir is removed in a `finally`, whatever the outcome.
 4. **Answers that end the run**: `ask` rejects with `FlowCancelled` (a user cancelling a prompt); the flow lets it through. An executor failure is rethrown marked so that `adoptRolledBack(err)` says the vault was rolled back, as `installRolledBack` does for install.
 5. **Headless `adopt --json`** (`commands/headless/adopt.ts`): parses with `commands/options/adopt.ts` (§4.29), runs the flow with `interactive: false` and an `ask` that is never called (a dry run stops at the plan, and the values never prompt without a terminal), writes `jsonSuccess('adopt', adoptPlanResult(plan, …))` or `jsonFailure('adopt', err)`. A Ctrl+C during the download removes the temp dir and exits 130, with no document: the cancelled download (`DownloadCancelledError`) is not a failure to report. `validate --json` does the same.
+6. **The update flow**, in the order the machine ran it:
+   1. `--json` without `--dry-run` is `JSON_REQUIRES_DRY_RUN`; then, unless dry run, `io.takeLock()` (#253).
+   2. `readUpdateTarget`: "Reading install state…", `readState` (none: `UPDATE_NO_INSTALL`), `assertFlagsCompatible` (`UPDATE_FLAG_CONFLICT`: `--release` with `--include-prerelease`, or either on a ref install), the source (`<source>#<ref>`, `<source>@<release>`, or the recorded source). Then `prepareShard`, resolving with `resolveRefForUpdate`, which rewrites the registry's hints for a ref read from disk, and announcing "Parsing new manifest and schema…". The update-check cache is primed (`primeLatestVersion`) only for the latest-stable policy, and the flow waits for that write before it returns: a headless run exits right after its document.
+   3. Up to date (a ref install: the same commit; a tag install: the same version and tarball): return `{ kind: 'up-to-date', manifest, state }`. A ref install resolved without a ref descriptor is a bug (`REGISTRY_NETWORK`), never "up to date".
+   4. "Loading current values…" (`shard-values.yaml`, the cached schema: `UPDATE_CACHE_MISSING`), "Applying migrations…" (`applyMigrations`), the schema's additions (new required values, new optional modules). A run whose `input.stop` was aborted ends here with `FlowCancelled`.
+   5. The values and modules: under `--yes`, a new required value is `VALUES_MISSING` and every new optional module is included. Otherwise a new required value is asked (`io.ask({ kind: 'new-values' })`, merged over the migrated values), or under `--json` refused with `UPDATE_JSON_NEEDS_ANSWERS`; new optional modules are asked (`new-modules`), or under `--json` carried as pending with `--yes`'s answer.
+   6. `checkExternalToolsForRun` (#138), then the drift and the new render together, the renames (#178), and the removed files the user edited. Under `--json`, the pending modules and those files are one `UPDATE_JSON_NEEDS_ANSWERS` naming both (#230), unless `--yes` answers them. Otherwise the files are asked (`removed-files`), or kept under `--yes`.
+   7. "Planning update…", `planUpdate`. `--json --dry-run`: return `{ kind: 'plan', plan }`, before any conflict is asked (#139).
+   8. Each pending conflict: `io.ask({ kind: 'conflict', currentIndex, resolutions })`, in order; under `--yes`, `keep_mine` for each. An editor round (#50) is the adapter's: it answers only with the file's final resolution.
+   9. `runUpdate` (`io.newRunAbort`, `io.onRun`, `io.progress`), then `io.onCommitted()`, then `runHooks({ command: 'update', previousVersion })` under the hooks' abort, then `{ kind: 'done', … }` with the summary, the migration warnings, the hooks, the backup folder (vault-relative POSIX, null in a dry run) and the external-tools lines. The temp dir is removed in a `finally`. An executor failure is marked for `updateRolledBack`.
+7. **Headless `update --json`** (`commands/headless/update.ts`): as adopt's. An up-to-date vault answers `upToDatePlanResult`; a plan answers `updatePlanResult`. With update and adopt headless, no `--json` run mounts Ink, so `cli.ts` no longer marks stdout non-interactive or drops Ink's trailing blank write (§4.23). A root option before the command is passed on to the runner.
 
 ## 5. Runtime Module: `shardmind/runtime`
 
@@ -2204,7 +2219,7 @@ The link carries the shardmind version (`?body=shardmind <version>`; the bare ne
 
 **Top level.** `cli.ts` runs the headless `--json` path and Pastel inside one `try`, and installs `uncaughtException` / `unhandledRejection` handlers first (`installCrashHandlers`). A throw that escapes every command (a command module that fails to load, a rejection nobody awaited) is printed by `formatErrorPlain` to stderr as plain text, the same three kinds without Ink (Ink may not be mounted), and the process exits 1: the exit code is set at once, and the exit waits for stderr to drain. Only the first such throw is printed, whichever path reports it: the `try`'s catch reports through the function `installCrashHandlers` returns, so it shares the handlers' once-guard. The version is read only when something crashes. The SIGINT path is untouched: a Ctrl+C still exits 130 with no bug framing.
 
-**While rendering.** A throw while a command renders never reaches either: Ink's own error boundary would print its overview, with no report link, and exit 0. Pastel's custom app, `commands/_app.tsx`, wraps every command in `components/CrashBoundary.tsx`, which shows the error through `ErrorView`, sets exit code 1 and ends the app. Under `--json` it writes the command's failure document instead (`jsonFailure`, the command named by `jsonCommandOf(argv)`: the first argument that is not a flag, else `status`), so stdout stays one document carrying the stack.
+**While rendering.** A throw while a command renders never reaches either: Ink's own error boundary would print its overview, with no report link, and exit 0. Pastel's custom app, `commands/_app.tsx`, wraps every command in `components/CrashBoundary.tsx`, which shows the error through `ErrorView`, sets exit code 1 and ends the app. A `--json` run never renders (§4.29, #302): a crash in it reaches the top-level handler, which answers on stdout.
 
 **Stdout closed early (#252).** When the reader of stdout goes away before shardmind finishes writing (`shardmind --json | head -1`), the next write fails with `EPIPE` and Node emits `'error'` on `process.stdout`. That is the reader's choice, not a failure of shardmind, so it is neither a `bug` nor an `environment` error. `exitQuietlyWhenStdoutCloses(proc)` (`core/stdout-closed.ts`), installed by `cli.ts` right after the `--json` gate, listens for it:
 - `EPIPE`: stdout is marked closed and every later write is dropped, its callback still called. The run is not cut short: an update or adopt in its write pass finishes, or rolls back, through its own paths, so a closed pipe never leaves a half-written vault. When the process exits, a run that would have exited 0 exits 141 (128 + SIGPIPE) on every OS instead. That is what a shell reports for a Unix tool cut off by `head`, so `set -o pipefail` treats shardmind like any other tool. Any other exit code the run reaches (a failure, a crash whose report went to stderr) is kept. Nothing is written to stderr.

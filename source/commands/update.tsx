@@ -1,9 +1,5 @@
-import { Box, Text, useApp } from 'ink';
-import { useEffect } from 'react';
-import zod from 'zod';
-import { updateCheckOption } from './hooks/update-check-option.js';
-
-import { emitJson, jsonFailure } from '../core/json-output.js';
+import { Box, Text } from 'ink';
+import type zod from 'zod';
 
 import { Spinner, StatusMessage, Alert } from '../components/ui.js';
 import { assertNever } from '../runtime/types.js';
@@ -23,41 +19,18 @@ import Header from '../components/Header.js';
 import { useUpdateMachine } from './hooks/use-update-machine.js';
 import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 
-export const options = zod.object({
-  yes: zod.boolean().default(false).describe('Accept defaults for every prompt (auto-keeps conflicts)'),
-  verbose: zod.boolean().default(false).describe('Show per-file action history during write'),
-  dryRun: zod.boolean().default(false).describe('Plan the update without touching the vault'),
-  json: zod
-    .boolean()
-    .default(false)
-    .describe('Emit machine-readable JSON instead of the TUI; with --dry-run, the per-file plan'),
-  // Named `--release <v>` because Pastel reserves the program-level
-  // `--version` for "print package version" (`shardmind --version`).
-  // Trying to expose `update --version 0.2.0` would silently print the
-  // package version and exit. `--release` matches GitHub's terminology
-  // for tagged releases and avoids the collision.
-  release: zod
-    .string()
-    .optional()
-    .describe('Pin the update to a specific shard release tag (stable or prerelease)'),
-  includePrerelease: zod
-    .boolean()
-    .default(false)
-    .describe('Widen latest-release resolution to include prereleases'),
-  adoptPreexisting: zod
-    .boolean()
-    .default(false)
-    .describe('Track a file you keep at a path the new version adds as your modified copy'),
-  updateCheck: updateCheckOption,
-});
+// Ink-free, so the headless `--json` run parses with the same options (#302).
+import { options } from './options/update.js';
+
+export { options };
 
 type Props = {
   options: zod.infer<typeof options>;
 };
 
 export default function Update({ options }: Props) {
-  const { yes, verbose, dryRun, release, includePrerelease, adoptPreexisting, updateCheck, json } = options;
-  const { exit: exitApp } = useApp();
+  // `--json` never reaches this component: cli.ts answers it headless (#302).
+  const { yes, verbose, dryRun, release, includePrerelease, adoptPreexisting, updateCheck } = options;
 
   const {
     phase,
@@ -71,30 +44,12 @@ export default function Update({ options }: Props) {
     yes,
     verbose,
     dryRun,
-    json,
     release,
     includePrerelease,
     adoptPreexisting,
   });
 
-  // Chrome is suppressed under --json so stdout is exactly one JSON document.
-  const { banner } = useSelfUpdateBanner({ updateCheck: updateCheck && !json });
-
-  // A --json run must answer with a document on failure too, not a rendered
-  // error box (which returns null here) and certainly not a stack trace. The
-  // machine's `finish` already sets a non-zero exit code; this supplies the
-  // parseable body to go with it (#139 finding 3).
-  useEffect(() => {
-    if (!json) return;
-    if (phase.kind !== 'error') return;
-    emitJson(jsonFailure('update', phase.error));
-    process.exitCode = 1;
-    exitApp();
-  }, [json, phase, exitApp]);
-
-  // Render nothing under --json: the machine writes the document straight to
-  // stdout, and an Ink frame would wrap it at the terminal width.
-  if (json) return null;
+  const { banner } = useSelfUpdateBanner({ updateCheck });
 
   switch (phase.kind) {
     case 'booting':

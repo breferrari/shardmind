@@ -131,7 +131,7 @@ shardmind/
 │   │   ├── adopt.tsx                  # shardmind adopt <shard>
 │   │   ├── validate.tsx               # shardmind validate [dir|shard] — author-facing check (#34)
 │   │   ├── options/                   # Ink-free zod args/options per command, re-exported by the .tsx (#302)
-│   │   ├── headless/                  # --json runners cli.ts calls before Ink loads: status, adopt (#302)
+│   │   ├── headless/                  # --json runners cli.ts calls before Ink loads: status, adopt, update (#302)
 │   │   └── hooks/                     # State-machine + shared command hooks
 │   │       ├── use-install-machine.ts
 │   │       ├── use-update-machine.ts
@@ -213,13 +213,13 @@ shardmind/
 │   │   ├── bug-report.ts              # describeError (known / environment / bug), report link, top-level crash handler (#225)
 │   │   ├── rollback-report.ts         # ROLLBACK_INCOMPLETE: what a failed rollback left behind (#247)
 │   │   ├── restore-tree.ts            # Put a snapshot back: copy over, or a whole-replaced folder exactly (#264)
-│   │   ├── json-run.ts                # A terminal --json run behaves as piped: stdout non-interactive before Ink (#198)
+│   │   ├── json-run.ts                # Which runs are --json runs, answered headless before Ink loads (#198, #302)
 │   │   ├── editor.ts                  # Open in editor: $VISUAL/$EDITOR, temp copy, raw-mode handoff (#50)
 │   │   ├── created-folders.ts         # The folders a run created, removed by its rollback (#258)
 │   │   ├── external-tools.ts          # Check external_tools against their ranges; no-shell probe (#138)
 │   │   ├── vault-transaction.ts       # One vault transaction: snapshot before each write, rollback, state.json last (#301)
 │   │   ├── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
-│   │   └── flows/                     # UI-free command runs the Ink machines adapt (§4.30, #302): prepare-shard, values, adopt
+│   │   └── flows/                     # UI-free command runs the Ink machines adapt (§4.30, #302): prepare-shard, values, adopt, update
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
 │   │   ├── hook-runner.ts             # ESM subprocess entry that imports + invokes a hook
 │   │   └── self-update-refresh.ts     # Detached child that refreshes the npm self-update cache (#285)
@@ -394,7 +394,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `vault-path-guard.ts` | §4.20 | Refuses install / update / adopt over a symlinked, hard-linked or case-folded vault path (`VAULT_PATH_UNSAFE`, #163) |
 | `stdout-closed.ts` | §7.2a | A reader that closes stdout early (`| head`): later writes dropped, the run finishes or rolls back, then a quiet exit 141 (#252) |
 | `color-env.ts` | §4.21 | Applies `NO_COLOR` to the environment before chalk loads; `FORCE_COLOR` wins when both are set (#37) |
-| `json-run.ts` | §4.23 | Detects a `--json` run of update / adopt / validate / status and marks stdout non-interactive before Ink loads, so a terminal run equals the piped one; a crash in it answers on stdout too (#198) |
+| `json-run.ts` | §4.23 | Detects a `--json` run of update / adopt / validate / status, which `cli.ts` answers headless before Ink loads, so a terminal run equals the piped one; a crash in it answers on stdout too (#198, #302) |
 
 | `lint-shard.ts` | §4.22 | Install's checks in check mode, collecting every finding; used by `validate` (#34) and the pre-install check (#35) |
 | `validate-shard.ts` | ARCHITECTURE §10.5b | `validate`'s target resolution (dir or downloaded ref) and its headless `--json` runner |

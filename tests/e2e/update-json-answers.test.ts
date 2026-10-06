@@ -188,3 +188,29 @@ describe('update --dry-run --json that would need answers', () => {
     }
   }, 120_000);
 });
+
+describe('update --dry-run --json cancelled during the download (#57, #302)', () => {
+  // POSIX sends a real SIGINT; Windows writes the ETX byte to stdin, which
+  // the stdin bridge turns into one. The headless run must have the bridge:
+  // without it a Windows cancel never reaches the runner's handler.
+  it('removes the download and exits 130 with no document', async () => {
+    const vault = await installedThenBumped(plainBump);
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'sm-child-tmp-'));
+    stub.setTarballDelay(10_000);
+    try {
+      const result = await spawnCli(['update', '--dry-run', '--json'], {
+        cwd: vault.root,
+        env: { SHARDMIND_GITHUB_API_BASE: stub.url, TMPDIR: tmp, TEMP: tmp, TMP: tmp },
+        signalAt: { signal: 'SIGINT', when: stub.waitForTarballRequest() },
+        timeoutMs: 20_000,
+      });
+      expect(result.exitCode === 130 || result.signal === 'SIGINT', `exitCode=${result.exitCode} signal=${result.signal}`).toBe(true);
+      expect(result.stdout).toBe('');
+      // The runner's handler ran, not the bridge's bare exit: the download is gone.
+      expect((await fs.readdir(tmp)).filter((n) => n.startsWith('shardmind-'))).toEqual([]);
+    } finally {
+      stub.setTarballDelay(0);
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  }, 30_000);
+});

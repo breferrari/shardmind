@@ -1,16 +1,17 @@
 /**
- * `source/core/json-run.ts` (#198): which runs are `--json` runs of update,
- * adopt or status, and making stdout non-interactive for them.
- * See docs/IMPLEMENTATION.md §4.23.
+ * `source/core/json-run.ts` (#198, #302): which runs are `--json` runs of
+ * update, adopt, validate or status. See docs/IMPLEMENTATION.md §4.23.
  */
 
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dropTrailingBlankWrites, isJsonRun, markNonInteractive, subcommandOf } from '../../source/core/json-run.js';
+import { jsonRunOf, ROOT_OPTIONS } from '../../source/core/json-run.js';
 
-describe('isJsonRun', () => {
+const isJsonRun = (argv: readonly string[]) => jsonRunOf(argv) !== undefined;
+
+describe('which runs are --json runs', () => {
   it.each([
     [['--json']],
     [['--json', '--verbose']],
@@ -45,18 +46,18 @@ describe('--version goes to Pastel, as --help does (#302)', () => {
   });
 });
 
-describe('subcommandOf (#302)', () => {
+describe('the subcommand of a --json run (#302)', () => {
   it.each([
-    [['--json'], undefined],
-    [['--verbose', '--json'], undefined],
+    [['--json'], 'status'],
+    [['--verbose', '--json'], 'status'],
     [['adopt', 'github:a/b', '--json'], 'adopt'],
     [['--verbose', 'adopt', '--json'], 'adopt'],
-    // A value of a root option reads as the subcommand: the run is not the status command.
-    [['--values', 'x', '--json'], 'x'],
+    // A value of a root option reads as the subcommand: not the status command, so no JSON run.
+    [['--values', 'x', '--json'], undefined],
     // Nothing after `--` is a subcommand.
-    [['--json', '--', 'adopt'], undefined],
+    [['--json', '--', 'adopt'], 'status'],
   ])('%j → %s', (argv, expected) => {
-    expect(subcommandOf(argv)).toBe(expected);
+    expect(jsonRunOf(argv)?.command).toBe(expected);
   });
 });
 
@@ -92,25 +93,21 @@ describe('every command with --json goes through the gate', () => {
   });
 });
 
-describe('markNonInteractive', () => {
-  it('makes a terminal stream report it is not a TTY', () => {
-    const stream = { isTTY: true } as { isTTY?: boolean };
-    markNonInteractive(stream);
-    expect(stream.isTTY).toBe(false);
-  });
-
-  it('leaves a piped stream as it is', () => {
-    const stream = {} as { isTTY?: boolean };
-    markNonInteractive(stream);
-    expect(stream.isTTY).toBeFalsy();
-  });
-});
-
 describe('root options before the subcommand', () => {
-  // isJsonRun and jsonCommandOf take the first non-option argument as the
+  // jsonRunOf takes the first non-option argument as the
   // subcommand. That holds while every root option is a boolean flag: an
   // option that took a value (`--profile work update --json`) would make the
   // value look like the subcommand.
+  it('are the status command\'s options, as ROOT_OPTIONS names them', async () => {
+    const { options } = await import('../../source/commands/options/status.js');
+    // A boolean that defaults to true is written as its --no- form (updateCheck → --no-update-check).
+    const flags = Object.entries(options.shape).map(([name, schema]) => {
+      const kebab = name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+      return schema.parse(undefined) === true ? `--no-${kebab}` : `--${kebab}`;
+    });
+    expect([...flags].sort()).toEqual([...ROOT_OPTIONS].sort());
+  });
+
   it('are all boolean flags', async () => {
     const { options } = await import('../../source/commands/index.js');
     for (const [name, schema] of Object.entries(options.shape)) {
@@ -120,53 +117,45 @@ describe('root options before the subcommand', () => {
   });
 });
 
-describe('dropTrailingBlankWrites (#231)', () => {
-  /** A stand-in for process.stdout that records what reaches it. */
-  function recorder(): { stream: { write: (chunk: unknown, ...rest: unknown[]) => boolean }; out: string[] } {
-    const out: string[] = [];
-    const stream = {
-      write: (chunk: unknown, ...rest: unknown[]): boolean => {
-        out.push(String(chunk));
-        const callback = rest.find((r) => typeof r === 'function') as (() => void) | undefined;
-        callback?.();
-        return true;
-      },
-    };
-    return { stream, out };
-  }
-
-  it("drops Ink's lone newline after the document", () => {
-    const { stream, out } = recorder();
-    dropTrailingBlankWrites(stream);
-    stream.write('{\n  "ok": true\n}\n');
-    stream.write('\n');
-    expect(out.join('')).toBe('{\n  "ok": true\n}\n');
+describe('jsonRunOf: the command and the arguments its runner takes (#302)', () => {
+  it.each([
+    [['--json'], 'status', ['--json']],
+    [['--verbose', '--json'], 'status', ['--verbose', '--json']],
+    [['update', '--dry-run', '--json'], 'update', ['--dry-run', '--json']],
+    // A root option before the subcommand is passed on (#147).
+    [['--verbose', 'adopt', 'github:a/b', '--json'], 'adopt', ['--verbose', 'github:a/b', '--json']],
+    // Only the subcommand is removed, not a later argument equal to it.
+    [['adopt', 'adopt', '--json', '--dry-run'], 'adopt', ['adopt', '--json', '--dry-run']],
+    [['validate', '--json', '--', 'x'], 'validate', ['--json', '--', 'x']],
+  ])('%j → %s with %j', (argv, command, rest) => {
+    expect(jsonRunOf(argv)).toEqual({ command, rest });
   });
 
-  it('passes a lone newline written before any content', () => {
-    const { stream, out } = recorder();
-    dropTrailingBlankWrites(stream);
-    stream.write('\n');
-    stream.write('{}\n');
-    expect(out.join('')).toBe('\n{}\n');
+  it.each([[['update', '--dry-run']], [['install', '--json']], [['--json', '--help']], [['update', '--', '--json']]])(
+    '%j is not a JSON run',
+    (argv) => {
+      expect(jsonRunOf(argv)).toBeUndefined();
+    },
+  );
+});
+
+describe('an option of the subcommand written before it (#302)', () => {
+  // Pastel refuses it (its root command does not take it); the headless run
+  // refuses it too, as a document, instead of running with it.
+  it.each([
+    [['--dry-run', 'update', '--json'], '--dry-run'],
+    [['--yes', 'adopt', 'github:a/b', '--dry-run', '--json'], '--yes'],
+    [['--verbose', '--release', 'update', '--json'], '--release'],
+  ])('%j is misplaced: %s', (argv, option) => {
+    expect(jsonRunOf(argv)?.misplaced).toBe(option);
   });
 
-  it('passes every write that carries content', () => {
-    const { stream, out } = recorder();
-    dropTrailingBlankWrites(stream);
-    stream.write('{\n');
-    stream.write('}\n');
-    stream.write('x\n');
-    expect(out.join('')).toBe('{\n}\nx\n');
-  });
-
-  it("still calls a dropped write's callback, which Ink's exit barrier waits on", () => {
-    const { stream } = recorder();
-    dropTrailingBlankWrites(stream);
-    stream.write('{}\n');
-    let called = false;
-    const returned = stream.write('\n', () => (called = true));
-    expect(called).toBe(true);
-    expect(returned).toBe(true);
-  });
+  it.each([[['--verbose', 'update', '--json']], [['--json', 'adopt', 'x', '--dry-run']], [['--no-update-check', 'validate', '--json']], [['update', '--dry-run', '--json']]])(
+    '%j has nothing misplaced',
+    (argv) => {
+      const run = jsonRunOf(argv);
+      expect(run).toBeDefined();
+      expect(run?.misplaced).toBeUndefined();
+    },
+  );
 });
