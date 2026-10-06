@@ -483,7 +483,7 @@ Hooks **can**:
 - Read / write files anywhere in `vaultRoot`
 - Run shell commands (`git init`, `qmd setup`, etc.)
 - Log to stdout AND stderr (both captured and surfaced in the install summary as separate labeled blocks)
-- Import `shardmind/runtime` for helpers (`loadValues`, `loadState`, `validateFrontmatter`)
+- Import `shardmind/runtime` for helpers (`loadValues`, `loadState`, `loadSchema`, `validateValues`, `validateFrontmatter`, `getIncludedModules`, `resolveVaultRoot`), the vault paths (`SHARDMIND_DIR`, `STATE_FILE`, `VALUES_FILE`), `ShardMindError` and the types. IMPLEMENTATION §5 lists everything.
 
 Hooks **cannot**:
 - Modify `.shardmind/` (engine-owned)
