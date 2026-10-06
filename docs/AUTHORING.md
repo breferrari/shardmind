@@ -496,7 +496,7 @@ Hooks **can**:
 - Read / write files anywhere in `vaultRoot`
 - Run shell commands (`git init`, `qmd setup`, etc.)
 - Log to stdout AND stderr (both captured and surfaced in the install summary as separate labeled blocks)
-- Import `shardmind/runtime` for helpers (`loadValues`, `loadState`, `loadSchema`, `validateValues`, `validateFrontmatter`, `getIncludedModules`, `resolveVaultRoot`), the vault paths (`SHARDMIND_DIR`, `STATE_FILE`, `VALUES_FILE`), `ShardMindError` and the types. IMPLEMENTATION §5 lists everything.
+- Import `shardmind/runtime` for helpers (`loadValues`, `loadState`, `loadSchema`, `validateValues`, `validateFrontmatter`, `getIncludedModules`, `resolveVaultRoot`), the vault paths (`SHARDMIND_DIR`, `STATE_FILE`, `VALUES_FILE`), `ShardMindError` and the types. IMPLEMENTATION §5 lists everything. The import resolves to the runtime of the ShardMind running the hook (see [Runtime environment](#runtime-environment)), so the shard does not vendor it.
 
 Hooks **cannot**:
 - Modify `.shardmind/` (engine-owned)
@@ -514,6 +514,8 @@ The re-hash is also where the engine detects a `bootstrap` that wrote a managed 
 ### Runtime environment
 
 Hooks run in a subprocess via the bundled `tsx` TypeScript loader; your `.ts` file is transpiled on load and executed with the same Node that's running `shardmind`. No separate build step on the shard-author side.
+
+**`import ... from 'shardmind/runtime'` gets the running engine's runtime** (#373). The engine maps that exact specifier to its own runtime before your hook loads, so the import works from a shard with no `node_modules`, and the runtime's own dependencies (`zod`, `yaml`) come from the engine's install. That runtime is the one that wrote the `state.json` your hook reads, so it always reads it. A shard can drop a vendored copy of `shardmind`; keeping one does no harm, because the engine's runtime is used either way. Other imports resolve as Node resolves them, from your hook file's location. For type-checking your hooks in your own repo, add `shardmind` as a dev dependency; type-only imports are erased and need nothing at run time.
 
 The child process receives:
 - `cwd` = `ctx.vaultRoot` (so `git init` / `qmd setup` act on the installed vault).

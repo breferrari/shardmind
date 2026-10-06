@@ -18,6 +18,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   runPostUpdateHook,
   runHook,
@@ -31,6 +32,8 @@ import type {
   PostUpdateContext,
   ShardManifest,
 } from '../../source/runtime/types.js';
+import { writeState } from '../../source/core/state.js';
+import { makeShardState } from '../helpers/shard-state.js';
 
 function makeManifest(hooks: ShardManifest['hooks']): ShardManifest {
   return {
@@ -834,5 +837,143 @@ describe('runHook — slot-agnostic runner', () => {
     expect(result.kind).toBe('ran');
     const body = await fsp.readFile(path.join(vaultDir, 'bootstrapped.txt'), 'utf-8');
     expect(body).toBe('bootstrap');
+  }, 30_000);
+});
+
+/**
+ * #373: a hook's `import 'shardmind/runtime'` resolves to the running
+ * engine's runtime, from a shard with no node_modules, and over a copy the
+ * shard vendors. The hooks below live in a fresh temp dir; they spawn the real
+ * runner, so CI covers this on all three OSes.
+ */
+describe('executeHook — shardmind/runtime resolves to the running engine (#373)', () => {
+  let shardDir: string;
+  let vaultDir: string;
+
+  beforeEach(async () => {
+    shardDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'hook-rt-shard-'));
+    vaultDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'hook-rt-vault-'));
+    // A real vault: state.json, the cached schema, and the user's values.
+    await writeState(vaultDir, makeShardState({ version: '4.5.6' }));
+    await fsp.copyFile(
+      path.resolve('examples/minimal-shard/.shardmind/shard-schema.yaml'),
+      path.join(vaultDir, '.shardmind', 'shard-schema.yaml'),
+    );
+    await fsp.writeFile(
+      path.join(vaultDir, 'shard-values.yaml'),
+      'user_name: Ada\norg_name: Engines\nvault_purpose: engineering\nqmd_enabled: false\n',
+      'utf-8',
+    );
+  });
+
+  afterEach(async () => {
+    const rmOpts = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
+    await fsp.rm(shardDir, rmOpts);
+    await fsp.rm(vaultDir, rmOpts);
+  });
+
+  const ctx = (): PostUpdateContext => ({
+    slot: 'post-update',
+    vaultRoot: vaultDir,
+    values: {},
+    modules: {},
+    shard: { name: 'rt', version: '1.0.0' },
+    newFiles: [],
+    removedFiles: [],
+  });
+
+  // Reads the vault through the runtime: loadValues parses YAML (yaml) and
+  // validateValues runs the schema's zod validator, so both dependencies must
+  // load from the engine's install, not the shard's empty directory.
+  const READ_THROUGH_RUNTIME = `
+    import { writeFile } from 'node:fs/promises';
+    import { join } from 'node:path';
+    import * as rt from 'shardmind/runtime';
+    export default async function (ctx: { vaultRoot: string }): Promise<void> {
+      const state = await rt.loadState();
+      const values = await rt.loadValues();
+      const schema = await rt.loadSchema();
+      const check = rt.validateValues(values, schema);
+      const bad = rt.validateValues({ ...values, qmd_enabled: 'yes' }, schema);
+      await writeFile(join(ctx.vaultRoot, 'read.json'), JSON.stringify({
+        version: state?.version,
+        user: values.user_name,
+        valid: check.valid,
+        badValid: bad.valid,
+        vendored: 'VENDORED' in rt,
+      }));
+    }
+  `;
+
+  // tsx loads `hook.ts` as CommonJS here (the shard has no "type": "module"),
+  // so its import becomes require(); `hook.mts` loads as ESM. Both loaders
+  // must map the specifier.
+  const LOADERS = [['CommonJS', 'hook.ts'], ['ESM', 'hook.mts']] as const;
+
+  async function run(file: string): Promise<{ version?: string; user?: string; valid?: boolean; badValid?: boolean; vendored?: boolean }> {
+    const hookPath = path.join(shardDir, file);
+    await fsp.writeFile(hookPath, READ_THROUGH_RUNTIME, 'utf-8');
+    const result = await executeHook(hookPath, ctx());
+    if (result.kind !== 'ran' || result.exitCode !== 0) {
+      throw new Error(`hook did not run cleanly: ${JSON.stringify(result)}`);
+    }
+    return JSON.parse(await fsp.readFile(path.join(vaultDir, 'read.json'), 'utf-8'));
+  }
+
+  it.each(LOADERS)('reads the vault through the runtime from a shard with no node_modules (%s)', async (_loader, file) => {
+    const read = await run(file);
+    expect(read).toEqual({ version: '4.5.6', user: 'Ada', valid: true, badValid: false, vendored: false });
+  }, 30_000);
+
+  it.each(LOADERS)('uses the engine runtime over a copy the shard vendors (%s)', async (_loader, file) => {
+    const vendored = path.join(shardDir, 'node_modules', 'shardmind');
+    await fsp.mkdir(vendored, { recursive: true });
+    await fsp.writeFile(
+      path.join(vendored, 'package.json'),
+      JSON.stringify({ name: 'shardmind', type: 'module', exports: { './runtime': './runtime.js' } }),
+      'utf-8',
+    );
+    await fsp.writeFile(path.join(vendored, 'runtime.js'), "export const VENDORED = true;\n", 'utf-8');
+    const read = await run(file);
+    expect(read.vendored).toBe(false);
+    expect(read.version).toBe('4.5.6');
+  }, 30_000);
+
+  // The CommonJS path require()s the engine's ESM runtime. Node made native
+  // require(esm) unflagged only in 22.12, and engines allows 22.0, so it must
+  // work without it: tsx's CommonJS loader transforms the runtime itself.
+  // Turning native require(esm) off simulates 22.0-22.11. Skipped on a Node
+  // without the flag, which has no native require(esm) to turn off.
+  const flagOk = spawnSync(process.execPath, ['--no-experimental-require-module', '-e', '0']).status === 0;
+  it.skipIf(!flagOk)('reads through the runtime on the CommonJS path without native require(esm)', async () => {
+    const previous = process.env['NODE_OPTIONS'];
+    process.env['NODE_OPTIONS'] = `${previous ?? ''} --no-experimental-require-module`.trim();
+    try {
+      const read = await run('hook.ts');
+      expect(read).toEqual({ version: '4.5.6', user: 'Ada', valid: true, badValid: false, vendored: false });
+    } finally {
+      if (previous === undefined) delete process.env['NODE_OPTIONS'];
+      else process.env['NODE_OPTIONS'] = previous;
+    }
+  }, 30_000);
+
+  it('leaves every other bare specifier to normal resolution', async () => {
+    const hookPath = path.join(shardDir, 'hook.ts');
+    await fsp.writeFile(
+      hookPath,
+      `
+        import { writeFile } from 'node:fs/promises';
+        import { join } from 'node:path';
+        export default async function (ctx: { vaultRoot: string }): Promise<void> {
+          let code = 'resolved';
+          try { await import('shardmind-not-a-real-package'); } catch (err) { code = (err as { code?: string }).code ?? 'unknown'; }
+          await writeFile(join(ctx.vaultRoot, 'code.txt'), code);
+        }
+      `,
+      'utf-8',
+    );
+    const result = await executeHook(hookPath, ctx());
+    expect(result.kind).toBe('ran');
+    expect(await fsp.readFile(path.join(vaultDir, 'code.txt'), 'utf-8')).toBe('ERR_MODULE_NOT_FOUND');
   }, 30_000);
 });

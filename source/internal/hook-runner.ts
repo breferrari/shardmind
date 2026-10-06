@@ -12,7 +12,8 @@
  * Flow:
  *   1. Read the two argv positions (hook path + ctx temp-file path).
  *   2. Parse the JSON-serialized slot context from the ctx file.
- *   3. Dynamically `import()` the hook module. `--import tsx/...loader.mjs`
+ *   3. Map `shardmind/runtime` to the running engine's runtime (#373), then
+ *      dynamically `import()` the hook module. `--import tsx/...loader.mjs`
  *      registers tsx's ESM loader on the parent node process, so a TS file
  *      resolves and compiles transparently from here.
  *   4. Invoke the default export with the parsed ctx and await completion.
@@ -31,9 +32,10 @@
  * docs/IMPLEMENTATION.md §4.14a for the execution algorithm.
  */
 
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import Module, { register } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { SlottedHookContext } from '../runtime/types.js';
 
 /**
@@ -89,6 +91,59 @@ function reportFailure(ctxPath: string | undefined, failure: RunnerFailure): voi
   }
 }
 
+/** The specifier mapped to the running engine's runtime (#373). Exact match only. */
+const RUNTIME_SPECIFIER = 'shardmind/runtime';
+
+/**
+ * The running engine's runtime entry, beside this runner: `../runtime/index.js`
+ * in dist, `../runtime/index.ts` when the runner itself runs from source (a dev
+ * or vitest run, which tsx transpiles). Null when neither exists.
+ */
+function engineRuntimePath(): string | null {
+  for (const rel of ['../runtime/index.js', '../runtime/index.ts']) {
+    const candidate = fileURLToPath(new URL(rel, import.meta.url));
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Resolve `shardmind/runtime` to the running engine's runtime for the hook
+ * (#373), also over a copy the shard vendors: the engine wrote the state the
+ * hook reads, so its runtime is the one guaranteed to read it. The runtime's
+ * own imports (zod, yaml) then resolve from the engine's install. Two loaders
+ * need it:
+ *   - ESM: a `module.register` resolve hook, an inline `data:` module so it
+ *     needs no bundle of its own. Registered after tsx's, so it runs first.
+ *   - CommonJS: tsx loads a `.ts` hook as CommonJS when the shard has no
+ *     `"type": "module"`, and its imports become `require()` calls, which
+ *     resolve hooks never see. `Module._resolveFilename` is wrapped instead,
+ *     the same seam tsx uses, calling through for every other request.
+ */
+function resolveRuntimeToEngine(): void {
+  const runtimePath = engineRuntimePath();
+  if (runtimePath === null) return;
+
+  const resolveHook = [
+    'let target;',
+    'export function initialize(data) { target = data.url; }',
+    'export async function resolve(specifier, context, nextResolve) {',
+    `  if (specifier === ${JSON.stringify(RUNTIME_SPECIFIER)}) return { url: target, shortCircuit: true };`,
+    '  return nextResolve(specifier, context);',
+    '}',
+  ].join('\n');
+  register(`data:text/javascript,${encodeURIComponent(resolveHook)}`, {
+    data: { url: pathToFileURL(runtimePath).href },
+  });
+
+  const original: unknown = Reflect.get(Module, '_resolveFilename');
+  if (typeof original !== 'function') return;
+  Reflect.set(Module, '_resolveFilename', function (this: unknown, request: unknown, ...rest: unknown[]): unknown {
+    if (request === RUNTIME_SPECIFIER) return runtimePath;
+    return original.call(this, request, ...rest);
+  });
+}
+
 async function main(): Promise<void> {
   const [, , hookPath, ctxPath] = process.argv;
   if (!hookPath || !ctxPath) {
@@ -107,6 +162,8 @@ async function main(): Promise<void> {
     reportFailure(ctxPath, 'context');
     process.exit(1);
   }
+
+  resolveRuntimeToEngine();
 
   // `pathToFileURL` wraps Windows absolute paths as `file:///C:/...` so
   // dynamic import resolves them. POSIX paths pass through unchanged.

@@ -1373,6 +1373,11 @@ The engine sets `install`, `context`, `spawn`, `timeout` and `cancelled` where i
 
 **Subprocess entry**: `source/internal/hook-runner.ts` — compiled to `dist/internal/hook-runner.js` via a dedicated tsup entry block. Reads argv[2] (hook path) + argv[3] (ctx tempfile), dynamic-imports the hook via `pathToFileURL`, awaits `mod.default(ctx)`, exits 0 / 1. Any throw reaches the stderr stream with a stack trace. Zero Ink / React / Pastel imports — this is the cold-start path.
 
+**`shardmind/runtime` resolves to the running engine** (#373). Before importing the hook, the runner calls `module.register()` with a resolve hook (an inline `data:` module, so no extra bundle and nothing for tsx to transpile in the loader thread). The hook maps the exact specifier `shardmind/runtime` to the runner's sibling runtime, as a `file:` URL from `pathToFileURL`: `../runtime/index.js` beside `dist/internal/hook-runner.js`, or `../runtime/index.ts` beside the source runner in a dev run. It returns `shortCircuit: true`; every other specifier goes to `nextResolve`. Hooks registered later run first, so it runs before tsx's resolution.
+- **Precedence: the engine wins**, also over a `node_modules/shardmind` the shard vendors. The engine running the hook wrote the `state.json` the hook reads, so only its runtime is guaranteed to read it (an older vendored runtime meeting newer state is #368's case), and its runtime is the pinned 1.0 surface (#358). A shard that vendored a newer runtime under an older engine gets the engine's; `requires.shardmind` is the gate for needing a newer one.
+- The runtime's own imports (`zod`, `yaml`) resolve from the runtime file's location, the engine's install, never the shard's.
+- Other `shardmind/*` specifiers and bare `shardmind` are not mapped.
+
 **Post-hook re-hash** (`source/core/state.ts::rehashManagedFiles`):
 
 ```typescript
