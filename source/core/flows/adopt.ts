@@ -102,6 +102,11 @@ export type AdoptFlowResult =
       durationMs: number;
       /** With `--from-version`: the base release, and why it could not be read, if so (#325). */
       base?: AdoptBase;
+      /** What was planned and how the differing files were settled: the --json result (#348). */
+      plan: AdoptPlan;
+      resolutions: AdoptResolutions;
+      /** The mode that settled them without asking (given, or the --yes / --json default); null otherwise. */
+      mode: AdoptMode | null;
     };
 
 
@@ -114,18 +119,9 @@ export async function runAdoptFlow(given: AdoptFlowInput, io: AdoptFlowIO): Prom
   // normalized (`v5.1.0` → `5.1.0`) for the renames and the base release.
   const input: AdoptFlowInput =
     given.fromVersion === undefined ? given : { ...given, fromVersion: parseFromVersion(given.fromVersion) };
-  const { vaultRoot, dryRun, json, yes, mode } = input;
+  const { vaultRoot, dryRun, yes, mode } = input;
   // A mode given on the command line is in force from the start, a dry run included.
   if (mode === 'auto-merge') io.warn(AUTO_MERGE_EXPERIMENTAL);
-  // `--json` is the plan surface only: executing under it would render
-  // nothing and wait at a prompt nobody sees.
-  if (json && !dryRun) {
-    throw new ShardMindError(
-      '--json is only supported together with --dry-run',
-      'JSON_REQUIRES_DRY_RUN',
-      'Add --dry-run to get the machine-readable plan. Executing with --json is not supported yet — run without --json to execute.',
-    );
-  }
   // Before the vault is read: a plan made from a vault another run is
   // changing would be stale (#253). Then the guard, before any download.
   if (!dryRun) io.lock();
@@ -212,8 +208,12 @@ async function planAndAdopt(
   // Returned even when nothing differs, so a caller always gets one (#139).
   if (input.json && input.dryRun) return { kind: 'plan', plan, mode: mode ?? null };
 
-  const resolutions = plan.differs.length === 0 ? {} : await resolveDiffers(io, shard, answers, plan, mode, yes);
-  return execute(input, io, shard, answers, plan, resolutions, externalTools);
+  // A real --json run never prompts: it settles the differing files as --yes
+  // does, keeping the user's bytes, unless a --mode decides (#348).
+  const headless = yes || input.json;
+  const resolutions = plan.differs.length === 0 ? {} : await resolveDiffers(io, shard, answers, plan, mode, headless);
+  const settledBy = plan.differs.length === 0 ? null : (mode ?? (headless ? 'keep-all-mine' : null));
+  return execute(input, io, shard, answers, plan, resolutions, externalTools, settledBy);
 }
 
 /**
@@ -328,6 +328,7 @@ async function execute(
   plan: AdoptPlan,
   resolutions: AdoptResolutions,
   externalTools: string[],
+  settledBy: AdoptMode | null,
 ): Promise<AdoptFlowResult> {
   const start = Date.now();
   io.phase({ kind: 'executing' });
@@ -375,5 +376,8 @@ async function execute(
     externalTools,
     durationMs: Date.now() - start,
     ...(plan.base ? { base: plan.base } : {}),
+    plan,
+    resolutions,
+    mode: settledBy,
   };
 }

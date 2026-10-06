@@ -134,7 +134,7 @@ shardmind update
   --adopt-preexisting                      # Track a file you keep at a path the new version adds, as your modified copy
   --dry-run                                # Plan without writing
   --verbose                                # Per-file action history
-  --json                                   # Machine-readable output; with --dry-run, the per-file plan
+  --json                                   # One JSON document: what the run did; with --dry-run, the per-file plan
 
 # Retrofit shardmind into an existing shard clone (pre-shardmind era)
 shardmind adopt <shard>
@@ -145,7 +145,7 @@ shardmind adopt <shard>
   --from-version <v>                       # The release you cloned: follow its renames, and update files you never changed
   --dry-run                                # Preview classification + plan
   --verbose                                # Per-file action history
-  --json                                   # Machine-readable output; with --dry-run, the per-file plan
+  --json                                   # One JSON document: what the run did; with --dry-run, the per-file plan
 
 # Check a shard before you publish it (author-facing, read-only)
 shardmind validate [dir|shard]
@@ -180,7 +180,7 @@ shardmind adopt <shard> --values v.yaml --dry-run --json |
 
 The list is uncapped: the terminal views sample long lists, the document never does.
 
-On `update` and `adopt`, `--json` currently requires `--dry-run` and refuses otherwise (`JSON_REQUIRES_DRY_RUN`) — it is the plan surface, not an execution surface. It always answers with one document: an up-to-date vault gets a plan marked `upToDate`, and an update that would need answers (new optional modules, removed files you edited) fails with `UPDATE_JSON_NEEDS_ANSWERS` until you add `--yes`. `shardmind --json` is the status report as a document: whether the vault is managed, installed vs latest version, and every modified, missing and orphaned file (with `--verbose`, line counts per modified file). See [`docs/ARCHITECTURE.md §10.3a`](docs/ARCHITECTURE.md).
+On `update` and `adopt`, `--dry-run --json` is the plan, and `--json` alone runs the command and answers with what it did: every file's outcome, the backup folder and the hooks. It never prompts: conflicts keep your version (as `--yes` does), and anything else needs the flags its dry run needs (#348, see [`docs/OPERATIONS.md`](docs/OPERATIONS.md)). It always answers with one document: an up-to-date vault gets a document marked `upToDate`, and an update that would need answers (new optional modules, removed files you edited) fails with `UPDATE_JSON_NEEDS_ANSWERS` until you add `--yes`. `shardmind --json` is the status report as a document: whether the vault is managed, installed vs latest version, and every modified, missing and orphaned file (with `--verbose`, line counts per modified file). See [`docs/ARCHITECTURE.md §10.3a`](docs/ARCHITECTURE.md).
 
 `adopt --mode auto-merge` is **experimental**: a best-effort union of your lines and the shard's that keeps lines the shard deleted and can duplicate lines. It sits outside the semver promise and warns on stderr when used.
 

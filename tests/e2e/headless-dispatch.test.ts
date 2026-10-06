@@ -27,10 +27,10 @@ describe('headless --json dispatch (#302)', () => {
   }, 60_000);
 
   it('a root option before the subcommand still runs it headless: `--verbose adopt --json` answers a document (#147, #302)', async () => {
-    const result = await spawnCli(['--verbose', 'adopt', 'github:a/b', '--json'], { cwd: os.tmpdir() });
+    const result = await spawnCli(['--verbose', 'adopt', 'github:a/b', '--json', '--mode', 'sideways'], { cwd: os.tmpdir() });
     expect(result.exitCode).toBe(1);
-    // --json without --dry-run: the headless runner's refusal, as one document.
-    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, command: 'adopt', error: { code: 'JSON_REQUIRES_DRY_RUN' } });
+    // The headless runner's own refusal, as one document, before any network.
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, command: 'adopt', error: { code: 'ARGS_INVALID' } });
   }, 60_000);
 
   it('an option of the subcommand before it is refused as a document, as Pastel refuses it (#302)', async () => {

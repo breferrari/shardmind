@@ -43,6 +43,14 @@ afterEach(async () => {
   await fsp.rm(dir, { recursive: true, force: true });
 });
 
+/** A lock file held by a live run on this host: the parent test runner's own PID. */
+async function holdLock(root: string): Promise<void> {
+  await fsp.writeFile(
+    path.join(root, '.shardmind.lock'),
+    JSON.stringify({ command: 'update', pid: process.ppid, startedAt: new Date(0).toISOString(), hostname: os.hostname() }),
+  );
+}
+
 describe('runAdoptJson (#302)', () => {
   it('a flag adopt does not take is ARGS_INVALID, exit 1', async () => {
     const { code, doc } = await run(['github:a/b', '--json', '--dry-run', '--nope']);
@@ -56,18 +64,16 @@ describe('runAdoptJson (#302)', () => {
     expect(doc).toMatchObject({ ok: false, error: { code: 'ARGS_INVALID' } });
   });
 
-  it('--json without --dry-run is JSON_REQUIRES_DRY_RUN, before any network', async () => {
-    const { code, doc } = await run(['github:a/b', '--json']);
+  it('--json without --dry-run is a real run: it takes the vault lock first, so a held lock is VAULT_LOCKED (#348)', async () => {
+    await holdLock(dir);
+    const { code, doc } = await run(['github:a/b', '--json', '--yes']);
     expect(code).toBe(1);
-    expect(doc).toMatchObject({ ok: false, command: 'adopt', error: { code: 'JSON_REQUIRES_DRY_RUN' } });
+    expect(doc).toMatchObject({ ok: false, command: 'adopt', error: { code: 'VAULT_LOCKED' } });
   });
 
-  it('a download cancelled by Ctrl+C writes no document and returns 130 (#57)', async () => {
-    let out = '';
-    const code = await runAdoptJson(['github:a/b', '--json', '--dry-run', '--yes'], '0.0.0-test', (chunk) => {
-      out += chunk;
-    });
+  it('a download cancelled by Ctrl+C answers CANCELLED and returns 130 (#57, #348)', async () => {
+    const { code, doc } = await run(['github:a/b', '--json', '--dry-run', '--yes']);
     expect(code).toBe(130);
-    expect(out).toBe('');
+    expect(doc).toMatchObject({ ok: false, command: 'adopt', error: { code: 'CANCELLED' } });
   });
 });

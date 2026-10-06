@@ -28,7 +28,11 @@ import type {
   UpdateStatus,
 } from '../runtime/types.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
-import { emptyUpdatePlanCounts, type UpdateAction, type UpdatePlan } from './update-planner.js';
+import { emptyUpdatePlanCounts, type ConflictResolution, type UpdateAction, type UpdatePlan } from './update-planner.js';
+import type { UpdateSummary } from './update-executor.js';
+import type { AdoptResolutions, AdoptSummary } from './adopt-executor.js';
+import type { HookOutcome } from './hook-orchestrator.js';
+import type { HookFailure } from './hook.js';
 
 /** Bumped only on a breaking reshape, never for additive fields. */
 export const JSON_SCHEMA_VERSION = 1;
@@ -296,6 +300,295 @@ export function updatePlanResult(
 /** An up-to-date vault's plan: marked, with its version, and nothing to do (#230). */
 export function upToDatePlanResult(opts: { dryRun: boolean; version: string }): UpdatePlanResult {
   return { dryRun: opts.dryRun, upToDate: true, version: opts.version, counts: emptyUpdatePlanCounts(), files: [] };
+}
+
+// ---------------------------------------------------------------------------
+// Real runs (#348) — `update --json` / `adopt --json` without `--dry-run`.
+// Spec: IMPLEMENTATION §4.29 (A real run under --json), OPERATIONS §--json
+// runs. Each file's `outcome` is a pure function of what the plan said and
+// how it was resolved, so a real run's outcomes are its dry run's plan.
+// ---------------------------------------------------------------------------
+
+/** Who settled a file nobody was asked about: the headless rule, or an adopt `--mode`. */
+export type JsonDecidedBy = 'json-default' | 'mode';
+
+export interface JsonRunHook {
+  readonly slot: string;
+  readonly outcome: 'completed' | 'failed' | 'skipped';
+  readonly exitCode?: number;
+  /** `failed` only: why, from a closed list (OPERATIONS §--json runs, #348). */
+  readonly failure?: HookFailure;
+  /** `failed` only: the first line the engine reported, for a person. */
+  readonly message?: string;
+  /** The full output, vault-relative, when the hook wrote a log. */
+  readonly log?: string;
+}
+
+export interface JsonRunWarnings {
+  readonly migrations?: readonly string[];
+  readonly externalTools: readonly string[];
+  /** A hook wrote outside its boundary (detect-and-warn, #102): `<slot>: <kind> <paths>`. */
+  readonly hookBoundary: readonly string[];
+  /** Experimental features the run used (#347). */
+  readonly experimental?: readonly string[];
+}
+
+export type UpdateRunOutcome =
+  | 'written'
+  | 'replaced'
+  | 'merged'
+  | 'restored'
+  | 'kept'
+  | 'kept-untracked'
+  | 'deleted'
+  | 'unchanged';
+
+export interface UpdateRunFile {
+  readonly path: string;
+  readonly outcome: UpdateRunOutcome;
+  readonly shardHash?: string;
+  readonly userHash?: string;
+  readonly renamedFrom?: string;
+  readonly conflict?: { readonly resolution: string; readonly by: JsonDecidedBy };
+}
+
+export interface UpdateRunResult {
+  readonly dryRun: false;
+  readonly fromVersion: string;
+  readonly toVersion: string;
+  readonly upToDate?: true;
+  readonly counts: UpdatePlan['counts'];
+  readonly files: readonly UpdateRunFile[];
+  readonly backupDir: string | null;
+  readonly hooks: readonly JsonRunHook[];
+  readonly warnings: JsonRunWarnings;
+  readonly durationMs: number;
+}
+
+function resolutionName(resolution: ConflictResolution): string {
+  return typeof resolution === 'string' ? resolution : resolution.kind;
+}
+
+/** What happened to one planned path, given its resolution when it was a conflict. */
+export function updateOutcome(
+  action: UpdateAction,
+  resolution: ConflictResolution | undefined,
+  keptUntracked: ReadonlySet<string>,
+): UpdateRunOutcome {
+  switch (action.kind) {
+    case 'add':
+      return 'written';
+    case 'overwrite':
+      return 'replaced';
+    case 'auto_merge':
+      return 'merged';
+    case 'restore_missing':
+      return 'restored';
+    case 'keep_as_user':
+      return 'kept';
+    case 'delete':
+      return 'deleted';
+    case 'noop':
+    case 'skip_volatile':
+      return 'unchanged';
+    case 'conflict': {
+      if (resolution === undefined) throw new Error(`no resolution for the conflict at ${action.path}`);
+      if (typeof resolution !== 'string') return 'merged';
+      if (resolution === 'accept_new') return 'replaced';
+      return keptUntracked.has(action.path) ? 'kept-untracked' : 'kept';
+    }
+  }
+}
+
+export function updateRunResult(input: {
+  plan: UpdatePlan;
+  resolutions: Readonly<Record<string, ConflictResolution>>;
+  summary: UpdateSummary;
+  hooks: readonly HookOutcome[];
+  backupDir: string | null;
+  migrationWarnings: readonly string[];
+  externalTools: readonly string[];
+  durationMs: number;
+}): UpdateRunResult {
+  const keptUntracked = new Set(input.summary.keptUntracked);
+  const files = input.plan.actions
+    .map((action): UpdateRunFile => {
+      const planned = updateFile(action);
+      const resolution = action.kind === 'conflict' ? input.resolutions[action.path] : undefined;
+      return {
+        path: planned.path,
+        outcome: updateOutcome(action, resolution, keptUntracked),
+        ...(planned.shardHash === undefined ? {} : { shardHash: planned.shardHash }),
+        ...(planned.userHash === undefined ? {} : { userHash: planned.userHash }),
+        ...(planned.renamedFrom === undefined ? {} : { renamedFrom: planned.renamedFrom }),
+        ...(resolution === undefined ? {} : { conflict: { resolution: resolutionName(resolution), by: 'json-default' as const } }),
+      };
+    })
+    .sort((a, b) => byPath(a.path, b.path));
+  return {
+    dryRun: false,
+    fromVersion: input.summary.fromVersion,
+    toVersion: input.summary.toVersion,
+    counts: input.plan.counts,
+    files,
+    backupDir: input.backupDir,
+    hooks: jsonRunHooks(input.hooks),
+    warnings: {
+      migrations: input.migrationWarnings,
+      externalTools: input.externalTools,
+      hookBoundary: hookBoundaryWarnings(input.hooks),
+    },
+    durationMs: input.durationMs,
+  };
+}
+
+/** An up-to-date vault's real run: nothing written, marked, with its version. */
+export function upToDateRunResult(version: string): UpdateRunResult {
+  return {
+    dryRun: false,
+    fromVersion: version,
+    toVersion: version,
+    upToDate: true,
+    counts: emptyUpdatePlanCounts(),
+    files: [],
+    backupDir: null,
+    hooks: [],
+    warnings: { migrations: [], externalTools: [], hookBoundary: [] },
+    durationMs: 0,
+  };
+}
+
+export type AdoptRunOutcome = 'matched' | 'kept-mine' | 'used-shard' | 'merged' | 'updated-behind' | 'installed';
+
+export interface AdoptRunFile {
+  readonly path: string;
+  readonly outcome: AdoptRunOutcome;
+  readonly shardHash: string;
+  readonly userHash?: string;
+  readonly renamedFrom?: string;
+  readonly conflict?: { readonly resolution: string; readonly by: JsonDecidedBy };
+}
+
+export interface AdoptRunResult {
+  readonly dryRun: false;
+  /** The mode that decided the differing files: given, or the headless default; null when nothing differed. */
+  readonly mode: string | null;
+  readonly version: string;
+  readonly counts: {
+    readonly matched: number;
+    readonly keptMine: number;
+    readonly usedShard: number;
+    readonly merged: number;
+    readonly updatedBehind: number;
+    readonly installed: number;
+    readonly total: number;
+  };
+  readonly files: readonly AdoptRunFile[];
+  readonly backupDir: string | null;
+  readonly hooks: readonly JsonRunHook[];
+  readonly warnings: JsonRunWarnings;
+  readonly durationMs: number;
+}
+
+export function adoptRunResult(input: {
+  plan: AdoptPlan;
+  resolutions: AdoptResolutions;
+  /** The mode that decided the differing files; null when none was needed. */
+  mode: string | null;
+  /** Whether that mode was given (`--mode`), or the headless default. */
+  modeGiven: boolean;
+  version: string;
+  summary: AdoptSummary;
+  hooks: readonly HookOutcome[];
+  backupDir: string | null;
+  externalTools: readonly string[];
+  durationMs: number;
+}): AdoptRunResult {
+  const file = (entry: AdoptClassification, outcome: AdoptRunOutcome, conflict?: AdoptRunFile['conflict']): AdoptRunFile => {
+    const planned = adoptFile(entry, 'matches');
+    return {
+      path: planned.path,
+      outcome,
+      shardHash: planned.shardHash,
+      ...(entry.kind === 'differs' ? { userHash: entry.userHash } : {}),
+      ...(planned.movedFrom === undefined ? {} : { renamedFrom: planned.movedFrom }),
+      ...(conflict === undefined ? {} : { conflict }),
+    };
+  };
+  const differing = input.plan.differs.map((entry) => {
+    const resolution = input.resolutions[entry.path];
+    if (resolution === undefined) throw new Error(`no resolution for the differing file ${entry.path}`);
+    const name = typeof resolution === 'string' ? resolution : resolution.kind;
+    // A mode decides every file it settles; under auto-merge, a conflicting
+    // file falls back to the user's bytes by the headless rule.
+    const by: JsonDecidedBy =
+      input.modeGiven && !(input.mode === 'auto-merge' && resolution === 'keep_mine') ? 'mode' : 'json-default';
+    const outcome: AdoptRunOutcome = name === 'keep_mine' ? 'kept-mine' : name === 'use_shard' ? 'used-shard' : 'merged';
+    return file(entry, outcome, { resolution: name, by });
+  });
+  const files = [
+    ...input.plan.matches.map((e) => file(e, 'matched')),
+    ...differing,
+    ...input.plan.behind.map((e) => file(e, 'updated-behind')),
+    ...input.plan.shardOnly.map((e) => file(e, 'installed')),
+  ].sort((a, b) => byPath(a.path, b.path));
+  const count = (outcome: AdoptRunOutcome) => files.filter((f) => f.outcome === outcome).length;
+  return {
+    dryRun: false,
+    mode: input.mode,
+    version: input.version,
+    counts: {
+      matched: count('matched'),
+      keptMine: count('kept-mine'),
+      usedShard: count('used-shard'),
+      merged: count('merged'),
+      updatedBehind: count('updated-behind'),
+      installed: count('installed'),
+      total: files.length,
+    },
+    files,
+    backupDir: input.backupDir,
+    hooks: jsonRunHooks(input.hooks),
+    warnings: {
+      externalTools: input.externalTools,
+      hookBoundary: hookBoundaryWarnings(input.hooks),
+      experimental: input.mode === 'auto-merge' ? ['adopt --mode auto-merge'] : [],
+    },
+    durationMs: input.durationMs,
+  };
+}
+
+function jsonRunHooks(outcomes: readonly HookOutcome[]): JsonRunHook[] {
+  const hooks: JsonRunHook[] = [];
+  for (const { slot, summary } of outcomes) {
+    if (!summary || summary.deferred) continue;
+    if (summary.skipped) {
+      hooks.push({ slot, outcome: 'skipped' });
+      continue;
+    }
+    const exitCode = summary.exitCode ?? 0;
+    const log = summary.logPath === undefined ? {} : { log: summary.logPath };
+    if (exitCode === 0) {
+      hooks.push({ slot, outcome: 'completed', exitCode, ...log });
+      continue;
+    }
+    const first = (summary.stderr ?? '').split(/\r?\n/).find((line) => line.trim() !== '');
+    hooks.push({
+      slot,
+      outcome: 'failed',
+      exitCode,
+      failure: summary.failure ?? (exitCode === -1 ? 'killed' : 'exit'),
+      ...(first === undefined ? {} : { message: first }),
+      ...log,
+    });
+  }
+  return hooks;
+}
+
+function hookBoundaryWarnings(outcomes: readonly HookOutcome[]): string[] {
+  return outcomes.flatMap(({ slot, summary }) =>
+    summary?.violation ? [`${slot}: ${summary.violation.kind} ${summary.violation.paths.join(', ')}`] : [],
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,17 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (`update --json` and `adopt --json` run the command — #348)
+
+- **`--json` without `--dry-run` now runs `update` and `adopt`**, and answers with one JSON document saying what happened. With `--dry-run` it still answers with the plan. The document has:
+  - each file's outcome (`written`, `replaced`, `merged`, `kept`, `kept-mine`, `used-shard`, `installed` and so on);
+  - the backup folder;
+  - each hook's outcome;
+  - an exit code that agrees with `ok`.
+- **It never prompts.** A conflict keeps your version, as `--yes` does, and the document marks it `by: "json-default"`. Any other question needs the same flags its dry run needs, so the real run does exactly what the dry run planned.
+- **A Ctrl+C rolls the run back** and answers with a `CANCELLED` document, exit 130. A hook's output never reaches stdout.
+- `JSON_REQUIRES_DRY_RUN` is no longer raised. It stays declared, so a script that names it keeps working. The exit codes and outcome names are listed in [`docs/OPERATIONS.md`](docs/OPERATIONS.md) as part of the 1.0 contract.
+
 ### Removed (the post-install hook — #357)
 
 - **Breaking: `hooks.post-install` is removed.** It was deprecated in 0.2, and since #356 the slots do everything it did. A `shard.yaml` that still declares it fails to load, and `shardmind validate` reports it, as `HOOK_SLOT_REMOVED`.

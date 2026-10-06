@@ -30,7 +30,7 @@ Status in the terminal (`shardmind` / `shardmind --verbose`) deliberately stays 
 Every `--json` document carries `schemaVersion` (`1` today). What it promises:
 
 - A consumer refuses a `schemaVersion` it does not know, rather than guess.
-- Within a `schemaVersion`, things are only added. A new field, a new `classification` or `action` value, or a new `error.details` shape may appear in a minor release, so a consumer ignores what it does not know and checks the values it branches on.
+- Within a `schemaVersion`, things are only added. A new field, a new `classification`, `action` or `outcome` value, a new hook `outcome` or `failure` value, or a new `error.details` shape may appear in a minor release, so a consumer ignores what it does not know and checks the values it branches on.
 - Within a `schemaVersion`, a field is never removed, renamed or retyped. A change that would break a consumer bumps it.
 - Error `code`s come from the registry in [`ERRORS.md`](ERRORS.md) and are stable. A code is never reused for another meaning.
 - `adopt --mode auto-merge` is experimental and outside this promise: its merge results may change in a minor release. The document's shape does not.
@@ -135,6 +135,80 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 | `SIGTERM` (POSIX) | Not specifically handled — Node's default terminates. Use `SIGINT` / ETX for clean cancellation. |
 
 ---
+
+## `--json` runs
+
+`shardmind update --json` and `shardmind adopt --json` **run** the command when `--dry-run` is absent, and write exactly one JSON document on stdout, ending in a newline, then exit (#348). With `--dry-run` they write the plan instead. The exit codes and `outcome` names below are part of the 1.0 contract.
+
+**Never prompts.**
+- **Conflicts** resolve as `--yes` resolves them, whether or not `--yes` is passed:
+  - update keeps your version of each conflicting file;
+  - adopt with no `--mode` keeps all your differing files;
+  - adopt with `--mode` lets that mode decide.
+
+  Each such file is listed with `conflict: { resolution, by }`, where `by` is `"json-default"` or `"mode"`, so a script can find every file it never chose.
+- **Any other decision** needs the flags its dry run needs, so the real run does exactly what `--dry-run --json` with the same flags planned:
+  - update's new optional modules or removed files you edited need `--yes`, else `UPDATE_JSON_NEEDS_ANSWERS`;
+  - adopt's values need `--values` or `--yes`.
+
+**Exit codes**
+
+| Case | `ok` | Exit |
+|---|---|---|
+| Finished, whatever the hooks did (they are non-fatal) | `true` | 0 |
+| Update with nothing to do (`upToDate: true`) | `true` | 0 |
+| Refused before writing (needs answers, vault locked, bad flags, network, …) | `false` | 1 |
+| Failed and rolled back, or could not roll back (`ROLLBACK_INCOMPLETE`) | `false` | 1 |
+| Ctrl+C before or during the write: rolled back | `false`, `error.code: "CANCELLED"` | 130 |
+| Ctrl+C during the hooks: the update or adopt is committed, the hooks were cut short | `true` | 130 |
+
+**`result` of a real run** (`dryRun: false`):
+
+- **`files`**: every path, sorted, each with an `outcome`, plus `shardHash` / `userHash` / `renamedFrom` / `conflict` where they apply.
+- **Run details:** `backupDir` (update: the snapshot of what it replaced; adopt: `null`, since a successful adopt keeps no snapshot), `hooks` (`slot`, `outcome`: `completed` / `failed` / `skipped`; a failed hook carries `failure`, below, and its first `message` line; plus `exitCode` and `log`), `warnings` and `durationMs`.
+- **update** also has `fromVersion`, `toVersion` and `counts`, and `upToDate: true` when there was nothing to do.
+- **adopt** also has `mode`, `version` and `counts`.
+
+| update `outcome` | Meaning |
+|---|---|
+| `written` | A new file the shard added |
+| `replaced` | Your untouched file, replaced by the new version |
+| `merged` | Your edits merged with the new version |
+| `restored` | A file you had deleted, put back |
+| `kept` | Your version kept (a conflict, or a removed file you edited) |
+| `kept-untracked` | Your file at a path the new version adds, left yours and untracked |
+| `deleted` | A file the new version dropped |
+| `unchanged` | Nothing to do |
+
+| hook `outcome` | Meaning |
+|---|---|
+| `completed` | It ran and exited 0 |
+| `failed` | It ran and failed, or could not start; `failure` says which way |
+| `skipped` | It was not run. Today that means only `personalize` when the values are the defaults (Invariant 2) |
+
+| hook `failure` (on a failed hook) | Meaning |
+|---|---|
+| `install` | shardmind's own files are missing: reinstall shardmind |
+| `context` | The hook's context could not be handed over |
+| `spawn` | The hook process could not start |
+| `import` | The hook module could not be loaded |
+| `no-default-export` | The module has no default function |
+| `threw` | The hook threw or rejected |
+| `exit` | The hook exited non-zero by itself |
+| `killed` | A signal ended it that was not shardmind's |
+| `timeout` | It ran past `timeout_ms` |
+| `cancelled` | Ctrl+C stopped it |
+
+Each failed hook has exactly one of these. The file `outcome`, hook `outcome` and hook `failure` lists are open: a later minor release may add a value (for example, #199's `--skip-hooks`). Consumers must tolerate unknown outcome values, and treat an unknown `failure` as a failure.
+
+| adopt `outcome` | Meaning |
+|---|---|
+| `matched` | Already the shard's bytes |
+| `kept-mine` | Differed; your bytes kept |
+| `used-shard` | Differed; the shard's bytes written |
+| `merged` | Differed; auto-merged (experimental) |
+| `updated-behind` | Still the `--from-version` release's bytes; the new release written (#325) |
+| `installed` | The shard's file, new to the vault |
 
 ## Versioning
 

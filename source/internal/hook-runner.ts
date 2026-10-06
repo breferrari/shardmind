@@ -31,6 +31,7 @@
  * docs/IMPLEMENTATION.md §4.14a for the execution algorithm.
  */
 
+import { writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import type { SlottedHookContext } from '../runtime/types.js';
@@ -70,6 +71,24 @@ function makeStdioBlocking(): boolean {
 
 const stdioBlocking = makeStdioBlocking();
 
+/**
+ * The runner's own failure, as the engine reads it (#348, IMPLEMENTATION
+ * §4.16): written to `<ctxPath>.failure` before exiting, so the engine knows
+ * why without parsing stderr. The exit code stays 1. Best effort: a failure
+ * to write it leaves the engine's fallback (`exit`).
+ */
+type RunnerFailure = 'context' | 'import' | 'no-default-export' | 'threw';
+let stage: RunnerFailure = 'context';
+
+function reportFailure(ctxPath: string | undefined, failure: RunnerFailure): void {
+  if (!ctxPath) return;
+  try {
+    writeFileSync(`${ctxPath}.failure`, failure, { encoding: 'utf-8', mode: 0o600 });
+  } catch {
+    // The engine falls back to `exit`.
+  }
+}
+
 async function main(): Promise<void> {
   const [, , hookPath, ctxPath] = process.argv;
   if (!hookPath || !ctxPath) {
@@ -85,20 +104,24 @@ async function main(): Promise<void> {
     ctx = JSON.parse(raw) as SlottedHookContext;
   } catch (err) {
     process.stderr.write(`shardmind hook-runner: cannot read ctx (${describe(err)})\n`);
+    reportFailure(ctxPath, 'context');
     process.exit(1);
   }
 
   // `pathToFileURL` wraps Windows absolute paths as `file:///C:/...` so
   // dynamic import resolves them. POSIX paths pass through unchanged.
+  stage = 'import';
   const mod = await import(pathToFileURL(hookPath).href);
   const fn = (mod as { default?: unknown }).default;
   if (typeof fn !== 'function') {
     process.stderr.write(
       `shardmind hook-runner: ${hookPath} must export a default async function (ctx) => Promise<void>.\n`,
     );
+    reportFailure(ctxPath, 'no-default-export');
     process.exit(1);
   }
 
+  stage = 'threw';
   await (fn as (c: SlottedHookContext) => Promise<void> | void)(ctx);
 }
 
@@ -140,6 +163,8 @@ function exitAfterFlush(code: number): void {
 
 main().catch((err: unknown) => {
   process.stderr.write(`${describe(err)}\n`);
+  // An import that failed, or the hook's function that threw.
+  reportFailure(process.argv[3], stage);
   if (stdioBlocking) process.exit(1);
   else exitAfterFlush(1);
 });

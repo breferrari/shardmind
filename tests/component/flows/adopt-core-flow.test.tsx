@@ -156,12 +156,6 @@ describe('adopt flow, UI-free (#302)', () => {
     }
   }, 60_000);
 
-  it('--json without --dry-run refuses before anything else', async () => {
-    const s = scriptedIO(() => undefined);
-    await expect(runAdoptFlow(input('unused', { json: true }), s.io)).rejects.toMatchObject({ code: 'JSON_REQUIRES_DRY_RUN' });
-    expect(s.phases).toEqual([]);
-  });
-
   it('a cancelled prompt ends the run with FlowCancelled, nothing written, the shard removed', async () => {
     pinShard();
     const vault = await vaultWith({ 'Home.md': 'mine\n' });

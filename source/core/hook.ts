@@ -145,11 +145,32 @@ export interface RunningHookPhase {
   total?: number;
 }
 
+/**
+ * Why a hook failed (#348, IMPLEMENTATION §4.16): one value from a closed
+ * list, so a script never parses message text. Exhaustive: every way a hook
+ * fails maps to exactly one value.
+ */
+export type HookFailure =
+  | 'install'
+  | 'context'
+  | 'spawn'
+  | 'import'
+  | 'no-default-export'
+  | 'threw'
+  | 'exit'
+  | 'killed'
+  | 'timeout'
+  | 'cancelled';
+
+/** The values the hook-runner may write to `<ctxPath>.failure` for its own failures. */
+const RUNNER_FAILURES: ReadonlySet<string> = new Set<HookFailure>(['context', 'import', 'no-default-export', 'threw']);
+
 export type HookResult =
   | { kind: 'absent' }
   | { kind: 'deferred'; hookPath: string }
-  | { kind: 'ran'; stdout: string; stderr: string; exitCode: number }
-  | { kind: 'failed'; message: string; stdout: string; stderr: string };
+  /** `failure` is set exactly when the exit code is non-zero. */
+  | { kind: 'ran'; stdout: string; stderr: string; exitCode: number; failure?: HookFailure }
+  | { kind: 'failed'; message: string; stdout: string; stderr: string; failure: HookFailure };
 
 /**
  * UI-layer summary of a `HookResult`. Produced by `summarizeHook` in
@@ -169,6 +190,8 @@ export type HookResult =
  *     indistinguishable from a non-zero exit at the UI layer by design).
  */
 export interface HookSummary {
+  /** Why it failed, when it did (#348). */
+  failure?: HookFailure;
   deferred?: boolean;
   /**
    * Set when the engine intentionally did NOT run a declared hook:
@@ -246,6 +269,21 @@ export function headLines(
  * - `failed` → `{ stdout, stderr: "hook <reason>\n<captured>", exitCode: 1 }` —
  *   the UI treats `failed` identically to a non-zero `ran`.
  */
+/** Where the hook-runner reports its own failure: next to the context file (#348). */
+export function runnerFailurePath(ctxPath: string): string {
+  return `${ctxPath}.failure`;
+}
+
+/** The runner's reported failure, if it wrote one we know. */
+async function readRunnerFailure(ctxPath: string): Promise<HookFailure | undefined> {
+  try {
+    const value = (await fsp.readFile(runnerFailurePath(ctxPath), 'utf-8')).trim();
+    return RUNNER_FAILURES.has(value) ? (value as HookFailure) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function summarizeHook(result: HookResult): HookSummary | null {
   switch (result.kind) {
     case 'absent':
@@ -253,11 +291,18 @@ export function summarizeHook(result: HookResult): HookSummary | null {
     case 'deferred':
       return { deferred: true };
     case 'ran':
-      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+      return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        // A non-zero exit always says why (#348): the runner's report, else
+        // a signal death (-1) or the hook's own exit.
+        ...(result.exitCode === 0 ? {} : { failure: result.failure ?? (result.exitCode === -1 ? 'killed' : 'exit') }),
+      };
     case 'failed': {
       const prefix = `hook ${result.message}`;
       const stderr = result.stderr ? `${prefix}\n${result.stderr}` : prefix;
-      return { stdout: result.stdout, stderr, exitCode: 1 };
+      return { stdout: result.stdout, stderr, exitCode: 1, failure: result.failure };
     }
     default:
       return assertNever(result);
@@ -379,6 +424,7 @@ export async function executeHook(
     return {
       kind: 'failed',
       message: 'tsx runtime not found in shardmind install. Reinstall shardmind (the bundled TypeScript loader for hooks is missing).',
+      failure: 'install',
       stdout: '',
       stderr: '',
     };
@@ -415,6 +461,7 @@ export async function executeHook(
     return {
       kind: 'failed',
       message: 'hook-runner not found in shardmind install. Did `npm run build` fail to emit the internal bundle?',
+      failure: 'install',
       stdout: '',
       stderr: '',
     };
@@ -442,6 +489,7 @@ export async function executeHook(
     return {
       kind: 'failed',
       message: `failed to write hook context to ${ctxPath}: ${message}`,
+      failure: 'context',
       stdout: '',
       stderr: '',
     };
@@ -629,6 +677,7 @@ export async function executeHook(
         message: 'cancelled',
         stdout,
         stderr,
+        failure: 'cancelled',
       };
     }
 
@@ -638,6 +687,7 @@ export async function executeHook(
         message: `timed out after ${(timeoutMs / 1000).toFixed(1)}s`,
         stdout,
         stderr,
+        failure: 'timeout',
       };
     }
 
@@ -647,6 +697,7 @@ export async function executeHook(
         message: `spawn failed: ${exitInfo.spawnErr.message}`,
         stdout,
         stderr,
+        failure: 'spawn',
       };
     }
 
@@ -654,7 +705,11 @@ export async function executeHook(
     // We fold that into exitCode -1 so the UI still has a numeric to show —
     // negative codes are conventional for signal-death in shell parlance.
     const exitCode = exitInfo.code ?? -1;
-    return { kind: 'ran', stdout, stderr, exitCode };
+    if (exitCode === 0) return { kind: 'ran', stdout, stderr, exitCode };
+    // Why it failed (#348): the runner's own report over `<ctxPath>.failure`,
+    // else a signal death (-1) or the hook's own non-zero exit.
+    const failure = (await readRunnerFailure(ctxPath)) ?? (exitCode === -1 ? 'killed' : 'exit');
+    return { kind: 'ran', stdout, stderr, exitCode, failure };
   } finally {
     offSigint();
     try {
@@ -662,5 +717,6 @@ export async function executeHook(
     } catch {
       // The file may already have been removed by sigintCleanup.
     }
+    await fsp.rm(runnerFailurePath(ctxPath), { force: true }).catch(() => {});
   }
 }

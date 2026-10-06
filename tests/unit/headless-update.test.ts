@@ -50,6 +50,14 @@ afterEach(async () => {
   await fsp.rm(dir, { recursive: true, force: true });
 });
 
+/** A lock file held by a live run on this host: the parent test runner's own PID. */
+async function holdLock(root: string): Promise<void> {
+  await fsp.writeFile(
+    path.join(root, '.shardmind.lock'),
+    JSON.stringify({ command: 'update', pid: process.ppid, startedAt: new Date(0).toISOString(), hostname: os.hostname() }),
+  );
+}
+
 describe('runUpdateJson (#302)', () => {
   it('a flag update does not take is ARGS_INVALID, exit 1', async () => {
     const { code, doc } = await run(['--json', '--dry-run', '--nope']);
@@ -58,10 +66,11 @@ describe('runUpdateJson (#302)', () => {
     expect(doc).toMatchObject({ ok: false, command: 'update', error: { code: 'ARGS_INVALID', message: expect.stringMatching(/^error: unknown option '--nope'/) } });
   });
 
-  it('--json without --dry-run is JSON_REQUIRES_DRY_RUN, before reading the vault', async () => {
+  it('--json without --dry-run is a real run: it takes the vault lock first, so a held lock is VAULT_LOCKED (#348)', async () => {
+    await holdLock(dir);
     const { code, doc } = await run(['--json']);
     expect(code).toBe(1);
-    expect(doc).toMatchObject({ ok: false, command: 'update', error: { code: 'JSON_REQUIRES_DRY_RUN' } });
+    expect(doc).toMatchObject({ ok: false, command: 'update', error: { code: 'VAULT_LOCKED' } });
   });
 
   it('a directory with no install is UPDATE_NO_INSTALL', async () => {
@@ -76,11 +85,11 @@ describe('runUpdateJson (#302)', () => {
     expect(doc).toMatchObject({ ok: false, command: 'update', error: { code: 'UPDATE_FLAG_CONFLICT' } });
   });
 
-  it('a download cancelled by Ctrl+C writes no document and returns 130 (#57)', async () => {
+  it('a download cancelled by Ctrl+C answers CANCELLED and returns 130 (#57, #348)', async () => {
     await writeInstall();
-    const { code, out } = await run(['--json', '--dry-run']);
+    const { code, doc } = await run(['--json', '--dry-run']);
     expect(code).toBe(130);
-    expect(out).toBe('');
+    expect(doc).toMatchObject({ ok: false, command: 'update', error: { code: 'CANCELLED' } });
   });
 
   it('the update-check cache is written by the time the run returns: cli.ts exits right after', async () => {

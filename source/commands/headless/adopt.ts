@@ -5,13 +5,13 @@
  * and without a terminal the values come from `--values` or `--yes`.
  */
 
-import { adoptPlanResult } from '../../core/json-output.js';
+import { adoptPlanResult, adoptRunResult } from '../../core/json-output.js';
 import { runAdoptFlow } from '../../core/flows/adopt.js';
 import type zod from 'zod';
 import { args as argsSchema, options as optionsSchema } from '../options/adopt.js';
 import { parseArgsOrThrow, runFlowJson, writeStdout, type Write } from './shared.js';
 
-/** The exit code: 0 for a plan, 1 for a failure document. */
+/** The exit code: 0 with a plan or a result, 1 with a failure document, 130 after a Ctrl+C. */
 export async function runAdoptJson(
   argv: readonly string[],
   engineVersion: string | undefined,
@@ -36,7 +36,8 @@ export async function runAdoptJson(
         vaultRoot: process.cwd(),
         engineVersion,
       },
-      // A --json run stops at the plan, before any question.
+      // A --json run never asks: a dry run stops at the plan, and a real run
+      // settles the differing files as --yes does, or by --mode (#348).
       {
         ...io,
         ask: () => Promise.reject(new Error('adopt --json never prompts')),
@@ -45,7 +46,20 @@ export async function runAdoptJson(
 `),
       },
     );
-    if (result.kind !== 'plan') throw new Error('adopt --json returned no plan');
-    return adoptPlanResult(result.plan, { dryRun: true, mode: result.mode });
+    if (result.kind === 'plan') return adoptPlanResult(result.plan, { dryRun: true, mode: result.mode });
+    // A real run answers with what it did (#348). Adopt keeps no snapshot
+    // once it succeeded (§4.28, retention per kind).
+    return adoptRunResult({
+      plan: result.plan,
+      resolutions: result.resolutions,
+      mode: result.mode,
+      modeGiven: options.mode !== undefined,
+      version: result.shard.manifest.version,
+      summary: result.summary,
+      hooks: result.hooks,
+      backupDir: null,
+      externalTools: result.externalTools,
+      durationMs: result.durationMs,
+    });
   });
 }
