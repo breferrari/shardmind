@@ -25,6 +25,7 @@ import type { RunningHookPhase } from '../../core/hook.js';
 import { rollbackDetail, wasRolledBack } from '../../core/rollback-report.js';
 import { useVaultLock } from './use-vault-lock.js';
 import { appendHookOutput, isCancelledRun, newRunAbort, stopRun, trackRun, useSigintRollback, type RunInFlight } from './shared.js';
+import { setExitCode } from '../../core/process-control.js';
 
 /** The phases every machine has, besides its own. */
 export type BasePhase = { kind: 'cancelled'; reason: string } | { kind: 'error'; error: Error; detail?: string } | RunningHookPhase;
@@ -85,7 +86,7 @@ export function useFlowRun<P extends { kind: string }>(opts: {
       setPhase(next);
       if (opts.isFinal(next)) {
         // Non-zero on error so scripts can tell; cancelled is the user's choice.
-        if (next.kind === 'error') process.exitCode = 1;
+        if (next.kind === 'error') setExitCode(1);
         // The run is over: the next one may start (#253).
         releaseLock();
         setTimeout(() => exit(), 100);

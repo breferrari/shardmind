@@ -19,6 +19,7 @@ import CommandFrame from '../components/CommandFrame.js';
 import { useInstallMachine } from './hooks/use-install-machine.js';
 import { resolveInstallDestination, type InstallDestination } from '../core/install-destination.js';
 import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
+import { setExitCode } from '../core/process-control.js';
 
 export const args = zod.tuple([
   zod.string().describe('Shard reference, e.g. "breferrari/obsidian-mind" or "github:owner/repo"'),
@@ -59,7 +60,7 @@ export default function Install({ args, options }: Props) {
       (dest) => !disposed && setDestination(dest),
       (error: unknown) => {
         if (disposed) return;
-        process.exitCode = 1;
+        setExitCode(1);
         setDestination({ error });
         setTimeout(() => exit(), 100);
       },

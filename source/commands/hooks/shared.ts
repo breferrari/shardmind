@@ -20,6 +20,7 @@ import {
   rollbackFailuresOf,
   type RollbackFailure,
 } from '../../core/rollback-report.js';
+import { exitProcess, onSigint } from '../../core/process-control.js';
 import {
   tailAtUtf8Boundary,
   summarizeHook,
@@ -132,18 +133,18 @@ export function useSigintRollback(opts: {
       } catch {
         // swallow
       }
-      process.exit(130);
+      exitProcess(130);
     };
-    process.on('SIGINT', handler);
-    sigintHandlers.add(handler);
+    const off = onSigint(handler);
+    sigintHandlers.add(off);
     return () => {
       // Once a rollback has started, keep the listener: in a TTY the first
       // Ctrl+C also makes Ink unmount the tree, and a second Ctrl+C that
       // finds no SIGINT listener would let Node's default action kill the
       // rollback halfway. The handler absorbs it; the run ends in exit(130).
       if (sigintRollbackStarted) return;
-      process.off('SIGINT', handler);
-      sigintHandlers.delete(handler);
+      off();
+      sigintHandlers.delete(off);
     };
   }, []);
 }
@@ -156,7 +157,7 @@ export function useSigintRollback(opts: {
  * never starts a rollback racing the first on the same paths.
  */
 let sigintRollbackStarted = false;
-const sigintHandlers = new Set<() => Promise<void>>();
+const sigintHandlers = new Set<() => void>();
 
 /**
  * Tests mock `process.exit`, so the process outlives the run: clear the
@@ -164,7 +165,7 @@ const sigintHandlers = new Set<() => Promise<void>>();
  */
 export function resetSigintRollbackForTests(): void {
   sigintRollbackStarted = false;
-  for (const handler of sigintHandlers) process.off('SIGINT', handler);
+  for (const off of sigintHandlers) off();
   sigintHandlers.clear();
 }
 

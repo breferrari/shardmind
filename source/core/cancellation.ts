@@ -44,6 +44,8 @@
  * cuts the first one short.
  */
 
+import { emitSigint, exitProcess } from './process-control.js';
+
 
 const ETX = 0x03;
 const ETX_CHAR = String.fromCharCode(ETX);
@@ -56,8 +58,8 @@ export interface CancellationDeps {
 }
 
 const processDeps: CancellationDeps = {
-  emitSigint: () => process.emit('SIGINT'),
-  exit: (code) => process.exit(code),
+  emitSigint,
+  exit: exitProcess,
 };
 
 let installed = false;
