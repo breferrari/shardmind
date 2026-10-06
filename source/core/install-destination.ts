@@ -27,6 +27,17 @@ export interface InstallDestination {
 export async function resolveInstallDestination(cwd: string, shardRef: string, folder?: string): Promise<InstallDestination> {
   // A malformed ref is refused first, whether or not a folder is given.
   const name = shardNameOf(shardRef);
+  // With no folder, a run from inside a vault would nest a second one in it (#337).
+  if (folder === undefined) {
+    const vault = await enclosingVault(cwd);
+    if (vault !== null) {
+      throw new ShardMindError(
+        `Cannot install into a new folder inside the vault at ${vault}`,
+        'INSTALL_INSIDE_VAULT',
+        'Name the folder to install into anyway (`shardmind install <shard> my-vault`), or install into the current folder in place with `shardmind install <shard> .`. To upgrade the vault you are in, run `shardmind update`.',
+      );
+    }
+  }
   const given = folder ?? name;
   const root = path.resolve(cwd, given);
   if (root === path.resolve(cwd)) return { root, folder: null, create: [] };
@@ -55,6 +66,21 @@ export async function resolveInstallDestination(cwd: string, shardRef: string, f
   }
   if (create.length === 0 && !(await isEmptyFolder(root))) throw destinationTaken(given, root, 'is not empty');
   return { root, folder: given, create };
+}
+
+/**
+ * The nearest folder, from `cwd` up to the filesystem root, that is a vault:
+ * it holds `.shardmind/state.json` (shardmind's) or `.obsidian/` (Obsidian's).
+ */
+async function enclosingVault(cwd: string): Promise<string | null> {
+  for (let at = path.resolve(cwd); ; at = path.dirname(at)) {
+    const [state, obsidian] = await Promise.all([
+      fsp.stat(path.join(at, '.shardmind', 'state.json')).catch(() => null),
+      fsp.stat(path.join(at, '.obsidian')).catch(() => null),
+    ]);
+    if (state?.isFile() || obsidian?.isDirectory()) return at;
+    if (path.dirname(at) === at) return null;
+  }
 }
 
 /** One entry read, not the whole listing. */
