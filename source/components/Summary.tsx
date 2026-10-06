@@ -127,14 +127,17 @@ function PathList({ title, paths }: { title: string; paths: string[] }) {
 
 /**
  * `cd` into the folder as written, safe to paste: bare when the shell would
- * read it as is, else quoted for the shell the platform runs (POSIX single
- * quotes; on Windows double quotes, a `"` never being in a Windows name). A
- * name starting with `-` gets `./`, so `cd` does not read it as an option.
+ * read it as is, else in single quotes, which neither a POSIX shell nor
+ * PowerShell (Windows' default) expands: `$`, a backtick and `%` stay as
+ * they are. Inside them a `'` is `'\''` in POSIX and `''` in PowerShell. A
+ * name starting with `-` gets `./`, so `cd` does not read it as an option;
+ * one starting with `@`, which PowerShell reads as splatting, is quoted.
  */
 export function cdCommand(folder: string, platform: NodeJS.Platform = os.platform()): string {
   const target = folder.startsWith('-') ? `./${folder}` : folder;
-  if (/^[\w./@+-]+$/.test(target)) return `cd ${target}`;
-  return platform === 'win32' ? `cd "${target}"` : `cd '${target.replace(/'/g, `'\\''`)}'`;
+  if (/^[\w./+-][\w./@+-]*$/.test(target)) return `cd ${target}`;
+  const quote = platform === 'win32' ? `''` : `'\\''`;
+  return `cd '${target.replace(/'/g, quote)}'`;
 }
 
 function openCommandForPlatform(vaultRoot: string): string {

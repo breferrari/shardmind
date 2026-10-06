@@ -169,8 +169,14 @@ describe('cdCommand: the cd line is safe to paste (#333)', () => {
     ['$HOME-vault', 'darwin', "cd '$HOME-vault'"],
     ["it's", 'linux', "cd 'it'\\''s'"],
     ['-vault', 'linux', 'cd ./-vault'],
-    ['my wiki', 'win32', 'cd "my wiki"'],
-    ['-my vault', 'win32', 'cd "./-my vault"'],
+    // PowerShell: single quotes expand nothing; `'` doubles; a leading @ is splatting.
+    ['my wiki', 'win32', "cd 'my wiki'"],
+    ['-my vault', 'win32', "cd './-my vault'"],
+    ['$work vault', 'win32', "cd '$work vault'"],
+    ['100%PATH%', 'win32', "cd '100%PATH%'"],
+    ["it's", 'win32', "cd 'it''s'"],
+    ['@vault', 'win32', "cd '@vault'"],
+    ['me@home', 'win32', 'cd me@home'],
   ] as const)('%s on %s → %s', (folder, platform, line) => {
     expect(cdCommand(folder, platform)).toBe(line);
   });
