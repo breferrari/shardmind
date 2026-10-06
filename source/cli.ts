@@ -96,7 +96,7 @@ try {
           new ShardMindError(
             `error: unknown option '${jsonArgs.misplaced}'`,
             'ARGS_INVALID',
-            `Write it after the command: shardmind ${jsonArgs.command} … ${jsonArgs.misplaced}.`,
+            `Before a command, shardmind takes only --verbose, --json and --no-update-check. Write a command's own options after it, or run \`shardmind ${jsonArgs.command} --help\` for the ones it takes.`,
           ),
         ),
       );
