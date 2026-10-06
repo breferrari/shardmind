@@ -240,8 +240,9 @@ migrations:
     renames:
       "brain/philosophy.md": "brain/manifesto.md"
 
-# v0.1: dependencies are vendored by the shard author.
-# ShardMind validates version compatibility but does not fetch.
+# dependencies: other shards this shard needs installed alongside it.
+# name/namespace as the manifest's; version a semver range. Validated,
+# not fetched (#369); fetching is planned (#82).
 ```
 
 ---

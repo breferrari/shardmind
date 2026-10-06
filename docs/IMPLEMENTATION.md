@@ -394,10 +394,12 @@ const ShardManifestSchema = z.object({
     // parse time; checked by assertEngineCompatible before any vault write.
     shardmind: z.string().refine(v => v.trim() && semver.validRange(v), 'range').optional(),
   }).optional(),
+  // Other shards this shard needs installed alongside it (#369): validated,
+  // not fetched; fetching is planned (#82).
   dependencies: z.array(z.object({
-    name: z.string(),
-    namespace: z.string(),
-    version: z.string(),
+    name: z.string().regex(/^[a-z0-9-]+$/),
+    namespace: z.string().regex(/^[a-z0-9-]+$/),
+    version: z.string().refine(v => v.trim() && semver.validRange(v), 'range'),
   })).default([]),
   hooks: z.object({
     // Three named slots since the #102 lifecycle split. `bootstrap` accepts
