@@ -450,8 +450,7 @@ Also planned in Phase 15, outside the layout contract:
 - Team features: managed templates, org-level defaults, admin controls, team sync ([#91](https://github.com/breferrari/shardmind/issues/91)).
 - A `SHARDMIND_DEBUG` log of every phase, fetch and write ([#36](https://github.com/breferrari/shardmind/issues/36)).
 - A command namespace prefix in the engine ([#25](https://github.com/breferrari/shardmind/issues/25)).
-
-An open decision, not a plan: whether a run can skip the shard's hooks ([#199](https://github.com/breferrari/shardmind/issues/199)). The options on the issue are a flag on adopt only or on all three commands, no flag, or skipping implied by `--json`.
+- `--skip-hooks` on install, update and adopt ([#199](https://github.com/breferrari/shardmind/issues/199), ruled 2026-10-06).
 
 **Superseded**:
 

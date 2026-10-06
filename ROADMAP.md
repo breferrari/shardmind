@@ -277,7 +277,7 @@ Engine capability from the original plan. These were declined on 2026-10-04/05 o
 | ⬜ | Shard search, metadata indexing and version history | [#89](https://github.com/breferrari/shardmind/issues/89) |
 | ⬜ | Teams: managed vault templates, shared values, admin controls | [#91](https://github.com/breferrari/shardmind/issues/91) |
 | ⬜ | Debug logging (SHARDMIND_DEBUG) | [#36](https://github.com/breferrari/shardmind/issues/36) |
-| ⬜ | Decide whether adopt gets --skip-hooks | [#199](https://github.com/breferrari/shardmind/issues/199) |
+| ⬜ | Add --skip-hooks to install, update and adopt | [#199](https://github.com/breferrari/shardmind/issues/199) |
 | ⬜ | Command namespace prefix in the engine | [#25](https://github.com/breferrari/shardmind/issues/25) |
 
 ## Shelf (retired 2026-10-04)
