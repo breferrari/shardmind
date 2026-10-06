@@ -37,7 +37,13 @@ export async function runAdoptJson(
         engineVersion,
       },
       // A --json run stops at the plan, before any question.
-      { ...io, ask: () => Promise.reject(new Error('adopt --json never prompts')) },
+      {
+        ...io,
+        ask: () => Promise.reject(new Error('adopt --json never prompts')),
+        // stderr only: stdout carries the one JSON document (#347).
+        warn: (message) => void process.stderr.write(`${message}
+`),
+      },
     );
     if (result.kind !== 'plan') throw new Error('adopt --json returned no plan');
     return adoptPlanResult(result.plan, { dryRun: true, mode: result.mode });

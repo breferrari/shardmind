@@ -34,6 +34,7 @@ describe('adopt flow, UI-free (#302)', () => {
     let committed = false;
     let cleanups = 0;
     const io: AdoptFlowIO = {
+      warn: () => {},
       ask: async (q) => {
         asked.push(q);
         return answer(q) as never;

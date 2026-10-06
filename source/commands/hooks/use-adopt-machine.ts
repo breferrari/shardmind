@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect } from 'react';
-import { useStdin } from 'ink';
+import { useStderr, useStdin } from 'ink';
 
 import { ShardMindError } from '../../runtime/types.js';
 import { resolveEngineVersion } from './cli-version.js';
@@ -128,6 +128,8 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
   // refuses (#139). Ink would otherwise throw "Raw mode is not supported"
   // from inside its own render tree and adopt NOTHING while exiting 0.
   const { isRawModeSupported } = useStdin();
+  // Ink's stderr: the line lands above the frame without breaking it (#347).
+  const { write: writeStderr } = useStderr();
 
   const { phase, phaseRef, launch, settle } = useFlowRun<Phase>({
     vaultRoot,
@@ -148,6 +150,8 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         const history: string[] = [];
         const io: AdoptFlowIO = {
           ...base,
+          warn: (message) => writeStderr(`${message}
+`),
           ask: <Q extends AdoptQuestion>(question: Q) =>
             ask<AdoptAnswer<Q>>(question, question.kind === 'per-file' ? question.currentIndex : undefined, () => {
               switch (question.kind) {

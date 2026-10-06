@@ -554,6 +554,9 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
         30_000,
       );
       expect(frame).toMatch(/auto-merged/);
+      // Chosen in the picker: the experimental warning, on stderr only (#347).
+      expect(r.stderr.frames.join('')).toMatch(/auto-merge is experimental/);
+      expect(r.frames.join('')).not.toMatch(/auto-merge is experimental/);
       // The empty Home.md was union-merged to the shard's rendered bytes.
       const home = await fs.readFile(path.join(vault, 'Home.md'), 'utf-8');
       expect(home.length).toBeGreaterThan(0);
@@ -583,6 +586,30 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
       expect(await fs.readFile(path.join(vault, 'Home.md'), 'utf-8')).not.toContain(
         'my pre-existing Home',
       );
+      // Not auto-merge: no experimental warning (#347).
+      expect(r.stderr.frames.join('')).not.toMatch(/experimental/);
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  it('--yes --mode=auto-merge warns once on stderr that auto-merge is experimental (#347)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('s347-auto-merge-flag');
+    try {
+      await writeRel(vault, 'Home.md', 'my pre-existing Home\n');
+      const valuesFile = path.join(vault, 'values.yaml');
+      await fs.writeFile(valuesFile, stringifyYaml(DEFAULT_VALUES), 'utf-8');
+      const r = mountAdopt({
+        shardRef: `${SHARD_REF}#v0.1.0`,
+        vaultRoot: vault,
+        options: { yes: true, values: valuesFile, mode: 'auto-merge' },
+      });
+      await waitFor(r.lastFrame, (f) => /Adopted shardmind\/minimal/.test(f), 30_000);
+      const warnings = r.stderr.frames.join('').match(/auto-merge is experimental/g) ?? [];
+      expect(warnings).toHaveLength(1);
+      expect(r.frames.join('')).not.toMatch(/auto-merge is experimental/);
     } finally {
       await cleanupVault(vault);
     }

@@ -24,7 +24,7 @@ export const options = zod.object({
     .enum(['keep-all-mine', 'use-all-theirs', 'auto-merge', 'decide-per-file'])
     .optional()
     .describe(
-      'Resolve divergent files in bulk, skipping the mode picker. keep-all-mine/use-all-theirs/auto-merge are non-interactive (auto-merge still prompts on conflicts unless --yes); decide-per-file is the per-file prompt. auto-merge is best-effort (keeps your bytes, ignores shard deletions, may duplicate — review after)',
+      'Resolve divergent files in bulk, skipping the mode picker. keep-all-mine/use-all-theirs/auto-merge are non-interactive (auto-merge still prompts on conflicts unless --yes); decide-per-file is the per-file prompt. auto-merge is experimental and best-effort (keeps your bytes, ignores shard deletions, may duplicate — review after)',
     ),
   fromVersion: zod
     .string()
