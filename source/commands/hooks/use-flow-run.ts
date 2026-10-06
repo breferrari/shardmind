@@ -5,9 +5,12 @@
  *
  * - the question the flow waits on, answered only from its own prompt
  *   (`settle`), and ended with `FlowCancelled` when the run is superseded;
- * - the run handle a Ctrl+C stops and waits for (#249), cleared only by
- *   the run that set it; the hooks' abort; the temp dir's cleanup, run on
- *   every Ctrl+C and on supersession (`useSigintRollback`);
+ * - the run handle a Ctrl+C stops and waits for (#249) and the hooks'
+ *   abort, each set and cleared only by its own run; the temp dir's
+ *   cleanup, run on every Ctrl+C and on supersession (`useSigintRollback`);
+ * - a superseded run's end: its run abort is aborted (when it is made, or
+ *   when the run is superseded mid-write, which rolls it back), its hooks'
+ *   abort too, and it takes or releases no lock its successor holds;
  * - the vault lock (#253), released when the run ends;
  * - the end of the run: the final phase, the exit code, the error view's
  *   rollback line.
@@ -149,8 +152,11 @@ export function useFlowRun<P extends { kind: string }>(opts: {
             },
           },
           // A transaction that makes its vault folder takes the lock once it
-          // exists, and releases it if it rolls back (§4.28 step 1a).
+          // exists, and releases it if it rolls back (§4.28 step 1a). The
+          // lock is the command's: a superseded run neither takes it nor
+          // releases the one its successor holds.
           lock: () => {
+            if (disposed) return { release: () => {} };
             takeLock();
             return { release: releaseLock };
           },
@@ -159,14 +165,18 @@ export function useFlowRun<P extends { kind: string }>(opts: {
             if (disposed) void cleanup().catch(() => {});
             else ctxCleanupRef.current = cleanup;
           },
-          // A run superseded after its last question goes no further: its
-          // executor gets an aborted signal and stops before it writes.
+          // A superseded run goes no further: its executor's signal is
+          // aborted, so it stops before its first write, or rolls back the
+          // writes it made.
           newRunAbort: () => {
             const abort = newRunAbort();
-            if (disposed) abort.abort();
+            if (stop.signal.aborted) abort.abort();
+            else stop.signal.addEventListener('abort', () => abort.abort(), { once: true });
             return abort;
           },
           onRun: (abort, run) => {
+            // The successor's handle is the one a Ctrl+C stops.
+            if (disposed) return;
             mine = trackRun(abort, run);
             runRef.current = mine;
           },
@@ -174,7 +184,10 @@ export function useFlowRun<P extends { kind: string }>(opts: {
           // during them can't walk the run back.
           onCommitted: dropMine,
           onHookAbort: (abort) => {
-            if (abort) {
+            if (abort && disposed) {
+              // A superseded run runs no hooks of its own.
+              abort.abort();
+            } else if (abort) {
               myHookAbort = abort;
               hookAbortRef.current = abort;
             } else if (hookAbortRef.current === myHookAbort) {
