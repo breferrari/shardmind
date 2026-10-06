@@ -8,6 +8,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (a hook can import shardmind/runtime — #373)
+
+- **A hook's `import ... from 'shardmind/runtime'` now works without vendoring.** The engine resolves it to its own runtime, so the helpers AUTHORING documents (`loadValues`, `loadState`, `validateValues` and the rest) are reachable from a shard with no `node_modules`. Before, the import failed unless the shard vendored `shardmind` together with `zod` and `yaml`.
+- The running engine's runtime is used even when the shard vendors a copy, because it is the runtime that wrote the `state.json` the hook reads. A shard can drop its vendored copy; keeping one does no harm.
+
 ### Added (`update --json` and `adopt --json` run the command — #348)
 
 - **`--json` without `--dry-run` now runs `update` and `adopt`**, and answers with one JSON document saying what happened. With `--dry-run` it still answers with the plan. The document has:
