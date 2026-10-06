@@ -135,20 +135,14 @@ export type UpdateFlowResult =
       /** Vault-relative POSIX path of the pre-update snapshot; null in a dry run. */
       backupDir: string | null;
       externalTools: string[];
+      /** What was planned and how each conflict was settled: the --json result (#348). */
+      plan: UpdatePlan;
+      resolutions: Record<string, ConflictResolution>;
     };
 
 
 export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): Promise<UpdateFlowResult> {
-  const { vaultRoot, dryRun, json } = input;
-  // `--json` is the plan surface only: executing under it would render
-  // nothing and wait at a prompt nobody sees.
-  if (json && !dryRun) {
-    throw new ShardMindError(
-      '--json is only supported together with --dry-run',
-      'JSON_REQUIRES_DRY_RUN',
-      'Add --dry-run to get the machine-readable plan. Executing with --json is not supported yet — run without --json to execute.',
-    );
-  }
+  const { vaultRoot, dryRun } = input;
   // Before the state is read: a plan made from a state another run is
   // changing would be stale (#253).
   if (!dryRun) io.lock();
@@ -344,8 +338,9 @@ async function planAndUpdate(
   const resolutions: Record<string, ConflictResolution> = {};
   for (let currentIndex = 0; currentIndex < plan.pendingConflicts.length; currentIndex++) {
     const pc = plan.pendingConflicts[currentIndex]!;
-    // --yes keeps the user's copy of each conflict.
-    resolutions[pc.path] = input.yes
+    // --yes keeps the user's copy of each conflict, and so does a real --json
+    // run, which never prompts (#348): keeping loses nothing.
+    resolutions[pc.path] = input.yes || input.json
       ? 'keep_mine'
       : await io.ask({ kind: 'conflict', ctx, plan, values, selections, currentIndex, resolutions: { ...resolutions } });
   }
@@ -412,6 +407,8 @@ async function execute(
     durationMs: Date.now() - start,
     backupDir: result.backupDir ? toPosix(vaultRoot, result.backupDir) : null,
     externalTools,
+    plan,
+    resolutions,
   };
 }
 

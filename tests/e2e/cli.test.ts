@@ -1438,11 +1438,10 @@ describe('shardmind update', () => {
       cwd: vault.root,
       env: envWithStub(),
     });
-    expect(result.exitCode).toBe(1);
+    // A real run since #348: it updates and answers with what it did.
+    expect(result.exitCode).toBe(0);
     const doc = JSON.parse(result.stdout);
-    expect(doc.ok).toBe(false);
-    expect(doc.error.code).toBe('JSON_REQUIRES_DRY_RUN');
-    expect(doc.error.hint).toMatch(/--dry-run/);
+    expect(doc).toMatchObject({ ok: true, result: { dryRun: false, toVersion: '0.2.0' } });
   });
 
   it('--dry-run on a bump leaves vault content unchanged', async () => {
@@ -1981,11 +1980,11 @@ describe('shardmind adopt', () => {
       cwd: vault.root,
       env: envWithStub(),
     });
-    expect(result.exitCode).toBe(1);
+    // A real run since #348: it adopts and answers with what it did.
+    expect(result.exitCode).toBe(0);
     const doc = JSON.parse(result.stdout);
-    expect(doc.ok).toBe(false);
-    expect(doc.error.code).toBe('JSON_REQUIRES_DRY_RUN');
-    expect(await vault.exists('.shardmind/state.json')).toBe(false);
+    expect(doc).toMatchObject({ ok: true, result: { dryRun: false } });
+    expect(await vault.exists('.shardmind/state.json')).toBe(true);
   });
 
   it('--dry-run --json reports a failure as a document with a non-zero exit', async () => {

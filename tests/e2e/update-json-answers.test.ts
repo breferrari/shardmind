@@ -153,6 +153,25 @@ describe('update --dry-run --json that would need answers', () => {
     expect(actionOf(answered, 'CLAUDE.md')).toBe('keep_as_user');
   }, 120_000);
 
+  it('a real --json run refuses the same way before writing anything, and with --yes keeps the removed file (#348)', async () => {
+    const vault = await installedThenBumped(removedFile, editClaude);
+    const run = (extra: string[] = []) =>
+      spawnCli(['update', '--json', ...extra], { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: stub.url } });
+
+    const refused = await run();
+    expect(refused.exitCode).toBe(1);
+    expect(JSON.parse(refused.stdout)).toMatchObject({ ok: false, error: { code: 'UPDATE_JSON_NEEDS_ANSWERS' } });
+    // Nothing written: still the installed version.
+    expect((JSON.parse(await vault.readFile('.shardmind/state.json')) as { version: string }).version).toBe('0.1.0');
+
+    const answered = await run(['--yes']);
+    expect(answered.exitCode).toBe(0);
+    const doc = JSON.parse(answered.stdout) as { ok: boolean; result: { files: Array<{ path: string; outcome: string }> } };
+    expect(doc.ok).toBe(true);
+    expect(doc.result.files.find((f) => f.path === 'CLAUDE.md')?.outcome).toBe('kept');
+    expect(await vault.readFile('CLAUDE.md')).toContain('My edit.');
+  }, 120_000);
+
   it('names both decisions when both are pending, so --yes decides nothing unannounced', async () => {
     const vault = await installedThenBumped(bothPending, editClaude);
     const refused = await updateJson(vault);
@@ -193,7 +212,7 @@ describe('update --dry-run --json cancelled during the download (#57, #302)', ()
   // POSIX sends a real SIGINT; Windows writes the ETX byte to stdin, which
   // the stdin bridge turns into one. The headless run must have the bridge:
   // without it a Windows cancel never reaches the runner's handler.
-  it('removes the download and exits 130 with no document', async () => {
+  it('removes the download and exits 130 with one CANCELLED document (#348)', async () => {
     const vault = await installedThenBumped(plainBump);
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'sm-child-tmp-'));
     stub.setTarballDelay(10_000);
@@ -204,8 +223,9 @@ describe('update --dry-run --json cancelled during the download (#57, #302)', ()
         signalAt: { signal: 'SIGINT', when: stub.waitForTarballRequest() },
         timeoutMs: 20_000,
       });
-      expect(result.exitCode === 130 || result.signal === 'SIGINT', `exitCode=${result.exitCode} signal=${result.signal}`).toBe(true);
-      expect(result.stdout).toBe('');
+      expect(result.exitCode, `exitCode=${result.exitCode} signal=${result.signal}`).toBe(130);
+      // Every --json exit answers with one document, a cancel included.
+      expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, command: 'update', error: { code: 'CANCELLED' } });
       // The runner's handler ran, not the bridge's bare exit: the download is gone.
       expect((await fs.readdir(tmp)).filter((n) => n.startsWith('shardmind-'))).toEqual([]);
     } finally {
