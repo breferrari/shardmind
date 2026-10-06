@@ -70,25 +70,25 @@ try {
   // even when it renders nothing (#198), and the JSON must be one clean
   // document (#34). Each runner takes the arguments after the command and
   // returns the exit code. `--help` still goes to Pastel.
-  // The status command (the root, no subcommand) and adopt run headless too (#302).
+  // The status command (the root, no subcommand), adopt and update run headless too (#302).
   const HEADLESS_JSON: Record<string, () => Promise<(argv: readonly string[], engineVersion: string | undefined) => Promise<number>>> = {
     validate: async () => (await import('./core/validate-shard.js')).runValidateJson,
     status: async () => (await import('./commands/headless/status.js')).runStatusJson,
     adopt: async () => (await import('./commands/headless/adopt.js')).runAdoptJson,
+    update: async () => (await import('./commands/headless/update.js')).runUpdateJson,
   };
   const argv = process.argv.slice(2);
-  // The subcommand as isJsonRun reads it; none is the status command. A named
-  // command must come first: a root option before it (`shardmind --verbose
-  // adopt`) goes to Pastel, which passes it on (#147).
+  // The subcommand as isJsonRun reads it; none is the status command. A root
+  // option before it (`shardmind --verbose adopt`) is passed on to the
+  // command, as Pastel passes it on (#147).
   const subcommand = subcommandOf(argv);
-  const isRoot = subcommand === undefined;
-  const command = isRoot ? 'status' : subcommand === argv[0] ? subcommand : undefined;
   // jsonRun admits only the commands in json-run.ts, so `constructor --json`
   // never reaches this lookup.
-  const headless = command === undefined ? undefined : HEADLESS_JSON[command];
+  const headless = HEADLESS_JSON[subcommand ?? 'status'];
   if (headless && jsonRun) {
     const run = await headless();
-    process.exitCode = await run(isRoot ? argv : argv.slice(1), crash.version);
+    const at = subcommand === undefined ? -1 : argv.indexOf(subcommand);
+    process.exitCode = await run(at < 0 ? argv : [...argv.slice(0, at), ...argv.slice(at + 1)], crash.version);
     // A pipe write can still be queued (Windows, macOS): exiting before it
     // drains would cut the document short.
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));

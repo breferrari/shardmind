@@ -18,7 +18,7 @@ import crypto from 'node:crypto';
 import {
   lookupUpdateTarget,
   resolveRefForUpdate,
-} from '../../source/commands/hooks/use-update-machine.js';
+} from '../../source/core/flows/update.js';
 import { ShardMindError } from '../../source/runtime/types.js';
 import { SHARDMIND_DIR, STATE_FILE } from '../../source/runtime/vault-paths.js';
 import { makeShardState } from '../helpers/index.js';

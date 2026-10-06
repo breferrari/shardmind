@@ -180,7 +180,8 @@ describe.skipIf(noPty())('--json in a real terminal (#198)', () => {
   it('a crash outside every command under --json is byte-identical to the piped run', async () => {
     const dist = await createBrokenDist();
     try {
-      await dist.setRootCommand("throw new TypeError('boom from a broken module under json');\n");
+      // update --json loads its headless runner's chunk (#302).
+      await dist.setChunk('update', "throw new TypeError('boom from a broken module under json');\n");
       const args = ['update', '--dry-run', '--json'];
       const env = { SHARDMIND_NO_UPDATE_CHECK: '1' };
       const piped = spawnSync(process.execPath, [dist.cli, ...args], {

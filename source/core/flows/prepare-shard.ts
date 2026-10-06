@@ -21,25 +21,31 @@ export interface PreparedShard {
 }
 
 export interface PrepareShardOptions {
-  command: 'install' | 'adopt';
+  command: 'install' | 'adopt' | 'update';
   engineVersion: string | undefined;
   /** Each step's message ("Resolving …", "Downloading …", …). */
   onLoading: (message: string) => void;
   /** The temp dir's cleanup, handed over before the fetch (#57). */
   onCleanup: (cleanup: () => Promise<void>) => void;
+  /** Resolve the caller's way (update: the source recorded in state.json). */
+  resolve?: () => Promise<ResolvedShard>;
+  /** The parse step's message; "Parsing manifest and schema…" by default. */
+  parseMessage?: string;
 }
 
 /** Resolve, download, parse the manifest, check the engine range (#121), parse the schema. */
 export async function prepareShard(ref: string, opts: PrepareShardOptions): Promise<PreparedShard> {
   opts.onLoading(`Resolving ${ref}…`);
-  const resolved = await resolveRef(ref, { command: opts.command });
+  const resolved = opts.resolve
+    ? await opts.resolve()
+    : await resolveRef(ref, { command: opts.command === 'update' ? undefined : opts.command });
 
   opts.onLoading(`Downloading ${resolved.namespace}/${resolved.name}@${resolved.version}…`);
   // The cleanup is handed over before the fetch, so a Ctrl+C during the
   // download removes the temp dir too (#57).
   const temp = await downloadShard(resolved.tarballUrl, opts.onCleanup);
 
-  opts.onLoading('Parsing manifest and schema…');
+  opts.onLoading(opts.parseMessage ?? 'Parsing manifest and schema…');
   const manifest = await parseManifest(temp.manifest);
   // Refused before any vault write if this engine can't satisfy the shard's
   // declared requires.shardmind range (#121).

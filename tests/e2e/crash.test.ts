@@ -72,24 +72,6 @@ describe('a bug no error view catches (#225)', () => {
     expect(result.stdout).toContain(`issues/new?body=shardmind+${version}`);
   }, 60_000);
 
-  // Update's --json still renders through Ink until it runs headless (#302).
-  it('writes a throw while a --json command renders as one failure document with the stack', async () => {
-    await dist.setCommand(
-      'update',
-      [
-        "import zod from 'zod';",
-        "export const options = zod.object({ json: zod.boolean().default(false), dryRun: zod.boolean().default(false) });",
-        "export default function Update() { throw new TypeError('boom while rendering json'); }",
-        '',
-      ].join('\n'),
-    );
-    const result = runCli(['update', '--dry-run', '--json']);
-    expect(result.status, result.stdout + result.stderr).toBe(1);
-    const doc = JSON.parse(result.stdout) as { ok: boolean; command: string; error: { code: null; stack: string } };
-    expect(doc).toMatchObject({ ok: false, command: 'update', error: { code: null } });
-    expect(doc.error.stack).toContain('boom while rendering json');
-  }, 60_000);
-
   // status --json runs headless (#302): a throw its runner does not catch
   // still answers on stdout.
   it('writes a throw from the headless status runner as one failure document with the stack', async () => {
@@ -105,9 +87,9 @@ describe('a bug no error view catches (#225)', () => {
   // there with one failure document, the same piped and in a terminal. The
   // plain-text report stays on stderr for a human.
   it.each([
-    // status --json and adopt --json load their headless runners, not the root command (#302).
+    // A --json run loads its command's headless runner, not the root command (#302).
     ['status --json', ['--json'], 'status', () => dist.setChunk('status', "throw new TypeError('boom from a broken module under json');\n")],
-    ['update --dry-run --json', ['update', '--dry-run', '--json'], 'update', () => dist.setRootCommand("throw new TypeError('boom from a broken module under json');\n")],
+    ['update --dry-run --json', ['update', '--dry-run', '--json'], 'update', () => dist.setChunk('update', "throw new TypeError('boom from a broken module under json');\n")],
     ['adopt --dry-run --json', ['adopt', 'github:acme/demo', '--dry-run', '--json'], 'adopt', () => dist.setChunk('adopt', "throw new TypeError('boom from a broken module under json');\n")],
   ] as const)('writes a throw that escapes every command in %s as one failure document on stdout', async (_name, args, command, breakIt) => {
     await breakIt();

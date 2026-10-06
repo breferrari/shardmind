@@ -29,6 +29,7 @@ import {
 import { tick, waitFor, ENTER, ARROW_DOWN } from '../helpers.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
 import { resetSigintRollbackForTests } from '../../../source/commands/hooks/shared.js';
+import { runUpdateJson } from '../../../source/commands/headless/update.js';
 
 const MULTI_CONFLICT_SLUG = 'acme/multi-conflict';
 const MULTI_CONFLICT_REF = `github:${MULTI_CONFLICT_SLUG}`;
@@ -819,14 +820,12 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
 
   // ───── Scenario 17g: --dry-run --json at the removed-files decision → one refusal document (#230) ─────
 
+  // `--json` runs headless, without this tree (#302): the runner cli.ts calls.
   it('17g. --dry-run --json at a removed-files decision writes a refusal document, not a hidden prompt (#230)', async () => {
     const { stub } = getCtx();
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rmj-'));
     const written: string[] = [];
-    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
-      written.push(String(chunk));
-      return true;
-    });
+    const cwd = process.cwd();
     try {
       const manifestOverrides = { hooks: {}, name: 'removed-file-json', namespace: 'flowtest' };
       const v01 = await buildCustomTarball({ version: '0.1.0', prefix: 'removed-json-0.1.0', manifestOverrides, outDir: tmpDir });
@@ -847,21 +846,18 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         stub.setVersion(REMOVED_FILE_SLUG, '0.2.0', v02);
         stub.setLatest(REMOVED_FILE_SLUG, '0.2.0');
 
-        mountUpdate({ vaultRoot: vault.root, options: { dryRun: true, json: true } });
-        // Under --json the tree renders nothing, so a hidden prompt shows up
-        // only as a document that never arrives.
-        const deadline = Date.now() + 30_000;
-        while (!written.join('').includes('"schemaVersion"') && Date.now() < deadline) await tick(50);
-        expect(written.join(''), 'no JSON document within 30 s: the run is waiting on a prompt').toContain('"schemaVersion"');
+        process.chdir(vault.root);
+        const code = await runUpdateJson(['--dry-run', '--json'], undefined, (chunk) => void written.push(chunk));
+        expect(code).toBe(1);
         const doc = JSON.parse(written.join('')) as { ok: boolean; error: { code: string; message: string } };
         expect(doc.ok).toBe(false);
         expect(doc.error.code).toBe('UPDATE_JSON_NEEDS_ANSWERS');
         expect(doc.error.message).toContain('CLAUDE.md');
       } finally {
+        process.chdir(cwd);
         await vault.cleanup();
       }
     } finally {
-      spy.mockRestore();
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   }, 120_000);

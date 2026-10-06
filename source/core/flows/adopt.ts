@@ -26,6 +26,9 @@ import { checkExternalToolsForRun } from '../external-tools.js';
 import { runHooks, type HookOutcome, type HookRunUi } from '../hook-orchestrator.js';
 import { prepareShard, type PreparedShard } from './prepare-shard.js';
 import { answersWithoutPrompting, loadValuesFile, type ValueAnswers } from './values.js';
+import { FlowCancelled } from './cancelled.js';
+
+export { FlowCancelled };
 
 /** How the differing files are settled when no per-file answer is given. */
 export type AdoptMode = 'keep-all-mine' | 'use-all-theirs' | 'auto-merge' | 'decide-per-file';
@@ -111,15 +114,6 @@ export type AdoptFlowResult =
       durationMs: number;
     };
 
-/** A prompt the user cancelled: the run ends, nothing written. */
-export class FlowCancelled extends Error {
-  readonly reason: string;
-  constructor(reason: string) {
-    super(reason);
-    this.name = 'FlowCancelled';
-    this.reason = reason;
-  }
-}
 
 /** The errors the executor threw after rolling the vault back. */
 const rolledBack = new WeakSet<object>();
