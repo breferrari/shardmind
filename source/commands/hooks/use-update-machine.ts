@@ -137,12 +137,13 @@ export interface UseUpdateMachineOutput {
   onConflictChoice: (action: DiffAction) => void;
   /** An editor is set ($VISUAL or $EDITOR), so the conflict prompt offers Open in editor (#50). */
   canEdit: boolean;
-  onCancel: (reason?: string) => void;
 }
 
 /** The question the flow is waiting on, answered from its prompt's handler only. */
 interface PendingAnswer {
   kind: UpdateQuestion['kind'];
+  /** A conflict's file: consecutive conflicts share their kind. */
+  index?: number;
   resolve: (answer: unknown) => void;
   reject: (err: Error) => void;
 }
@@ -214,7 +215,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           reject(new FlowCancelled('Superseded by a newer run.'));
           return;
         }
-        pendingRef.current = { kind: question.kind, resolve: resolve as (answer: unknown) => void, reject };
+        pendingRef.current = {
+          kind: question.kind,
+          index: question.kind === 'conflict' ? question.currentIndex : undefined,
+          resolve: resolve as (answer: unknown) => void,
+          reject,
+        };
         switch (question.kind) {
           case 'new-values':
             show({ kind: 'prompt-new-values', ctx: question.ctx });
@@ -333,10 +339,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         });
       },
       (err: unknown) => {
+        // A superseded run leaves the ref to the run that replaced it.
+        if (disposed) return;
         runRef.current = null;
         // A Ctrl+C mid-download stops the fetch; the command is exiting, so
         // that is not an error to render.
-        if (disposed || err instanceof DownloadCancelledError) return;
+        if (err instanceof DownloadCancelledError) return;
         if (err instanceof FlowCancelled) {
           finish({ kind: 'cancelled', reason: err.reason });
           return;
@@ -370,11 +378,12 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
 
   /**
    * Settle the question the flow waits on, if it is the one this prompt
-   * answers: a late or doubled handler never answers the next question.
+   * answers (a conflict: the same file): a late or doubled handler never
+   * answers the next question.
    */
-  const settle = useCallback((kind: UpdateQuestion['kind'], outcome: { value: unknown } | { error: Error }) => {
+  const settle = useCallback((kind: UpdateQuestion['kind'], outcome: { value: unknown } | { error: Error }, index?: number) => {
     const pending = pendingRef.current;
-    if (pending?.kind !== kind) return;
+    if (pending?.kind !== kind || pending.index !== index) return;
     pendingRef.current = null;
     if ('error' in outcome) pending.reject(outcome.error);
     else pending.resolve(outcome.value);
@@ -414,7 +423,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       const pc = current.plan.pendingConflicts[current.currentIndex];
       if (!pc) return;
       const edit = current.edit ?? { attempt: 0 };
-      const resolve = (resolution: ConflictResolution) => settle('conflict', { value: resolution });
+      const resolve = (resolution: ConflictResolution) => settle('conflict', { value: resolution }, current.currentIndex);
 
       if (action === 'use_edit') {
         // The one way conflict markers reach the vault: chosen, by name (#50).
@@ -453,18 +462,6 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     [settle, editorCommand, setStreamRawMode],
   );
 
-  const onCancel = useCallback(
-    (reason: string = 'User cancelled.') => {
-      // A prompt cancelled ends the flow waiting on it; with none waiting,
-      // the machine ends here.
-      const pending = pendingRef.current;
-      pendingRef.current = null;
-      if (pending) pending.reject(new FlowCancelled(reason));
-      else finish({ kind: 'cancelled', reason });
-    },
-    [finish],
-  );
-
   return {
     phase,
     // Only with an editor set and a terminal to hand it (#50).
@@ -473,7 +470,6 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     onNewModulesComplete,
     onRemovedFilesComplete,
     onConflictChoice,
-    onCancel,
   };
 }
 
