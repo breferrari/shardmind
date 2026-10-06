@@ -449,8 +449,9 @@ Also planned in Phase 15, outside the layout contract:
 - Shard discovery and search, metadata indexing and version history over the registry index, with `shardmind search` ([#89](https://github.com/breferrari/shardmind/issues/89)). A hosted registry with accounts and publishing workflows stays a VISION non-goal.
 - Team features: managed templates, org-level defaults, admin controls, team sync ([#91](https://github.com/breferrari/shardmind/issues/91)).
 - A `SHARDMIND_DEBUG` log of every phase, fetch and write ([#36](https://github.com/breferrari/shardmind/issues/36)).
-- `--skip-hooks` on adopt, install or update ([#199](https://github.com/breferrari/shardmind/issues/199)).
 - A command namespace prefix in the engine ([#25](https://github.com/breferrari/shardmind/issues/25)).
+
+An open decision, not a plan: whether a run can skip the shard's hooks ([#199](https://github.com/breferrari/shardmind/issues/199)). The options on the issue are a flag on adopt only or on all three commands, no flag, or skipping implied by `--json`.
 
 **Superseded**:
 
