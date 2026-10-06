@@ -155,12 +155,15 @@ describe.runIf(gitWorks)('validate in a git work tree (#320)', () => {
     const other = path.join(os.tmpdir(), `shardmind-validate-git-other-${crypto.randomUUID()}`);
     await fsp.mkdir(other);
     git(other, 'init', '-q');
+    // Redirected, the listing would find nothing tracked and check the
+    // untracked broken template too.
+    await fsp.writeFile(path.join(shard, 'Draft.md.njk'), '{{ broken(');
     const before = process.env['GIT_DIR'];
     process.env['GIT_DIR'] = path.join(other, '.git');
     try {
       const report = await validateShard(shard, {});
       expect(errors(report)).toEqual([]);
-      expect(report.findings.filter((f) => f.code === 'LINT_UNTRACKED_FILE')).toEqual([]);
+      expect(report.findings).toContainEqual(expect.objectContaining({ code: 'LINT_UNTRACKED_FILE', path: 'Draft.md.njk' }));
     } finally {
       if (before === undefined) delete process.env['GIT_DIR'];
       else process.env['GIT_DIR'] = before;
