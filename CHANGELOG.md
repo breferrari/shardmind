@@ -17,7 +17,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
   - an exit code that agrees with `ok`.
 - **It never prompts.** A conflict keeps your version, as `--yes` does, and the document marks it `by: "json-default"`. Any other question needs the same flags its dry run needs, so the real run does exactly what the dry run planned.
 - **A Ctrl+C rolls the run back** and answers with a `CANCELLED` document, exit 130. A hook's output never reaches stdout.
-- `JSON_REQUIRES_DRY_RUN` is gone. The exit codes and outcome names are listed in [`docs/OPERATIONS.md`](docs/OPERATIONS.md) as part of the 1.0 contract.
+- `JSON_REQUIRES_DRY_RUN` is no longer raised. It stays declared, so a script that names it keeps working. The exit codes and outcome names are listed in [`docs/OPERATIONS.md`](docs/OPERATIONS.md) as part of the 1.0 contract.
 
 ### Removed (the post-install hook — #357)
 

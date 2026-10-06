@@ -382,6 +382,12 @@ Thrown by `source/core/install-planner.ts` and `source/core/install-executor.ts`
 
 **Remedy:** For a file that appeared after planning, run `shardmind install` again: it plans around the file, and offers to back it up. Otherwise check permissions on the vault directory and the mentioned path, and retry. When the cause is an environmental errno (a full disk, a locked or read-only file, a permission refusal), the hint is that errno's own ("The disk is full…", #225), and the errno is kept as the error's `cause`.
 
+### `JSON_REQUIRES_DRY_RUN`
+
+**Meaning:** No longer raised (#348). Before #348, `update --json` and `adopt --json` without `--dry-run` refused with this code, because `--json` was only the plan. Since #348 they run the command and answer with what it did ([`OPERATIONS.md §--json runs`](OPERATIONS.md)). The code stays declared in `ErrorCode`, so a script or hook that names it keeps working.
+
+**Remedy:** None needed. To get the plan without running, add `--dry-run`.
+
 ### `CANCELLED`
 
 **Meaning:** An install, update or adopt was cancelled with Ctrl+C while it was writing (#249). Thrown by `throwIfCancelled` in `source/core/run-cancel.ts`, which each executor calls before every write, so the run stops between two writes and is then rolled back once. The process exits 130. Under `--json` it is the run's one failure document (#348).
