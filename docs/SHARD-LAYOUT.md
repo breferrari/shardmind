@@ -452,6 +452,8 @@ Criterion: **obsidian-mind v6 does not need these to install, configure, or upgr
 - **`.shardmind/shards/`** is reserved for each overlay's cached `shard.yaml`, `shard-schema.yaml` and templates, at `.shardmind/shards/<namespace>/<name>/`. No engine writes there before composition, and a shard never ships it (`.shardmind/` is Tier 1).
 - **Overlay values live at the vault root as `shard-values.<namespace>.<name>.yaml`**, beside the base shard's `shard-values.yaml`, which keeps its name. The name pattern `shard-values.*.yaml` at the vault root is reserved for them: a shard should not ship a file matching it. The engine does not enforce this today (it is not Tier 1); refusing such a file would narrow what installs, and is the maintainer's call. Removing ShardMind from a composed vault also deletes these files.
 
+**Reserved for dependency fetching** (#82, reserved in 1.0 by #369): `shard.yaml`'s `dependencies` names other shards this shard needs installed alongside it. Each entry is `{ name, namespace, version }`: `name` and `namespace` follow the manifest's own rules (lowercase letters, digits, hyphens), and `version` is a semver range. The engine validates them and does not fetch them: the shard's user installs them. Fetching them on install is planned ([#82](https://github.com/breferrari/shardmind/issues/82)); defined and validated in 1.0 (#369) so that fetching gives them no new meaning.
+
 Also planned in Phase 15, outside the layout contract:
 
 - Named registries in a user config, with `--registry` ([#39](https://github.com/breferrari/shardmind/issues/39)). Today `SHARDMIND_REGISTRY_INDEX_URL` points at another index (docs/OPERATIONS.md), and `github:owner/repo` bypasses the registry.

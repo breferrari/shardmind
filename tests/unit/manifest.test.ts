@@ -549,3 +549,50 @@ describe('external_tools (#138)', () => {
     expect(parse({ 'qmd & calc': qmd }).success).toBe(false);
   });
 });
+
+describe('dependencies are defined and validated (#369)', () => {
+  const base = { apiVersion: 'v1', name: 'demo', namespace: 'acme', version: '1.0.0' };
+  const parse = (dependencies: unknown) => ShardManifestSchema.safeParse({ ...base, dependencies });
+
+  it('accepts entries with a shard name, namespace and semver range', () => {
+    const r = parse([
+      { name: 'skills', namespace: 'kepano', version: '^1.0.0' },
+      { name: 'wiki-mind', namespace: 'breferrari', version: '>=0.1.0 <2' },
+      { name: 'any', namespace: 'x', version: '*' },
+    ]);
+    expect(r.success).toBe(true);
+  });
+
+  it('is [] when absent, as before', () => {
+    const r = ShardManifestSchema.safeParse(base);
+    expect(r.success && r.data.dependencies).toEqual([]);
+  });
+
+  it.each([
+    ['an empty version', { name: 'skills', namespace: 'kepano', version: '' }, 'dependencies.0.version'],
+    ['a whitespace version', { name: 'skills', namespace: 'kepano', version: '   ' }, 'dependencies.0.version'],
+    ['a version that is no range', { name: 'skills', namespace: 'kepano', version: 'latest' }, 'dependencies.0.version'],
+    ['an uppercase name', { name: 'Skills', namespace: 'kepano', version: '^1.0.0' }, 'dependencies.0.name'],
+    ['a namespace with a slash', { name: 'skills', namespace: 'kepano/x', version: '^1.0.0' }, 'dependencies.0.namespace'],
+    ['a missing version', { name: 'skills', namespace: 'kepano' }, 'dependencies.0.version'],
+  ])('refuses %s, naming the entry', async (_label, entry, field) => {
+    const file = tmpYaml('manifest-deps');
+    const yaml = [
+      'apiVersion: v1',
+      'name: demo',
+      'namespace: acme',
+      'version: 1.0.0',
+      'dependencies:',
+      `  - ${JSON.stringify(entry)}`,
+    ].join('\n');
+    await fs.writeFile(file, yaml);
+    try {
+      await expect(parseManifest(file)).rejects.toMatchObject({
+        code: 'MANIFEST_VALIDATION_FAILED',
+        message: expect.stringContaining(field),
+      });
+    } finally {
+      await fs.rm(file, { force: true });
+    }
+  });
+});

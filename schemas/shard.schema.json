@@ -62,7 +62,7 @@
       }
     },
     "dependencies": {
-      "description": "Other shards this shard depends on. Vendored in v0.1 (must be pre-installed in the vault); auto-fetched in v0.2+.",
+      "description": "Other shards this shard needs installed alongside it. Validated, not fetched: the shard's user installs them; fetching on install is planned (#82). Defined in 1.0 (#369).",
       "type": "array",
       "default": [],
       "items": {
@@ -70,9 +70,9 @@
         "required": ["name", "namespace", "version"],
         "additionalProperties": false,
         "properties": {
-          "name": { "type": "string" },
-          "namespace": { "type": "string" },
-          "version": { "type": "string" }
+          "name": { "type": "string", "pattern": "^[a-z0-9-]+$", "description": "The dependency shard's name: lowercase letters, digits, hyphens." },
+          "namespace": { "type": "string", "pattern": "^[a-z0-9-]+$", "description": "The dependency shard's namespace: lowercase letters, digits, hyphens." },
+          "version": { "type": "string", "minLength": 1, "description": "A semver range the dependency's version must satisfy, e.g. \"^1.0.0\"." }
         }
       }
     },
