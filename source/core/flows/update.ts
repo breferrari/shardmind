@@ -44,10 +44,11 @@ import { applyRenames, renamesBetween, type AppliedRenames } from '../rename-mig
 import { runUpdate, type UpdateProgressEvent, type UpdateSummary } from '../update-executor.js';
 import { checkExternalToolsForRun } from '../external-tools.js';
 import { buildRenderContext } from '../renderer.js';
-import { runHooks, type HookOutcome, type HookRunUi } from '../hook-orchestrator.js';
+import type { HookOutcome } from '../hook-orchestrator.js';
 import { prepareShard } from './prepare-shard.js';
 import { validateValues } from './values.js';
 import { FlowCancelled } from './cancelled.js';
+import { runAndHooks, type FlowRunIO } from './run.js';
 
 export interface UpdateFlowInput {
   vaultRoot: string;
@@ -116,20 +117,10 @@ export type UpdateAnswer<Q extends UpdateQuestion> = Q extends { kind: 'new-valu
 
 export type UpdateFlowPhase = { kind: 'loading'; message: string } | { kind: 'writing' };
 
-export interface UpdateFlowIO {
+export interface UpdateFlowIO extends FlowRunIO {
   ask<Q extends UpdateQuestion>(question: Q): Promise<UpdateAnswer<Q>>;
   phase(phase: UpdateFlowPhase): void;
   progress(event: UpdateProgressEvent): void;
-  /** The hooks' phase and output; the flow supplies the signal. */
-  hooks: Omit<HookRunUi, 'signal'>;
-  /** The vault lock, taken before the state is read (#253); not under --dry-run. */
-  takeLock(): void;
-  onCleanup(cleanup: () => Promise<void>): void;
-  /** The abort for the run; aborted already if a Ctrl+C came first (#249). */
-  newRunAbort(): AbortController;
-  onRun(abort: AbortController, run: Promise<unknown>): void;
-  onCommitted(): void;
-  onHookAbort(abort: AbortController | null): void;
 }
 
 export type UpdateFlowResult =
@@ -146,13 +137,6 @@ export type UpdateFlowResult =
       externalTools: string[];
     };
 
-/** The errors the executor threw after rolling the vault back. */
-const rolledBack = new WeakSet<object>();
-
-/** Whether the run that threw `err` rolled the vault back, for the error view's line. */
-export function updateRolledBack(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && rolledBack.has(err);
-}
 
 export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): Promise<UpdateFlowResult> {
   const { vaultRoot, dryRun, json } = input;
@@ -382,64 +366,45 @@ async function execute(
   const { vaultRoot, dryRun } = input;
   const start = Date.now();
   io.phase({ kind: 'writing' });
-  const abort = io.newRunAbort();
-  const run = runUpdate({
-    vaultRoot,
-    plan,
-    conflictResolutions: resolutions,
-    currentState: ctx.state,
-    newManifest: ctx.newManifest,
-    newSchema: ctx.newSchema,
-    newValues: values,
-    newSelections: selections,
-    resolved: ctx.resolved,
-    tarballSha256: ctx.newTarballSha,
-    newTempDir: ctx.newTempDir,
-    dryRun,
-    adoptPreexisting: input.adoptPreexisting,
-    signal: abort.signal,
-    onProgress: io.progress,
-  });
-  io.onRun(abort, run);
-  let result;
-  try {
-    result = await run;
-  } catch (err) {
-    // runUpdate rolled the vault back before throwing (a dry run wrote nothing).
-    if (!dryRun && typeof err === 'object' && err !== null) rolledBack.add(err);
-    throw err;
-  }
-  // state.json is on disk: past the point of no return, so a Ctrl+C during
-  // the hooks can't walk the update back (spec §9.3).
-  io.onCommitted();
-
-  // Bootstrap only if its fingerprint changed, then post-update. A dry run
-  // reports deferred outcomes without spawning.
-  const hookAbort = new AbortController();
-  io.onHookAbort(hookAbort);
-  let hooks: HookOutcome[];
-  try {
-    const hookRun = await runHooks(
-      {
-        command: 'update',
-        tempDir: ctx.newTempDir,
-        manifest: ctx.newManifest,
-        schema: ctx.newSchema,
+  // runUpdate rolls the vault back before throwing (a dry run wrote nothing).
+  const { result, hooks } = await runAndHooks(
+    io,
+    { markOnFailure: !dryRun },
+    (signal) =>
+      runUpdate({
         vaultRoot,
-        state: result.state,
-        values,
-        modules: selections,
-        previousVersion: ctx.state.version,
-        newFiles: result.summary.addedFiles,
-        removedFiles: result.summary.deletedFiles,
+        plan,
+        conflictResolutions: resolutions,
+        currentState: ctx.state,
+        newManifest: ctx.newManifest,
+        newSchema: ctx.newSchema,
+        newValues: values,
+        newSelections: selections,
+        resolved: ctx.resolved,
+        tarballSha256: ctx.newTarballSha,
+        newTempDir: ctx.newTempDir,
         dryRun,
-      },
-      { ...io.hooks, signal: hookAbort.signal },
-    );
-    hooks = hookRun.outcomes;
-  } finally {
-    io.onHookAbort(null);
-  }
+        adoptPreexisting: input.adoptPreexisting,
+        signal,
+        onProgress: io.progress,
+      }),
+    // Bootstrap only if its fingerprint changed, then post-update. A dry run
+    // reports deferred outcomes without spawning.
+    (done) => ({
+      command: 'update',
+      tempDir: ctx.newTempDir,
+      manifest: ctx.newManifest,
+      schema: ctx.newSchema,
+      vaultRoot,
+      state: done.state,
+      values,
+      modules: selections,
+      previousVersion: ctx.state.version,
+      newFiles: done.summary.addedFiles,
+      removedFiles: done.summary.deletedFiles,
+      dryRun,
+    }),
+  );
 
   return {
     kind: 'done',

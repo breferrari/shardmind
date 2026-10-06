@@ -26,7 +26,7 @@ import { initShardDir, cacheTemplates, cacheManifest, writeState, STATE_SCHEMA_V
 import { sha256, toPosix } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
-import { attemptRollback, withRollbackFailures } from './rollback-report.js';
+import { attemptRollback, markRolledBack, withRollbackFailures } from './rollback-report.js';
 import { wrapWriteError } from './bug-report.js';
 import { beginTransaction, type BackupRecord, type CreateRoot, type VaultTransaction } from './vault-transaction.js';
 import { VALUES_FILE } from '../runtime/vault-paths.js';
@@ -291,14 +291,6 @@ export interface InstallTransactionResult extends InstallResult {
   left: BackupRecord[];
 }
 
-/** The errors a transaction threw after rolling back (`installRolledBack`). */
-const rolledBack = new WeakSet<object>();
-
-/** Whether the transaction that threw `err` rolled the vault back, for the error view's line. */
-export function installRolledBack(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && rolledBack.has(err);
-}
-
 /**
  * The whole install, as `use-install-machine` runs it, owning its rollback
  * the way `runUpdate` and `runAdopt` do (#300). On its vault transaction
@@ -324,7 +316,7 @@ export async function runInstallTransaction(opts: InstallTransactionOptions): Pr
     result = await runInstall({ ...installOpts, tx });
   } catch (err) {
     const thrown = withRollbackFailures(err, await attemptRollback(() => tx.rollback()));
-    if (typeof thrown === 'object' && thrown !== null) rolledBack.add(thrown);
+    markRolledBack(thrown);
     throw thrown;
   }
 

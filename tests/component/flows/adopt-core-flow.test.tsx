@@ -12,12 +12,12 @@ import { stringify as stringifyYaml } from 'yaml';
 import { setupFlowSuite, makeVaultDir, cleanupVault, SHARD_SLUG, SHARD_REF, STUB_SHA, DEFAULT_VALUES } from './helpers.js';
 import {
   runAdoptFlow,
-  adoptRolledBack,
   type AdoptFlowInput,
   type AdoptFlowIO,
   type AdoptQuestion,
 } from '../../../source/core/flows/adopt.js';
 import { FlowCancelled } from '../../../source/core/flows/cancelled.js';
+import { wasRolledBack } from '../../../source/core/rollback-report.js';
 
 describe('adopt flow, UI-free (#302)', () => {
   const getCtx = setupFlowSuite({ shards: { [SHARD_SLUG]: { versions: {} as Record<string, string>, latest: '0.1.0' } } });
@@ -207,7 +207,7 @@ describe('adopt flow, UI-free (#302)', () => {
       const err = await runAdoptFlow(input(vault, { yes: true }), s.io).catch((e: unknown) => e);
       spy.mockRestore();
       expect(err).toBeInstanceOf(Error);
-      expect(adoptRolledBack(err)).toBe(true);
+      expect(wasRolledBack(err)).toBe(true);
       expect(s.committed()).toBe(false);
     } finally {
       await cleanupVault(vault);

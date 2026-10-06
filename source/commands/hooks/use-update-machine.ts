@@ -34,11 +34,10 @@ import type { UpdatePlan, ConflictResolution, NewFilePlan } from '../../core/upd
 import type { UpdateSummary } from '../../core/update-executor.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { type HookOutcome } from '../../core/hook-orchestrator.js';
-import { rollbackDetail } from '../../core/rollback-report.js';
+import { rollbackDetail, wasRolledBack } from '../../core/rollback-report.js';
 import { FlowCancelled } from '../../core/flows/cancelled.js';
 import {
   runUpdateFlow,
-  updateRolledBack,
   type UpdateAnswer,
   type UpdateContext,
   type UpdateFlowIO,
@@ -359,7 +358,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         finish({
           kind: 'error',
           error: err as Error,
-          detail: updateRolledBack(err) ? rollbackDetail(err, 'Rolled back partial update.') : undefined,
+          detail: wasRolledBack(err) ? rollbackDetail(err, 'Rolled back partial update.') : undefined,
         });
       },
     );

@@ -31,10 +31,9 @@ import type { AdoptApplyKind, AdoptResolutions, AdoptSummary as AdoptSummaryData
 import type { ShardManifest } from '../../runtime/types.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { type HookOutcome } from '../../core/hook-orchestrator.js';
-import { rollbackDetail } from '../../core/rollback-report.js';
+import { rollbackDetail, wasRolledBack } from '../../core/rollback-report.js';
 import {
   runAdoptFlow,
-  adoptRolledBack,
   type AdoptAnswer,
   type AdoptFileChoice,
   type AdoptFlowIO,
@@ -341,7 +340,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         finish({
           kind: 'error',
           error: err as Error,
-          detail: adoptRolledBack(err) ? rollbackDetail(err, 'Rolled back partial adopt.') : undefined,
+          detail: wasRolledBack(err) ? rollbackDetail(err, 'Rolled back partial adopt.') : undefined,
         });
       },
     );

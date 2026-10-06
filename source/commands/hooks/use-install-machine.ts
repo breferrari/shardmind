@@ -42,13 +42,13 @@ import {
   stillFiles,
   type Collision,
 } from '../../core/install-planner.js';
-import { installRolledBack, runInstallTransaction, type BackupRecord } from '../../core/install-executor.js';
+import { runInstallTransaction, type BackupRecord } from '../../core/install-executor.js';
 import type { InstallDestination } from '../../core/install-destination.js';
 import { assertSafeVaultPaths } from '../../core/vault-path-guard.js';
 import { toPosix } from '../../core/fs-utils.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { runHooks, type HookOutcome } from '../../core/hook-orchestrator.js';
-import { rollbackDetail } from '../../core/rollback-report.js';
+import { rollbackDetail, wasRolledBack } from '../../core/rollback-report.js';
 import { SHARDMIND_DIR, VALUES_FILE } from '../../runtime/vault-paths.js';
 import {
   appendHookOutput,
@@ -573,7 +573,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           error: err as Error,
           // Only when the transaction rolled back: a failure after
           // state.json rolls nothing back.
-          detail: installRolledBack(err)
+          detail: wasRolledBack(err)
             ? rollbackDetail(err, 'Rolled back partial install (including any pre-install backups).')
             : undefined,
         });
