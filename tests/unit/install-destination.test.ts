@@ -3,7 +3,7 @@
  * docs/IMPLEMENTATION.md §4.31, ARCHITECTURE §10.6.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +11,9 @@ import crypto from 'node:crypto';
 import { resolveInstallDestination } from '../../source/core/install-destination.js';
 import { shardNameOf } from '../../source/core/registry.js';
 import { ShardMindError } from '../../source/runtime/types.js';
+import { symlinksWork } from '../helpers/fs-capabilities.js';
+
+const canSymlink = await symlinksWork();
 
 let cwd: string;
 beforeEach(async () => {
@@ -18,6 +21,7 @@ beforeEach(async () => {
   await fsp.mkdir(cwd, { recursive: true });
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   await fsp.rm(cwd, { recursive: true, force: true });
 });
 
@@ -99,6 +103,29 @@ describe('resolveInstallDestination (#333)', () => {
     const err = await refusal(resolveInstallDestination(cwd, 'acme/wiki-mind', 'a/b'));
     expect(err.code).toBe('INSTALL_DESTINATION_NOT_EMPTY');
     expect(err.message).toContain('a');
+  });
+
+  it.runIf(canSymlink)('a parent level that is a link to a folder is that folder (macOS /tmp, a synced folder)', async () => {
+    await fsp.mkdir(path.join(cwd, 'real'));
+    await fsp.symlink(path.join(cwd, 'real'), path.join(cwd, 'linked'), 'junction');
+    const dest = await resolveInstallDestination(cwd, 'acme/wiki-mind', 'linked/vault');
+    expect(dest.create).toEqual([path.join(cwd, 'linked', 'vault')]);
+  });
+
+  it('a path whose drive or share does not exist is refused, not walked forever', async () => {
+    // Every level is missing, the top included: an unmapped drive (`Q:\\vault`).
+    vi.spyOn(fsp, 'stat').mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    const err = await refusal(resolveInstallDestination(cwd, 'acme/wiki-mind', 'vault'));
+    expect(err.code).toBe('INSTALL_DESTINATION_NOT_EMPTY');
+    expect(err.message).toContain('does not exist');
+  });
+
+  it('the refusal points at `cd` before `.`, and at update for a vault', async () => {
+    await fsp.mkdir(path.join(cwd, 'wiki-mind'));
+    await fsp.writeFile(path.join(cwd, 'wiki-mind', 'x.md'), 'x');
+    const err = await refusal(resolveInstallDestination(cwd, 'acme/wiki-mind'));
+    expect(err.hint).toMatch(/`cd` into it/);
+    expect(err.hint).toContain('shardmind update');
   });
 
   it('an absolute folder is taken as is', async () => {

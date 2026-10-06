@@ -33,19 +33,22 @@ export async function resolveInstallDestination(cwd: string, shardRef: string, f
 
   // Up from the vault folder to the nearest level that exists: everything
   // below it is to make. A file at a level makes the levels under it ENOTDIR.
+  // A link to a folder is that folder (macOS's /tmp, a synced folder, a
+  // junction): the vault folder's own contents are guarded when it writes.
   const create: string[] = [];
   for (let at = root; ; at = path.dirname(at)) {
-    const stat = await fsp.lstat(at).catch((err: unknown) => {
+    const stat = await fsp.stat(at).catch((err: unknown) => {
       const code = errnoCode(err);
       if (code === 'ENOENT' || code === 'ENOTDIR') return null;
       throw err;
     });
-    if (stat === null) {
-      create.unshift(at);
-      continue;
+    if (stat !== null) {
+      if (!stat.isDirectory()) throw destinationTaken(given, at, 'is not a folder');
+      break;
     }
-    if (!stat.isDirectory()) throw destinationTaken(given, at, 'is not a folder');
-    break;
+    // Not even the drive or share exists (`Q:\vault`, an unreachable UNC path).
+    if (path.dirname(at) === at) throw destinationTaken(given, at, 'does not exist');
+    create.unshift(at);
   }
   if (create.length === 0 && !(await isEmptyFolder(root))) throw destinationTaken(given, root, 'is not empty');
   return { root, folder: given, create };
@@ -70,6 +73,6 @@ export function destinationTaken(folder: string, at: string, what: string): Shar
   return new ShardMindError(
     `Cannot install into ${folder}: ${at} ${what}`,
     'INSTALL_DESTINATION_NOT_EMPTY',
-    `Give another folder name (\`shardmind install <shard> my-vault\`), or install into the current folder with \`.\`.`,
+    'Give another folder name (`shardmind install <shard> my-vault`). To install into that folder as it is, `cd` into it and run `shardmind install <shard> .`; if it is already a shardmind vault, `shardmind update` there upgrades it.',
   );
 }
