@@ -1117,7 +1117,7 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     );
 
     try {
-      const { manifest, schema, values } = await installBaseline(vault, shardDir, 'sha-0.1.0');
+      const { schema, values } = await installBaseline(vault, shardDir, 'sha-0.1.0');
 
       // Bump the shard version to 0.2.0 and re-parse so planUpdate runs.
       const shardYaml = await fsp.readFile(path.join(shardDir, '.shardmind', 'shard.yaml'), 'utf-8');

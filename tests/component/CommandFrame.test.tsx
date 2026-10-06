@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import { Text } from 'ink';
 import CommandFrame from '../../source/components/CommandFrame.js';
 

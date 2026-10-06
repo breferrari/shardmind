@@ -993,7 +993,7 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     // "empty plan" footnote — this test makes sure runAdopt actually
     // exercises that branch end-to-end rather than crashing on a zero
     // total or skipping the metadata writes.
-    const { manifest, schema } = await loadShard();
+    const { schema } = await loadShard();
     const validator = buildValuesValidator(schema);
     const values = validator.parse(resolveComputedDefaults(schema, VALUES));
     // Exclude every removable module. `brain` is non-removable, so

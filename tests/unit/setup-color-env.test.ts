@@ -11,8 +11,8 @@ import config from '../../vitest.config.js';
 
 describe('colour environment in test workers', () => {
   it("clears the caller's FORCE_COLOR and NO_COLOR", () => {
-    expect(process.env.FORCE_COLOR).toBeUndefined();
-    expect(process.env.NO_COLOR).toBeUndefined();
+    expect(process.env['FORCE_COLOR']).toBeUndefined();
+    expect(process.env['NO_COLOR']).toBeUndefined();
   });
 
   it('leaves chalk, which Ink colours through, at level 0', () => {

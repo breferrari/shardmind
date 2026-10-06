@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import AdoptSummary from '../../source/components/AdoptSummary.js';
 import type { ShardManifest } from '../../source/runtime/types.js';
 import type { AdoptSummary as AdoptSummaryData } from '../../source/core/adopt-executor.js';

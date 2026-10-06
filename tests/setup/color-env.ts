@@ -12,7 +12,7 @@
  * chalk colour even a pipe, so those go too.
  */
 
-delete process.env.FORCE_COLOR;
-delete process.env.NO_COLOR;
-delete process.env.TF_BUILD;
-delete process.env.AGENT_NAME;
+delete process.env['FORCE_COLOR'];
+delete process.env['NO_COLOR'];
+delete process.env['TF_BUILD'];
+delete process.env['AGENT_NAME'];

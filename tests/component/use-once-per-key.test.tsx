@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useOncePerKey } from '../../source/components/use-once-per-key.js';
 import { tick } from './helpers.js';
 

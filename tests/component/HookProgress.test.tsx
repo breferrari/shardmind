@@ -10,7 +10,6 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import chalk from 'chalk';
 import HookProgress from '../../source/components/HookProgress.js';
 

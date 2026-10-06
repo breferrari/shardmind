@@ -636,10 +636,10 @@ describe('executeHook — subprocess runtime', () => {
     const ac = new AbortController();
     ac.abort();
     const scopedTmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'hook-pre-abort-'));
-    const saved = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
-    process.env.TMPDIR = scopedTmp;
-    process.env.TEMP = scopedTmp;
-    process.env.TMP = scopedTmp;
+    const saved = { TMPDIR: process.env['TMPDIR'], TEMP: process.env['TEMP'], TMP: process.env['TMP'] };
+    process.env['TMPDIR'] = scopedTmp;
+    process.env['TEMP'] = scopedTmp;
+    process.env['TMP'] = scopedTmp;
     try {
       const result = await executeHook(hookPath, baseCtx(), { signal: ac.signal });
       // The runtime will either surface this as `cancelled` (the abort
@@ -725,13 +725,13 @@ describe('executeHook — subprocess runtime', () => {
     // three, run the hook, then restore.
     const scopedTmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'hook-cleanup-scope-'));
     const saved = {
-      TMPDIR: process.env.TMPDIR,
-      TEMP: process.env.TEMP,
-      TMP: process.env.TMP,
+      TMPDIR: process.env['TMPDIR'],
+      TEMP: process.env['TEMP'],
+      TMP: process.env['TMP'],
     };
-    process.env.TMPDIR = scopedTmp;
-    process.env.TEMP = scopedTmp;
-    process.env.TMP = scopedTmp;
+    process.env['TMPDIR'] = scopedTmp;
+    process.env['TEMP'] = scopedTmp;
+    process.env['TMP'] = scopedTmp;
     try {
       const result = await executeHook(hookPath, baseCtx());
       expect(result.kind).toBe('ran');

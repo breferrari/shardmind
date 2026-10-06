@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import DiffView, { type DiffAction } from '../../source/components/DiffView.js';
 import type { MergeResult } from '../../source/runtime/types.js';
 import { ARROW_DOWN, ENTER, tick, waitFor, waitForCall } from './helpers.js';

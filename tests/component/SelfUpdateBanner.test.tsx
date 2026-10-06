@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import SelfUpdateBanner from '../../source/components/SelfUpdateBanner.js';
 
 afterEach(() => {

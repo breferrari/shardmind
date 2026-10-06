@@ -23,7 +23,6 @@ import {
   driveDiffIteration,
   SHARD_SLUG,
   SHARD_REF,
-  STUB_SHA,
   DEFAULT_VALUES,
 } from './helpers.js';
 import { tick, waitFor, ENTER, ARROW_DOWN } from '../helpers.js';

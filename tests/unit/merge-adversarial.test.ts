@@ -634,7 +634,7 @@ describe('merge adversarial — duplicate-density stress', () => {
   });
 
   it('all lines unique is the sparsest duplicate case', () => {
-    const lines = Array.from({ length: 500 }, (_, i) => crypto.randomUUID());
+    const lines = Array.from({ length: 500 }, () => crypto.randomUUID());
     const content = lines.join('\n') + '\n';
     const result = threeWayMerge(content, content, content);
     expect(result.content).toBe(content);

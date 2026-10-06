@@ -18,7 +18,6 @@
  * would have been caught here).
  */
 
-import React from 'react';
 import { render, type RenderResult } from 'ink-testing-library';
 import { vi, beforeAll, afterAll, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
