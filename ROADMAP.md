@@ -266,6 +266,7 @@ Everything 1.0 freezes is either decided or built: the contract review's behavio
 | ⬜ | Trim shardmind/runtime to what hooks use | [#345](https://github.com/breferrari/shardmind/issues/345) |
 | ⬜ | Remove the reserved type_changed error code | [#346](https://github.com/breferrari/shardmind/issues/346) |
 | ⬜ | Mark adopt --mode auto-merge experimental | [#347](https://github.com/breferrari/shardmind/issues/347) |
+| ⬜ | Let update and adopt run with --json, not only plan | [#348](https://github.com/breferrari/shardmind/issues/348) |
 
 ## Shelf (retired 2026-10-04)
 
