@@ -21,21 +21,18 @@
  * (`commands/headless/update.ts`).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import path from 'node:path';
 import type { ReadStream as TtyReadStream } from 'node:tty';
-import { useApp, useStdin } from 'ink';
+import { useStdin } from 'ink';
 import type { ShardManifest, ShardState, ModuleSelections } from '../../runtime/types.js';
 import { ShardMindError } from '../../runtime/types.js';
-import { DownloadCancelledError } from '../../core/download.js';
 import { resolveEngineVersion } from './cli-version.js';
-import { useVaultLock } from './use-vault-lock.js';
+import { useFlowRun } from './use-flow-run.js';
 import type { UpdatePlan, ConflictResolution, NewFilePlan } from '../../core/update-planner.js';
 import type { UpdateSummary } from '../../core/update-executor.js';
 import { type RunningHookPhase } from '../../core/hook.js';
 import { type HookOutcome } from '../../core/hook-orchestrator.js';
-import { rollbackDetail, wasRolledBack } from '../../core/rollback-report.js';
-import { FlowCancelled } from '../../core/flows/cancelled.js';
 import {
   runUpdateFlow,
   type UpdateAnswer,
@@ -43,15 +40,6 @@ import {
   type UpdateFlowIO,
   type UpdateQuestion,
 } from '../../core/flows/update.js';
-import {
-  appendHookOutput,
-  useSigintRollback,
-  isCancelledRun,
-  newRunAbort,
-  stopRun,
-  trackRun,
-  type RunInFlight,
-} from './shared.js';
 import type { DiffAction } from '../../components/DiffView.js';
 import { editInEditor, hasConflictMarkers, resolveEditorCommand, withSigintHeld, withTerminalReleased } from '../../core/editor.js';
 
@@ -138,199 +126,96 @@ export interface UseUpdateMachineOutput {
   canEdit: boolean;
 }
 
-/** The question the flow is waiting on, answered from its prompt's handler only. */
-interface PendingAnswer {
-  kind: UpdateQuestion['kind'];
-  /** A conflict's file: consecutive conflicts share their kind. */
-  index?: number;
-  resolve: (answer: unknown) => void;
-  reject: (err: Error) => void;
-}
-
 export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachineOutput {
   const { vaultRoot, yes, verbose, dryRun, release, includePrerelease, adoptPreexisting = false } = input;
-  const { exit } = useApp();
 
-  const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
-  // The conflict prompt's editor rounds read the file it is on.
-  const phaseRef = useRef<Phase>(phase);
-  phaseRef.current = phase;
-
-  const ctxCleanupRef = useRef<(() => Promise<void>) | null>(null);
-  // The update in flight, which a Ctrl+C stops and waits for (#249).
-  const runRef = useRef<RunInFlight | null>(null);
-  // The hooks' abort while they run: a Ctrl+C then kills the hook but does
-  // NOT roll the update back, since `runUpdate` has written state.json.
-  const hookAbortRef = useRef<AbortController | null>(null);
-  const pendingRef = useRef<PendingAnswer | null>(null);
-
-  // One run per vault (#253); --dry-run writes nothing and takes no lock.
-  const { take: takeLock, release: releaseLock } = useVaultLock(vaultRoot, 'update', !dryRun);
-
-  const finish = useCallback(
-    (next: Phase) => {
-      setPhase(next);
-      if (next.kind === 'summary' || next.kind === 'cancelled' || next.kind === 'error' || next.kind === 'up-to-date') {
-        // Non-zero exit on error so scripting / CI can detect failure.
-        // cancelled + up-to-date + summary are all "successful outcomes"
-        // from the engine's perspective and keep the default exit 0.
-        if (next.kind === 'error') process.exitCode = 1;
-        // The run is over: the next one may start (#253).
-        releaseLock();
-        setTimeout(() => exit(), 100);
-      }
-    },
-    [exit, releaseLock],
-  );
-
-  // Mid-write, a Ctrl+C stops the run and waits for its rollback. Tempdir
-  // cleanup fires on every Ctrl+C — otherwise cancelling during the
-  // download/plan phase would leak the extracted shard on disk. What the
-  // run's rollback could not restore is printed before the exit (#247).
-  useSigintRollback({
-    isActive: () => !dryRun && runRef.current !== null,
-    rollback: () => stopRun(runRef.current),
-    cleanup: async () => {
-      // A hook in flight dies on every Ctrl+C: past state.json `isActive` is
-      // false, and the child must still exit for the parent to.
-      hookAbortRef.current?.abort();
-      if (ctxCleanupRef.current) await ctxCleanupRef.current();
-    },
+  const { phase, setPhase, phaseRef, launch, settle } = useFlowRun<Phase>({
+    vaultRoot,
+    command: 'update',
+    dryRun,
+    initial: { kind: 'booting' },
+    // cancelled, up-to-date and summary are all successful outcomes and keep exit 0.
+    isFinal: (p) => p.kind === 'summary' || p.kind === 'cancelled' || p.kind === 'error' || p.kind === 'up-to-date',
+    rolledBack: 'Rolled back partial update.',
+    asPhase: (p) => p,
   });
 
-  useEffect(() => {
-    let disposed = false;
-    // Stops this run if the effect is superseded before it writes.
-    const stop = new AbortController();
-    // A superseded run's reports go nowhere.
-    const show = (next: Phase | ((prev: Phase) => Phase)) => {
-      if (!disposed) setPhase(next);
-    };
-    const history: string[] = [];
-    // This run's handle: a superseded run never clears its successor's.
-    let mine: RunInFlight | null = null;
-    const dropMine = () => {
-      if (runRef.current === mine) runRef.current = null;
-    };
-
-    const ask = <Q extends UpdateQuestion>(question: Q): Promise<UpdateAnswer<Q>> =>
-      new Promise<UpdateAnswer<Q>>((resolve, reject) => {
-        if (disposed) {
-          reject(new FlowCancelled('Superseded by a newer run.'));
-          return;
-        }
-        pendingRef.current = {
-          kind: question.kind,
-          index: question.kind === 'conflict' ? question.currentIndex : undefined,
-          resolve: resolve as (answer: unknown) => void,
-          reject,
+  useEffect(
+    () =>
+      launch(async ({ io: base, ask, show, stop }) => {
+        const history: string[] = [];
+        const io: UpdateFlowIO = {
+          ...base,
+          ask: <Q extends UpdateQuestion>(question: Q) =>
+            ask<UpdateAnswer<Q>>(question, question.kind === 'conflict' ? question.currentIndex : undefined, () => {
+              switch (question.kind) {
+                case 'new-values':
+                  show({ kind: 'prompt-new-values', ctx: question.ctx });
+                  return;
+                case 'new-modules':
+                  show({ kind: 'prompt-new-modules', ctx: question.ctx, values: question.values });
+                  return;
+                case 'removed-files':
+                  show({
+                    kind: 'prompt-removed-files',
+                    ctx: question.ctx,
+                    values: question.values,
+                    selections: question.selections,
+                    paths: question.paths,
+                    newFilePlan: question.newFilePlan,
+                  });
+                  return;
+                case 'conflict':
+                  show({
+                    kind: 'resolving-conflicts',
+                    ctx: question.ctx,
+                    plan: question.plan,
+                    values: question.values,
+                    selections: question.selections,
+                    currentIndex: question.currentIndex,
+                    resolutions: question.resolutions,
+                  });
+                  return;
+              }
+            }),
+          phase: (p) => {
+            if (p.kind === 'loading') show({ kind: 'loading', message: p.message });
+            else show({ kind: 'writing', total: 0, current: 0, label: 'Preparing…', history });
+          },
+          progress: (ev) => {
+            if (ev.kind === 'start') {
+              show((prev) => (prev.kind === 'writing' ? { ...prev, total: ev.total, current: 0, label: 'Starting…' } : prev));
+            } else if (ev.kind === 'file') {
+              if (verbose) {
+                history.push(`${labelForAction(ev.action)} ${ev.outputPath}`);
+                if (history.length > 5) history.shift();
+              }
+              show((prev) =>
+                prev.kind === 'writing'
+                  ? { ...prev, current: ev.index, total: ev.total, label: ev.outputPath, history: verbose ? [...history] : prev.history }
+                  : prev,
+              );
+            }
+          },
         };
-        switch (question.kind) {
-          case 'new-values':
-            show({ kind: 'prompt-new-values', ctx: question.ctx });
-            return;
-          case 'new-modules':
-            show({ kind: 'prompt-new-modules', ctx: question.ctx, values: question.values });
-            return;
-          case 'removed-files':
-            show({
-              kind: 'prompt-removed-files',
-              ctx: question.ctx,
-              values: question.values,
-              selections: question.selections,
-              paths: question.paths,
-              newFilePlan: question.newFilePlan,
-            });
-            return;
-          case 'conflict':
-            show({
-              kind: 'resolving-conflicts',
-              ctx: question.ctx,
-              plan: question.plan,
-              values: question.values,
-              selections: question.selections,
-              currentIndex: question.currentIndex,
-              resolutions: question.resolutions,
-            });
-            return;
-        }
-      });
-
-    const io: UpdateFlowIO = {
-      ask,
-      phase: (p) => {
-        if (p.kind === 'loading') show({ kind: 'loading', message: p.message });
-        else show({ kind: 'writing', total: 0, current: 0, label: 'Preparing…', history });
-      },
-      progress: (ev) => {
-        if (ev.kind === 'start') {
-          show((prev) => (prev.kind === 'writing' ? { ...prev, total: ev.total, current: 0, label: 'Starting…' } : prev));
-        } else if (ev.kind === 'file') {
-          if (verbose) {
-            history.push(`${labelForAction(ev.action)} ${ev.outputPath}`);
-            if (history.length > 5) history.shift();
-          }
-          show((prev) =>
-            prev.kind === 'writing'
-              ? { ...prev, current: ev.index, total: ev.total, label: ev.outputPath, history: verbose ? [...history] : prev.history }
-              : prev,
-          );
-        }
-      },
-      hooks: {
-        setPhase: (p) => show(p),
-        onStdout: (chunk) => {
-          if (!disposed) appendHookOutput(setPhase, chunk);
-        },
-        onStderr: (chunk) => {
-          if (!disposed) appendHookOutput(setPhase, chunk);
-        },
-      },
-      takeLock,
-      onCleanup: (cleanup) => {
-        // A superseded run removes its own dir instead of taking the ref.
-        if (disposed) void cleanup().catch(() => {});
-        else ctxCleanupRef.current = cleanup;
-      },
-      newRunAbort,
-      onRun: (abort, run) => {
-        mine = trackRun(abort, run);
-        runRef.current = mine;
-      },
-      // state.json is on disk: drop the run before the hooks, so a Ctrl+C
-      // during them can't walk the update back.
-      onCommitted: dropMine,
-      onHookAbort: (abort) => {
-        hookAbortRef.current = abort;
-      },
-    };
-
-    runUpdateFlow(
-      {
-        vaultRoot,
-        yes,
-        dryRun,
-        json: false,
-        release,
-        includePrerelease,
-        adoptPreexisting,
-        engineVersion: resolveEngineVersion(),
-        stop: stop.signal,
-      },
-      io,
-    ).then(
-      (result) => {
-        if (disposed) return;
-        if (result.kind === 'up-to-date') {
-          finish({ kind: 'up-to-date', manifest: result.manifest, state: result.state });
-          return;
-        }
+        const result = await runUpdateFlow(
+          {
+            vaultRoot,
+            yes,
+            dryRun,
+            json: false,
+            release,
+            includePrerelease,
+            adoptPreexisting,
+            engineVersion: resolveEngineVersion(),
+            stop,
+          },
+          io,
+        );
+        if (result.kind === 'up-to-date') return { kind: 'up-to-date', manifest: result.manifest, state: result.state };
         // A plan comes back only under --json, which runs headless: a bug here.
-        if (result.kind === 'plan') {
-          finish({ kind: 'error', error: new Error('update flow returned a --json plan to the terminal run') });
-          return;
-        }
-        finish({
+        if (result.kind === 'plan') return { kind: 'error', error: new Error('update flow returned a --json plan to the terminal run') };
+        return {
           kind: 'summary',
           summary: result.summary,
           migrationWarnings: result.migrationWarnings,
@@ -339,56 +224,11 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           dryRun,
           backupDir: result.backupDir,
           externalTools: result.externalTools,
-        });
-      },
-      (err: unknown) => {
-        dropMine();
-        // A Ctrl+C mid-download stops the fetch; the command is exiting, so
-        // that is not an error to render.
-        if (disposed || err instanceof DownloadCancelledError) return;
-        if (err instanceof FlowCancelled) {
-          finish({ kind: 'cancelled', reason: err.reason });
-          return;
-        }
-        if (isCancelledRun(err)) {
-          // The Ctrl+C handler reports any rollback failure and exits 130.
-          finish({ kind: 'cancelled', reason: 'Cancelled with Ctrl+C.' });
-          return;
-        }
-        finish({
-          kind: 'error',
-          error: err as Error,
-          detail: wasRolledBack(err) ? rollbackDetail(err, 'Rolled back partial update.') : undefined,
-        });
-      },
-    );
-
-    return () => {
-      disposed = true;
-      stop.abort();
-      // A question the superseded run waits on ends it.
-      const pending = pendingRef.current;
-      pendingRef.current = null;
-      pending?.reject(new FlowCancelled('Superseded by a newer run.'));
-      if (ctxCleanupRef.current) {
-        ctxCleanupRef.current().catch(() => {});
-      }
-    };
+        };
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vaultRoot, yes, release, includePrerelease]);
-
-  /**
-   * Settle the question the flow waits on, if it is the one this prompt
-   * answers (a conflict: the same file): a late or doubled handler never
-   * answers the next question.
-   */
-  const settle = useCallback((kind: UpdateQuestion['kind'], outcome: { value: unknown } | { error: Error }, index?: number) => {
-    const pending = pendingRef.current;
-    if (pending?.kind !== kind || pending.index !== index) return;
-    pendingRef.current = null;
-    if ('error' in outcome) pending.reject(outcome.error);
-    else pending.resolve(outcome.value);
-  }, []);
+    [vaultRoot, yes, release, includePrerelease],
+  );
 
   const onNewValuesComplete = useCallback(
     (values: Record<string, unknown>) => settle('new-values', { value: values }),
@@ -460,7 +300,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       }
       resolve(action);
     },
-    [settle, editorCommand, setStreamRawMode],
+    [settle, phaseRef, setPhase, editorCommand, setStreamRawMode],
   );
 
   return {
