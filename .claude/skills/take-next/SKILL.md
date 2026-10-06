@@ -74,12 +74,13 @@ Take the **topmost unstarted row** in the `ROADMAP.md` section of that phase. If
 
 ### Declines
 
-A decline costs more than a build, because a missing feature gives the reader nothing to review.
+A pass never declines. ShardMind is a template engine for anyone's vaults, so its planned capability is measured against what any shard could need, not against the shards that exist today.
 
-- Reach a decline early. Whether the reason holds is a question of fact. After you know the reason, more time only adds words that defend the decline.
-- A decline has a higher bar than a build: its reason must survive a check. A bad build is visible in review. A bad refusal is not visible, and no gate can find a feature that nobody built.
+- **If you would decline, stop and report it to the reader with the evidence. The reader rules.** A missing feature gives the reader nothing to review: a bad build is visible in review, a bad refusal is not, and no gate can find a feature nobody built.
+- **Demand evidence is never a reason.** That covers no request, no reaction, no current shard using it, one author, "until someone asks", and YAGNI. All of it says something about today's users, nothing about the engine.
+- **Only two reasons can close an issue without building it.** Something better already replaces it (name it and link it), or it is a non-goal already written in `VISION.md`. The evidence goes on the issue.
+- **Removing working public surface follows the same rule.** That covers commands, flags, modes, exports, error codes, hook slots and documented behaviour. It goes only when a better alternative replaces it, with the reader's ruling on that item.
 - If the reader asked for the thing, build it. "Possible, affordable, but I prefer another design" is a preference, not a reason.
-- A deferral goes in the spec's own out-of-scope list (`docs/SHARD-LAYOUT.md §Out of scope`, or `VISION.md`'s non-goals for a permanent one), in the fewest words that evidence can prove false, with its date. The evidence goes on the issue.
 
 ### A question inside a build issue
 
