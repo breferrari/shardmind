@@ -2088,17 +2088,17 @@ The one owner of the CLI process's SIGINT handling, its exit code and its startu
 
 ```typescript
 onSigint(handler: () => void | Promise<void>, opts?: { once?: boolean }): () => void
+exitOnSigint(cleanupOf: () => (() => Promise<void>) | undefined): () => void
 emitSigint(): boolean
 withSigintHeld<T>(fn: () => T, onRestored?: () => void): T
 setExitCode(code: number): void
 exitProcess(code?: number): void
-STARTUP_STEPS: readonly ['applyNoColor', 'exitQuietlyWhenStdoutCloses', 'installCrashHandlers', 'installStdinCancellation']
 ```
 
-1. **The SIGINT stack.** `onSigint` adds a handler and returns its removal; `once` removes it before it runs. One process listener runs the handlers in the order they were added, as Node runs its listeners. It is installed while any handler is registered and removed when none is, so `emitSigint()` (the stdin bridge, #155) is still false with nothing to run, and the bridge exits 130 itself. A handler's rejection is swallowed: every one runs.
-2. **`withSigintHeld`** (#50, #282): while an editor owns the terminal, a Ctrl+C must cancel the edit, not the run. Every raw SIGINT listener (the stack's, and Ink's own `signal-exit` one) comes off behind a no-op listener and goes back two `setImmediate`s after `fn` returns, so the queued signal lands on the no-op. A nested call just runs `fn`.
-3. **The exit code.** `setExitCode` writes `process.exitCode`; `exitProcess` calls `process.exit`. Nothing else does.
-4. **Startup order.** `cli.ts` runs `STARTUP_STEPS` in that order, before anything loads Ink: colour first, since chalk reads the environment once on import (#37); the closed-stdout handler before anything writes (#252); the crash handlers before the first dynamic import (#225); the stdin Ctrl+C bridge before any headless runner or Pastel (#155, #302). A unit test reads `cli.ts` and asserts the calls in that order.
+1. **The SIGINT stack.** `onSigint` adds a handler and returns its removal; `once` removes it before it runs. One process listener runs the handlers in the order they were added, together, where the first was added among the process's other listeners (Ink's). It is installed while any handler is registered and removed when none is, so `emitSigint()` (the stdin bridge, #155) is still false with nothing to run, and the bridge exits 130 itself. A handler that throws does not stop the others; the first throw is rethrown once they have run, so it reaches the crash handler as a listener's throw did. `exitOnSigint` is a headless run's handler: once, run the cleanup (a download's temp dir, #57), then exit 130, whether or not the cleanup threw.
+2. **`withSigintHeld`** (#50, #282): while an editor owns the terminal, a Ctrl+C must cancel the edit, not the run. The stack is held (its listener runs nothing), so a handler added or removed meanwhile keeps the listener in step with the stack. The process's other listeners (Ink's `signal-exit`) come off behind a no-op listener and go back two `setImmediate`s after `fn` returns, so the queued signal lands while the hold lasts. A nested call just runs `fn`.
+3. **The exit code.** `setExitCode` writes `process.exitCode`; `exitProcess` calls `process.exit`, with no argument when there is no code (Node 22 counts its arguments: an explicit `undefined` exits 0 over the code already set). Nothing else does; `stdout-closed.ts` takes `setExitCode` as its writer, a test passing its own.
+4. **Startup order.** `cli.ts` sets the process up in this order, each step once: `applyNoColor` first, since chalk reads the environment once on import (#37); `exitQuietlyWhenStdoutCloses` before anything writes (#252), both before any dynamic import; `installCrashHandlers` as soon as its own module loads, before any other import (#225); `installStdinCancellation` before a headless runner is picked or the cli-kit (Ink) loads (#155, #302). A unit test reads `cli.ts`'s syntax tree and asserts each of these.
 
 ## 5. Runtime Module: `shardmind/runtime`
 
