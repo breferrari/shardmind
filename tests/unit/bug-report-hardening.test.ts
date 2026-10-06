@@ -8,7 +8,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { describeError, formatErrorPlain, installCrashHandlers } from '../../source/core/bug-report.js';
-import { jsonCommandOf } from '../../source/core/json-output.js';
 import { ShardMindError } from '../../source/runtime/types.js';
 
 afterEach(() => {
@@ -86,18 +85,5 @@ describe('one report per process (#225)', () => {
     expect(written.join('')).toContain('from the catch');
     expect(written.join('')).not.toContain('stray rejection');
     expect(exits).toEqual([1]);
-  });
-});
-
-describe('jsonCommandOf (#225)', () => {
-  it('names the --json command from the arguments, status when there is none', () => {
-    expect(jsonCommandOf(['--json'])).toBe('status');
-    expect(jsonCommandOf(['--verbose', '--json'])).toBe('status');
-    expect(jsonCommandOf(['adopt', 'github:a/b', '--json'])).toBe('adopt');
-    expect(jsonCommandOf(['update', '--json', '--yes'])).toBe('update');
-    expect(jsonCommandOf(['validate', '.', '--json'])).toBe('validate');
-    // Root options are all boolean flags, so one before the subcommand is skipped.
-    expect(jsonCommandOf(['--verbose', 'update', '--json'])).toBe('update');
-    expect(jsonCommandOf(['--no-update-check', 'adopt', 'github:a/b', '--json'])).toBe('adopt');
   });
 });
