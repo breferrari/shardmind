@@ -11,4 +11,4 @@ requires:
   node: ">=18.0.0"
 
 hooks:
-  post-install: hooks/post-install.ts
+  bootstrap: hooks/bootstrap.ts

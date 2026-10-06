@@ -134,6 +134,14 @@ dependencies:
     expect(warning?.message).toMatch(/Modules '(simple|fancy)' and '(simple|fancy)' clash/);
   });
 
+  it('reports a removed post-install hook with the migration in its hint (#357)', async () => {
+    await edit('.shardmind/shard.yaml', (s) => s.replace(/hooks:[\s\S]*$/, 'hooks:\n  post-install: hooks/post-install.ts\n'));
+    const result = await lintShard(shard, {});
+    expect(errors(result)).toHaveLength(1);
+    expect(errors(result)[0]).toMatchObject({ code: 'HOOK_SLOT_REMOVED' });
+    expect(errors(result)[0]!.hint).toMatch(/hooks\.bootstrap.*hooks\.personalize/s);
+  });
+
   it('reports an unparseable schema and stops there', async () => {
     await write('.shardmind/shard-schema.yaml', 'schema_version: 1\nvalues: [not, a, map]\n');
     const result = await lintShard(shard, {});
@@ -274,10 +282,10 @@ dependencies:
   it('never runs shard code: a hook that would write a marker does not run', async () => {
     const marker = path.join(root, 'hook-ran');
     const hook = `import { writeFileSync } from 'node:fs';\nexport default async function () { writeFileSync(${JSON.stringify(marker)}, 'x'); }\n`;
-    await write('.shardmind/hooks/post-install.ts', hook);
-    await write('hooks/post-install.ts', hook);
+    await write('.shardmind/hooks/bootstrap.ts', hook);
+    await write('.shardmind/hooks/personalize.ts', hook);
     await edit('.shardmind/shard.yaml', (s) =>
-      s.replace(/hooks:[\s\S]*$/, 'hooks:\n  bootstrap:\n    script: .shardmind/hooks/post-install.ts\n  personalize: .shardmind/hooks/post-install.ts\n'),
+      s.replace(/hooks:[\s\S]*$/, 'hooks:\n  bootstrap:\n    script: .shardmind/hooks/bootstrap.ts\n  personalize: .shardmind/hooks/personalize.ts\n'),
     );
     await lintShard(shard, {});
     await expect(fsp.access(marker)).rejects.toBeTruthy();

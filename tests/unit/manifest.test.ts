@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import { parseManifest, ShardManifestSchema, assertEngineCompatible } from '../../source/core/manifest.js';
 import type { ShardManifest } from '../../source/runtime/types.js';
+import { ShardMindError } from '../../source/runtime/types.js';
 
 // Unique tmp filename per call. `Date.now()` collides under parallel
 // vitest workers (two tests within the same millisecond share a path,
@@ -28,7 +29,7 @@ describe('parseManifest', () => {
     expect(manifest.license).toBe('MIT');
     expect(manifest.homepage).toBe('https://github.com/breferrari/shardmind');
     expect(manifest.requires).toEqual({ node: '>=18.0.0' });
-    expect(manifest.hooks).toEqual({ 'post-install': 'hooks/post-install.ts' });
+    expect(manifest.hooks).toEqual({ bootstrap: { script: 'hooks/bootstrap.ts' } });
   });
 
   it('defaults dependencies to [] and hooks to {} when omitted', async () => {
@@ -62,7 +63,7 @@ describe('parseManifest', () => {
       '    namespace: kepano',
       '    version: "^1.0.0"',
       'hooks:',
-      '  post-install: hooks/post-install.ts',
+      '  bootstrap: hooks/bootstrap.ts',
       '  post-update: hooks/post-update.ts',
     ].join('\n');
     const tmp = tmpYaml('manifest-test');
@@ -71,7 +72,7 @@ describe('parseManifest', () => {
       const manifest = await parseManifest(tmp);
       expect(manifest.dependencies).toHaveLength(1);
       expect(manifest.dependencies[0]).toEqual({ name: 'skills', namespace: 'kepano', version: '^1.0.0' });
-      expect(manifest.hooks['post-install']).toBe('hooks/post-install.ts');
+      expect(manifest.hooks.bootstrap).toEqual({ script: 'hooks/bootstrap.ts' });
       expect(manifest.hooks['post-update']).toBe('hooks/post-update.ts');
     } finally {
       await fs.unlink(tmp);
@@ -165,7 +166,7 @@ describe('hooks.timeout_ms validation', () => {
   it('accepts a valid integer inside 1_000..600_000', () => {
     const parsed = ShardManifestSchema.parse({
       ...base,
-      hooks: { 'post-install': 'h.ts', timeout_ms: 60_000 },
+      hooks: { bootstrap: 'h.ts', timeout_ms: 60_000 },
     });
     expect(parsed.hooks.timeout_ms).toBe(60_000);
   });
@@ -212,9 +213,9 @@ describe('hooks.timeout_ms validation', () => {
   it('accepts hooks block without timeout_ms (the field is optional)', () => {
     const parsed = ShardManifestSchema.parse({
       ...base,
-      hooks: { 'post-install': 'h.ts' },
+      hooks: { bootstrap: 'h.ts' },
     });
-    expect(parsed.hooks['post-install']).toBe('h.ts');
+    expect(parsed.hooks.bootstrap).toEqual({ script: 'h.ts' });
     expect(parsed.hooks.timeout_ms).toBeUndefined();
   });
 });
@@ -417,65 +418,37 @@ describe('hooks lifecycle slots (#102)', () => {
     ).toThrow();
   });
 
-  it('throws HOOK_SLOT_CONFLICT when post-install coexists with bootstrap', async () => {
-    const yaml = [
-      'apiVersion: v1',
-      'name: test',
-      'namespace: ns',
-      'version: 1.0.0',
-      'hooks:',
-      '  post-install: hooks/post-install.ts',
-      '  bootstrap: .shardmind/hooks/bootstrap.ts',
-    ].join('\n');
+  // post-install was removed in 1.0 (#357): declared at all, alone or beside
+  // the slots, it is HOOK_SLOT_REMOVED, and the error says how to migrate.
+  async function parseHooks(hookLines: string[]): Promise<unknown> {
+    const yaml = ['apiVersion: v1', 'name: test', 'namespace: ns', 'version: 1.0.0', 'hooks:', ...hookLines].join('\n');
     const tmp = tmpYaml('manifest-test');
     await fs.writeFile(tmp, yaml);
     try {
-      const err = await parseManifest(tmp).catch((e) => e);
-      expect(err.code).toBe('HOOK_SLOT_CONFLICT');
+      return await parseManifest(tmp).catch((e: unknown) => e);
     } finally {
       await fs.unlink(tmp);
     }
+  }
+
+  it.each([
+    ['alone', ['  post-install: hooks/post-install.ts']],
+    ['beside post-update', ['  post-install: hooks/post-install.ts', '  post-update: hooks/post-update.ts']],
+    ['beside bootstrap', ['  post-install: hooks/post-install.ts', '  bootstrap: .shardmind/hooks/bootstrap.ts']],
+    ['beside personalize', ['  post-install: hooks/post-install.ts', '  personalize: hooks/personalize.ts']],
+  ])('throws HOOK_SLOT_REMOVED for a post-install declared %s (#357)', async (_label, hookLines) => {
+    const err = await parseHooks(hookLines);
+    expect(err).toBeInstanceOf(ShardMindError);
+    expect((err as ShardMindError).code).toBe('HOOK_SLOT_REMOVED');
   });
 
-  it('throws HOOK_SLOT_CONFLICT when post-install coexists with personalize', async () => {
-    const yaml = [
-      'apiVersion: v1',
-      'name: test',
-      'namespace: ns',
-      'version: 1.0.0',
-      'hooks:',
-      '  post-install: hooks/post-install.ts',
-      '  personalize: hooks/personalize.ts',
-    ].join('\n');
-    const tmp = tmpYaml('manifest-test');
-    await fs.writeFile(tmp, yaml);
-    try {
-      const err = await parseManifest(tmp).catch((e) => e);
-      expect(err.code).toBe('HOOK_SLOT_CONFLICT');
-    } finally {
-      await fs.unlink(tmp);
-    }
-  });
-
-  it('still accepts a lone legacy post-install (deprecated but valid)', async () => {
-    const yaml = [
-      'apiVersion: v1',
-      'name: test',
-      'namespace: ns',
-      'version: 1.0.0',
-      'hooks:',
-      '  post-install: hooks/post-install.ts',
-      '  post-update: hooks/post-update.ts',
-    ].join('\n');
-    const tmp = tmpYaml('manifest-test');
-    await fs.writeFile(tmp, yaml);
-    try {
-      const manifest = await parseManifest(tmp);
-      expect(manifest.hooks['post-install']).toBe('hooks/post-install.ts');
-      expect(manifest.hooks.bootstrap).toBeUndefined();
-    } finally {
-      await fs.unlink(tmp);
-    }
+  it('names both replacements with their roles and links the worked split (#357)', async () => {
+    const err = (await parseHooks(['  post-install: hooks/post-install.ts'])) as ShardMindError;
+    expect(err.message).toContain('hooks.post-install');
+    expect(err.message).toContain('removed in 1.0');
+    expect(err.hint).toMatch(/hooks\.bootstrap[^.]*unmanaged setup/);
+    expect(err.hint).toMatch(/hooks\.personalize[^.]*managed/);
+    expect(err.hint).toContain('docs/AUTHORING.md#post-install-was-removed-in-10');
   });
 });
 

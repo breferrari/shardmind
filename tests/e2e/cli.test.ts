@@ -19,7 +19,7 @@
  *                        collision + BACKUP_FAILED + SIGINT rollback +
  *                        --defaults flag (Invariant 1 mode) + flag conflict
  *                        + over-existing + skips wizard
- *   Install hook       — post-install hook ran + ctx fields + re-hash +
+ *   Install hook       — bootstrap + personalize ran + ctx fields + re-hash +
  *                        dry-run note
  *   Install Invariant 1— byte-equivalence vs minimal-shard via
  *                        `verifyInvariant1` (helpers/invariant1.ts)
@@ -1020,14 +1020,14 @@ describe('shardmind install — Invariant 1', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. Install — post-install hook execution.
+// 5. Install — bootstrap + personalize hook execution.
 // One scenario, its own stub mount because the main stub's shard roster is
 // frozen at suite-start. Builds a custom tarball that adds
-// hooks/post-install.ts on top of the minimal-shard tree, then installs
-// `github:acme/hook-demo` through the real CLI binary.
+// hooks/bootstrap.ts and hooks/personalize.ts on top of the minimal-shard
+// tree, then installs `github:acme/hook-demo` through the real CLI binary.
 // ---------------------------------------------------------------------------
 
-describe('shardmind install — post-install hook', () => {
+describe('shardmind install — bootstrap + personalize hooks', () => {
   let hookStub: GitHubStub;
   let hookTarball: string;
   let hookScratch: string;
@@ -1046,31 +1046,48 @@ describe('shardmind install — post-install hook', () => {
     const minimalShard = fileURLToPath(new URL('../../examples/minimal-shard', import.meta.url));
     await copyTree(minimalShard, workDir);
     await fs.mkdir(path.join(workDir, 'hooks'), { recursive: true });
-    // Hook writes a marker and logs a known string so the assertions can
-    // key off both disk state and the captured stdout block the Summary
-    // renders.
+    // Bootstrap writes a marker and logs a known string so the assertions
+    // can key off both disk state and the captured stdout block the
+    // Summary renders.
     await fs.writeFile(
-      path.join(workDir, 'hooks', 'post-install.ts'),
+      path.join(workDir, 'hooks', 'bootstrap.ts'),
       [
-        "import { writeFile, appendFile } from 'node:fs/promises';",
+        "import { writeFile } from 'node:fs/promises';",
         "import { join } from 'node:path';",
         'export default async function (ctx) {',
         "  console.log('HOOK_RAN_FOR_' + ctx.shard.name);",
-        "  await writeFile(join(ctx.vaultRoot, 'post-install-marker.txt'), 'hook ran');",
-        // Always echo the full ctx so the new-fields tests below can
-        // assert what the hook actually received. Existing tests don't
-        // read this file, so they're unaffected.
+        "  await writeFile(join(ctx.vaultRoot, 'bootstrap-marker.txt'), 'hook ran');",
+        // Always echo the full ctx so the ctx tests below can assert what
+        // the hook actually received.
         "  await writeFile(join(ctx.vaultRoot, '.hook-ctx.json'), JSON.stringify(ctx));",
-        // Re-hash test marker: when SHARDMIND_REHASH_TEST=1 is set in
-        // the hook's env, edit a managed file (Home.md). The post-hook
-        // re-hash should pick up the new bytes and update state.json's
-        // hash so a subsequent `shardmind` status reports zero drift.
+        '}',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    // Personalize, the managed-edit slot: when SHARDMIND_REHASH_TEST=1 is
+    // set in the hook's env, edit a managed file (Home.md). The post-hook
+    // re-hash should pick up the new bytes and update state.json's hash so
+    // a subsequent `shardmind` status reports zero drift.
+    await fs.writeFile(
+      path.join(workDir, 'hooks', 'personalize.ts'),
+      [
+        "import { appendFile } from 'node:fs/promises';",
+        "import { join } from 'node:path';",
+        'export default async function (ctx) {',
         "  if (process.env.SHARDMIND_REHASH_TEST === '1') {",
         "    await appendFile(join(ctx.vaultRoot, 'Home.md'), '\\n<!-- POST-HOOK-EDIT -->\\n');",
         '  }',
         '}',
         '',
       ].join('\n'),
+      'utf-8',
+    );
+    const manifestPath = path.join(workDir, '.shardmind', 'shard.yaml');
+    const manifestYaml = await fs.readFile(manifestPath, 'utf-8');
+    await fs.writeFile(
+      manifestPath,
+      manifestYaml.replace(/hooks:[\s\S]*$/, 'hooks:\n  bootstrap: hooks/bootstrap.ts\n  personalize: hooks/personalize.ts\n'),
       'utf-8',
     );
     hookTarball = path.join(hookScratch, `${prefix}.tar.gz`);
@@ -1117,18 +1134,18 @@ describe('shardmind install — post-install hook', () => {
     expect(await vault.exists('.shardmind/state.json')).toBe(true);
     // Hook side effect landed — both the marker on disk and the stdout
     // block in the captured Summary.
-    expect(await vault.exists('post-install-marker.txt')).toBe(true);
-    const marker = await vault.readFile('post-install-marker.txt');
+    expect(await vault.exists('bootstrap-marker.txt')).toBe(true);
+    const marker = await vault.readFile('bootstrap-marker.txt');
     expect(marker).toBe('hook ran');
-    expect(result.stdout).toMatch(/Post-install hook completed/);
+    expect(result.stdout).toMatch(/Bootstrap hook completed/);
     expect(result.stdout).toMatch(/HOOK_RAN_FOR_minimal/);
   }, 60_000);
 
-  it('passes valuesAreDefaults / newFiles / removedFiles into the hook ctx (#75)', async () => {
+  it('passes valuesAreDefaults / removedFiles into the bootstrap ctx (#75, #356)', async () => {
     // DEFAULT_VALUES diverges from the schema's literal defaults
     // (user_name: 'Alice' vs '', qmd_enabled: true vs false) so the
-    // hook receives valuesAreDefaults: false. newFiles + removedFiles
-    // are empty on every clean install per spec line 130.
+    // hook receives valuesAreDefaults: false. removedFiles is empty on a
+    // first install; newFiles belongs to post-update, not bootstrap.
     vault = await createEmptyVault('install-hook-ctx');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const result = await spawnCli(
@@ -1137,14 +1154,15 @@ describe('shardmind install — post-install hook', () => {
     );
     expect(result.exitCode).toBe(0);
     const ctx = JSON.parse(await vault.readFile('.hook-ctx.json')) as {
+      slot: string;
       valuesAreDefaults: boolean;
-      newFiles: string[];
       removedFiles: string[];
       values: Record<string, unknown>;
     };
+    expect(ctx.slot).toBe('bootstrap');
     expect(ctx.valuesAreDefaults).toBe(false);
-    expect(ctx.newFiles).toEqual([]);
     expect(ctx.removedFiles).toEqual([]);
+    expect(ctx).not.toHaveProperty('newFiles');
     expect(ctx.values).toMatchObject({ user_name: 'Alice', qmd_enabled: true });
   }, 60_000);
 
@@ -1154,8 +1172,8 @@ describe('shardmind install — post-install hook', () => {
     // defaults are user_name='' / org_name='Independent' /
     // vault_purpose='engineering' / qmd_enabled=false. Passing those
     // verbatim must yield valuesAreDefaults: true so a hook author
-    // gating managed-file edits with `if (!ctx.valuesAreDefaults)`
-    // can trust the signal.
+    // whose bootstrap sets up differently on a defaults install can
+    // trust the signal.
     vault = await createEmptyVault('install-hook-ctx-defaults');
     const valuesPath = await writeValuesFile(vault, {
       user_name: '',
@@ -1188,16 +1206,14 @@ describe('shardmind install — post-install hook', () => {
     expect(result.exitCode).toBe(0);
     const ctx = JSON.parse(await vault.readFile('.hook-ctx.json')) as {
       valuesAreDefaults: boolean;
-      newFiles: string[];
       removedFiles: string[];
     };
     expect(ctx.valuesAreDefaults).toBe(true);
-    expect(ctx.newFiles).toEqual([]);
     expect(ctx.removedFiles).toEqual([]);
   }, 60_000);
 
   it('re-hashes managed files after a hook that edits one (#75)', async () => {
-    // Hook appends to Home.md under SHARDMIND_REHASH_TEST=1. After
+    // Personalize appends to Home.md under SHARDMIND_REHASH_TEST=1. After
     // install completes, state.json's `rendered_hash` for Home.md must
     // reflect the post-edit bytes so `shardmind` status sees zero
     // drift — that's the spec's enforceable claim
@@ -1245,13 +1261,13 @@ describe('shardmind install — post-install hook', () => {
     expect(result.exitCode).toBe(0);
     // Dry run: no writes.
     expect(await vault.exists('.shardmind/state.json')).toBe(false);
-    expect(await vault.exists('post-install-marker.txt')).toBe(false);
+    expect(await vault.exists('bootstrap-marker.txt')).toBe(false);
     // But the summary must ANNOUNCE the hook would have fired — even
     // though its body didn't execute. Ink soft-wraps; collapse whitespace
     // before the substring check so terminal width can't flake the
     // assertion.
     const collapsed = result.stdout.replace(/\s+/g, ' ');
-    expect(collapsed).toContain('Post-install hook skipped (dry run).');
+    expect(collapsed).toContain('Bootstrap hook skipped (dry run).');
   }, 60_000);
 });
 

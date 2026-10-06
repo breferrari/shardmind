@@ -86,7 +86,7 @@ export interface MutatedShardOptions extends BaseShardOpts {
    */
   mutate: (workDir: string) => Promise<void>;
   /**
-   * Drop `manifest.hooks` entirely so the post-install phase never
+   * Drop `manifest.hooks` entirely so the hook phase never
    * fires. Set true for scenarios where the hook would interfere
    * with what's under test (e.g. multi-conflict update scenarios
    * that need a clean install + update cycle without a hook
@@ -103,8 +103,8 @@ export async function buildHookFixtureShard(
   opts: HookShardOptions,
 ): Promise<string> {
   return cloneAndPack(opts, async (workDir) => {
-    // REPLACE the hooks block (minimal-shard ships a legacy `post-install`;
-    // declaring it alongside `bootstrap` would be a HOOK_SLOT_CONFLICT).
+    // REPLACE the hooks block: minimal-shard declares its own bootstrap
+    // path, and this fixture's script and timeout take its place.
     const manifest = await readManifest(workDir);
     manifest.hooks = { bootstrap: 'hooks/bootstrap.ts' };
     if (opts.hookTimeoutMs !== undefined) {

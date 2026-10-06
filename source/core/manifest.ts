@@ -112,9 +112,10 @@ export const ShardManifestSchema = z.object({
       .optional(),
     personalize: z.string().optional(),
     'post-update': z.string().optional(),
-    // Deprecated combined hook. Mutually exclusive with bootstrap/personalize;
-    // the conflict is rejected post-parse as HOOK_SLOT_CONFLICT (a superRefine
-    // would surface only as the generic MANIFEST_VALIDATION_FAILED).
+    // Removed in 1.0 (#357). Kept in the schema only so a manifest that still
+    // declares it is refused post-parse as HOOK_SLOT_REMOVED, with the
+    // migration in the hint (a superRefine would surface only as the generic
+    // MANIFEST_VALIDATION_FAILED, and an unknown key would be stripped silently).
     'post-install': z.string().optional(),
     // Per-shard hook execution timeout in milliseconds. Default 30_000 when
     // absent. Clamped to 1_000..600_000 — below one second is almost always a
@@ -180,20 +181,21 @@ export async function parseManifest(filePath: string): Promise<ShardManifest> {
     );
   }
 
-  // The deprecated `post-install` slot cannot coexist with the new
-  // `bootstrap` / `personalize` slots — a half-migrated manifest is a
-  // mistake, not a merge. Reject post-parse so the hint is precise (a zod
-  // superRefine would collapse into the generic MANIFEST_VALIDATION_FAILED).
-  const hooks = result.data.hooks;
-  if (hooks['post-install'] && (hooks.bootstrap || hooks.personalize)) {
+  // `post-install` was removed in 1.0 (#357): the slots carry everything it
+  // did. Refuse it whatever else is declared, and say how to split it.
+  // HOOK_SLOT_CONFLICT (post-install beside the slots) is no longer raised.
+  const { 'post-install': postInstall, ...hooks } = result.data.hooks;
+  if (postInstall !== undefined) {
     throw new ShardMindError(
-      'shard.yaml declares the deprecated hooks.post-install alongside hooks.bootstrap/personalize.',
-      'HOOK_SLOT_CONFLICT',
-      'Remove hooks.post-install once you have split it into bootstrap + personalize. See docs/AUTHORING.md §6.',
+      'shard.yaml declares hooks.post-install, which was removed in 1.0.',
+      'HOOK_SLOT_REMOVED',
+      'Split it into two slots: hooks.bootstrap for unmanaged setup (git init, indexes, registrations), which always runs; ' +
+        'and hooks.personalize for managed-file edits, which runs only when the user changed a default. ' +
+        'Then remove hooks.post-install. Worked split: https://github.com/breferrari/shardmind/blob/main/docs/AUTHORING.md#post-install-was-removed-in-10',
     );
   }
 
-  return result.data as ShardManifest;
+  return { ...result.data, hooks } as ShardManifest;
 }
 
 /**
