@@ -202,6 +202,9 @@ describe('install (obsidian-mind-like)', () => {
     expect(await vault.exists('.bootstrap-marker.txt')).toBe(true);
     const bootstrap = await readHookContext<BootstrapContext>(vault, 'bootstrap');
     expect(bootstrap.slot).toBe('bootstrap');
+    // #356: bootstrap knows the user took the defaults; a first install removed nothing.
+    expect(bootstrap.valuesAreDefaults).toBe(true);
+    expect(bootstrap.removedFiles).toEqual([]);
 
     // Invariant 2: personalize was NOT invoked — no ctx dump, North Star
     // unmodified.
