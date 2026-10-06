@@ -15,13 +15,14 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **A folder the install made is removed if the install fails or is cancelled** before it finishes; a cancel before the install writes leaves nothing to remove. A folder that existed is never removed.
 - **The final message says where the vault is**, with a `cd` line.
 
-### Changed (status, adopt and update --json run without the terminal UI — #302)
+### Changed (every command runs as a UI-free flow; --json without the terminal UI — #302)
 
 - **`shardmind --json` with a flag it does not take now answers with a document.** It used to print the error on stderr and write nothing to stdout. It now writes a failure document with the code `ARGS_INVALID` and the same message, and exits 1, so a `--json` caller always gets a document.
 - **`shardmind adopt --dry-run --json` and `shardmind update --dry-run --json` with a flag they do not take answer with a document too**, `ARGS_INVALID`, where they printed the error and wrote nothing.
 - **An option of a command written before its name under `--json` (`shardmind --dry-run update --json`) is refused with a document**, `ARGS_INVALID`, as the run without `--json` refuses it. Only `shardmind`'s own options (`--verbose`, `--json`, `--no-update-check`) may come first.
 - **A Ctrl+C while `adopt --json`, `update --json` or `validate --json` downloads the shard writes no document.** It exits 130 with nothing on stdout, where a failure document could slip out before the exit.
-- Internal: `shardmind --json`, `shardmind adopt --dry-run --json` and `shardmind update --dry-run --json` are answered before the terminal UI loads, as `validate --json` is: they parse their flags with the same rules as the interactive run (`cli-kit/parse.ts`). Adopt and update run as UI-free flows (`core/flows/`) that the terminal UI adapts. With no `--json` run left in the terminal UI, the two workarounds that made one behave as piped (stdout marked non-interactive, Ink's trailing blank line dropped) are gone. Install follows.
+- **`shardmind install <shard> --values <file>` with no terminal, and a file of your own where the shard puts one, backs your file up**, as `--yes` does. It used to reach the collision review with no terminal to show it on.
+- Internal: `shardmind --json`, `shardmind adopt --dry-run --json` and `shardmind update --dry-run --json` are answered before the terminal UI loads, as `validate --json` is: they parse their flags with the same rules as the interactive run (`cli-kit/parse.ts`). Install, adopt and update run as UI-free flows (`core/flows/`) that the terminal UI adapts, sharing their write step (`runAndHooks`), one rolled-back marker, and the terminal side's wiring (`useFlowRun`). With no `--json` run left in the terminal UI, the two workarounds that made one behave as piped (stdout marked non-interactive, Ink's trailing blank line dropped) are gone.
 
 ### Changed (install owns its rollback, as update and adopt do — #300)
 
