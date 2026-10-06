@@ -436,6 +436,8 @@ describe('hooks lifecycle slots (#102)', () => {
     ['beside post-update', ['  post-install: hooks/post-install.ts', '  post-update: hooks/post-update.ts']],
     ['beside bootstrap', ['  post-install: hooks/post-install.ts', '  bootstrap: .shardmind/hooks/bootstrap.ts']],
     ['beside personalize', ['  post-install: hooks/post-install.ts', '  personalize: hooks/personalize.ts']],
+    ['with no value', ['  post-install:']],
+    ['in an object form', ['  post-install:', '    script: hooks/post-install.ts']],
   ])('throws HOOK_SLOT_REMOVED for a post-install declared %s (#357)', async (_label, hookLines) => {
     const err = await parseHooks(hookLines);
     expect(err).toBeInstanceOf(ShardMindError);
@@ -449,6 +451,17 @@ describe('hooks lifecycle slots (#102)', () => {
     expect(err.hint).toMatch(/hooks\.bootstrap[^.]*unmanaged setup/);
     expect(err.hint).toMatch(/hooks\.personalize[^.]*managed/);
     expect(err.hint).toContain('docs/AUTHORING.md#post-install-was-removed-in-10');
+  });
+  it("drops a post-install from a vault's installed copy instead of refusing it (#357)", async () => {
+    const yaml = ['apiVersion: v1', 'name: test', 'namespace: ns', 'version: 1.0.0', 'hooks:', '  post-install: hooks/post-install.ts', '  post-update: hooks/post-update.ts'].join('\n');
+    const tmp = tmpYaml('manifest-test');
+    await fs.writeFile(tmp, yaml);
+    try {
+      const manifest = await parseManifest(tmp, { installedCopy: true });
+      expect(manifest.hooks).toEqual({ 'post-update': 'hooks/post-update.ts' });
+    } finally {
+      await fs.unlink(tmp);
+    }
   });
 });
 

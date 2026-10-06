@@ -116,7 +116,8 @@ export const ShardManifestSchema = z.object({
     // declares it is refused post-parse as HOOK_SLOT_REMOVED, with the
     // migration in the hint (a superRefine would surface only as the generic
     // MANIFEST_VALIDATION_FAILED, and an unknown key would be stripped silently).
-    'post-install': z.string().optional(),
+    // Any value, so a blank or object-form declaration is refused the same way.
+    'post-install': z.unknown().optional(),
     // Per-shard hook execution timeout in milliseconds. Default 30_000 when
     // absent. Clamped to 1_000..600_000 — below one second is almost always a
     // bug (even a trivial `git init` hits ~50ms with warm caches but 200ms
@@ -136,7 +137,20 @@ export const ShardManifestSchema = z.object({
  */
 export const DEFAULT_HOOK_TIMEOUT_MS = 30_000;
 
-export async function parseManifest(filePath: string): Promise<ShardManifest> {
+export interface ParseManifestOptions {
+  /**
+   * The vault's cached copy of the shard.yaml it was installed from
+   * (`.shardmind/shard.yaml`), read by status. A copy from a pre-1.0 shard
+   * may still declare `post-install`; the vault never runs it, and the
+   * migration is the author's, so it is dropped instead of refused (#357).
+   */
+  installedCopy?: boolean;
+}
+
+export async function parseManifest(
+  filePath: string,
+  opts: ParseManifestOptions = {},
+): Promise<ShardManifest> {
   let raw: string;
   try {
     raw = await fs.readFile(filePath, 'utf-8');
@@ -185,7 +199,7 @@ export async function parseManifest(filePath: string): Promise<ShardManifest> {
   // did. Refuse it whatever else is declared, and say how to split it.
   // HOOK_SLOT_CONFLICT (post-install beside the slots) is no longer raised.
   const { 'post-install': postInstall, ...hooks } = result.data.hooks;
-  if (postInstall !== undefined) {
+  if (postInstall !== undefined && !opts.installedCopy) {
     throw new ShardMindError(
       'shard.yaml declares hooks.post-install, which was removed in 1.0.',
       'HOOK_SLOT_REMOVED',

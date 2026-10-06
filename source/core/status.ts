@@ -237,7 +237,7 @@ async function loadCachedManifest(
 ): Promise<ShardManifest | null> {
   const filePath = path.join(vaultRoot, CACHED_MANIFEST);
   try {
-    return await parseManifest(filePath);
+    return await parseManifest(filePath, { installedCopy: true });
   } catch (err) {
     warnings.push({
       severity: 'warning',

@@ -13,6 +13,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **Breaking: `hooks.post-install` is removed.** It was deprecated in 0.2, and since #356 the slots do everything it did. A `shard.yaml` that still declares it fails to load, and `shardmind validate` reports it, as `HOOK_SLOT_REMOVED`.
   - The error says how to migrate: unmanaged setup moves to `hooks.bootstrap`, which always runs; managed-file edits move to `hooks.personalize`, which runs only when the user changed a default. AUTHORING §6 has the worked split.
 - **`shardmind/runtime` no longer exports `HookContext`**, the flat context only `post-install` received. Type a hook against its slot: `BootstrapContext`, `PersonalizeContext` or `PostUpdateContext`.
+- A vault installed from an older shard that declared `post-install` keeps working: `shardmind` (status) reads its cached `shard.yaml` without the removed key and without a warning. The editor schema (`schemas/shard.schema.json`) flags the key as removed.
 - `HOOK_SLOT_CONFLICT` stays in `ErrorCode` but is no longer raised. The `HOOK_POST_INSTALL_DEPRECATED` warning is no longer shown.
 
 ### Changed (shards that use newer fields declare the engine they need — #370)
