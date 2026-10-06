@@ -1468,6 +1468,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
         await waitFor(r.lastFrame, (f) => f.includes('INSTALL_INSIDE_VAULT'), 30_000);
         expect(stub.requestedPaths().length).toBe(before);
         expect(await fs.readdir(cwd)).toEqual(['.obsidian']);
+        expect(process.exitCode).toBe(1);
       } finally {
         process.exitCode = undefined;
         await cleanupVault(cwd);
