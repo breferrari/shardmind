@@ -285,6 +285,17 @@ Engine capability from the original plan. These were declined on 2026-10-04/05 o
 | ⬜ | Add --skip-hooks to install, update and adopt | [#199](https://github.com/breferrari/shardmind/issues/199) |
 | ⬜ | Command namespace prefix in the engine | [#25](https://github.com/breferrari/shardmind/issues/25) |
 
+## Phase 16 — 1.0.x fixes
+
+Milestone: [Phase 16](https://github.com/breferrari/shardmind/milestone/17)
+
+Defects found after the 1.0 contract was settled, fixed in 1.0.x patches without changing what 1.0 freezes.
+
+| | Task | Issue |
+|---|---|---|
+| ⬜ | Report a failed shardmind/runtime mapping accurately, not as a context failure | [#377](https://github.com/breferrari/shardmind/issues/377) |
+| ⬜ | Update RELEASE-SMOKE's adopt recipe for the bulk-resolution picker | [#379](https://github.com/breferrari/shardmind/issues/379) |
+
 ## Shelf (retired 2026-10-04)
 
 The shelf was retired on 2026-10-04: every item on it moved into Phases 4 to 11. The deferral reasons are kept below as a record of why each item waited. They are history, not a build order.
@@ -575,7 +586,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 
 ### v1.0.0 — Ecosystem (2026–2027)
 
-1.0 is the engine contract: Phase 14 settles everything it freezes. Of the ecosystem below, the guides shipped, the registry index is published (obsidian-mind and wiki-mind), and search and teams are planned in Phase 15. A hosted registry with accounts stays a VISION non-goal. Each area has a parent umbrella issue.
+1.0 is the engine contract: Phase 14 settled everything it freezes, and **1.0.0 shipped on 2026-10-06** with it: install into a new folder, `--json` that runs `update` and `adopt`, a validated `state.json`, hooks importing the running engine's runtime, and the reservations that let Phase 15 land in 1.x without a breaking change. Of the ecosystem below, the guides shipped, the registry index is published (obsidian-mind and wiki-mind), and search and teams are planned in Phase 15. A hosted registry with accounts stays a VISION non-goal. Each area has a parent umbrella issue.
 
 #### Registry (hosted) ([#89](https://github.com/breferrari/shardmind/issues/89))
 
