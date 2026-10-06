@@ -120,8 +120,9 @@ const KILL_GRACE_MS = 2_000;
 /**
  * Which lifecycle slot fired the hook. Exported so the command machines,
  * the HookProgress component, the orchestrator, and the hook-runner can all
- * share one source of truth for the allowed phase strings: bootstrap /
- * personalize / post-update (`post-install` was removed in 1.0, #357).
+ * name the allowed phase strings: bootstrap / personalize / post-update.
+ * The same type as the runtime's `HookSlot`, which `HOOK_STAGES` defines
+ * (`post-install` was removed in 1.0, #357).
  */
 export type HookStage = HookSlot;
 

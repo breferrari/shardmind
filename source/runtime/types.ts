@@ -353,7 +353,7 @@ export interface MigrationResult {
  * The three lifecycle hook slots (post the #102 split). The discriminator
  * shared by every slotted hook context and by the orchestrator's outcomes.
  */
-export type HookSlot = 'bootstrap' | 'personalize' | 'post-update';
+export type HookSlot = (typeof HOOK_STAGES)[number];
 
 /** Fields every slotted hook receives, regardless of slot. */
 export interface HookContextBase {
@@ -611,6 +611,7 @@ export interface StatusWarning {
 }
 
 import type { ErrorCode } from './errors.js';
+import type { HOOK_STAGES } from './vault-paths.js';
 export type { ErrorCode } from './errors.js';
 
 const SHARDMIND_ERROR_BRAND: unique symbol = Symbol.for('shardmind.ShardMindError') as never;
