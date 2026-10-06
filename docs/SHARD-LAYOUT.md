@@ -186,7 +186,10 @@ These are warnings, not thrown errors — see [`docs/ERRORS.md §Hook lifecycle 
 
 The ctx is slotted — each hook receives only the fields meaningful to it (`source/runtime/types.ts`):
 
-- **`bootstrap`** → `{ slot, vaultRoot, values, modules, shard, previousVersion? }`. No `valuesAreDefaults` (it always runs); no file lists. `previousVersion` set only on an update re-bootstrap.
+- **`bootstrap`** → `{ slot, vaultRoot, values, modules, shard, previousVersion?, valuesAreDefaults, removedFiles }` (#356).
+  - `previousVersion` is set only on an update re-bootstrap.
+  - `valuesAreDefaults` is the engine's own answer (deep-equal against the defaults of the version being installed; on an update re-bootstrap, the new version's). Bootstrap always runs, so it can let unmanaged setup differ on a defaults install. Invariant 2 does not depend on it: bootstrap writes no managed files.
+  - `removedFiles` holds the managed paths this run removed: on install, the files a reinstall dropped because the shard no longer has them (empty on a first install); on adopt, empty; on an update re-bootstrap, the update's deletions. Use it to clean up external state (QMD collection refs, MCP registrations) that pointed at them. On an update, `post-update` gets the same list, so the cleanup should be idempotent. It is this run's list only: a re-bootstrap after a failed one doesn't repeat the earlier run's removals.
 - **`personalize`** → `{ slot, vaultRoot, values, modules, shard }`. No `valuesAreDefaults` — the engine already enforced the gate; if `personalize` runs at all, values are non-default.
 - **`post-update`** → `{ slot, vaultRoot, values, modules, shard, previousVersion, newFiles, removedFiles }`. `newFiles` = managed paths added (`UpdateAction.kind === 'add'`); `removedFiles` = managed paths deleted. Use `removedFiles` to maintain external state (QMD collection refs, MCP registrations) that referenced now-gone paths.
 

@@ -24,6 +24,8 @@ interface BootstrapCtx {
   modules: Record<string, 'included' | 'excluded'>;
   shard: { name: string; version: string };
   previousVersion?: string;
+  valuesAreDefaults: boolean;
+  removedFiles: string[];
 }
 
 export default async function (ctx: BootstrapCtx): Promise<void> {

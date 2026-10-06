@@ -1101,7 +1101,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   async function reinstallWithoutTwoFiles(
     prefix: string,
-    opts: { breakRender: boolean; before?: (vault: Vault) => Promise<void> },
+    opts: { breakRender: boolean; before?: (vault: Vault) => Promise<void>; bootstrapDump?: boolean },
   ) {
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
@@ -1114,11 +1114,30 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
     const tarPath = await buildCustomTarball({
       version: '0.1.0',
       prefix: `dropped-${prefix}`,
-      manifestOverrides: { hooks: {}, name: 'minimal', namespace: 'shardmind' },
+      manifestOverrides: {
+        hooks: opts.bootstrapDump ? { bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } } : {},
+        name: 'minimal',
+        namespace: 'shardmind',
+      },
       outDir: vault.root,
       mutate: async (work) => {
         await fs.rm(path.join(work, 'CLAUDE.md'));
         await fs.rm(path.join(work, 'brain', 'North Star.md.njk'));
+        if (opts.bootstrapDump) {
+          // Writes what the engine handed bootstrap to an unmanaged file (#356).
+          await fs.mkdir(path.join(work, '.shardmind', 'hooks'), { recursive: true });
+          await fs.writeFile(
+            path.join(work, '.shardmind', 'hooks', 'bootstrap.ts'),
+            [
+              "import { writeFile } from 'node:fs/promises';",
+              "import { join } from 'node:path';",
+              'export default async function (ctx) {',
+              "  await writeFile(join(ctx.vaultRoot, '.bootstrap-ctx.json'), JSON.stringify({ removedFiles: ctx.removedFiles, valuesAreDefaults: ctx.valuesAreDefaults }));",
+              '}',
+              '',
+            ].join('\n'),
+          );
+        }
         if (opts.breakRender) {
           await fs.writeFile(
             path.join(work, 'zz-broken.md.njk'),
@@ -1150,6 +1169,20 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       expect(Object.keys(state.files)).not.toContain('brain/North Star.md');
       expect(Object.keys(state.files)).not.toContain('CLAUDE.md');
       expect(await leftoverBackups(vault.root)).toEqual([]);
+    } finally {
+      await vault.cleanup();
+    }
+  }, 90_000);
+
+  it("hands the reinstall's removed file to the bootstrap hook (#356)", async () => {
+    const { vault, r } = await reinstallWithoutTwoFiles('s356-bootstrap', { breakRender: false, bootstrapDump: true });
+    try {
+      await waitFor(() => r.frames.join('\n'), (f) => /Removed 1 file/.test(f), 30_000);
+      const ctx = JSON.parse(await vault.readFile('.bootstrap-ctx.json')) as { removedFiles: string[]; valuesAreDefaults: boolean };
+      // CLAUDE.md was edited, so it was kept, not removed.
+      expect(ctx.removedFiles).toEqual(['brain/North Star.md']);
+      // The wizard answered a non-default name (Dana), so not a defaults install.
+      expect(ctx.valuesAreDefaults).toBe(false);
     } finally {
       await vault.cleanup();
     }

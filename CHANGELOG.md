@@ -8,6 +8,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (the bootstrap hook knows what a reinstall removed — #356)
+
+- **A `bootstrap` hook's context now carries `removedFiles` and `valuesAreDefaults`.**
+  - `removedFiles` holds the managed files the run removed: on a reinstall, the ones the shard no longer has; on an update re-bootstrap, the update's deletions. A shard can clean up external state that pointed at them, such as a search index entry or an MCP registration.
+  - `valuesAreDefaults` says whether the user took every default.
+- Until now only the deprecated `post-install` hook received these on install. This closes that gap before `post-install` is removed (#357).
+
 ### Added (the shardmind/runtime surface pinned for 1.0 — #358)
 
 - **`shardmind/runtime` exports the vault paths** `SHARDMIND_DIR`, `STATE_FILE` and `VALUES_FILE`, which the docs promised. It also exports type-only names for every shape its functions return: `FileState`, `ModuleSelections`, `GroupDefinition`, `Migration` and `MigrationChange`, alongside the types already exported. Every existing export stays.

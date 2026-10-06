@@ -625,7 +625,9 @@ interface HookContextBase {
   modules: Record<string, 'included' | 'excluded'>;
   shard: { name: string; version: string };
 }
-interface BootstrapContext   extends HookContextBase { slot: 'bootstrap';   previousVersion?: string; }
+interface BootstrapContext   extends HookContextBase {
+  slot: 'bootstrap'; previousVersion?: string; valuesAreDefaults: boolean; removedFiles: string[];  // #356
+}
 interface PersonalizeContext extends HookContextBase { slot: 'personalize'; }
 interface PostUpdateContext  extends HookContextBase {
   slot: 'post-update'; previousVersion?: string; newFiles: string[]; removedFiles: string[];

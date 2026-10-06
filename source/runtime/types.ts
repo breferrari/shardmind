@@ -409,13 +409,32 @@ export interface HookContextBase {
 }
 
 /**
- * `bootstrap` context — unmanaged-path setup. No `valuesAreDefaults` (it
- * always runs) and no file lists. `previousVersion` is set only on an
- * update re-bootstrap (fingerprint changed).
+ * `bootstrap` context — unmanaged-path setup. It always runs, so it carries
+ * `valuesAreDefaults`, and the run's `removedFiles` for cleaning up external
+ * state (#356). `previousVersion` is set only on an update re-bootstrap
+ * (fingerprint changed).
  */
 export interface BootstrapContext extends HookContextBase {
   slot: 'bootstrap';
   previousVersion?: string;
+  /**
+   * The user's values equal the defaults of the version being installed
+   * (the engine's `valuesAreDefaults`; on an update re-bootstrap, the new
+   * version's schema). Bootstrap always runs, so unmanaged setup can differ
+   * on a defaults install; managed edits stay `personalize`'s, which the
+   * engine skips on defaults (#356).
+   */
+  valuesAreDefaults: boolean;
+  /**
+   * Managed paths this run removed: on install, the files a reinstall dropped
+   * because the shard no longer has them (empty on a first install); on adopt,
+   * empty; on an update re-bootstrap, the update's deletions, which
+   * `post-update` also receives, so clean up idempotently. Only this run's
+   * removals: a re-bootstrap after an earlier failed one does not repeat the
+   * earlier run's list. For cleaning up external state that pointed at them
+   * (#356).
+   */
+  removedFiles: string[];
 }
 
 /**
