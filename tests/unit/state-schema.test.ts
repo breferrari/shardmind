@@ -172,4 +172,26 @@ describe('loadState (runtime) validates the same way (#343)', () => {
     await writeRaw(valid());
     expect((await loadState())!.shard).toBe(valid()['shard']);
   });
+
+  it('a state.json from a newer ShardMind is STATE_UNSUPPORTED_VERSION with both numbers, not corrupt (#368)', async () => {
+    vi.spyOn(process, 'cwd').mockReturnValue(vault);
+    // A newer engine's shape: no top-level shard, files elsewhere.
+    await writeRaw({ schema_version: 3, shards: [{ shard: 'acme/base' }] });
+    const err = await loadState().catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'STATE_UNSUPPORTED_VERSION' });
+    expect(newerStateOf(err)).toEqual({ stateSchemaVersion: 3, supportedSchemaVersion: 2 });
+  });
+
+  it('a v1 state reads as it is (#368)', async () => {
+    vi.spyOn(process, 'cwd').mockReturnValue(vault);
+    await writeRaw({ ...valid(), schema_version: 1 });
+    expect((await loadState())!.schema_version).toBe(1);
+  });
+
+  it('a state.json with no integer schema_version is STATE_CORRUPT naming it (#368)', async () => {
+    vi.spyOn(process, 'cwd').mockReturnValue(vault);
+    const { schema_version: _drop, ...rest } = valid();
+    await writeRaw(rest);
+    await expect(loadState()).rejects.toMatchObject({ code: 'STATE_CORRUPT', message: expect.stringContaining('schema_version') });
+  });
 });
