@@ -867,9 +867,12 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     const abort = new AbortController();
     const realWrite = fsp.writeFile;
     let writesAfterAbort = 0;
+    // Ctrl+C lands right after the last shard-only file is written.
+    const lastShardOnlyAbs = path.join(vault, lastShardOnly);
     const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
       if (abort.signal.aborted) writesAfterAbort++;
-      return realWrite(file, data, opts);
+      await realWrite(file, data, opts);
+      if (String(file) === lastShardOnlyAbs) abort.abort();
     });
     const err = await runAdopt({
       vaultRoot: vault,
@@ -883,10 +886,6 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
       plan: adoptPlan,
       resolutions: { 'Home.md': 'use_shard' },
       signal: abort.signal,
-      // Ctrl+C lands right after the last shard-only file is written.
-      onFileTouched: (rel) => {
-        if (rel === lastShardOnly) abort.abort();
-      },
     }).catch((e: unknown) => e);
     writeSpy.mockRestore();
     expect(err).toMatchObject({ code: 'CANCELLED' });
@@ -907,6 +906,14 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
       selections,
     });
     const abort = new AbortController();
+    // shard-values.yaml is the last write before state.json: Ctrl+C lands
+    // right after it.
+    const valuesAbs = path.join(vault, 'shard-values.yaml');
+    const realWrite = fsp.writeFile;
+    const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (file, data, opts) => {
+      await realWrite(file, data, opts);
+      if (String(file) === valuesAbs) abort.abort();
+    });
     const err = await runAdopt({
       vaultRoot: vault,
       manifest,
@@ -919,11 +926,9 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
       plan: adoptPlan,
       resolutions: {},
       signal: abort.signal,
-      // shard-values.yaml is the last write before state.json.
-      onFileTouched: (rel) => {
-        if (rel === 'shard-values.yaml') abort.abort();
-      },
     }).catch((e: unknown) => e);
+    writeSpy.mockRestore();
+    expect(abort.signal.aborted, 'the values file was written').toBe(true);
     expect(err).toMatchObject({ code: 'CANCELLED' });
     expect(await readState(vault)).toBeNull();
     // Every file it wrote is gone, and so is every folder it made (#258).

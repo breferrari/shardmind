@@ -106,20 +106,6 @@ export interface AdoptRunnerOptions {
    */
   signal?: AbortSignal;
   onProgress?: (event: AdoptProgressEvent) => void;
-  /**
-   * Fires once after the snapshot is staged, before any vault write.
-   * Progress only: the rollback is runAdopt's own, in its catch, and a
-   * Ctrl+C reaches it through `signal` (#249).
-   */
-  onBackupReady?: (backupDir: string) => void;
-  /**
-   * Fires once per write or record-only action. `introduced=true` when
-   * this run created the on-disk file (shard-only fresh install); the
-   * rollback erases only those paths. `false` for matches /
-   * differs-keep-mine (we didn't write) and differs-use-shard (we
-   * overwrote — restore-from-snapshot covers that one).
-   */
-  onFileTouched?: (outputPath: string, introduced: boolean) => void;
 }
 
 export type AdoptApplyKind =
@@ -192,9 +178,8 @@ export async function assertAdoptable(vaultRoot: string): Promise<void> {
  * the transaction's rollback):
  *
  *   1. Pre-flight guards — `assertAdoptable`.
- *   2. Begin the transaction. Surface its backup dir to the caller via
- *      `onBackupReady` BEFORE any write; each write below records itself
- *      first (`recordWrite`).
+ *   2. Begin the transaction; each write below records itself first
+ *      (`recordWrite`).
  *   3. Apply per-classification:
  *        - `matches`        → record managed FileState; no disk write.
  *        - `shard-only`     → write rendered/copied bytes; record
@@ -231,8 +216,6 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     dryRun = false,
     signal,
     onProgress,
-    onBackupReady,
-    onFileTouched,
   } = opts;
 
   await assertAdoptable(vaultRoot);
@@ -273,7 +256,6 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
   };
   try {
     if (tx) {
-      onBackupReady?.(tx.dir);
       // A move's new path is introduced by this run, whether it is written or
       // the old file moves there, and its old path is snapshotted: both
       // recorded before any write, so a failure or Ctrl+C removes the new
@@ -281,7 +263,6 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
       for (const move of moves) {
         await tx.recordWrite(move.to);
         await tx.recordWrite(move.from);
-        onFileTouched?.(move.to, true);
       }
     }
 
@@ -298,7 +279,6 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         action: 'matches',
       });
       fileStates[c.path] = buildFileState(c, c.shardHash, 'managed');
-      onFileTouched?.(c.path, false);
       summary.matchedAuto.push(c.path);
     }
 
@@ -318,12 +298,6 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         await writeVaultFileBuffer(vaultRoot, c.path, c.shardContent);
       }
       fileStates[c.path] = buildFileState(c, c.shardHash, 'managed');
-      // `introduced` reflects whether this run actually created the file
-      // on disk — false under --dry-run since no write happened. Keeps
-      // the SIGINT-rollback `addedPaths` accounting honest under
-      // dry-run semantics (where nothing was written, nothing should
-      // be erased).
-      onFileTouched?.(c.path, !dryRun);
       summary.installedFresh.push(c.path);
     }
 
@@ -363,14 +337,12 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
         resolution === 'use_shard' || (resolution !== 'keep_mine' && resolution.hash === c.shardHash);
       fileStates[c.path] = buildFileState(c, c.shardHash, managed ? 'managed' : 'modified');
       if (resolution === 'keep_mine') {
-        onFileTouched?.(c.path, false);
         summary.adoptedMine.push(c.path);
       } else if (resolution === 'use_shard') {
         if (tx) {
           await tx.recordWrite(c.path);
           await writeVaultFileBuffer(vaultRoot, c.path, c.shardContent);
         }
-        onFileTouched?.(c.path, false);
         summary.adoptedShard.push(c.path);
       } else {
         // Auto-merge (#120): write the union-merged bytes. The result is
@@ -383,7 +355,6 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
           await tx.recordWrite(c.path);
           await writeVaultFileBuffer(vaultRoot, c.path, resolution.content);
         }
-        onFileTouched?.(c.path, false);
         summary.adoptedMerged.push(c.path);
       }
     }
@@ -426,7 +397,6 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
           // Recorded only once written: the exclusive write fails on a values
           // file the user put there mid-adopt, which the rollback must keep.
           tx.introduced.push(VALUES_FILE);
-          onFileTouched?.(VALUES_FILE, true);
         },
         state: () => writeState(vaultRoot, state),
       });

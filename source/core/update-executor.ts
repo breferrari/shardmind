@@ -73,21 +73,6 @@ export interface UpdateRunnerOptions {
    */
   adoptPreexisting?: boolean;
   onProgress?: (event: UpdateProgressEvent) => void;
-  /**
-   * Fires exactly once, after the backup directory is created and the
-   * engine cache snapshotted, before any vault mutation happens. Progress
-   * only: the rollback is runUpdate's own, in its catch, and a Ctrl+C
-   * reaches it through `signal` (#249).
-   */
-  onBackupReady?: (backupDir: string) => void;
-  /**
-   * Fires after each write with the file's vault-relative path and
-   * whether the run introduced it (nothing was there when it was
-   * recorded): the same list runUpdate's own rollback erases, so a caller can see exactly which files this run created. A rename's new
-   * path (#178) fires once before the write pass, after it was checked
-   * free.
-   */
-  onFileTouched?: (outputPath: string, introduced: boolean) => void;
 }
 
 export type UpdateProgressEvent =
@@ -178,8 +163,6 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     signal,
     adoptPreexisting = false,
     onProgress,
-    onBackupReady,
-    onFileTouched,
   } = opts;
 
   // Every conflict must arrive decided (#292). The machine resolves each
@@ -215,9 +198,6 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
 
   try {
     if (tx) {
-      // Before any write. Progress only: the rollback is this run's own
-      // catch (#249).
-      onBackupReady?.(tx.dir);
       // A rename's new path is introduced by this run, whichever pass fills
       // it, and its old file is snapshotted: recorded once, before any write,
       // so a failure or Ctrl+C mid-pass removes the one and restores the
@@ -225,7 +205,6 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
       for (const action of plan.actions) {
         if (action.renamedFrom === undefined) continue;
         await tx.recordMove(action.renamedFrom, action.path);
-        onFileTouched?.(action.path, true);
       }
     }
 
@@ -282,7 +261,6 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
         tx,
         adoptPreexisting,
         onProgress,
-        onFileTouched,
         index: ++index,
         total: progressTotal,
       });
@@ -383,7 +361,6 @@ interface ApplyContext {
   tx: SnapshotTransaction | null;
   adoptPreexisting: boolean;
   onProgress: ((event: UpdateProgressEvent) => void) | undefined;
-  onFileTouched?: (outputPath: string, introduced: boolean) => void;
   index: number;
   total: number;
 }
@@ -439,8 +416,6 @@ async function applyWriteAction(action: UpdateAction, ctx: ApplyContext): Promis
         // a rollback removes it.
         await ctx.tx.recordWrite(action.path);
         await writeAction(ctx.vaultRoot, action);
-        // A rename's new path is reported before the write pass (#178).
-        if (action.renamedFrom === undefined) ctx.onFileTouched?.(action.path, ctx.tx.introduced.includes(action.path));
       }
       ctx.nextFiles[action.path] = buildFileState(action, action.renderedHash, 'managed');
       ctx.summary.wroteFiles.push(action.path);
