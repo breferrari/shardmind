@@ -72,31 +72,45 @@ describe('a bug no error view catches (#225)', () => {
     expect(result.stdout).toContain(`issues/new?body=shardmind+${version}`);
   }, 60_000);
 
+  // Update's --json still renders through Ink until it runs headless (#302).
   it('writes a throw while a --json command renders as one failure document with the stack', async () => {
-    await dist.setRootCommand(
+    await dist.setCommand(
+      'update',
       [
         "import zod from 'zod';",
-        "export const options = zod.object({ json: zod.boolean().default(false) });",
-        "export default function Index() { throw new TypeError('boom while rendering json'); }",
+        "export const options = zod.object({ json: zod.boolean().default(false), dryRun: zod.boolean().default(false) });",
+        "export default function Update() { throw new TypeError('boom while rendering json'); }",
         '',
       ].join('\n'),
     );
+    const result = runCli(['update', '--dry-run', '--json']);
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    const doc = JSON.parse(result.stdout) as { ok: boolean; command: string; error: { code: null; stack: string } };
+    expect(doc).toMatchObject({ ok: false, command: 'update', error: { code: null } });
+    expect(doc.error.stack).toContain('boom while rendering json');
+  }, 60_000);
+
+  // status --json runs headless (#302): a throw its runner does not catch
+  // still answers on stdout.
+  it('writes a throw from the headless status runner as one failure document with the stack', async () => {
+    await dist.setChunk('status', "export async function runStatusJson() { throw new TypeError('boom in the status runner'); }\n");
     const result = runCli(['--json']);
     expect(result.status, result.stdout + result.stderr).toBe(1);
     const doc = JSON.parse(result.stdout) as { ok: boolean; command: string; error: { code: null; stack: string } };
     expect(doc).toMatchObject({ ok: false, command: 'status', error: { code: null } });
-    expect(doc.error.stack).toContain('boom while rendering json');
+    expect(doc.error.stack).toContain('boom in the status runner');
   }, 60_000);
 
   // A --json caller reads stdout: a crash outside every command still answers
   // there with one failure document, the same piped and in a terminal. The
   // plain-text report stays on stderr for a human.
   it.each([
-    ['status --json', ['--json'], 'status'],
-    ['update --dry-run --json', ['update', '--dry-run', '--json'], 'update'],
-    ['adopt --dry-run --json', ['adopt', 'github:acme/demo', '--dry-run', '--json'], 'adopt'],
-  ])('writes a throw that escapes every command in %s as one failure document on stdout', async (_name, args, command) => {
-    await dist.setRootCommand("throw new TypeError('boom from a broken module under json');\n");
+    // status --json loads its headless runner, not the root command (#302).
+    ['status --json', ['--json'], 'status', () => dist.setChunk('status', "throw new TypeError('boom from a broken module under json');\n")],
+    ['update --dry-run --json', ['update', '--dry-run', '--json'], 'update', () => dist.setRootCommand("throw new TypeError('boom from a broken module under json');\n")],
+    ['adopt --dry-run --json', ['adopt', 'github:acme/demo', '--dry-run', '--json'], 'adopt', () => dist.setRootCommand("throw new TypeError('boom from a broken module under json');\n")],
+  ] as const)('writes a throw that escapes every command in %s as one failure document on stdout', async (_name, args, command, breakIt) => {
+    await breakIt();
     const piped = runCli(args);
     const terminal = runCli(args, { tty: true });
     expect(piped.status, piped.stderr).toBe(1);
@@ -127,11 +141,14 @@ describe('a bug no error view catches (#225)', () => {
 
   it('does not write a second document after a run already wrote one', async () => {
     const jsonOutput = await dist.chunk('json-output');
-    await dist.setRootCommand(
+    await dist.setChunk(
+      'status',
       [
-        `import { emitJson, jsonSuccess } from '../${jsonOutput}';`,
-        "emitJson(jsonSuccess('status', { early: true }));",
-        "throw new TypeError('boom after the document');",
+        `import { emitJson, jsonSuccess } from './${jsonOutput}';`,
+        'export async function runStatusJson() {',
+        "  emitJson(jsonSuccess('status', { early: true }));",
+        "  throw new TypeError('boom after the document');",
+        '}',
         '',
       ].join('\n'),
     );

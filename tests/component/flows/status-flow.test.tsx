@@ -7,7 +7,7 @@
  * the views have real data to display.
  */
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { cleanup } from 'ink-testing-library';
 
 import {
@@ -19,6 +19,7 @@ import {
 } from './helpers.js';
 import { waitFor } from '../helpers.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
+import { runStatusJson } from '../../../source/commands/headless/status.js';
 
 describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)', () => {
   const getCtx = setupFlowSuite({
@@ -111,16 +112,15 @@ describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)'
 
   // ───── `shardmind --json` → one document on stdout, no frame (#139) ─────
 
-  it('`shardmind --json` → renders no frame and writes one status document to stdout', async () => {
+  // `--json` runs headless, without this tree (#302): the document for an
+  // installed vault, from the runner `cli.ts` calls.
+  it('`shardmind --json` → one status document for the installed vault, exit 0', async () => {
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
     stub.setLatest(SHARD_SLUG, '0.1.0');
     let vault: Vault | null = null;
     const written: string[] = [];
-    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
-      written.push(String(chunk));
-      return true;
-    });
+    const cwd = process.cwd();
     try {
       vault = await createInstalledVault({
         stub,
@@ -128,9 +128,9 @@ describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)'
         values: DEFAULT_VALUES,
         prefix: 's26-status-json',
       });
-      const r = mountStatus({ vaultRoot: vault.root, options: { json: true } });
-      await waitFor(() => written.join(''), (out) => out.endsWith('}\n'), 15_000);
-      expect((r.lastFrame() ?? '').trim()).toBe('');
+      process.chdir(vault.root);
+      const code = await runStatusJson(['--json'], undefined, (chunk) => void written.push(chunk));
+      expect(code).toBe(0);
       expect(written).toHaveLength(1);
       const doc = JSON.parse(written[0]!) as {
         command: string;
@@ -143,7 +143,7 @@ describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)'
       expect(doc.result.shard).toMatch(/shardmind\/minimal/);
       expect(doc.result.files.counts.modified).toBe(0);
     } finally {
-      spy.mockRestore();
+      process.chdir(cwd);
       if (vault) await vault.cleanup();
     }
   }, 60_000);

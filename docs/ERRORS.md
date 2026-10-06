@@ -386,6 +386,14 @@ A Ctrl+C rollback that could not restore everything prints the same list to stde
 
 ---
 
+## Arguments
+
+### `ARGS_INVALID`
+
+**Meaning:** A `--json` run that runs without the terminal UI (§4.29 in IMPLEMENTATION.md: the status command, then adopt and update) was given arguments its command does not accept: an unknown flag, a flag without its value, a value outside a flag's choices, or a missing argument (#302). The message is the one the same command prints without `--json`. The run writes this as its failure document and exits 1.
+
+**Remedy:** Fix the arguments; `shardmind <command> --help` lists them.
+
 ## Install command flags
 
 Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-flight, before any network call.

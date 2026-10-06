@@ -1,7 +1,7 @@
 /*
  * From pastel@4.0.1 (https://github.com/vadimdemedes/pastel at fe4ce10046a55d0492a35b1ae08f54b5c64775e4), generate-command.tsx.
  * Copyright (c) Vadym Demedes. MIT: see cli-kit/LICENSE.
- * Modified by Brenno Ferrari: StatusMessage from the ui-kit instead of @inkjs/ui.
+ * Modified by Brenno Ferrari: StatusMessage from the ui-kit instead of @inkjs/ui; the schemas' registration and validation from lib/command-input.ts, shared with parse.ts (ShardMind #302).
  */
 
 import process from 'node:process';
@@ -9,10 +9,8 @@ import {type Command as CommanderCommand} from 'commander';
 import {render} from 'ink';
 import React, {type ComponentType} from 'react';
 import {StatusMessage} from '../ui-kit/index.js';
-import {fromZodError} from 'zod-validation-error';
 import {type Command} from './internal-types.js';
-import generateOptions from './generate-options.js';
-import generateArguments from './generate-arguments.js';
+import {addSchemas, parseCommandInput} from './lib/command-input.js';
 import {type AppProps} from './types.js';
 
 const generateCommand = (
@@ -30,31 +28,7 @@ const generateCommand = (
 		commanderCommand.alias(pastelCommand.alias);
 	}
 
-	const optionsSchema = pastelCommand.options;
-
-	if (optionsSchema) {
-		const options = generateOptions(optionsSchema);
-
-		for (const option of options) {
-			commanderCommand.addOption(option);
-		}
-	}
-
-	let hasVariadicArgument = false;
-
-	const argumentsSchema = pastelCommand.args;
-
-	if (argumentsSchema) {
-		const arguments_ = generateArguments(argumentsSchema);
-
-		for (const argument of arguments_) {
-			if (argument.variadic) {
-				hasVariadicArgument = true;
-			}
-
-			commanderCommand.addArgument(argument);
-		}
-	}
+	const hasVariadicArgument = addSchemas(commanderCommand, pastelCommand);
 
 	const {component} = pastelCommand;
 
@@ -64,64 +38,21 @@ const generateCommand = (
 			input.pop();
 
 			const options = input.pop() as Record<string, unknown>;
-			let parsedOptions: Record<string, unknown> = {};
+			const result = parseCommandInput(options, input, pastelCommand, hasVariadicArgument);
 
-			if (pastelCommand.options) {
-				const result = pastelCommand.options.safeParse(options);
+			if (!result.ok) {
+				render(<StatusMessage variant="error">{result.message}</StatusMessage>);
 
-				if (result.success) {
-					parsedOptions = result.data ?? {};
-				} else {
-					render(
-						<StatusMessage variant="error">
-							{
-								fromZodError(result.error, {
-									maxIssuesInMessage: 1,
-									prefix: '',
-									prefixSeparator: '',
-								}).message
-							}
-						</StatusMessage>,
-					);
-
-					// eslint-disable-next-line unicorn/no-process-exit
-					process.exit(1);
-				}
-			}
-
-			let arguments_: unknown[] = [];
-
-			if (pastelCommand.args) {
-				const result = pastelCommand.args.safeParse(
-					hasVariadicArgument ? input.flat() : input,
-				);
-
-				if (result.success) {
-					arguments_ = result.data ?? [];
-				} else {
-					render(
-						<StatusMessage variant="error">
-							{
-								fromZodError(result.error, {
-									maxIssuesInMessage: 1,
-									prefix: '',
-									prefixSeparator: '',
-								}).message
-							}
-						</StatusMessage>,
-					);
-
-					// eslint-disable-next-line unicorn/no-process-exit
-					process.exit(1);
-				}
+				// eslint-disable-next-line unicorn/no-process-exit
+				process.exit(1);
 			}
 
 			render(
 				React.createElement(appComponent, {
 					Component: component,
 					commandProps: {
-						options: parsedOptions,
-						args: arguments_,
+						options: result.options,
+						args: result.args,
 					},
 				}),
 			);

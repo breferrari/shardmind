@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dropTrailingBlankWrites, isJsonRun, markNonInteractive } from '../../source/core/json-run.js';
+import { dropTrailingBlankWrites, isJsonRun, markNonInteractive, subcommandOf } from '../../source/core/json-run.js';
 
 describe('isJsonRun', () => {
   it.each([
@@ -39,17 +39,49 @@ describe('isJsonRun', () => {
   });
 });
 
+describe('--version goes to Pastel, as --help does (#302)', () => {
+  it.each([[['--json', '--version']], [['-v', '--json']], [['--version', '--json']]])('%j is not a JSON run', (argv) => {
+    expect(isJsonRun(argv)).toBe(false);
+  });
+});
+
+describe('subcommandOf (#302)', () => {
+  it.each([
+    [['--json'], undefined],
+    [['--verbose', '--json'], undefined],
+    [['adopt', 'github:a/b', '--json'], 'adopt'],
+    [['--verbose', 'adopt', '--json'], 'adopt'],
+    // A value of a root option reads as the subcommand: the run is not the status command.
+    [['--values', 'x', '--json'], 'x'],
+    // Nothing after `--` is a subcommand.
+    [['--json', '--', 'adopt'], undefined],
+  ])('%j → %s', (argv, expected) => {
+    expect(subcommandOf(argv)).toBe(expected);
+  });
+});
+
 describe('every command with --json goes through the gate', () => {
   // A command that gains a `json` option must be a JSON run here, or its
   // --json in a terminal would get Ink's cursor codes and live prompts again.
   const commandsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../source/commands');
   // Any `json:` key declared through zod (`zod.` or `z.`), quoted or not, in
-  // any command file at any depth; index.tsx is the status command.
+  // any command file at any depth, or in a command's Ink-free options module
+  // (`options/<command>.ts`, #302); index.tsx and options/status.ts are the
+  // status command.
   const declaresJson = /['"]?\bjson['"]?\s*:\s*z(?:od)?\b/;
-  const withJson = (fs.readdirSync(commandsDir, { recursive: true }) as string[])
-    .filter((file) => file.endsWith('.tsx'))
-    .filter((file) => declaresJson.test(fs.readFileSync(path.join(commandsDir, file), 'utf-8')))
-    .map((file) => file.replace(/\.tsx$/, '').split(path.sep).join('/'));
+  const commandOf = (file: string) => {
+    const name = file.replace(/\.tsx?$/, '').split(path.sep).join('/');
+    if (name === 'options/status') return 'index';
+    return name.startsWith('options/') ? name.slice('options/'.length) : name;
+  };
+  const withJson = [
+    ...new Set(
+      (fs.readdirSync(commandsDir, { recursive: true }) as string[])
+        .filter((file) => file.endsWith('.tsx') || file.startsWith(`options${path.sep}`))
+        .filter((file) => declaresJson.test(fs.readFileSync(path.join(commandsDir, file), 'utf-8')))
+        .map(commandOf),
+    ),
+  ];
 
   it('finds the --json commands', () => {
     expect(withJson).toEqual(expect.arrayContaining(['index', 'update', 'adopt', 'validate']));

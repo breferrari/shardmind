@@ -10,6 +10,7 @@ Vendored into ShardMind on 2026-10-05 (#277). Pastel depended on `@inkjs/ui`, an
    - `decamelize` (its default path) and `plur` (its regular rule) are inlined in `lib/`;
    - `read-package-up` is dropped: Pastel read the `package.json` above the current directory to default `name`, `version` and `description`, which ShardMind always passes.
 3. Fixed at the source: `lib/program.ts` builds the program with Commander's positional options, and passes root options given before a subcommand on to it (ShardMind #147). It replaces `source/cli-options.ts`, which patched Pastel's Commander at runtime.
+4. A second entry, ShardMind's own: `parse.ts` parses a command's arguments with the same options, schemas and error message as a Pastel run, without loading Ink, for the headless `--json` runs (ShardMind #302). Its runtime imports never reach `ink`, `react` or the ui-kit.
 
 `commander` and `zod-validation-error` stay npm dependencies of ShardMind: the first is maintained and not ours to own, and the second's message for a zod issue is real code that the text of an argument error depends on.
 
