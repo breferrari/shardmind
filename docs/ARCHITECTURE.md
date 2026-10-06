@@ -666,7 +666,7 @@ export default async function(ctx: BootstrapContext): Promise<void>;
 
 **Execution runtime**: hooks run in a subprocess spawned by `source/core/hook.ts:executeHook`. The engine ships the `tsx` TypeScript loader (~6 MB) bundled as a runtime dependency so authors can write plain `.ts` without a compile step on their side. An internal wrapper at `source/internal/hook-runner.ts` (emitted to `dist/internal/hook-runner.js`) imports the hook and invokes its default export with its slot's typed context (`BootstrapContext`, `PersonalizeContext` or `PostUpdateContext`).
 
-**Execution environment**: child `cwd` is `ctx.vaultRoot`; env inherits from the parent plus `SHARDMIND_HOOK=1` and `SHARDMIND_HOOK_PHASE=bootstrap|personalize|post-update` (or `post-install` for a legacy hook), derived from `ctx.slot`, for the hook to branch on.
+**Execution environment**: child `cwd` is `ctx.vaultRoot`; env inherits from the parent plus `SHARDMIND_HOOK=1` and `SHARDMIND_HOOK_PHASE=bootstrap|personalize|post-update`, derived from `ctx.slot`, for the hook to branch on.
 
 **Output capture**: stdout and stderr are captured into separate 256 KB-capped buffers. Overflow truncates with a `[… truncated, N bytes discarded]` marker rather than dropping the hook. The command TUI additionally renders a tail-only (last 12 lines) live view during execution; the full captured output surfaces in the final summary.
 
@@ -803,7 +803,7 @@ Full diagnostic output. Replaces the old `doctor` command concept.
 **v0.1 deviations from the example above**:
 
 - **Per-modified-file flavor text** (`"you added a custom section"`, `"filled in your goals"`) is aspirational; natural-language summaries of user edits would require semantic diff (LLM-class understanding) we deliberately keep out of the engine. **Numeric `+N/−M` change counts are shipped** in verbose mode: for each modified file, `core/status.ts` renders the cached template against current values and runs a 2-way line diff, bounded by `MODIFIED_DIFF_CONCURRENCY = 8` to keep the common-case status run sub-second on large vaults. CRLF and leading-BOM normalization apply, and a pure-whitespace change renders as `(whitespace-only)` rather than a confusing `+0/−0`.
-- **Shard-specific environment rows** like `"QMD not installed"` require a shard to contribute diagnostics. v0.1 has no `status` hook type (hooks are post-install and post-update only), so the Environment section ships with Node.js version and a PATH-lookup answer for the Obsidian CLI. Shard-contributed diagnostics are a future enhancement.
+- **Shard-specific environment rows** like `"QMD not installed"` require a shard to contribute diagnostics. v0.1 has no `status` hook type (the hook slots are bootstrap, personalize and post-update), so the Environment section ships with Node.js version and a PATH-lookup answer for the Obsidian CLI. Shard-contributed diagnostics are a future enhancement.
 - **Update-available line** is cache-backed (24h TTL; see `docs/IMPLEMENTATION.md §4.15`). When the cache answer is stale — network offline but a previous check exists — the line suffixes `(cached)` so the user can tell.
 
 ### 10.3a `shardmind --json` — Status for Scripts and Agents

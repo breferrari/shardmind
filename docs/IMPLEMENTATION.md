@@ -446,7 +446,7 @@ and enforced before any vault write by `assertEngineCompatible` (#121).
 **Error cases**:
 - YAML parse error → `MANIFEST_INVALID_YAML`
 - Zod validation error → `MANIFEST_VALIDATION_FAILED` (`"{field}: {message}"`)
-- `hooks.post-install` declared at all, with any value → `HOOK_SLOT_REMOVED` (#357): removed in 1.0; the hint names `bootstrap` and `personalize` with their roles and links AUTHORING's worked split. Not for the vault's installed copy (`parseManifest(path, { installedCopy: true })`, read by status): a vault installed from a pre-1.0 shard keeps that shard.yaml cached, the vault never runs the hook, and the migration is the author's, so the key is dropped there. (`HOOK_SLOT_CONFLICT`, its alongside-the-slots predecessor, is no longer raised.)
+- `hooks.post-install` declared at all, with any value → `HOOK_SLOT_REMOVED` (#357): removed in 1.0; the hint names `bootstrap` and `personalize` with their roles and links AUTHORING's worked split. Not for the vault's installed copy (`parseManifest(path, { installedCopy: true, onRemovedSlot })`, read by status): a vault installed from a pre-1.0 shard keeps that shard.yaml cached, the vault never runs the hook, and the migration is the author's, so the key is dropped there and status shows an info note (an update to a release that still declares it is refused). (`HOOK_SLOT_CONFLICT`, its alongside-the-slots predecessor, is no longer raised.)
 - Running engine can't satisfy `requires.shardmind` → `SHARDMIND_VERSION_MISMATCH` (#121, thrown by `assertEngineCompatible`, not `parseManifest`)
 
 **Dependencies**: `yaml`, `zod`, `semver`.
