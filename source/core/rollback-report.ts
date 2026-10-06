@@ -69,6 +69,17 @@ export function markRolledBack(err: unknown): void {
   if (typeof err === 'object' && err !== null) rolledBack.add(err);
 }
 
+/**
+ * Roll back after `err`, and return what to throw: `err` with what the
+ * rollback could not undo (#247), marked as rolled back. The one way the
+ * three executors end a failed run.
+ */
+export async function rolledBackError(err: unknown, rollback: () => Promise<RollbackFailure[]>): Promise<unknown> {
+  const thrown = withRollbackFailures(err, await attemptRollback(rollback));
+  markRolledBack(thrown);
+  return thrown;
+}
+
 /** Whether the run that threw `err` rolled the vault back, for the error view's line. */
 export function wasRolledBack(err: unknown): boolean {
   return typeof err === 'object' && err !== null && rolledBack.has(err);

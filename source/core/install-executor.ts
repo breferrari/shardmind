@@ -26,7 +26,7 @@ import { initShardDir, cacheTemplates, cacheManifest, writeState, STATE_SCHEMA_V
 import { sha256, toPosix } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
-import { attemptRollback, markRolledBack, withRollbackFailures } from './rollback-report.js';
+import { rolledBackError } from './rollback-report.js';
 import { wrapWriteError } from './bug-report.js';
 import { beginTransaction, type BackupRecord, type CreateRoot, type VaultTransaction } from './vault-transaction.js';
 import { VALUES_FILE } from '../runtime/vault-paths.js';
@@ -315,9 +315,7 @@ export async function runInstallTransaction(opts: InstallTransactionOptions): Pr
     for (const collision of moveAside) await tx.recordSetAside(collision.absolutePath, keep.has(collision.absolutePath));
     result = await runInstall({ ...installOpts, tx });
   } catch (err) {
-    const thrown = withRollbackFailures(err, await attemptRollback(() => tx.rollback()));
-    markRolledBack(thrown);
-    throw thrown;
+    throw await rolledBackError(err, () => tx.rollback());
   }
 
   // Committed: state.json is on disk, so nothing below rolls back and a

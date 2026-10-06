@@ -53,7 +53,7 @@ import {
   STATE_SCHEMA_VERSION,
 } from './state.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
-import { attemptRollback, withRollbackFailures } from './rollback-report.js';
+import { rolledBackError } from './rollback-report.js';
 import { beginTransaction } from './vault-transaction.js';
 import { wrapWriteError } from './bug-report.js';
 
@@ -439,7 +439,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
   } catch (err) {
     if (tx) {
       // A file left unrestored is never reported as rolled back (#247).
-      throw withRollbackFailures(err, await attemptRollback(() => tx.rollback()));
+      throw await rolledBackError(err, () => tx.rollback());
     }
     throw err;
   }
