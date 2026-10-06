@@ -75,7 +75,6 @@ Issues whose work already landed elsewhere get verified against the code and clo
 
 | | Task | Issue |
 |---|---|---|
-| ✅ | Command namespace prefix for discoverability | [#25](https://github.com/breferrari/shardmind/issues/25) |
 | ✅ | Topic-based meeting prep command (/prep-topic) | [#26](https://github.com/breferrari/shardmind/issues/26) |
 | ✅ | npm publishing setup — claim-publish retry + NPM_TOKEN | [#27](https://github.com/breferrari/shardmind/issues/27) |
 | ✅ | Encode state-schema migration rules (uses v0.1 framework) | [#40](https://github.com/breferrari/shardmind/issues/40) |
@@ -143,22 +142,20 @@ The implementation docs describe the modules as they are now.
 
 Milestone: [Phase 7](https://github.com/breferrari/shardmind/milestone/8)
 
-Each authoring and CLI proposal is built, or declined with a reason that survives a check. These were deferred as polish with no user report behind them. Each pass decides build or decline under the take-next Declines rule, on evidence.
+Each authoring and CLI proposal is built, or closed because something better replaced it. A proposal is never declined for lack of requests; see the take-next Declines rule.
 
 | | Task | Issue |
 |---|---|---|
 | ✅ | Enforce tarball size cap in downloadShard | [#32](https://github.com/breferrari/shardmind/issues/32) |
-| ✅ | VaultFS abstraction with built-in rollback tracking (declined) | [#33](https://github.com/breferrari/shardmind/issues/33) |
+| ✅ | VaultFS abstraction with built-in rollback tracking (superseded by the vault transaction, #301) | [#33](https://github.com/breferrari/shardmind/issues/33) |
 | ✅ | shardmind validate <shard> command | [#34](https://github.com/breferrari/shardmind/issues/34) |
 | ✅ | Pre-install template syntax lint | [#35](https://github.com/breferrari/shardmind/issues/35) |
-| ✅ | Debug logging (SHARDMIND_DEBUG env var) (declined) | [#36](https://github.com/breferrari/shardmind/issues/36) |
 | ✅ | $EDITOR integration for DiffView conflict resolution | [#50](https://github.com/breferrari/shardmind/issues/50) |
 | ✅ | Declare & enforce external CLI tool dependencies (e.g. qmd) with version ranges at install/update | [#138](https://github.com/breferrari/shardmind/issues/138) |
 | ✅ | Let a vault exclude a permanently unreadable folder from the write-boundary walk | [#190](https://github.com/breferrari/shardmind/issues/190) |
 | ✅ | Let the update prompt track a kept add-collision file per file | [#165](https://github.com/breferrari/shardmind/issues/165) |
 | ✅ | Merge files with many repeated lines in less than cubic time | [#170](https://github.com/breferrari/shardmind/issues/170) |
 | ✅ | Write --json output without terminal control codes in a TTY | [#198](https://github.com/breferrari/shardmind/issues/198) |
-| ✅ | Decide whether adopt gets --skip-hooks (declined) | [#199](https://github.com/breferrari/shardmind/issues/199) |
 | ✅ | Decide what a bare owner/repo install does while shardmind/registry is empty | [#200](https://github.com/breferrari/shardmind/issues/200) |
 | ✅ | Decide who keeps .shardmind/logs/ out of a vault's git history: the shard's .gitignore, and validate warns | [#201](https://github.com/breferrari/shardmind/issues/201) |
 | ✅ | Show a stack trace and a report link for an unexpected error | [#225](https://github.com/breferrari/shardmind/issues/225) |
@@ -193,41 +190,31 @@ The release pipeline, dependencies and test harness are settled: built, or decli
 
 Milestone: [Phase 9](https://github.com/breferrari/shardmind/milestone/10)
 
-A second shard exists, and the features that wait on one are built or declined. #81 and #86 wait on a second shard in real use, so they follow #15 here.
+A second shard exists. The features that waited on one (#81, #86) moved to Phase 15 on 2026-10-06.
 
 | | Task | Issue |
 |---|---|---|
-| ✅ | v0.2: Shard composition (multi-shard per vault) (declined) | [#81](https://github.com/breferrari/shardmind/issues/81) |
-| ✅ | v0.2: rendered_files opt-in for Nunjucks at vault-visible paths (declined) | [#86](https://github.com/breferrari/shardmind/issues/86) |
 
 ## Phase 10 — v0.2 contract
 
 Milestone: [Phase 10](https://github.com/breferrari/shardmind/milestone/11)
 
-Each v0.2 contract extension is built, or declined in the spec's out-of-scope list. A deferral goes to `docs/SHARD-LAYOUT.md §Out of scope` with its date, per the take-next Declines rule.
+Each v0.2 contract extension is built. The ones declined on 2026-10-05 for lack of requests were reopened into Phase 15 on 2026-10-06.
 
 | | Task | Issue |
 |---|---|---|
-| ✅ | v0.2: Guided file creation (guided_files schema + third install phase) (declined) | [#79](https://github.com/breferrari/shardmind/issues/79) |
-| ✅ | v0.2: Structural variants (modules.structure + vault_purpose) (declined) | [#80](https://github.com/breferrari/shardmind/issues/80) |
-| ✅ | v0.2: Dependency fetching (recursive + lock file) (declined) | [#82](https://github.com/breferrari/shardmind/issues/82) |
-| ✅ | v0.2: shardmind eject command (declined) | [#83](https://github.com/breferrari/shardmind/issues/83) |
-| ✅ | v0.2: shardmind init command for shard authors (declined) | [#84](https://github.com/breferrari/shardmind/issues/84) |
 | ✅ | v0.2: .shardmindignore negation (!pattern) support | [#87](https://github.com/breferrari/shardmind/issues/87) |
 
 ## Phase 11 — v1.0 ecosystem
 
 Milestone: [Phase 11](https://github.com/breferrari/shardmind/milestone/12)
 
-Each ecosystem item is built, or declined with the evidence on the issue. Each pass decides build or decline under the take-next Declines rule, on evidence.
+Each ecosystem item is built, or closed because something better replaced it. A hosted registry service stays a VISION non-goal. The items declined on 2026-10-05 for lack of requests were reopened into Phase 15 on 2026-10-06.
 
 | | Task | Issue |
 |---|---|---|
 | ✅ | Finalize shardmind/registry index.json schema | [#29](https://github.com/breferrari/shardmind/issues/29) |
-| ✅ | Alternate registry configurability (GHE, private, custom URL) (env var documented; config file declined) | [#39](https://github.com/breferrari/shardmind/issues/39) |
-| ✅ | v1.0: Hosted registry (shardmind.dev) + shard discovery + search (declined) | [#89](https://github.com/breferrari/shardmind/issues/89) |
 | ✅ | v1.0: Community — fork-to-shard guide (validation CI and listing declined) | [#90](https://github.com/breferrari/shardmind/issues/90) |
-| ✅ | v1.0: Teams — managed vault templates + shared values + admin controls (declined) | [#91](https://github.com/breferrari/shardmind/issues/91) |
 
 ## Phase 12 — one vault transaction
 
@@ -252,7 +239,7 @@ Brenno-led: author the research-wiki shard. Not taken by the unattended loop.
 
 | | Task | Issue |
 |---|---|---|
-| ⬜ | Write the wiki-mind shard (research wiki) | [#15](https://github.com/breferrari/shardmind/issues/15) |
+| ✅ | Write the wiki-mind shard (research wiki) | [#15](https://github.com/breferrari/shardmind/issues/15) |
 
 ## Phase 14 — the 1.0 contract
 
@@ -264,10 +251,34 @@ Everything 1.0 freezes is either decided or built: the contract review's behavio
 |---|---|---|
 | ✅ | Validate state.json on read | [#343](https://github.com/breferrari/shardmind/issues/343) |
 | ⬜ | Report a state.json from a newer ShardMind in status instead of failing | [#344](https://github.com/breferrari/shardmind/issues/344) |
-| ⬜ | Trim shardmind/runtime to what hooks use | [#345](https://github.com/breferrari/shardmind/issues/345) |
-| ⬜ | Remove the reserved type_changed error code | [#346](https://github.com/breferrari/shardmind/issues/346) |
-| ⬜ | Mark adopt --mode auto-merge experimental | [#347](https://github.com/breferrari/shardmind/issues/347) |
+| ⬜ | Pin the shardmind/runtime surface for 1.0 (supersedes the reversed trim, [#345](https://github.com/breferrari/shardmind/issues/345)) | [#358](https://github.com/breferrari/shardmind/issues/358) |
+| ⬜ | Document the reserved transform error code and report invalid values clearly | [#346](https://github.com/breferrari/shardmind/issues/346) |
+| ✅ | Mark adopt --mode auto-merge experimental | [#347](https://github.com/breferrari/shardmind/issues/347) |
+| ⬜ | Give the slotted hooks a reinstall's removed files and the defaults flag | [#356](https://github.com/breferrari/shardmind/issues/356) |
+| ⬜ | Remove the deprecated post-install hook | [#357](https://github.com/breferrari/shardmind/issues/357) |
 | ⬜ | Let update and adopt run with --json, not only plan | [#348](https://github.com/breferrari/shardmind/issues/348) |
+
+## Phase 15 — planned engine features
+
+Milestone: [Phase 15](https://github.com/breferrari/shardmind/milestone/16)
+
+Engine capability from the original plan. These were declined on 2026-10-04/05 on demand evidence (no request, no current shard needing it, one author) and reopened on 2026-10-06. ShardMind is a template engine for any vault, so the absence of requests is not a reason to drop planned capability. Brenno schedules each item, either before the 1.0 tag or in a 1.x minor release. Not taken by the unattended loop until scheduled.
+
+| | Task | Issue |
+|---|---|---|
+| ⬜ | Shard composition (several shards per vault) | [#81](https://github.com/breferrari/shardmind/issues/81) |
+| ⬜ | Dependency fetching (recursive + lock file) | [#82](https://github.com/breferrari/shardmind/issues/82) |
+| ⬜ | Structural variants (modules.structure + vault_purpose) | [#80](https://github.com/breferrari/shardmind/issues/80) |
+| ⬜ | Guided file creation (guided_files schema + third install phase) | [#79](https://github.com/breferrari/shardmind/issues/79) |
+| ⬜ | rendered_files opt-in for Nunjucks at vault-visible paths | [#86](https://github.com/breferrari/shardmind/issues/86) |
+| ⬜ | shardmind init command for shard authors | [#84](https://github.com/breferrari/shardmind/issues/84) |
+| ⬜ | shardmind eject command | [#83](https://github.com/breferrari/shardmind/issues/83) |
+| ⬜ | Named and private registries (GHE, private, multiple indexes) | [#39](https://github.com/breferrari/shardmind/issues/39) |
+| ⬜ | Shard search, metadata indexing and version history | [#89](https://github.com/breferrari/shardmind/issues/89) |
+| ⬜ | Teams: managed vault templates, shared values, admin controls | [#91](https://github.com/breferrari/shardmind/issues/91) |
+| ⬜ | Debug logging (SHARDMIND_DEBUG) | [#36](https://github.com/breferrari/shardmind/issues/36) |
+| ⬜ | Decide whether adopt gets --skip-hooks | [#199](https://github.com/breferrari/shardmind/issues/199) |
+| ⬜ | Command namespace prefix in the engine | [#25](https://github.com/breferrari/shardmind/issues/25) |
 
 ## Shelf (retired 2026-10-04)
 
