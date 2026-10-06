@@ -22,12 +22,20 @@ afterEach(() => {
 });
 
 /** Runs `start` once per `runKey`; a new key supersedes the run before it. */
-function Harness({ runKey, start }: { runKey: number; start: (key: number, ctx: FlowRunContext<Phase>) => Promise<Phase> }) {
+function Harness({
+  runKey,
+  start,
+  dryRun = true,
+}: {
+  runKey: number;
+  start: (key: number, ctx: FlowRunContext<Phase>) => Promise<Phase>;
+  dryRun?: boolean;
+}) {
   const { phase, launch } = useFlowRun<Phase>({
     vaultRoot: os.tmpdir(),
     command: 'install',
-    // A dry run takes no lock, so the harness needs no vault.
-    dryRun: true,
+    // The lock is taken only through `lock()`; these runs never call it.
+    dryRun,
     initial: { kind: 'booting' },
     isFinal: (p) => p.kind === 'done' || p.kind === 'error' || p.kind === 'cancelled',
     rolledBackLine: 'Rolled back.',
@@ -108,7 +116,7 @@ describe('useFlowRun: a superseded run (#302)', () => {
 
   it('cannot take its successor\'s run handle or hooks abort, nor release a lock it never took', async () => {
     let releaseFirst: () => void = () => {};
-    const seen: { second?: AbortController; firstHook?: AbortController; firstRelease?: () => void } = {};
+    const seen: { second?: AbortController; secondRun?: AbortController; firstHook?: AbortController; firstRelease?: () => void } = {};
     const start = async (key: number, ctx: FlowRunContext<Phase>): Promise<Phase> => {
       if (key === 1) {
         await new Promise<void>((resolve) => (releaseFirst = resolve));
@@ -120,14 +128,20 @@ describe('useFlowRun: a superseded run (#302)', () => {
         seen.firstRelease = ctx.io.lock().release;
         return { kind: 'done' };
       }
+      // The successor is mid-write, and its hook runs too.
+      seen.secondRun = ctx.io.newRunAbort();
+      const signal = seen.secondRun.signal;
+      // As an executor does: stopped by its signal, it rolls back and rejects.
+      ctx.io.onRun(seen.secondRun, new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')))));
       const abort = new AbortController();
       ctx.io.onHookAbort(abort);
       seen.second = abort;
       return new Promise<Phase>(() => {});
     };
-    const r = render(<Harness runKey={1} start={start} />);
+    // Not a dry run: a Ctrl+C stops the run in flight.
+    const r = render(<Harness runKey={1} start={start} dryRun={false} />);
     await tick(20);
-    r.rerender(<Harness runKey={2} start={start} />);
+    r.rerender(<Harness runKey={2} start={start} dryRun={false} />);
     await tick(20);
     releaseFirst();
     await tick(20);
@@ -138,5 +152,7 @@ describe('useFlowRun: a superseded run (#302)', () => {
     process.emit('SIGINT');
     await tick(20);
     expect(seen.second?.signal.aborted).toBe(true);
+    // ...and stops the successor's run, whose handle the superseded run did not take.
+    expect(seen.secondRun?.signal.aborted).toBe(true);
   });
 });
