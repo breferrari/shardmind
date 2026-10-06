@@ -131,8 +131,9 @@ export interface UseAdoptMachineOutput {
   onDiffChoice: (action: AdoptFileChoice) => void;
 }
 
-/** The question the flow is waiting on, answered from the prompt's handler. */
+/** The question the flow is waiting on, answered from its prompt's handler only. */
 interface PendingAnswer {
+  kind: AdoptQuestion['kind'];
   resolve: (answer: unknown) => void;
   reject: (err: Error) => void;
 }
@@ -147,8 +148,6 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
   const { isRawModeSupported } = useStdin();
 
   const [phase, setPhase] = useState<Phase>({ kind: 'booting' });
-  const phaseRef = useRef<Phase>(phase);
-  phaseRef.current = phase;
 
   const ctxCleanupRef = useRef<(() => Promise<void>) | null>(null);
   // The adopt in flight, which a Ctrl+C stops and waits for (#249).
@@ -186,6 +185,12 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
 
   useEffect(() => {
     let disposed = false;
+    // Stops this run if the effect is superseded before it writes.
+    const stop = new AbortController();
+    // A superseded run's reports go nowhere.
+    const show = (next: Phase | ((prev: Phase) => Phase)) => {
+      if (!disposed) setPhase(next);
+    };
     // The `--values` prefill the values page shows; known once asked.
     let prefillValues: Record<string, unknown> = {};
     const ctxOf = (shard: PreparedShard): PreparedContext => ({ ...shard, prefillValues });
@@ -193,17 +198,21 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
 
     const ask = <Q extends AdoptQuestion>(question: Q): Promise<AdoptAnswer<Q>> =>
       new Promise<AdoptAnswer<Q>>((resolve, reject) => {
-        pendingRef.current = { resolve: resolve as (answer: unknown) => void, reject };
+        if (disposed) {
+          reject(new FlowCancelled('Superseded by a newer run.'));
+          return;
+        }
+        pendingRef.current = { kind: question.kind, resolve: resolve as (answer: unknown) => void, reject };
         switch (question.kind) {
           case 'values':
             prefillValues = question.prefill;
-            setPhase({ kind: 'wizard', ctx: ctxOf(question.shard) });
+            show({ kind: 'wizard', ctx: ctxOf(question.shard) });
             return;
           case 'mode':
-            setPhase({ kind: 'mode-select', ctx: ctxOf(question.shard), result: question.answers, plan: question.plan });
+            show({ kind: 'mode-select', ctx: ctxOf(question.shard), result: question.answers, plan: question.plan });
             return;
           case 'per-file':
-            setPhase({
+            show({
               kind: 'diff-review',
               ctx: ctxOf(question.shard),
               result: question.answers,
@@ -219,19 +228,19 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
     const io: AdoptFlowIO = {
       ask,
       phase: (p) => {
-        if (p.kind === 'loading') setPhase({ kind: 'loading', message: p.message });
-        else if (p.kind === 'planning') setPhase({ kind: 'planning', ctx: ctxOf(p.shard), result: p.answers });
-        else setPhase({ kind: 'executing', total: 0, current: 0, label: 'Preparing…', history });
+        if (p.kind === 'loading') show({ kind: 'loading', message: p.message });
+        else if (p.kind === 'planning') show({ kind: 'planning', ctx: ctxOf(p.shard), result: p.answers });
+        else show({ kind: 'executing', total: 0, current: 0, label: 'Preparing…', history });
       },
       progress: (ev) => {
         if (ev.kind === 'start') {
-          setPhase((prev) => (prev.kind === 'executing' ? { ...prev, total: ev.total, current: 0, label: 'Starting…' } : prev));
+          show((prev) => (prev.kind === 'executing' ? { ...prev, total: ev.total, current: 0, label: 'Starting…' } : prev));
         } else if (ev.kind === 'file') {
           if (verbose) {
             history.push(`${labelForAction(ev.action)} ${ev.outputPath}`);
             if (history.length > 5) history.shift();
           }
-          setPhase((prev) =>
+          show((prev) =>
             prev.kind === 'executing'
               ? { ...prev, current: ev.index, total: ev.total, label: ev.label, history: verbose ? [...history] : prev.history }
               : prev,
@@ -239,9 +248,13 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         }
       },
       hooks: {
-        setPhase: (p) => setPhase(p),
-        onStdout: (chunk) => appendHookOutput(setPhase, chunk),
-        onStderr: (chunk) => appendHookOutput(setPhase, chunk),
+        setPhase: (p) => show(p),
+        onStdout: (chunk) => {
+          if (!disposed) appendHookOutput(setPhase, chunk);
+        },
+        onStderr: (chunk) => {
+          if (!disposed) appendHookOutput(setPhase, chunk);
+        },
       },
       takeLock,
       onCleanup: (cleanup) => {
@@ -275,6 +288,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
         interactive: isRawModeSupported,
         vaultRoot,
         engineVersion: resolveEngineVersion(),
+        stop: stop.signal,
       },
       io,
     ).then(
@@ -320,6 +334,11 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
 
     return () => {
       disposed = true;
+      stop.abort();
+      // A question the superseded run waits on ends it.
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      pending?.reject(new FlowCancelled('Superseded by a newer run.'));
       if (ctxCleanupRef.current) {
         ctxCleanupRef.current().catch(() => {});
       }
@@ -327,31 +346,23 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shardRef, valuesFile, yes, vaultRoot, isRawModeSupported, dryRun, fromVersion]);
 
-  /** Answer the question the flow waits on, when the phase is the one asking it. */
-  const answer = useCallback((kind: Phase['kind'], value: unknown) => {
-    if (phaseRef.current.kind !== kind) return;
+  /**
+   * Settle the question the flow waits on, if it is the one this prompt
+   * answers: a late or doubled handler never answers the next question.
+   */
+  const settle = useCallback((kind: AdoptQuestion['kind'], outcome: { value: unknown } | { error: Error }) => {
     const pending = pendingRef.current;
+    if (pending?.kind !== kind) return;
     pendingRef.current = null;
-    pending?.resolve(value);
+    if ('error' in outcome) pending.reject(outcome.error);
+    else pending.resolve(outcome.value);
   }, []);
 
-  const onWizardComplete = useCallback((result: ValueAnswers) => answer('wizard', result), [answer]);
-
-  const onWizardCancel = useCallback(() => {
-    const pending = pendingRef.current;
-    pendingRef.current = null;
-    pending?.reject(new FlowCancelled('User cancelled in wizard.'));
-  }, []);
-
-  const onWizardError = useCallback((err: Error) => {
-    const pending = pendingRef.current;
-    pendingRef.current = null;
-    pending?.reject(err);
-  }, []);
-
-  const onModeSelect = useCallback((selected: AdoptMode) => answer('mode-select', selected), [answer]);
-
-  const onDiffChoice = useCallback((action: AdoptFileChoice) => answer('diff-review', action), [answer]);
+  const onWizardComplete = useCallback((result: ValueAnswers) => settle('values', { value: result }), [settle]);
+  const onWizardCancel = useCallback(() => settle('values', { error: new FlowCancelled('User cancelled in wizard.') }), [settle]);
+  const onWizardError = useCallback((err: Error) => settle('values', { error: err }), [settle]);
+  const onModeSelect = useCallback((selected: AdoptMode) => settle('mode', { value: selected }), [settle]);
+  const onDiffChoice = useCallback((action: AdoptFileChoice) => settle('per-file', { value: action }), [settle]);
 
   return {
     phase,

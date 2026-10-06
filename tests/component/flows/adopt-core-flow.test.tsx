@@ -174,6 +174,24 @@ describe('adopt flow, UI-free (#302)', () => {
     }
   }, 60_000);
 
+  it('a run superseded while it downloaded goes no further: FlowCancelled, nothing written', async () => {
+    pinShard();
+    const vault = await vaultWith({ 'Home.md': 'mine\n' });
+    try {
+      const stop = new AbortController();
+      const s = scriptedIO(() => undefined);
+      const io = { ...s.io, phase: (p: Parameters<AdoptFlowIO['phase']>[0]) => {
+        s.io.phase(p);
+        if (p.kind === 'loading' && p.message.startsWith('Parsing')) stop.abort();
+      } };
+      await expect(runAdoptFlow(input(vault, { yes: true, stop: stop.signal }), io)).rejects.toBeInstanceOf(FlowCancelled);
+      expect(s.asked).toEqual([]);
+      await expect(fs.access(path.join(vault, '.shardmind', 'state.json'))).rejects.toThrow();
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
   it('an executor failure is marked rolled back', async () => {
     pinShard();
     const vault = await vaultWith({ 'Home.md': 'mine\n' });

@@ -48,6 +48,8 @@ export interface AdoptFlowInput {
   interactive: boolean;
   vaultRoot: string;
   engineVersion: string | undefined;
+  /** Aborted when the caller no longer wants the run (a superseded Ink run). */
+  stop?: AbortSignal;
 }
 
 /** The questions the flow asks, each with the prepared shard and the run so far. */
@@ -153,6 +155,8 @@ export async function runAdoptFlow(input: AdoptFlowInput, io: AdoptFlowIO): Prom
       onLoading: (message) => io.phase({ kind: 'loading', message }),
       onCleanup: io.onCleanup,
     });
+    // A run superseded while it downloaded goes no further.
+    if (input.stop?.aborted) throw new FlowCancelled('Superseded by a newer run.');
     const prefill = input.valuesFile ? await loadValuesFile(input.valuesFile, shard.schema) : {};
     const answers = await valueAnswers(input, io, shard, prefill);
     return await planAndAdopt(input, io, shard, answers, mode, yes);

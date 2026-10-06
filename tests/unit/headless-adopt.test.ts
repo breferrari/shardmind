@@ -4,8 +4,23 @@
  * json e2e suites.
  */
 
-import { describe, it, expect } from 'vitest';
-import { runAdoptJson } from '../../source/commands/headless/adopt.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+
+// A download a Ctrl+C cancelled (#57): the fetch rejects as `download.ts`'s does.
+vi.mock('../../source/core/registry.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../source/core/registry.js')>()),
+  resolve: vi.fn(async () => ({ namespace: 'a', name: 'b', version: '1.0.0', source: 'github:a/b', tarballUrl: 'https://example.invalid/t.tgz' })),
+}));
+vi.mock('../../source/core/download.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../source/core/download.js')>();
+  return { ...actual, downloadShard: vi.fn(async () => Promise.reject(new actual.DownloadCancelledError())) };
+});
+
+const { runAdoptJson } = await import('../../source/commands/headless/adopt.js');
 
 async function run(argv: string[]) {
   let out = '';
@@ -14,6 +29,19 @@ async function run(argv: string[]) {
   });
   return { code, doc: JSON.parse(out) as Record<string, unknown> };
 }
+
+let dir: string;
+let cwd: string;
+beforeEach(async () => {
+  dir = path.join(os.tmpdir(), `shardmind-headless-adopt-${crypto.randomUUID()}`);
+  await fsp.mkdir(dir, { recursive: true });
+  cwd = process.cwd();
+  process.chdir(dir);
+});
+afterEach(async () => {
+  process.chdir(cwd);
+  await fsp.rm(dir, { recursive: true, force: true });
+});
 
 describe('runAdoptJson (#302)', () => {
   it('a flag adopt does not take is ARGS_INVALID, exit 1', async () => {
@@ -32,5 +60,14 @@ describe('runAdoptJson (#302)', () => {
     const { code, doc } = await run(['github:a/b', '--json']);
     expect(code).toBe(1);
     expect(doc).toMatchObject({ ok: false, command: 'adopt', error: { code: 'JSON_REQUIRES_DRY_RUN' } });
+  });
+
+  it('a download cancelled by Ctrl+C writes no document and returns 130 (#57)', async () => {
+    let out = '';
+    const code = await runAdoptJson(['github:a/b', '--json', '--dry-run', '--yes'], '0.0.0-test', (chunk) => {
+      out += chunk;
+    });
+    expect(code).toBe(130);
+    expect(out).toBe('');
   });
 });

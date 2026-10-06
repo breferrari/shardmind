@@ -8,6 +8,7 @@
 import { parseCommandArgv } from '../../cli-kit/parse.js';
 import { adoptPlanResult, emitJson, jsonFailure, jsonSuccess } from '../../core/json-output.js';
 import { runAdoptFlow } from '../../core/flows/adopt.js';
+import { DownloadCancelledError } from '../../core/download.js';
 import { ShardMindError } from '../../runtime/types.js';
 import type zod from 'zod';
 import { args as argsSchema, options as optionsSchema } from '../options/adopt.js';
@@ -60,6 +61,9 @@ export async function runAdoptJson(
     emitJson(jsonSuccess('adopt', adoptPlanResult(result.plan, { dryRun: true, mode: result.mode })), write);
     return 0;
   } catch (err) {
+    // A Ctrl+C stopped the download: the SIGINT handler exits 130, and the
+    // caller gets no document for a run it cancelled.
+    if (err instanceof DownloadCancelledError) return 130;
     emitJson(jsonFailure('adopt', err), write);
     return 1;
   } finally {
