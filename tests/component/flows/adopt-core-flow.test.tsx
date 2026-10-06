@@ -13,11 +13,11 @@ import { setupFlowSuite, makeVaultDir, cleanupVault, SHARD_SLUG, SHARD_REF, STUB
 import {
   runAdoptFlow,
   adoptRolledBack,
-  FlowCancelled,
   type AdoptFlowInput,
   type AdoptFlowIO,
   type AdoptQuestion,
 } from '../../../source/core/flows/adopt.js';
+import { FlowCancelled } from '../../../source/core/flows/cancelled.js';
 
 describe('adopt flow, UI-free (#302)', () => {
   const getCtx = setupFlowSuite({ shards: { [SHARD_SLUG]: { versions: {} as Record<string, string>, latest: '0.1.0' } } });

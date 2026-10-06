@@ -2,8 +2,8 @@
  * Unit tests for the pure update-machine entry points.
  *
  * The boot logic (`readState` → throw if null → `resolveRef` wrapped with
- * update-audience hints) is extracted from `use-update-machine.ts` as
- * `throwNoInstall`, `resolveRefForUpdate`, and `lookupUpdateTarget` so the
+ * update-audience hints) lives in `core/flows/update.ts` as
+ * `readUpdateTarget` and `resolveRefForUpdate` (#302), so the
  * typed-error contract can be exercised without mounting an Ink tree. E2E
  * scenarios cover the same paths through the CLI subprocess; these tests
  * give refactor safety at the module layer — a logic-only regression that
@@ -15,13 +15,17 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import {
-  lookupUpdateTarget,
-  resolveRefForUpdate,
-} from '../../source/core/flows/update.js';
+import { readUpdateTarget, resolveRefForUpdate } from '../../source/core/flows/update.js';
 import { ShardMindError } from '../../source/runtime/types.js';
 import { SHARDMIND_DIR, STATE_FILE } from '../../source/runtime/vault-paths.js';
 import { makeShardState } from '../helpers/index.js';
+
+/** The flow's boot: the install and its source, then the release it resolves to. */
+async function lookupUpdateTarget(vaultRoot: string, opts: { release?: string; includePrerelease?: boolean } = {}) {
+  const { state, source } = await readUpdateTarget(vaultRoot, opts);
+  const resolved = await resolveRefForUpdate(source, { includePrerelease: opts.includePrerelease ?? false });
+  return { state, resolved, source };
+}
 
 describe('lookupUpdateTarget', () => {
   let vault: string;

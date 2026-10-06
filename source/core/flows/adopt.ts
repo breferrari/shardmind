@@ -14,7 +14,7 @@ import { classifyAdoption, type AdoptClassification, type AdoptPlan } from '../a
 import { twoWayUnionMerge } from '../adopt-merge.js';
 import { parseFromVersion, renamesBetween } from '../rename-migrations.js';
 import { sha256 } from '../fs-utils.js';
-import { buildValuesValidator } from '../schema.js';
+import { resolve as resolveRef } from '../registry.js';
 import {
   assertAdoptable,
   runAdopt,
@@ -25,10 +25,8 @@ import {
 import { checkExternalToolsForRun } from '../external-tools.js';
 import { runHooks, type HookOutcome, type HookRunUi } from '../hook-orchestrator.js';
 import { prepareShard, type PreparedShard } from './prepare-shard.js';
-import { answersWithoutPrompting, loadValuesFile, type ValueAnswers } from './values.js';
+import { answersWithoutPrompting, loadValuesFile, validateValues, type ValueAnswers } from './values.js';
 import { FlowCancelled } from './cancelled.js';
-
-export { FlowCancelled };
 
 /** How the differing files are settled when no per-file answer is given. */
 export type AdoptMode = 'keep-all-mine' | 'use-all-theirs' | 'auto-merge' | 'decide-per-file';
@@ -114,7 +112,6 @@ export type AdoptFlowResult =
       durationMs: number;
     };
 
-
 /** The errors the executor threw after rolling the vault back. */
 const rolledBack = new WeakSet<object>();
 
@@ -144,7 +141,7 @@ export async function runAdoptFlow(input: AdoptFlowInput, io: AdoptFlowIO): Prom
   let shard: PreparedShard | undefined;
   try {
     shard = await prepareShard(input.shardRef, {
-      command: 'adopt',
+      resolve: () => resolveRef(input.shardRef, { command: 'adopt' }),
       engineVersion: input.engineVersion,
       onLoading: (message) => io.phase({ kind: 'loading', message }),
       onCleanup: io.onCleanup,
@@ -189,7 +186,7 @@ async function planAndAdopt(
   mode: AdoptMode | undefined,
   yes: boolean,
 ): Promise<AdoptFlowResult> {
-  const values = buildValuesValidator(shard.schema).parse(given.values) as Record<string, unknown>;
+  const values = validateValues(shard.schema, given.values);
   const answers: ValueAnswers = { values, selections: given.selections };
 
   // With the values final, before the plan and any diff prompt (#138).

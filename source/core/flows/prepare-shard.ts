@@ -5,7 +5,6 @@
  */
 
 import type { ResolvedShard, ShardManifest, ShardSchema } from '../../runtime/types.js';
-import { resolve as resolveRef } from '../registry.js';
 import { downloadShard } from '../download.js';
 import { parseManifest, assertEngineCompatible } from '../manifest.js';
 import { parseSchema } from '../schema.js';
@@ -21,14 +20,13 @@ export interface PreparedShard {
 }
 
 export interface PrepareShardOptions {
-  command: 'install' | 'adopt' | 'update';
+  /** The release to fetch: `resolve(ref, { command })`, or update's resolve from state.json. */
+  resolve: () => Promise<ResolvedShard>;
   engineVersion: string | undefined;
   /** Each step's message ("Resolving …", "Downloading …", …). */
   onLoading: (message: string) => void;
   /** The temp dir's cleanup, handed over before the fetch (#57). */
   onCleanup: (cleanup: () => Promise<void>) => void;
-  /** Resolve the caller's way (update: the source recorded in state.json). */
-  resolve?: () => Promise<ResolvedShard>;
   /** The parse step's message; "Parsing manifest and schema…" by default. */
   parseMessage?: string;
 }
@@ -36,9 +34,7 @@ export interface PrepareShardOptions {
 /** Resolve, download, parse the manifest, check the engine range (#121), parse the schema. */
 export async function prepareShard(ref: string, opts: PrepareShardOptions): Promise<PreparedShard> {
   opts.onLoading(`Resolving ${ref}…`);
-  const resolved = opts.resolve
-    ? await opts.resolve()
-    : await resolveRef(ref, { command: opts.command === 'update' ? undefined : opts.command });
+  const resolved = await opts.resolve();
 
   opts.onLoading(`Downloading ${resolved.namespace}/${resolved.name}@${resolved.version}…`);
   // The cleanup is handed over before the fetch, so a Ctrl+C during the

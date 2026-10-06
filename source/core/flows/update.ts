@@ -24,7 +24,7 @@ import { ShardMindError } from '../../runtime/types.js';
 import { VALUES_FILE } from '../../runtime/vault-paths.js';
 import { resolve as resolveRef } from '../registry.js';
 import { primeLatestVersion } from '../update-check.js';
-import { parseSchema, buildValuesValidator } from '../schema.js';
+import { parseSchema } from '../schema.js';
 import { readState } from '../state.js';
 import { detectDrift } from '../drift.js';
 import { applyMigrations } from '../migrator.js';
@@ -46,6 +46,7 @@ import { checkExternalToolsForRun } from '../external-tools.js';
 import { buildRenderContext } from '../renderer.js';
 import { runHooks, type HookOutcome, type HookRunUi } from '../hook-orchestrator.js';
 import { prepareShard } from './prepare-shard.js';
+import { validateValues } from './values.js';
 import { FlowCancelled } from './cancelled.js';
 
 export interface UpdateFlowInput {
@@ -173,7 +174,6 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
   let cleanup: (() => Promise<void>) | undefined;
   try {
     const shard = await prepareShard(source, {
-      command: 'update',
       engineVersion: input.engineVersion,
       onLoading: (message) => io.phase({ kind: 'loading', message }),
       onCleanup: (c) => {
@@ -477,16 +477,6 @@ export async function readUpdateTarget(
   return { state, source };
 }
 
-/** `readUpdateTarget`, then the release it resolves to. */
-export async function lookupUpdateTarget(
-  vaultRoot: string,
-  opts: { release?: string; includePrerelease?: boolean } = {},
-): Promise<{ state: ShardState; resolved: ResolvedShard; source: string }> {
-  const { state, source } = await readUpdateTarget(vaultRoot, opts);
-  const resolved = await resolveRefForUpdate(source, { includePrerelease: opts.includePrerelease ?? false });
-  return { state, resolved, source };
-}
-
 function throwNoInstall(): never {
   throw new ShardMindError(
     'No shard installed in this directory.',
@@ -624,6 +614,3 @@ async function loadCachedSchema(vaultRoot: string, state: ShardState): Promise<S
   }
 }
 
-function validateValues(schema: ShardSchema, values: Record<string, unknown>): Record<string, unknown> {
-  return buildValuesValidator(schema).parse(values) as Record<string, unknown>;
-}

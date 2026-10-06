@@ -77,18 +77,15 @@ export interface UseUpdateMachineInput {
   adoptPreexisting?: boolean;
 }
 
-/** The install, the new release and the migrated values (the flow's context). */
-export type PreparedContext = UpdateContext;
-
 export type Phase =
   | { kind: 'booting' }
   | { kind: 'loading'; message: string }
   | { kind: 'up-to-date'; manifest: ShardManifest; state: ShardState }
-  | { kind: 'prompt-new-values'; ctx: PreparedContext }
-  | { kind: 'prompt-new-modules'; ctx: PreparedContext; values: Record<string, unknown> }
+  | { kind: 'prompt-new-values'; ctx: UpdateContext }
+  | { kind: 'prompt-new-modules'; ctx: UpdateContext; values: Record<string, unknown> }
   | {
       kind: 'prompt-removed-files';
-      ctx: PreparedContext;
+      ctx: UpdateContext;
       values: Record<string, unknown>;
       selections: ModuleSelections;
       paths: string[];
@@ -96,7 +93,7 @@ export type Phase =
     }
   | {
       kind: 'resolving-conflicts';
-      ctx: PreparedContext;
+      ctx: UpdateContext;
       plan: UpdatePlan;
       values: Record<string, unknown>;
       selections: ModuleSelections;
@@ -319,9 +316,9 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           finish({ kind: 'up-to-date', manifest: result.manifest, state: result.state });
           return;
         }
-        // A plan comes back only under --json, which runs headless.
+        // A plan comes back only under --json, which runs headless: a bug here.
         if (result.kind === 'plan') {
-          finish({ kind: 'cancelled', reason: 'Plan only (--json).' });
+          finish({ kind: 'error', error: new Error('update flow returned a --json plan to the terminal run') });
           return;
         }
         finish({

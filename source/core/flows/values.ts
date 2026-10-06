@@ -43,6 +43,10 @@ export function answersWithoutPrompting(schema: ShardSchema, prefill: Record<str
         : 'Add them to your --values file, or run in an interactive terminal to be prompted.',
     );
   }
-  const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, merged)) as Record<string, unknown>;
-  return { values, selections: defaultModuleSelections(schema) };
+  return { values: validateValues(schema, resolveComputedDefaults(schema, merged)), selections: defaultModuleSelections(schema) };
+}
+
+/** `values` checked against the schema's validator, with its defaults and coercions applied. */
+export function validateValues(schema: ShardSchema, values: Record<string, unknown>): Record<string, unknown> {
+  return buildValuesValidator(schema).parse(values) as Record<string, unknown>;
 }

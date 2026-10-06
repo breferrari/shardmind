@@ -35,7 +35,6 @@ import { rollbackDetail } from '../../core/rollback-report.js';
 import {
   runAdoptFlow,
   adoptRolledBack,
-  FlowCancelled,
   type AdoptAnswer,
   type AdoptFileChoice,
   type AdoptFlowIO,
@@ -43,6 +42,7 @@ import {
   type AdoptQuestion,
 } from '../../core/flows/adopt.js';
 import type { PreparedShard } from '../../core/flows/prepare-shard.js';
+import { FlowCancelled } from '../../core/flows/cancelled.js';
 import type { ValueAnswers } from '../../core/flows/values.js';
 import {
   appendHookOutput,
