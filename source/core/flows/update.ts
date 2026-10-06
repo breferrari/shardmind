@@ -239,8 +239,7 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
     const { values, selections, pendingModules } = await valuesAndModules(input, io, ctx);
     return await planAndUpdate(input, io, ctx, values, selections, pendingModules);
   } finally {
-    await priming;
-    await cleanup?.().catch(() => {});
+    await Promise.allSettled([priming, cleanup?.()]);
   }
 }
 
