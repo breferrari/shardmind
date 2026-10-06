@@ -253,6 +253,21 @@ Brenno-led: author the research-wiki shard. Not taken by the unattended loop.
 |---|---|---|
 | ⬜ | Write the wiki-mind shard (research wiki) | [#15](https://github.com/breferrari/shardmind/issues/15) |
 
+## Phase 14 — the 1.0 contract
+
+Milestone: [Phase 14](https://github.com/breferrari/shardmind/milestone/15)
+
+Everything 1.0 freezes is either decided or built: the contract review's behaviour findings, ruled by Brenno on 2026-10-06. The 1.0.0 tag waits for this phase to close.
+
+| | Task | Issue |
+|---|---|---|
+| ⬜ | Validate state.json on read | [#343](https://github.com/breferrari/shardmind/issues/343) |
+| ⬜ | Report a state.json from a newer ShardMind in status instead of failing | [#344](https://github.com/breferrari/shardmind/issues/344) |
+| ⬜ | Trim shardmind/runtime to what hooks use | [#345](https://github.com/breferrari/shardmind/issues/345) |
+| ⬜ | Remove the reserved type_changed error code | [#346](https://github.com/breferrari/shardmind/issues/346) |
+| ⬜ | Mark adopt --mode auto-merge experimental | [#347](https://github.com/breferrari/shardmind/issues/347) |
+| ⬜ | Let update and adopt run with --json, not only plan | [#348](https://github.com/breferrari/shardmind/issues/348) |
+
 ## Shelf (retired 2026-10-04)
 
 The shelf was retired on 2026-10-04: every item on it moved into Phases 4 to 11. The deferral reasons are kept below as a record of why each item waited. They are history, not a build order.
