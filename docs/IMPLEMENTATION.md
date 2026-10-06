@@ -1694,6 +1694,8 @@ lintShard(shardDir, opts: { values?: Record<string, unknown>; engineVersion?: st
 Says which runs are `--json` runs, so a `--json` run in a terminal behaves exactly as piped (#198).
 
 ```typescript
+export type JsonRunCommand = 'update' | 'adopt' | 'validate' | 'status';
+export function jsonRunOf(argv: readonly string[]): { command: JsonRunCommand; rest: readonly string[] } | undefined;
 export function isJsonRun(argv: readonly string[]): boolean;
 export function subcommandOf(argv: readonly string[]): string | undefined;
 ```
@@ -1705,7 +1707,8 @@ A mounted Ink app in a TTY did two things under `--json` that a pipe never sees:
 Every command with a `--json` now answers it headless, before anything loads Ink (§4.29, #302), so neither can happen: no Ink app is mounted, and the flows refuse a prompt under `--json` themselves (§4.30). Until #302, `cli.ts` marked stdout non-interactive and dropped Ink's trailing blank write for these runs; both workarounds are gone.
 
 1. `isJsonRun`: `--json` appears before any `--`, there is no `-h`, `--help`, `-v` or `--version` (Pastel answers those), and the subcommand is `update`, `adopt`, `validate` or absent (the status command). `--json=true` is not a form Commander accepts for a boolean flag. Install has no `--json`. A unit test ties the accepted commands to every command file under `source/commands/` that declares a `json` option.
-2. `subcommandOf`: the first argument before any `--` that is not an option. Every root option is a boolean flag, so no option value is read as the subcommand. A root option before the subcommand (`shardmind --verbose adopt --json`) is passed on to the command's runner, as Pastel passes it on (#147).
+2. `subcommandOf`: the first argument before any `--` that is not an option. Every root option is a boolean flag, so no option value is read as the subcommand.
+3. `jsonRunOf`: for a run `isJsonRun` accepts, the command (`status` without a subcommand) and the arguments its runner takes, which are `argv` with that one subcommand removed: a root option before it (`shardmind --verbose adopt --json`) is passed on, as Pastel passes it on (#147). `cli.ts` keys its headless runners on `JsonRunCommand`, so a command with a `--json` and no runner is a type error, and its crash answer names the same command.
 
 The prompt is decided in the flow, not by faking stdin. Ink derives `isRawModeSupported` from `stdin.isTTY`, but marking stdin non-interactive would send the stdin SIGINT bridge (`core/cancellation.ts`) down its pipe path on a real terminal. A backgrounded run would then get SIGTTIN and stop, and type-ahead would be swallowed. Instead:
 - adopt: no terminal, or `--json`, refuses with `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES`, or uses `--values`, exactly as piped;

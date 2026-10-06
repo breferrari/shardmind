@@ -9,7 +9,11 @@
  */
 
 // Commands with a `--json`, each answered headless (#302). Install has none.
-const JSON_COMMANDS = new Set(['update', 'adopt', 'validate']);
+// cli.ts keys its runners on `JsonRunCommand`, so the two lists cannot drift.
+const JSON_COMMANDS: readonly string[] = ['update', 'adopt', 'validate'] satisfies readonly JsonRunCommand[];
+
+/** A command a `--json` run is answered by: a subcommand, or the status command (the root). */
+export type JsonRunCommand = 'update' | 'adopt' | 'validate' | 'status';
 
 /** The arguments before any `--`. */
 function beforeTerminator(argv: readonly string[]): readonly string[] {
@@ -27,15 +31,28 @@ export function subcommandOf(argv: readonly string[]): string | undefined {
 }
 
 /**
+ * A `--json` run's command and the arguments its runner takes: `argv` with
+ * the subcommand removed, so a root option before it (`--verbose adopt`) is
+ * passed on, as Pastel passes it on (#147). Undefined for a run that is not
+ * a `--json` run (`isJsonRun`).
+ */
+export function jsonRunOf(argv: readonly string[]): { command: JsonRunCommand; rest: readonly string[] } | undefined {
+  const args = beforeTerminator(argv);
+  if (!args.includes('--json')) return undefined;
+  if (args.some((arg) => arg === '-h' || arg === '--help' || arg === '-v' || arg === '--version')) return undefined;
+  const at = args.findIndex((arg) => !arg.startsWith('-'));
+  if (at === -1) return { command: 'status', rest: argv };
+  const subcommand = args[at]!;
+  if (!JSON_COMMANDS.includes(subcommand)) return undefined;
+  return { command: subcommand as JsonRunCommand, rest: [...argv.slice(0, at), ...argv.slice(at + 1)] };
+}
+
+/**
  * True for a `--json` run of update, adopt, validate or the status command (no
  * subcommand): `--json` before any `--`, and no help or version flag, which
  * Pastel answers (#302). (`--json=true` is not a form Commander accepts for a
  * boolean flag.)
  */
 export function isJsonRun(argv: readonly string[]): boolean {
-  const args = beforeTerminator(argv);
-  if (!args.includes('--json')) return false;
-  if (args.some((arg) => arg === '-h' || arg === '--help' || arg === '-v' || arg === '--version')) return false;
-  const subcommand = subcommandOf(argv);
-  return subcommand === undefined || JSON_COMMANDS.has(subcommand);
+  return jsonRunOf(argv) !== undefined;
 }

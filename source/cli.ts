@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { installStdinCancellation } from './core/cancellation.js';
 import { applyNoColor } from './core/color-env.js';
-import { isJsonRun, subcommandOf } from './core/json-run.js';
+import { jsonRunOf, type JsonRunCommand } from './core/json-run.js';
 import { exitQuietlyWhenStdoutCloses } from './core/stdout-closed.js';
 
 // NO_COLOR turns colour off unless FORCE_COLOR is set (#37). chalk, which Ink
@@ -17,7 +17,7 @@ exitQuietlyWhenStdoutCloses(process);
 
 // A --json run never loads Ink: its command answers headless below, so it
 // writes in a terminal exactly what it writes piped (#198, #302).
-const jsonRun = isJsonRun(process.argv.slice(2));
+const jsonArgs = jsonRunOf(process.argv.slice(2));
 
 // A throw that escapes every command (a command module that fails to load, a
 // rejection nobody awaited) is printed as plain text, since Ink may not be
@@ -46,11 +46,12 @@ const reportCrash = installCrashHandlers(process, crash);
 // with one failure document (#198), unless the run already wrote its document.
 // Loaded once the handlers are in place: if it cannot load, the plain-text
 // report on stderr still stands.
-if (jsonRun) {
+if (jsonArgs) {
+  const { command } = jsonArgs;
   const json = await import('./core/json-output.js').catch(() => undefined);
   if (json) {
     crash.writeJson = (error) => {
-      if (!json.jsonEmitted()) json.emitJson(json.jsonFailure(json.jsonCommandOf(process.argv.slice(2)), error));
+      if (!json.jsonEmitted()) json.emitJson(json.jsonFailure(command, error));
     };
   }
 }
@@ -59,27 +60,19 @@ try {
   // `<command> --json` for the commands listed here runs before Pastel loads
   // Ink: a mounted Ink app writes terminal control codes around the document
   // even when it renders nothing (#198), and the JSON must be one clean
-  // document (#34). Each runner takes the arguments after the command and
-  // returns the exit code. `--help` still goes to Pastel.
+  // document (#34). Each runner takes the arguments without the subcommand
+  // (a root option before it is passed on, #147) and returns the exit code.
+  // `--help` and `--version` still go to Pastel.
   // The status command (the root, no subcommand), adopt and update run headless too (#302).
-  const HEADLESS_JSON: Record<string, () => Promise<(argv: readonly string[], engineVersion: string | undefined) => Promise<number>>> = {
+  const HEADLESS_JSON: Record<JsonRunCommand, () => Promise<(argv: readonly string[], engineVersion: string | undefined) => Promise<number>>> = {
     validate: async () => (await import('./core/validate-shard.js')).runValidateJson,
     status: async () => (await import('./commands/headless/status.js')).runStatusJson,
     adopt: async () => (await import('./commands/headless/adopt.js')).runAdoptJson,
     update: async () => (await import('./commands/headless/update.js')).runUpdateJson,
   };
-  const argv = process.argv.slice(2);
-  // The subcommand as isJsonRun reads it; none is the status command. A root
-  // option before it (`shardmind --verbose adopt`) is passed on to the
-  // command, as Pastel passes it on (#147).
-  const subcommand = subcommandOf(argv);
-  // jsonRun admits only the commands in json-run.ts, so `constructor --json`
-  // never reaches this lookup.
-  const headless = HEADLESS_JSON[subcommand ?? 'status'];
-  if (headless && jsonRun) {
-    const run = await headless();
-    const at = subcommand === undefined ? -1 : argv.indexOf(subcommand);
-    process.exitCode = await run(at < 0 ? argv : [...argv.slice(0, at), ...argv.slice(at + 1)], crash.version);
+  if (jsonArgs) {
+    const run = await HEADLESS_JSON[jsonArgs.command]();
+    process.exitCode = await run(jsonArgs.rest, crash.version);
     // A pipe write can still be queued (Windows, macOS): exiting before it
     // drains would cut the document short.
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));

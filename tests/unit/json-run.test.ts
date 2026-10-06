@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isJsonRun, subcommandOf } from '../../source/core/json-run.js';
+import { isJsonRun, jsonRunOf, subcommandOf } from '../../source/core/json-run.js';
 
 describe('isJsonRun', () => {
   it.each([
@@ -103,4 +103,26 @@ describe('root options before the subcommand', () => {
       expect(schema.safeParse('update').success, name).toBe(false);
     }
   });
+});
+
+describe('jsonRunOf: the command and the arguments its runner takes (#302)', () => {
+  it.each([
+    [['--json'], 'status', ['--json']],
+    [['--verbose', '--json'], 'status', ['--verbose', '--json']],
+    [['update', '--dry-run', '--json'], 'update', ['--dry-run', '--json']],
+    // A root option before the subcommand is passed on (#147).
+    [['--verbose', 'adopt', 'github:a/b', '--json'], 'adopt', ['--verbose', 'github:a/b', '--json']],
+    // Only the subcommand is removed, not a later argument equal to it.
+    [['adopt', 'adopt', '--json', '--dry-run'], 'adopt', ['adopt', '--json', '--dry-run']],
+    [['validate', '--json', '--', 'x'], 'validate', ['--json', '--', 'x']],
+  ])('%j → %s with %j', (argv, command, rest) => {
+    expect(jsonRunOf(argv)).toEqual({ command, rest });
+  });
+
+  it.each([[['update', '--dry-run']], [['install', '--json']], [['--json', '--help']], [['update', '--', '--json']]])(
+    '%j is not a JSON run',
+    (argv) => {
+      expect(jsonRunOf(argv)).toBeUndefined();
+    },
+  );
 });
