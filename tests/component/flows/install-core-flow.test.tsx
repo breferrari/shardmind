@@ -6,7 +6,6 @@
 
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs/promises';
-import fsSync from 'node:fs';
 import path from 'node:path';
 import { stringify as stringifyYaml } from 'yaml';
 
@@ -54,13 +53,6 @@ describe('install flow, UI-free (#302)', () => {
       onHookAbort: () => {},
     };
     return { io, asked, phases, committed: () => committed };
-  }
-
-  /** A values file beside the vault, removed by the test's finally. */
-  function valuesFileFor(vault: string): string {
-    const file = `${vault}-values.yaml`;
-    fsSync.writeFileSync(file, stringifyYaml(DEFAULT_VALUES));
-    return file;
   }
 
   const input = (vault: string, extra: Partial<InstallFlowInput> = {}): InstallFlowInput => ({
@@ -133,16 +125,18 @@ describe('install flow, UI-free (#302)', () => {
   it('a headless --values run with a file of the user\'s in the way backs it up, never asking (#302)', async () => {
     pinShard();
     const vault = await makeVaultDir('install-core-headless-collision');
+    const valuesFile = `${vault}-values.yaml`;
     try {
       await fs.writeFile(path.join(vault, 'Home.md'), 'my own home\n');
+      await fs.writeFile(valuesFile, stringifyYaml(DEFAULT_VALUES));
       const s = scriptedIO(() => {
         throw new Error('asked without a terminal');
       });
-      const result = await runInstallFlow(input(vault, { interactive: false, valuesFile: valuesFileFor(vault) }), s.io);
+      const result = await runInstallFlow(input(vault, { interactive: false, valuesFile }), s.io);
       expect(s.asked).toEqual([]);
       expect(result.backups.map((b) => path.basename(b.originalPath))).toEqual(['Home.md']);
     } finally {
-      await fs.rm(`${vault}-values.yaml`, { force: true });
+      await fs.rm(valuesFile, { force: true });
       await cleanupVault(vault);
     }
   }, 60_000);

@@ -287,13 +287,10 @@ async function execute(
   ]);
   const oldStatePath = oldInstall.find((c) => c.outputPath === SHARDMIND_DIR)?.absolutePath;
   // A stale file whose set-aside copy could not be deleted is still in the
-  // vault under its backup name: listed as such, never as removed. Known
-  // once the transaction returns, before the hooks run.
-  let removedNow = removed;
-  const removedAfter = (left: BackupRecord[]): string[] => {
+  // vault under its backup name: listed as such, never as removed.
+  const removedGiven = (left: BackupRecord[]): string[] => {
     const leftPaths = new Set(left.map((r) => toPosix(vaultRoot, r.originalPath)));
-    removedNow = removed.filter((rel) => !leftPaths.has(rel));
-    return removedNow;
+    return removed.filter((rel) => !leftPaths.has(rel));
   };
 
   const start = Date.now();
@@ -329,7 +326,7 @@ async function execute(
       modules: answers.selections,
       newFiles: [],
       // A reinstall removes the files the shard no longer has (#228).
-      removedFiles: dryRun ? [] : removedAfter(done.left),
+      removedFiles: dryRun ? [] : removedGiven(done.left),
       dryRun,
     }),
   );
@@ -344,7 +341,7 @@ async function execute(
     durationMs: Date.now() - start,
     backups: [...result.backups, ...leftBackups],
     replaced,
-    removed: removedNow,
+    removed: dryRun ? removed : removedGiven(result.left),
     keptStale,
     hooks,
     dryRun,
