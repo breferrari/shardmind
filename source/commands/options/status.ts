@@ -11,6 +11,8 @@ export const options = zod.object({
     .boolean()
     .default(false)
     .describe('Show full diagnostics (values, modules, files, frontmatter, environment)'),
+  // Read by cli.ts, which answers `--json` headless (#302); declared here so
+  // it parses and shows in --help.
   json: zod
     .boolean()
     .default(false)

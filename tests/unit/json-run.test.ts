@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dropTrailingBlankWrites, isJsonRun, markNonInteractive } from '../../source/core/json-run.js';
+import { dropTrailingBlankWrites, isJsonRun, markNonInteractive, subcommandOf } from '../../source/core/json-run.js';
 
 describe('isJsonRun', () => {
   it.each([
@@ -36,6 +36,27 @@ describe('isJsonRun', () => {
     [['update', '--', '--json']],
   ])('is not a JSON run: %j', (argv) => {
     expect(isJsonRun(argv)).toBe(false);
+  });
+});
+
+describe('--version goes to Pastel, as --help does (#302)', () => {
+  it.each([[['--json', '--version']], [['-v', '--json']], [['--version', '--json']]])('%j is not a JSON run', (argv) => {
+    expect(isJsonRun(argv)).toBe(false);
+  });
+});
+
+describe('subcommandOf (#302)', () => {
+  it.each([
+    [['--json'], undefined],
+    [['--verbose', '--json'], undefined],
+    [['adopt', 'github:a/b', '--json'], 'adopt'],
+    [['--verbose', 'adopt', '--json'], 'adopt'],
+    // A value of a root option reads as the subcommand: the run is not the status command.
+    [['--values', 'x', '--json'], 'x'],
+    // Nothing after `--` is a subcommand.
+    [['--json', '--', 'adopt'], undefined],
+  ])('%j → %s', (argv, expected) => {
+    expect(subcommandOf(argv)).toBe(expected);
   });
 });
 

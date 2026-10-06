@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { installStdinCancellation } from './core/cancellation.js';
 import { applyNoColor } from './core/color-env.js';
-import { dropTrailingBlankWrites, isJsonRun, markNonInteractive } from './core/json-run.js';
+import { dropTrailingBlankWrites, isJsonRun, markNonInteractive, subcommandOf } from './core/json-run.js';
 import { exitQuietlyWhenStdoutCloses } from './core/stdout-closed.js';
 
 // NO_COLOR turns colour off unless FORCE_COLOR is set (#37). chalk, which Ink
@@ -76,12 +76,14 @@ try {
     status: async () => (await import('./commands/headless/status.js')).runStatusJson,
   };
   const argv = process.argv.slice(2);
-  // A run whose arguments are all options is the root command. A root option
-  // before a subcommand (`shardmind --verbose adopt`) goes to Pastel, which
-  // passes it on (#147).
-  const isRoot = argv.every((arg) => arg.startsWith('-'));
-  const command = isRoot ? 'status' : argv[0];
-  const headless = command === undefined ? undefined : HEADLESS_JSON[command];
+  // The subcommand as isJsonRun reads it; none is the status command. A named
+  // command must come first: a root option before it (`shardmind --verbose
+  // adopt`) goes to Pastel, which passes it on (#147).
+  const subcommand = subcommandOf(argv);
+  const isRoot = subcommand === undefined;
+  const command = isRoot ? 'status' : subcommand === argv[0] ? subcommand : undefined;
+  // An own key only: `constructor` is not a command.
+  const headless = command !== undefined && Object.hasOwn(HEADLESS_JSON, command) ? HEADLESS_JSON[command] : undefined;
   if (headless && jsonRun) {
     const run = await headless();
     process.exitCode = await run(isRoot ? argv : argv.slice(1), crash.version);

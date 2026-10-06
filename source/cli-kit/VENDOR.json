@@ -12,7 +12,7 @@
       "upstream": "generate-arguments.tsx"
     },
     "generate-command.tsx": {
-      "change": "StatusMessage from the ui-kit instead of @inkjs/ui.",
+      "change": "StatusMessage from the ui-kit instead of @inkjs/ui; the schemas' registration and validation from lib/command-input.ts, shared with parse.ts (ShardMind #302).",
       "modified": true,
       "upstream": "generate-command.tsx"
     },
