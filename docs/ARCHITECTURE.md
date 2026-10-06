@@ -132,7 +132,8 @@ my-vault/
 │   ├── shard.yaml                    ← cached manifest
 │   ├── shard-schema.yaml             ← cached values schema
 │   ├── templates/                    ← cached source files; merge base for three-way merge on update
-│   └── logs/                         ← full output of a crashed or long hook (<slot>.log); on demand
+│   ├── logs/                         ← full output of a crashed or long hook (<slot>.log); on demand
+│   └── shards/                       ← reserved for composition's overlay caches (#81, #368); never written before it
 │
 ├── shard-values.yaml                 ← user's wizard answers; vault-root, NOT under .shardmind/
 │                                       ("delete .shardmind/ and shard-values.yaml — the vault

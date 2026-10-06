@@ -115,6 +115,15 @@ export async function loadState(): Promise<ShardState | null> {
     );
   }
   if ((version as number) > STATE_SCHEMA_VERSION) throw newerStateError(version as number);
+  // Below the first schema there is nothing to read it as: unsupported, as
+  // the engine's readState answers (no migration reaches it).
+  if ((version as number) < 1) {
+    throw new ShardMindError(
+      `Unsupported state schema_version: ${version as number}`,
+      'STATE_UNSUPPORTED_VERSION',
+      `This version of shardmind reads schema_version 1 to ${STATE_SCHEMA_VERSION}.`,
+    );
+  }
   // The same contract the engine reads with (#343).
   return parseShardState(parsed, filePath);
 }

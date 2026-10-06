@@ -182,6 +182,13 @@ describe('loadState (runtime) validates the same way (#343)', () => {
     expect(newerStateOf(err)).toEqual({ stateSchemaVersion: 3, supportedSchemaVersion: 2 });
   });
 
+  it('a schema_version below 1 is STATE_UNSUPPORTED_VERSION, as the engine answers (#368)', async () => {
+    vi.spyOn(process, 'cwd').mockReturnValue(vault);
+    await writeRaw({ ...valid(), schema_version: 0 });
+    await expect(loadState()).rejects.toMatchObject({ code: 'STATE_UNSUPPORTED_VERSION' });
+    await expect(readState(vault)).rejects.toMatchObject({ code: 'STATE_UNSUPPORTED_VERSION' });
+  });
+
   it('a v1 state reads as it is (#368)', async () => {
     vi.spyOn(process, 'cwd').mockReturnValue(vault);
     await writeRaw({ ...valid(), schema_version: 1 });

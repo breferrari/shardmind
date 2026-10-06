@@ -56,7 +56,6 @@ const CACHE_COPY_CONCURRENCY = 16;
  */
 const REHASH_CONCURRENCY = 16;
 
-
 /**
  * `onContractError` (status only): a state.json that breaks the contract
  * (#343) is handed to it and read as it is, unchecked, so the ambient status
