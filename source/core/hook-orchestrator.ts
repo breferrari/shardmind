@@ -68,7 +68,7 @@ export interface HookRunPlan {
   previousVersion?: string;
   /** Managed paths newly added — `[]` on install, summary.addedFiles on update. */
   newFiles: string[];
-  /** Managed paths removed — `[]` on install/adopt, summary.deletedFiles on update. */
+  /** Managed paths removed: a reinstall's removals on install (#228), `[]` on adopt, summary.deletedFiles on update. bootstrap and post-update receive it (#356). */
   removedFiles: string[];
   dryRun: boolean;
 }
@@ -305,7 +305,13 @@ function buildJobs(
       relPath: hooks.bootstrap?.script,
       boundary: 'managed-write',
       willRun: bootstrapShouldRerun(plan.state.bootstrap_fingerprint, hooks.bootstrap?.fingerprint),
-      makeCtx: () => ({ slot: 'bootstrap', ...base, previousVersion: plan.previousVersion }),
+      makeCtx: () => ({
+        slot: 'bootstrap',
+        ...base,
+        previousVersion: plan.previousVersion,
+        valuesAreDefaults: ctx.defaults,
+        removedFiles: plan.removedFiles,
+      }),
     });
     jobs.push({
       slot: 'post-update',
@@ -350,7 +356,7 @@ function buildJobs(
       relPath: hooks.bootstrap?.script,
       boundary: 'managed-write',
       willRun: true,
-      makeCtx: () => ({ slot: 'bootstrap', ...base }),
+      makeCtx: () => ({ slot: 'bootstrap', ...base, valuesAreDefaults: ctx.defaults, removedFiles: plan.removedFiles }),
     },
     {
       slot: 'personalize',

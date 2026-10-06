@@ -768,3 +768,61 @@ describe('runHooks — user edits made before the hook phase (#150)', () => {
     expect(result.finalState.files['mine.md']!.rendered_hash).toBe(sha256('engine render\n'));
   });
 });
+
+// #356: bootstrap carries a reinstall's removed files and the defaults flag,
+// which only the deprecated post-install context had on install.
+describe('runHooks — the bootstrap context (#356)', () => {
+  const dumpCtx = `
+    import { writeFile } from 'node:fs/promises';
+    import { join } from 'node:path';
+    export default async function (ctx) {
+      await writeFile(
+        join(ctx.vaultRoot, '.bootstrap-ctx.json'),
+        JSON.stringify({ removedFiles: ctx.removedFiles, valuesAreDefaults: ctx.valuesAreDefaults }),
+      );
+    }
+  `;
+  const BOOTSTRAP = { bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } };
+
+  async function bootstrapCtx(plan: HookRunPlan): Promise<{ removedFiles: unknown; valuesAreDefaults: unknown }> {
+    await hook('bootstrap.ts', dumpCtx);
+    await runHooks(plan, NOOP_UI);
+    return JSON.parse(await fsp.readFile(path.join(vault, '.bootstrap-ctx.json'), 'utf-8')) as {
+      removedFiles: unknown;
+      valuesAreDefaults: unknown;
+    };
+  }
+
+  it("hands a reinstall's removed files to bootstrap", async () => {
+    const ctx = await bootstrapCtx(installPlan({ manifest: manifest(BOOTSTRAP), removedFiles: ['brain/Old.md', 'work/Gone.md'] }));
+    expect(ctx.removedFiles).toEqual(['brain/Old.md', 'work/Gone.md']);
+  }, 30_000);
+
+  it('hands an empty list on a first install and on adopt', async () => {
+    expect((await bootstrapCtx(installPlan({ manifest: manifest(BOOTSTRAP) }))).removedFiles).toEqual([]);
+    expect((await bootstrapCtx(installPlan({ manifest: manifest(BOOTSTRAP), command: 'adopt' }))).removedFiles).toEqual([]);
+  }, 30_000);
+
+  it('says whether the user accepted every default', async () => {
+    expect((await bootstrapCtx(installPlan({ manifest: manifest(BOOTSTRAP), values: { user_name: 'default' } }))).valuesAreDefaults).toBe(true);
+    expect((await bootstrapCtx(installPlan({ manifest: manifest(BOOTSTRAP), values: { user_name: 'alice' } }))).valuesAreDefaults).toBe(false);
+  }, 30_000);
+
+  it("hands an update re-bootstrap the update's removed files and the defaults flag", async () => {
+    const ctx = await bootstrapCtx({
+      command: 'update',
+      tempDir: shardDir,
+      schema: SCHEMA,
+      vaultRoot: vault,
+      state: makeShardState({ bootstrap_fingerprint: 'v1' }),
+      values: { user_name: 'default' },
+      modules: {},
+      previousVersion: '0.9.0',
+      newFiles: [],
+      removedFiles: ['old.md'],
+      dryRun: false,
+      manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v2' } }),
+    });
+    expect(ctx).toEqual({ removedFiles: ['old.md'], valuesAreDefaults: true });
+  }, 30_000);
+});

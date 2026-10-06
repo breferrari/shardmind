@@ -768,6 +768,8 @@ describe('executeHook — subprocess runtime', () => {
       modules: {},
       shard: { name: 'test-shard', version: '2.0.0' },
       previousVersion: '1.0.0',
+      valuesAreDefaults: false,
+      removedFiles: [],
     };
     const result = await executeHook(hookPath, ctx);
     if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}`);
@@ -795,6 +797,8 @@ describe('runHook — slot-agnostic runner', () => {
     values: {},
     modules: {},
     shard: { name: 'test-shard', version: '1.0.0' },
+    valuesAreDefaults: false,
+    removedFiles: [],
   });
 
   it('returns absent when the relative path is undefined', async () => {
