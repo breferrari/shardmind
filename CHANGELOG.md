@@ -8,10 +8,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
-### Changed (the status command's --json runs without the terminal UI — #302)
+### Changed (status and adopt --json run without the terminal UI — #302)
 
 - **`shardmind --json` with a flag it does not take now answers with a document.** It used to print the error on stderr and write nothing to stdout. It now writes a failure document with the code `ARGS_INVALID` and the same message, and exits 1, so a `--json` caller always gets a document.
-- Internal: `shardmind --json` is answered before the terminal UI loads, as `validate --json` is: it parses its flags with the same rules as the interactive run (`cli-kit/parse.ts`) and writes the report directly. Adopt and update follow.
+- **`shardmind adopt --dry-run --json` with a flag it does not take answers with a document too**, `ARGS_INVALID`, where it printed the error and wrote nothing.
+- Internal: `shardmind --json` and `shardmind adopt --dry-run --json` are answered before the terminal UI loads, as `validate --json` is: they parse their flags with the same rules as the interactive run (`cli-kit/parse.ts`). Adopt runs as a UI-free flow (`core/flows/adopt.ts`) that the terminal UI adapts. Update and install follow.
 
 ### Changed (install owns its rollback, as update and adopt do — #300)
 
