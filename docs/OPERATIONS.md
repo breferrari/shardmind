@@ -165,7 +165,7 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 **`result` of a real run** (`dryRun: false`):
 
 - **`files`**: every path, sorted, each with an `outcome`, plus `shardHash` / `userHash` / `renamedFrom` / `conflict` where they apply.
-- **Run details:** `backupDir` (update: the snapshot of what it replaced; adopt: `null`, since a successful adopt keeps no snapshot), `hooks` (`slot`, `outcome`: `completed` / `failed` / `skipped`; a timeout or a hook cut short by Ctrl+C is `failed` with its `message`; plus `exitCode` and `log`), `warnings` and `durationMs`.
+- **Run details:** `backupDir` (update: the snapshot of what it replaced; adopt: `null`, since a successful adopt keeps no snapshot), `hooks` (`slot`, `outcome`: `completed` / `failed` / `skipped`; a failed hook carries `failure`, below, and its first `message` line; plus `exitCode` and `log`), `warnings` and `durationMs`.
 - **update** also has `fromVersion`, `toVersion` and `counts`, and `upToDate: true` when there was nothing to do.
 - **adopt** also has `mode`, `version` and `counts`.
 
@@ -179,6 +179,21 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 | `kept-untracked` | Your file at a path the new version adds, left yours and untracked |
 | `deleted` | A file the new version dropped |
 | `unchanged` | Nothing to do |
+
+| hook `failure` (on a failed hook) | Meaning |
+|---|---|
+| `install` | shardmind's own files are missing: reinstall shardmind |
+| `context` | The hook's context could not be handed over |
+| `spawn` | The hook process could not start |
+| `import` | The hook module could not be loaded |
+| `no-default-export` | The module has no default function |
+| `threw` | The hook threw or rejected |
+| `exit` | The hook exited non-zero by itself |
+| `killed` | A signal ended it that was not shardmind's |
+| `timeout` | It ran past `timeout_ms` |
+| `cancelled` | Ctrl+C stopped it |
+
+The list is exhaustive: a failed hook always has exactly one of these.
 
 | adopt `outcome` | Meaning |
 |---|---|

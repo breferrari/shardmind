@@ -1341,6 +1341,23 @@ type HookResult =
 - Hook hangs past `timeoutMs` → `failed / "timed out after Ns"` with any captured output so far preserved.
 - Parent SIGINT (via caller's AbortSignal) → `failed / "cancelled"`.
 
+**Why a hook failed, as a field (#348).** Every failed hook carries `failure`, one value from a closed list, so a script never parses message text. The list is exhaustive: every way a hook fails maps to exactly one value.
+
+| `failure` | When |
+|---|---|
+| `install` | shardmind's own files are missing (`tsx`, or the hook-runner): reinstall shardmind |
+| `context` | The context file could not be written by the engine, or read by the runner |
+| `spawn` | The hook process could not start |
+| `import` | The hook module could not be loaded (a syntax error, a failing import) |
+| `no-default-export` | The module loaded but has no default function |
+| `threw` | The hook's function threw or rejected |
+| `exit` | The hook process exited non-zero by itself (`process.exit(n)`) |
+| `killed` | A signal ended it that was not ours (exit code -1) |
+| `timeout` | It ran past `timeout_ms` and was stopped |
+| `cancelled` | Ctrl+C stopped it |
+
+The engine sets `install`, `context`, `spawn`, `timeout` and `cancelled` where it creates the `failed` result. The runner's own failures (`context` on read, `import`, `no-default-export`, `threw`) come over a side channel: before it exits, the runner writes the value to `<ctxPath>.failure`, next to the context file the engine created (same 0o600 temp file convention). After a non-zero exit the engine reads it, falling back to `killed` for exit code -1 and `exit` otherwise. It deletes it in the `finally` that removes the context file. Exit codes are unchanged: the runner still exits 1 on its own failures. `failure` is on `HookResult` (`ran` with a non-zero exit, and `failed`) and on `HookSummary`, and the `--json` result carries it on every failed hook.
+
 **Why JSON-temp-file for ctx transport** (decision rationale):
 - Env var — Windows process-env has a 32 KB per-var cap; a `values` object larger than that truncates silently.
 - Stdin — conflicts with the cancellation bridge in `source/core/cancellation.ts` (which treats ETX bytes on stdin as SIGINT surrogates).
