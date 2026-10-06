@@ -440,7 +440,7 @@ Criterion: **obsidian-mind v6 does not need these to install, configure, or upgr
 
 | Planned | Why v6 did not need it | How it is added without redesign |
 |---------|------------------------|----------------------------------|
-| `rendered_files` opt-in, Nunjucks at vault-visible paths ([#86](https://github.com/breferrari/shardmind/issues/86)) | obsidian-mind personalises `brain/North Star.md` with a post-install hook; no `{{ }}` at vault-visible paths | A new optional field in `shard.yaml`; `renderer.ts` renders the listed files during install. Without the field, behaviour is unchanged |
+| `rendered_files` opt-in, Nunjucks at vault-visible paths ([#86](https://github.com/breferrari/shardmind/issues/86)) | obsidian-mind personalises `brain/North Star.md` with a `personalize` hook; no `{{ }}` at vault-visible paths | A new optional field in `shard.yaml`; `renderer.ts` renders the listed files during install. Without the field, behaviour is unchanged |
 | Shard composition, several shards in one vault ([#81](https://github.com/breferrari/shardmind/issues/81)) | One shard per vault | `state.json` extends from `{shard, version}` to `{shards: [...]}`, a new `schema_version` with a forward migration; one shard stays the special case |
 | Dependency fetching ([#82](https://github.com/breferrari/shardmind/issues/82)) | Shards vendor their dependencies (obsidian-mind does) | `shard.yaml`'s `dependencies: []` is fetched on install, with a lock file |
 | Structural variants ([#80](https://github.com/breferrari/shardmind/issues/80)) | obsidian-mind is one shard | Modules gain a `structure` field with purpose-driven variants (ARCHITECTURE §16); orthogonal to the layout |

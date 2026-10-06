@@ -1077,7 +1077,7 @@ runInstallTransaction(opts: InstallTransactionOptions): Promise<InstallTransacti
 
 **Dependencies**: `yaml` (`stringify`), `core/modules` (`resolveModules`), `core/renderer` (`createRenderer`, `renderFile`, `buildRenderContext`), `core/state` (`initShardDir`, `cacheTemplates`, `cacheManifest`, `writeState`, `STATE_SCHEMA_VERSION`), `core/fs-utils` (`sha256`, `toPosix`, `pathExists`, `removePath`), `core/install-planner` (`hashValues`, `Collision`), `core/vault-path-guard` (`assertSafeVaultPaths`), `runtime/errno`, `runtime/vault-paths` (`SHARDMIND_DIR`, `VALUES_FILE`).
 
-**Tests**: `tests/unit/vault-transaction.test.ts` (set-asides, their rollback and commit, carry-over, install's refusal of a file that appeared after planning); `tests/integration/install.test.ts` (full pipeline against `examples/minimal-shard`: module exclusion, ref vs tag state, per-file hashes, dry run, `VALUES_FILE_COLLISION`, rollback, post-install hook); `tests/integration/vault-path-guard.test.ts` (`VAULT_PATH_UNSAFE` refusals, #163); `tests/component/flows/install-flow.test.tsx` (Layer 1); `tests/e2e/cli.test.ts` (CLI install incl. Invariant 1 byte-equivalence).
+**Tests**: `tests/unit/vault-transaction.test.ts` (set-asides, their rollback and commit, carry-over, install's refusal of a file that appeared after planning); `tests/integration/install.test.ts` (full pipeline against `examples/minimal-shard`: module exclusion, ref vs tag state, per-file hashes, dry run, `VALUES_FILE_COLLISION`, rollback, bootstrap hook); `tests/integration/vault-path-guard.test.ts` (`VAULT_PATH_UNSAFE` refusals, #163); `tests/component/flows/install-flow.test.tsx` (Layer 1); `tests/e2e/cli.test.ts` (CLI install incl. Invariant 1 byte-equivalence).
 
 ---
 
@@ -1225,7 +1225,7 @@ Returns `null` when the vault has no `.shardmind/state.json` — the "not in a s
 
 **Deviations from the spec** (`docs/ARCHITECTURE.md §10.2–10.3`):
 - Flavor text like `"you added a custom section"` is rendered as a plain path without a natural-language summary — semantic diff of user edits would require an LLM. Numeric `+N/−M` counts **are** shipped.
-- Shard-specific environment checks (e.g. `"QMD not installed"`) are absent because no `status` hook exists yet (hooks are post-install/post-update only); this remains a future shard-author feature.
+- Shard-specific environment checks (e.g. `"QMD not installed"`) are absent because no `status` hook exists yet (the hook slots are bootstrap, personalize and post-update); this remains a future shard-author feature.
 
 **Dependencies**: `core/state`, `core/drift`, `core/manifest`, `core/schema`, `core/values-io`, `core/update-check`, `runtime/frontmatter`, `core/fs-utils`.
 
