@@ -517,7 +517,7 @@ Not blockers for engine use, but needed before the registry-mode flow (`shardmin
 
 ### v0.2.0 — Composition & Polish (Q2–Q3 2026)
 
-Deferred from v0.1 per [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-scope-and-planned) + [`VISION.md §Current Priorities`](VISION.md). Most of it was declined on 2026-10-05, then reopened as planned work on 2026-10-06 (Phase 15, above; whether each lands before 1.0 or in 1.x is Brenno's ruling, item by item); what remains is built only after v0.1 is stable and adoption signals are real. Each feature has an umbrella issue tracking its sub-tasks.
+Deferred from v0.1 per [`docs/SHARD-LAYOUT.md §Out of scope`](docs/SHARD-LAYOUT.md#out-of-scope-and-planned) + [`VISION.md §Current Priorities`](VISION.md). Most of it was declined on 2026-10-05, then reopened as planned work on 2026-10-06 (Phase 15, above; whether each lands before 1.0 or in 1.x is the maintainer's ruling, item by item); what remains is built only after v0.1 is stable and adoption signals are real. Each feature has an umbrella issue tracking its sub-tasks.
 
 #### Core features
 

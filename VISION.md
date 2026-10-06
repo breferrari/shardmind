@@ -97,7 +97,7 @@ The `shardmind/runtime` module is used by hook scripts, and hooks are a Claude C
 - 17 fixture-driven merge tests (TDD)
 - npm publish
 
-**Deferred from v0.1, and planned** (Phase 15 in [`ROADMAP.md`](ROADMAP.md); designs in [`docs/SHARD-LAYOUT.md` §Out of scope and planned](docs/SHARD-LAYOUT.md#out-of-scope-and-planned); whether each lands before 1.0 or in 1.x is Brenno's ruling, item by item):
+**Deferred from v0.1, and planned** (Phase 15 in [`ROADMAP.md`](ROADMAP.md); designs in [`docs/SHARD-LAYOUT.md` §Out of scope and planned](docs/SHARD-LAYOUT.md#out-of-scope-and-planned); whether each lands before 1.0 or in 1.x is the maintainer's ruling, item by item):
 
 - Dependency fetching (until then, shard authors vendor deps)
 - Shard composition (until then, one shard per vault)

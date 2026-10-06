@@ -431,7 +431,7 @@ A renamed file is planned at its new path as the old one would have been at the 
 
 Criterion: **obsidian-mind v6 does not need these to install, configure, or upgrade cleanly.** Each is a clean additive extension: adding it later forces no retroactive design change.
 
-**Planned** (declined on 2026-10-05, reopened as planned work on 2026-10-06: ROADMAP.md Phase 15; whether each lands before 1.0 or in 1.x is Brenno's ruling, item by item):
+**Planned** (declined on 2026-10-05, reopened as planned work on 2026-10-06: ROADMAP.md Phase 15; whether each lands before 1.0 or in 1.x is the maintainer's ruling, item by item):
 
 | Planned | Why v6 did not need it | How it is added without redesign |
 |---------|------------------------|----------------------------------|

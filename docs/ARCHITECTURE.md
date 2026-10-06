@@ -1891,7 +1891,7 @@ staying hermetic. No test reaches the public internet.
 
 ## 21. Deferred (v0.2+)
 
-**Planned** (declined on 2026-10-05, reopened as planned work on 2026-10-06, ROADMAP Phase 15): every row below, dependency fetching (#82), eject (#83), shard composition (#81), structural variants (#80), SOUL guided creation (#79) and `shardmind init` (#84). Whether each lands before 1.0 or in 1.x is Brenno's ruling, item by item. See [`SHARD-LAYOUT.md` §Out of scope and planned](SHARD-LAYOUT.md#out-of-scope-and-planned).
+**Planned** (declined on 2026-10-05, reopened as planned work on 2026-10-06, ROADMAP Phase 15): every row below, dependency fetching (#82), eject (#83), shard composition (#81), structural variants (#80), SOUL guided creation (#79) and `shardmind init` (#84). Whether each lands before 1.0 or in 1.x is the maintainer's ruling, item by item. See [`SHARD-LAYOUT.md` §Out of scope and planned](SHARD-LAYOUT.md#out-of-scope-and-planned).
 
 | Item | Why Deferred | Design Hint |
 |------|-------------|-------------|
