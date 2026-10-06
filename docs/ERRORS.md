@@ -396,7 +396,7 @@ A Ctrl+C rollback that could not restore everything prints the same list to stde
 
 ## Install command flags
 
-Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-flight, before any network call.
+Thrown during install's pre-flight, before any network call: by the install flow (`source/core/flows/install.ts`), or, for where the vault goes (`INSTALL_DESTINATION_NOT_EMPTY`, `INSTALL_INSIDE_VAULT`), by `source/core/install-destination.ts` before the run starts.
 
 ### `INSTALL_FLAG_CONFLICT`
 
@@ -415,6 +415,12 @@ Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-fl
 **Meaning:** `shardmind install <shard> [folder]` installs into a new folder named after the shard, or `[folder]` (#333). That folder already exists and is not empty, or a file sits at its path or at one of its parent levels. Refused before any download or prompt: installing a vault over an unrelated folder's content is never what the default meant. Also raised at write time when the folder appeared after the install planned (another run took the name).
 
 **Remedy:** Give another folder name as the second argument (`shardmind install <shard> my-vault`). To install into that folder as it is, `cd` into it and run `shardmind install <shard> .`, which keeps the in-place behaviour, collision review included; `.` names the current folder, so running it from the parent would install there. If the folder is already a shardmind vault, `shardmind update` inside it upgrades it. Also raised when the destination's drive or share does not exist.
+
+### `INSTALL_INSIDE_VAULT`
+
+**Meaning:** `shardmind install <shard>` with no folder argument installs into a new folder named after the shard (#333). It was run from inside an existing vault: the current folder, or a folder above it, holds `.shardmind/state.json` (a shardmind vault) or `.obsidian/` (an Obsidian vault). A second vault nested inside the first is almost never what was meant (#337). Refused before any download or prompt; the message names the vault found.
+
+**Remedy:** To install into a new folder anyway, name it: `shardmind install <shard> my-vault` (a folder argument skips the check). To install into the vault in place, `cd` to the vault the message names (it can be above the current folder) and run `shardmind install <shard> .`, which keeps the existing-install gate and collision review. To upgrade it, `cd` there and run `shardmind update` for a shardmind vault, or `shardmind adopt <shard>` for an Obsidian vault with no shard yet. Also raised when a folder on the way up cannot be read: the check cannot tell whether it is a vault, and naming the folder skips it. An empty folder argument (an unset `$DEST`) counts as none.
 
 ### `JSON_REQUIRES_DRY_RUN`
 

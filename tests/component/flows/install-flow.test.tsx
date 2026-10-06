@@ -1458,6 +1458,23 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       }
     }, 30_000);
 
+    it('with no folder, inside an existing vault, refuses before any network call (#337)', async () => {
+      const { stub } = getCtx();
+      const cwd = await makeVaultDir('new-folder-inside-vault');
+      try {
+        await fs.mkdir(path.join(cwd, '.obsidian'));
+        const before = stub.requestedPaths().length;
+        const r = mountInstall({ shardRef: SHARD_REF, vaultRoot: cwd, folder: undefined, options: { defaults: true } });
+        await waitFor(r.lastFrame, (f) => f.includes('INSTALL_INSIDE_VAULT'), 30_000);
+        expect(stub.requestedPaths().length).toBe(before);
+        expect(await fs.readdir(cwd)).toEqual(['.obsidian']);
+        expect(process.exitCode).toBe(1);
+      } finally {
+        process.exitCode = undefined;
+        await cleanupVault(cwd);
+      }
+    }, 45_000);
+
     it('a cancel at the confirm screen leaves no folder behind', async () => {
       const { stub, fixtures } = getCtx();
       stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);

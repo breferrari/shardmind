@@ -156,3 +156,90 @@ describe('resolveInstallDestination (#333)', () => {
     expect((await refusal(resolveInstallDestination(cwd, 'nope', folder))).code).toBe('REGISTRY_INVALID_REF');
   });
 });
+
+describe('no folder, inside an existing vault (#337)', () => {
+  async function shardmindVault(at: string): Promise<void> {
+    await fsp.mkdir(path.join(at, '.shardmind'), { recursive: true });
+    await fsp.writeFile(path.join(at, '.shardmind', 'state.json'), '{}');
+  }
+
+  it.each([
+    ['a shardmind vault', shardmindVault],
+    ['an Obsidian vault', (at: string) => fsp.mkdir(path.join(at, '.obsidian'), { recursive: true })],
+  ] as const)('%s in the current folder is refused, naming it, with both ways out', async (_kind, makeVault) => {
+    await makeVault(cwd);
+    const err = await refusal(resolveInstallDestination(cwd, 'acme/wiki-mind'));
+    expect(err.code).toBe('INSTALL_INSIDE_VAULT');
+    expect(err.message).toContain(cwd);
+    expect(err.hint).toContain('shardmind install <shard> my-vault');
+    expect(err.hint).toContain('shardmind install <shard> .');
+  });
+
+  it('a vault two levels above is refused, naming that vault', async () => {
+    await shardmindVault(cwd);
+    const deep = path.join(cwd, 'notes', 'inbox');
+    await fsp.mkdir(deep, { recursive: true });
+    const err = await refusal(resolveInstallDestination(deep, 'acme/wiki-mind'));
+    expect(err.code).toBe('INSTALL_INSIDE_VAULT');
+    expect(err.message).toContain(cwd);
+    expect(err.message).not.toContain(deep);
+  });
+
+  it.each([['.'], ['my-wiki']])('an explicit folder (%s) skips the check', async (folder) => {
+    await shardmindVault(cwd);
+    await fsp.mkdir(path.join(cwd, '.obsidian'));
+    const dest = await resolveInstallDestination(cwd, 'acme/wiki-mind', folder);
+    expect(dest.root).toBe(path.resolve(cwd, folder));
+  });
+
+  it('.obsidian as a file, or .shardmind/ without state.json, is not a vault', async () => {
+    await fsp.writeFile(path.join(cwd, '.obsidian'), 'not a folder');
+    await fsp.mkdir(path.join(cwd, '.shardmind'));
+    const dest = await resolveInstallDestination(cwd, 'acme/wiki-mind');
+    expect(dest.root).toBe(path.join(cwd, 'wiki-mind'));
+  });
+
+  it('an Obsidian vault above is refused too, and its hint names adopt, with a cd to it', async () => {
+    await fsp.mkdir(path.join(cwd, '.obsidian'));
+    const deep = path.join(cwd, 'notes');
+    await fsp.mkdir(deep);
+    const err = await refusal(resolveInstallDestination(deep, 'acme/wiki-mind'));
+    expect(err.code).toBe('INSTALL_INSIDE_VAULT');
+    expect(err.hint).toContain(`cd "${cwd}"`);
+    expect(err.hint).toContain('shardmind adopt <shard>');
+    expect(err.hint).not.toContain('shardmind update');
+  });
+
+  it('a shardmind vault\'s hint names update, with a cd to it', async () => {
+    await shardmindVault(cwd);
+    const err = await refusal(resolveInstallDestination(path.join(cwd), 'acme/wiki-mind'));
+    expect(err.hint).toContain(`cd "${cwd}"`);
+    expect(err.hint).toContain('shardmind update');
+  });
+
+  it('the nearest of two nested vaults is the one named', async () => {
+    await fsp.mkdir(path.join(cwd, '.obsidian'));
+    const inner = path.join(cwd, 'inner');
+    await shardmindVault(inner);
+    const deep = path.join(inner, 'notes');
+    await fsp.mkdir(deep);
+    const err = await refusal(resolveInstallDestination(deep, 'acme/wiki-mind'));
+    expect(err.message).toContain(`vault at ${inner}`);
+  });
+
+  it('an empty folder argument (an unset $DEST) counts as none: still checked, never in place', async () => {
+    await shardmindVault(cwd);
+    expect((await refusal(resolveInstallDestination(cwd, 'acme/wiki-mind', ''))).code).toBe('INSTALL_INSIDE_VAULT');
+  });
+
+  it('a level it cannot read is refused, never taken for no vault', async () => {
+    const realStat = fsp.stat.bind(fsp);
+    vi.spyOn(fsp, 'stat').mockImplementation((async (p: string) => {
+      if (String(p).endsWith('state.json')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      return realStat(p);
+    }) as typeof fsp.stat);
+    const err = await refusal(resolveInstallDestination(cwd, 'acme/wiki-mind'));
+    expect(err.code).toBe('INSTALL_INSIDE_VAULT');
+    expect(err.message).toContain('EACCES');
+  });
+});
