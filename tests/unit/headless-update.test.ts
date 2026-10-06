@@ -47,9 +47,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   process.chdir(cwd);
-  // The flow primes the update-check cache in the vault without waiting on
-  // it, so that write can still be under way here (Windows: ENOTEMPTY).
-  await fsp.rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  await fsp.rm(dir, { recursive: true, force: true });
 });
 
 describe('runUpdateJson (#302)', () => {
@@ -83,5 +81,14 @@ describe('runUpdateJson (#302)', () => {
     const { code, out } = await run(['--json', '--dry-run']);
     expect(code).toBe(130);
     expect(out).toBe('');
+  });
+
+  it('the update-check cache is written by the time the run returns: cli.ts exits right after', async () => {
+    await writeInstall();
+    await run(['--json', '--dry-run']);
+    const shardmindDir = path.join(dir, path.dirname(STATE_FILE));
+    const cache = JSON.parse(await fsp.readFile(path.join(shardmindDir, 'update-check.json'), 'utf-8')) as Record<string, unknown>;
+    expect(cache).toMatchObject({ source: 'github:a/b', latest_version: '2.0.0' });
+    expect((await fsp.readdir(shardmindDir)).filter((n) => n.includes('.tmp'))).toEqual([]);
   });
 });

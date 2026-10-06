@@ -172,6 +172,9 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
   const { state, source } = await readUpdateTarget(vaultRoot, input);
 
   let cleanup: (() => Promise<void>) | undefined;
+  // Waited on before the run returns: a headless run exits right after its
+  // document, which would cut the write short.
+  let priming: Promise<void> | undefined;
   try {
     const shard = await prepareShard(source, {
       engineVersion: input.engineVersion,
@@ -185,7 +188,7 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
         // The update-check cache stores "latest stable" for the status
         // command: primed only when the run resolved through that policy.
         if (!state.ref && !input.release && !input.includePrerelease) {
-          void primeLatestVersion(vaultRoot, state.source, resolved.version).catch(() => {});
+          priming = primeLatestVersion(vaultRoot, state.source, resolved.version).catch(() => {});
         }
         return resolved;
       },
@@ -236,6 +239,7 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
     const { values, selections, pendingModules } = await valuesAndModules(input, io, ctx);
     return await planAndUpdate(input, io, ctx, values, selections, pendingModules);
   } finally {
+    await priming;
     await cleanup?.().catch(() => {});
   }
 }
