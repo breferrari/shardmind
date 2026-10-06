@@ -225,7 +225,7 @@ async function valueAnswers(input: InstallFlowInput, io: InstallFlowIO, shard: I
     );
   }
   const given = await io.ask({ kind: 'values', shard });
-  return { values: validateValues(shard.schema, given.values), selections: given.selections };
+  return { values: validateValues(shard.schema, given.values, 'answers'), selections: given.selections };
 }
 
 async function planAndInstall(input: InstallFlowInput, io: InstallFlowIO, shard: InstallShard, answers: ValueAnswers): Promise<InstallFlowResult> {

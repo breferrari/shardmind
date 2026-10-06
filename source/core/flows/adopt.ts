@@ -179,7 +179,7 @@ async function planAndAdopt(
   mode: AdoptMode | undefined,
   yes: boolean,
 ): Promise<AdoptFlowResult> {
-  const values = validateValues(shard.schema, given.values);
+  const values = validateValues(shard.schema, given.values, 'answers');
   const answers: ValueAnswers = { values, selections: given.selections };
 
   // With the values final, before the plan and any diff prompt (#138).
