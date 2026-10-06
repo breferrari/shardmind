@@ -126,7 +126,7 @@ Known defects and stale workarounds in the engine are fixed, so no user is block
 | ✅ | Apply each key in one input chunk to the multiselect state the previous key left | [#317](https://github.com/breferrari/shardmind/issues/317) |
 | ⬜ | Validate a shard repo's tracked files, as the release tarball ships them | [#320](https://github.com/breferrari/shardmind/issues/320) |
 | ⬜ | Take the target release for base-identical files when adopting with --from-version and keep-all-mine | [#325](https://github.com/breferrari/shardmind/issues/325) |
-| ✅ | Keep a clone's existing .shardmind files when adopt fails and rolls back (0.2.1, #327 on release/0.2.x; #324 on main) | [#326](https://github.com/breferrari/shardmind/issues/326) |
+| ✅ | Keep a clone's existing .shardmind files when adopt fails and rolls back (shipped in 0.2.1, #327 on release/0.2.x; on main by #324) | [#326](https://github.com/breferrari/shardmind/issues/326) |
 
 ## Phase 6 — docs match the code
 
