@@ -416,6 +416,12 @@ Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-fl
 
 **Remedy:** Give another folder name as the second argument (`shardmind install <shard> my-vault`). To install into that folder as it is, `cd` into it and run `shardmind install <shard> .`, which keeps the in-place behaviour, collision review included; `.` names the current folder, so running it from the parent would install there. If the folder is already a shardmind vault, `shardmind update` inside it upgrades it. Also raised when the destination's drive or share does not exist.
 
+### `INSTALL_INSIDE_VAULT`
+
+**Meaning:** `shardmind install <shard>` with no folder argument installs into a new folder named after the shard (#333). It was run from inside an existing vault: the current folder, or a folder above it, holds `.shardmind/state.json` (a shardmind vault) or `.obsidian/` (an Obsidian vault). A second vault nested inside the first is almost never what was meant (#337). Refused before any download or prompt; the message names the vault found.
+
+**Remedy:** To install into a new folder anyway, name it: `shardmind install <shard> my-vault` (a folder argument skips the check). To install into the current folder in place, as before #333, use `.`: `shardmind install <shard> .`, which keeps the existing-install gate and collision review. To upgrade the vault you are in, run `shardmind update`.
+
 ### `JSON_REQUIRES_DRY_RUN`
 
 **Meaning:** `--json` was passed without `--dry-run` on `adopt` or `update`. The JSON surface is currently the **plan** surface: the document is emitted at the dry-run decision point, before any conflict prompt. A decision the dry run itself would ask about fails with `UPDATE_JSON_NEEDS_ANSWERS` on update and `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES` on adopt.
