@@ -18,6 +18,7 @@
  */
 
 import { describeError } from './bug-report.js';
+import { newerStateOf, type NewerState } from './state.js';
 import type {
   StatusEnvironmentReport,
   StatusFrontmatterSummary,
@@ -42,6 +43,8 @@ export interface JsonErrorPayload {
   readonly hint: string | null;
   /** The stack of a bug in shardmind (#225); null for a known or environment error. */
   readonly stack: string | null;
+  /** A state.json from a newer ShardMind (#344): its schema version and the newest this one reads. Absent otherwise. */
+  readonly details?: NewerState;
 }
 
 export interface JsonEnvelope {
@@ -74,7 +77,8 @@ function toJsonError(error: unknown): JsonErrorPayload {
   // `code` stays a registry code or null: an environment error's errno code
   // is in its message, and its hint says what to do.
   if (d.kind === 'bug') return { code: null, message: d.message, hint: null, stack: d.stack };
-  return { code: d.kind === 'known' ? d.code : null, message: d.message, hint: d.hint, stack: null };
+  const newer = newerStateOf(error);
+  return { code: d.kind === 'known' ? d.code : null, message: d.message, hint: d.hint, stack: null, ...(newer ? { details: newer } : {}) };
 }
 
 let emitted = false;

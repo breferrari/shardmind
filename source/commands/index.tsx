@@ -24,13 +24,14 @@
 import { Box, Text } from 'ink';
 import type zod from 'zod';
 
-import { Spinner } from '../components/ui.js';
+import { Spinner, StatusMessage } from '../components/ui.js';
 import StatusView from '../components/StatusView.js';
 import VerboseView from '../components/VerboseView.js';
 import { assertNever } from '../runtime/types.js';
 import ErrorView from '../components/ErrorView.js';
 import { resolveEngineVersion } from './hooks/cli-version.js';
 import { useStatusReport } from './hooks/use-status-report.js';
+import { newerStateOf, type NewerState } from '../core/state.js';
 import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 // Ink-free, so the headless `--json` run parses with the same options (#302).
 import { options } from './options/status.js';
@@ -65,8 +66,13 @@ export default function Index({ options }: Props) {
         );
       case 'not-in-vault':
         return <NotInVault />;
-      case 'error':
+      case 'error': {
+        // A newer ShardMind's vault is not a failure here: say so, and how to
+        // manage it (#344).
+        const newer = newerStateOf(phase.error);
+        if (newer) return <NewerStateNotice newer={newer} />;
         return <ErrorView error={phase.error} version={resolveEngineVersion()} />;
+      }
       case 'ready':
         return verbose ? (
           <VerboseView report={phase.report} />
@@ -110,3 +116,14 @@ function NotInVault() {
 }
 
 export const description = 'Show shard status for the current vault';
+
+function NewerStateNotice({ newer }: { newer: NewerState }) {
+  return (
+    <Box flexDirection="column">
+      <StatusMessage variant="warning">
+        {`This vault was written by a newer ShardMind (state schema ${newer.stateSchemaVersion}; this one reads up to ${newer.supportedSchemaVersion}).`}
+      </StatusMessage>
+      <Text>  Upgrade ShardMind to manage it: npm install -g shardmind@latest</Text>
+    </Box>
+  );
+}
