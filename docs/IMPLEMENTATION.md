@@ -1922,6 +1922,7 @@ interface TransactionOptions {
   now?: Date;
   signal?: AbortSignal;
   noPriorInstall: boolean;         // install and adopt: true
+  createRoot?: { folders: readonly string[]; command: 'install' };  // install into a folder it creates (#333)
 }
 interface VaultTransaction {
   readonly dir: string | null;     // the snapshot folder; install has none
@@ -1938,6 +1939,7 @@ interface VaultTransaction {
 beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction>
 ```
 
+0. **Create the vault** (`createRoot`, install only, #333). The vault folder does not exist yet: `install-destination.ts` (§4.31) decided it and named the missing levels, outermost first. Each is made with a plain `mkdir`, so two runs racing for one name cannot both win: `EEXIST` on the vault folder itself, or anything already at a level, is `INSTALL_DESTINATION_NOT_EMPTY` before any write, and what this begin made is removed. Then the vault lock is taken (`acquireVaultLock`, §4.25): it lives inside the vault, so a vault that did not exist when the run planned is locked from the moment it exists, by its transaction. The levels it made join the created folders of step 5.6, outside the vault.
 1. **Begin.** Install makes no snapshot folder: its record (introduced paths, created folders, set-asides) is kept in memory only, and a file it would overwrite has been moved aside before the run (§4.11b). No command reads a run's record after a crash, so a record on disk would have no reader; and on a reinstall the folder would sit inside the new `.shardmind/`, which restoring the old one replaces whole, so a snapshot kept there after a failed restore would be deleted. If a crash-recovery command is ever added, a durable record becomes worth it. For update and adopt, `createBackupDir(vaultRoot, now, kind)` (`state.ts`, §4.12 step 1) makes `.shardmind/backups/<kind>-<stamp>[-N]/`. Without `noPriorInstall`, the engine cache is snapshotted too: `state.json`, the cached `shard.yaml` and `shard-schema.yaml` and `shard-values.yaml` into `<dir>/cache/`, and `.shardmind/templates/` whole, followed by the marker `<dir>/templates-snapshot.json`, `{ existed }`, written only once the template copy is whole (#264). The copies run together and all settle before a failure is thrown (#274); a missing file is skipped. The caller reports `dir` (`onBackupReady`) before its first write.
 2. **`recordWrite(rel)`**, before every write, removal or move onto a vault path. A cancel check runs before it and after it: the record's own writes are writes, so a Ctrl+C during them stops the run before the caller's write (#249). Once per path:
    - The folders the write will create (`missingFolders`, with one `seen` map for the run) are added to the run's list, kept in memory and, with a snapshot folder, written to `<dir>/folders.json` (#258).
@@ -1960,6 +1962,8 @@ beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTran
    6. The recorded folders, once empty, deepest first: `rollbackCreatedFolders`, or `removeCreatedFolders` for install, which has no record on disk. When `folders.json` cannot be read, the in-memory list is used (#295).
    7. The set-aside paths, newest first: whatever the run left at the original path is removed (`removePath`) and the backup renamed back (`restore failed:`, with the backup's path). Last, so each lands on a path the steps above freed.
    8. With `noPriorInstall`, the snapshot folder is removed, unless a failure names a `backup` inside it (a file restore, or a read of the snapshot, failed): it then holds the only copy (#246). Then `backups/`, only if empty, and `.shardmind/`, only if empty and the run made it: one that was there when the run began is the user's, or the old install's.
+   9. With `createRoot`: the lock is released, then the vault folder and the levels step 0 made are removed, deepest first, each only if empty (`remove failed:` otherwise, naming it). A folder something else put a file into during the run is left, and reported.
+   `commit` releases a `createRoot` lock too; the folders stay.
 
 **Retention per kind**: install keeps no snapshot; its kept backups (`.shardmind-backup-*` beside the original) are reported, and its set-aside paths are restored or discarded. Adopt (`noPriorInstall: true`) keeps the snapshot only on a failed restore. Update (`noPriorInstall: false`) always keeps it: the rollback removes nothing under `.shardmind/backups/`, and the update summary points at its `files/` as the previous copies of every file it replaced.
 
@@ -2027,6 +2031,30 @@ readUpdateTarget(vaultRoot: string, opts: { release?: string; includePrerelease?
    8. Each pending conflict: `io.ask({ kind: 'conflict', currentIndex, resolutions })`, in order; under `--yes`, `keep_mine` for each. An editor round (#50) is the adapter's: it answers only with the file's final resolution.
    9. `runUpdate` (`io.newRunAbort`, `io.onRun`, `io.progress`), then `io.onCommitted()`, then `runHooks({ command: 'update', previousVersion })` under the hooks' abort, then `{ kind: 'done', … }` with the summary, the migration warnings, the hooks, the backup folder (vault-relative POSIX, null in a dry run) and the external-tools lines. The temp dir is removed in a `finally`. An executor failure is marked for `updateRolledBack`.
 7. **Headless `update --json`** (`commands/headless/update.ts`): as adopt's. An up-to-date vault answers `upToDatePlanResult`; a plan answers `updatePlanResult`. With update and adopt headless, no `--json` run mounts Ink, so `cli.ts` no longer marks stdout non-interactive or drops Ink's trailing blank write (§4.23). A root option before the command is passed on to the runner.
+
+### 4.31 `install-destination.ts`
+
+Where `shardmind install <shard> [folder]` installs (#333; ARCHITECTURE §10.6). Pure of Ink; the install machine (and, with #302, the install flow) calls it first, before the vault lock, the state read, the download or any prompt.
+
+```typescript
+interface InstallDestination {
+  root: string;               // the vault folder, absolute
+  display: string;            // as the user wrote it, or the default name; '.' in place
+  inPlace: boolean;           // '.': the current folder, as before #333
+  create: readonly string[];  // the levels to make, outermost first; [] when the folder exists
+}
+resolveInstallDestination(cwd: string, shardRef: string, folder?: string): Promise<InstallDestination>
+// core/registry.ts
+shardNameOf(shardRef: string): string  // the <name> of <namespace>/<name>, from parseRef; REGISTRY_INVALID_REF otherwise
+```
+
+1. `folder` absent: `shardNameOf(shardRef)`. `.` (or a path that resolves to `cwd`): `{ root: cwd, inPlace: true, create: [] }`, with no check here; the in-place install's own checks apply as before.
+2. Otherwise the path is resolved against `cwd`, and each level from `cwd` down is looked at (`lstat`):
+   - a missing level: it and every level below it go to `create`;
+   - a folder: the next level;
+   - anything else (a file, a link): `INSTALL_DESTINATION_NOT_EMPTY`, naming that path.
+3. The vault folder itself, when it exists: empty, it is installed into (`create: []`); not empty, `INSTALL_DESTINATION_NOT_EMPTY`, naming it and suggesting another name or `.`.
+4. With `create` non-empty, the install takes no lock at plan time (there is no folder to hold it), reads no state (there is none), and hands `create` to its transaction (`createRoot`, §4.28 step 0), which makes the folders when the install writes. `--dry-run` never does.
 
 ## 5. Runtime Module: `shardmind/runtime`
 

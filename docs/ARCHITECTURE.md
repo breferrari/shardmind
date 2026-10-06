@@ -701,7 +701,7 @@ Four commands for vault owners: three that write, one that reads. One more for s
 | Command | What | Writes? |
 |---------|------|---------|
 | `shardmind` | Status + health | No |
-| `shardmind install <namespace/name>` | Install a shard into an empty (or near-empty) directory | Yes |
+| `shardmind install <namespace/name> [folder]` | Install a shard into a new folder named after it, or `[folder]` (`.` for the current one, §10.6) | Yes |
 | `shardmind update` | Upgrade to a newer version | Yes |
 | `shardmind adopt <namespace/name>` | Retrofit the engine onto a vault that was already cloned without shardmind | Yes |
 | `shardmind --verbose` | Detailed diagnostics | No |
@@ -820,7 +820,7 @@ Full diagnostic output. Replaces the old `doctor` command concept.
 
 Lists are uncapped and sorted by path. The terminal views sample at 20 entries, and the document never does.
 
-### 10.4 `shardmind install <shard>` — Install Flow
+### 10.4 `shardmind install <shard> [folder]` — Install Flow
 
 ```
 shardmind install breferrari/obsidian-mind
@@ -1014,14 +1014,21 @@ Two shardmind runs on one vault at once would each read the same `state.json`, w
 
 ### 10.6 Install Location
 
-Always the current directory. Same as `git init`. The convention: `cd` into your vault folder and run the command.
+A new folder, as `git clone` makes one (#333). `install` is the one command that creates a vault, so it chooses where; adopt, update and status work on the current folder.
 
 ```bash
-mkdir my-vault && cd my-vault
-shardmind install breferrari/obsidian-mind
+shardmind install breferrari/wiki-mind            # creates ./wiki-mind and installs into it
+shardmind install breferrari/wiki-mind my-wiki    # creates ./my-wiki (a nested path too)
+shardmind install breferrari/wiki-mind .          # the current folder
 ```
 
-If the directory isn't empty, ShardMind warns and asks to confirm. No `--dir` flag in v1.
+- **The default folder is the shard's name**: the `<name>` of `<namespace>/<name>` as the ref is written, for bare, `github:`, `@version` and `#ref` forms alike. It is read from the ref before any network call, so a registry entry pointing at a repo with another name does not change it.
+- **The second argument names the folder**, relative to the current one, created if missing (every missing level of a nested path). `.` is the current folder: an existing Obsidian vault is installed into exactly as before this change, collision review and the existing-install gate included.
+- **An existing destination** other than `.`: an empty folder is installed into; a non-empty one, or a file at the path or at a parent level, is refused before any download or prompt with `INSTALL_DESTINATION_NOT_EMPTY`, naming the folder and suggesting another name or `.`.
+- **A folder the run creates** is created when the install writes, not when it plans, and removed by the install's rollback if the run fails or is cancelled before it commits (§IMPLEMENTATION 4.28). A cancelled wizard or a failed download has created nothing. A folder that existed is never removed. `--dry-run` creates nothing.
+- **The final message** says where the vault is, with a `cd <folder>` line when it is not the current folder.
+
+Until #333 the vault was always the current directory (the `git init` convention), so every shard README began with `mkdir my-vault && cd my-vault`, and a user who ran the command from their home folder installed the vault there. Installing in place now needs `.`.
 
 ### 10.7 Update Fetching
 
