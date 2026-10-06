@@ -35,6 +35,7 @@ import { caseJournal, sameFile, undoCaseHops, type CaseJournal } from './rename-
 import { throwIfCancelled } from './run-cancel.js';
 import { pathExists, removePath, settleAll, toPosix } from './fs-utils.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
+import { destinationTaken } from './install-destination.js';
 import { ShardMindError } from '../runtime/types.js';
 import { wrapWriteError } from './bug-report.js';
 import { ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
@@ -363,11 +364,7 @@ async function createVaultRoot(vaultRoot: string, root: CreateRoot): Promise<Cre
       );
       if (created) made.push(folder);
       else if (folder === vaultRoot || !(await isFolder(folder))) {
-        throw new ShardMindError(
-          `Cannot install into ${vaultRoot}: ${folder} appeared after this install planned`,
-          'INSTALL_DESTINATION_NOT_EMPTY',
-          'Another run, or another program, took that folder. Give another folder name, or install into the current folder with `.`.',
-        );
+        throw destinationTaken(vaultRoot, folder, 'appeared after this install planned');
       }
     }
     return { made, lock: root.lock() };
@@ -386,16 +383,17 @@ async function removeVaultRoot(root: CreatedRoot): Promise<RollbackFailure[]> {
 }
 
 /**
- * The folders a begin made, deepest first, each once empty. One something
- * else put a file into during the run is left, and named: it and the levels
- * above it stay.
+ * The folders a begin made, deepest first, each once empty. One already gone
+ * is skipped. One something else put a file into during the run is left, and
+ * named: it and the levels above it stay.
  */
 async function removeMadeFolders(made: readonly string[]): Promise<RollbackFailure[]> {
   for (const folder of [...made].reverse()) {
     try {
       await fsp.rmdir(folder);
     } catch (err) {
-      return isEnoent(err) ? [] : [{ path: folder, reason: `remove failed: ${reasonOf(err)}` }];
+      if (isEnoent(err)) continue;
+      return [{ path: folder, reason: `remove failed: ${reasonOf(err)}` }];
     }
   }
   return [];

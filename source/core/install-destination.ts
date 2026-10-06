@@ -44,10 +44,10 @@ export async function resolveInstallDestination(cwd: string, shardRef: string, f
       create.unshift(at);
       continue;
     }
-    if (!stat.isDirectory()) throw notEmpty(at, given, 'is a file, not a folder');
+    if (!stat.isDirectory()) throw destinationTaken(given, at, 'is not a folder');
     break;
   }
-  if (create.length === 0 && !(await isEmptyFolder(root))) throw notEmpty(root, given, 'is not empty');
+  if (create.length === 0 && !(await isEmptyFolder(root))) throw destinationTaken(given, root, 'is not empty');
   return { root, folder: given, create };
 }
 
@@ -61,9 +61,14 @@ async function isEmptyFolder(folder: string): Promise<boolean> {
   }
 }
 
-function notEmpty(at: string, given: string, what: string): ShardMindError {
+/**
+ * `INSTALL_DESTINATION_NOT_EMPTY`: `at` (the folder, or a level on its way)
+ * is in the way of installing into `folder`. Also thrown by the transaction
+ * when the folder appears after planning (§4.28 step 0).
+ */
+export function destinationTaken(folder: string, at: string, what: string): ShardMindError {
   return new ShardMindError(
-    `Cannot install into ${given}: ${at} ${what}`,
+    `Cannot install into ${folder}: ${at} ${what}`,
     'INSTALL_DESTINATION_NOT_EMPTY',
     `Give another folder name (\`shardmind install <shard> my-vault\`), or install into the current folder with \`.\`.`,
   );

@@ -518,6 +518,14 @@ describe('vault transaction for an install into a folder it creates (#333)', () 
     expect(await fsp.readdir(vault)).toEqual([]);
   });
 
+  it('a level already gone is skipped, and the levels above it are still removed', async () => {
+    const levels = [path.join(vault, 'a'), path.join(vault, 'a', 'b')];
+    const tx = await beginInto(levels);
+    await fsp.rm(levels[1]!, { recursive: true, force: true });
+    expect(await tx.rollback()).toEqual([]);
+    expect(await exists(levels[0]!)).toBe(false);
+  });
+
   it('a file something else put in the folder during the run keeps it, named as a failure', async () => {
     const root = path.join(vault, 'wiki-mind');
     const tx = await beginInto([root]);
