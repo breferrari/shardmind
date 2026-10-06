@@ -50,16 +50,16 @@ async function buildTarball(scratch, slug, hookSource, { timeoutMs } = {}) {
   const workRoot = path.join(scratch, slug.replace('/', '-'));
   const workDir = path.join(workRoot, prefix);
   await copyTree(MINIMAL, workDir);
-  await fs.mkdir(path.join(workDir, 'hooks'), { recursive: true });
-  await fs.writeFile(path.join(workDir, 'hooks/bootstrap.ts'), hookSource, 'utf-8');
-  if (timeoutMs !== undefined) {
-    const shardYaml = await fs.readFile(path.join(workDir, 'shard.yaml'), 'utf-8');
-    await fs.writeFile(
-      path.join(workDir, 'shard.yaml'),
-      shardYaml + `  timeout_ms: ${timeoutMs}\n`,
-      'utf-8',
-    );
-  }
+  // v6 layout: the hook lives in the source-side .shardmind/ sidecar, never
+  // installed, and the manifest's hooks block points the bootstrap slot at it.
+  await fs.mkdir(path.join(workDir, '.shardmind', 'hooks'), { recursive: true });
+  await fs.writeFile(path.join(workDir, '.shardmind', 'hooks', 'bootstrap.ts'), hookSource, 'utf-8');
+  const manifestPath = path.join(workDir, '.shardmind', 'shard.yaml');
+  const shardYaml = await fs.readFile(manifestPath, 'utf-8');
+  const hooksBlock =
+    'hooks:\n  bootstrap: .shardmind/hooks/bootstrap.ts\n' +
+    (timeoutMs !== undefined ? `  timeout_ms: ${timeoutMs}\n` : '');
+  await fs.writeFile(manifestPath, shardYaml.replace(/hooks:[\s\S]*$/, hooksBlock), 'utf-8');
   const tarPath = path.join(scratch, `${prefix}.tar.gz`);
   await tar.c({ file: tarPath, gzip: true, cwd: workRoot }, [prefix]);
   return tarPath;
@@ -90,7 +90,7 @@ async function runScenario(name, { slug, hook, timeoutMs, validate }) {
     const valuesPath = await writeValues(vault);
     const start = Date.now();
     const result = await spawnCli(
-      ['install', `github:${slug}`, '--yes', '--values', valuesPath],
+      ['install', `github:${slug}`, '.', '--yes', '--values', valuesPath],
       { cwd: vault, env: { SHARDMIND_GITHUB_API_BASE: stub.url } },
     );
     const elapsed = Date.now() - start;
@@ -147,8 +147,8 @@ await runScenario('happy path', {
     if (result.exitCode !== 0) throw new Error(`expected exit 0, got ${result.exitCode}`);
     const marker = await fs.readFile(path.join(vault, 'smoke-marker.txt'), 'utf-8');
     if (marker !== 'ok') throw new Error(`marker content: ${JSON.stringify(marker)}`);
-    if (!result.stdout.includes('Post-install hook completed'))
-      throw new Error('expected "Post-install hook completed" in stdout');
+    if (!result.stdout.includes('Bootstrap hook completed'))
+      throw new Error('expected "Bootstrap hook completed" in stdout');
     if (!result.stdout.includes('SMOKE_HAPPY'))
       throw new Error('expected captured stdout line in summary');
     console.log('  ✓ exit 0');
@@ -173,14 +173,14 @@ await runScenario('throwing hook', {
     } catch {
       throw new Error('Home.md missing — rollback fired');
     }
-    if (!result.stdout.includes('Post-install hook exited with code 1'))
+    if (!result.stdout.includes('Bootstrap hook exited with code 1'))
       throw new Error('expected "exited with code 1" warning in stdout');
     if (!result.stdout.includes('SMOKE_THROW_BOOM'))
       throw new Error('expected throw message in captured output');
     // Ink may soft-wrap at terminal width; collapse whitespace before matching.
     const collapsed = result.stdout.replace(/\s+/g, ' ');
-    if (!collapsed.includes("Install succeeded; the hook's work may be incomplete."))
-      throw new Error('expected "Install succeeded" warning phrasing (after whitespace collapse)');
+    if (!collapsed.includes("The operation succeeded; the hook's work may be incomplete."))
+      throw new Error('expected "The operation succeeded" warning phrasing (after whitespace collapse)');
     console.log('  ✓ exit 0 (install completed despite hook throw)');
     console.log('  ✓ state.json + Home.md present (no rollback)');
     console.log('  ✓ yellow warning with exit code 1');
