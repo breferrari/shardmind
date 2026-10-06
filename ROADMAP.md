@@ -258,7 +258,7 @@ Everything 1.0 freezes is either decided or built: the contract review's behavio
 | ⬜ | Remove the deprecated post-install hook | [#357](https://github.com/breferrari/shardmind/issues/357) |
 | ✅ | Make the runtime's loadState version-aware and reserve composition's paths | [#368](https://github.com/breferrari/shardmind/issues/368) |
 | ✅ | Define and validate shard.yaml dependencies | [#369](https://github.com/breferrari/shardmind/issues/369) |
-| ⬜ | Require requires.shardmind for shards that use post-1.0 fields | [#370](https://github.com/breferrari/shardmind/issues/370) |
+| ✅ | Require requires.shardmind for shards that use post-1.0 fields | [#370](https://github.com/breferrari/shardmind/issues/370) |
 | ⬜ | Let update and adopt run with --json, not only plan | [#348](https://github.com/breferrari/shardmind/issues/348) |
 
 ## Phase 15 — planned engine features

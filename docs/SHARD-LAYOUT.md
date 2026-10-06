@@ -430,6 +430,10 @@ A renamed file is planned at its new path as the old one would have been at the 
 
 **On adopt** (#179): `shardmind adopt <shard> --from-version <v>` applies the rename chain from `<v>` to the shard's version, for a vault cloned from release `<v>` before the engine managed it. A renamed file whose new path is absent from the vault, and whose old path exists there and is not produced by the shard, is compared at the new path against the shard's output. It then moves: a match or Keep mine carries the user's file to the new path; Use the shard's or a merge writes the new path and deletes the old one. Something already at the new path, two renames into one path, or an old path the shard still ships leaves the rename out. A `--from-version` that is not semver is refused (`ADOPT_FROM_VERSION_INVALID`); a version no migration applies to is a no-op. Without the flag, adopt is unchanged.
 
+## Fields added after 1.0
+
+A ShardMind engine ignores a `shard.yaml` or `shard-schema.yaml` field it does not know: it installs the shard as if the field were absent, with no error. A shard that uses a field added after 1.0 must therefore declare `requires.shardmind` with the version that added it (for example `requires.shardmind: ">=1.2.0"`). An older engine then refuses the shard with `SHARDMIND_VERSION_MISMATCH` before any vault write, instead of installing a vault the author did not mean. Reserved in 1.0 by #370; the gate itself is #121's.
+
 ## Out of scope and planned
 
 Criterion: **obsidian-mind v6 does not need these to install, configure, or upgrade cleanly.** Each is a clean additive extension: adding it later forces no retroactive design change.
