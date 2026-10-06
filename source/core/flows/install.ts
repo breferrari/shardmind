@@ -80,8 +80,6 @@ export interface InstallFlowIO extends FlowRunIO {
   ask<Q extends InstallQuestion>(question: Q): Promise<InstallAnswer<Q>>;
   phase(phase: InstallFlowPhase): void;
   progress(event: ProgressEvent): void;
-  /** Release the lock `takeLock` took: a folder the install makes is locked by its transaction (§4.28 step 1a). */
-  releaseLock(): void;
 }
 
 export interface InstallFlowResult {
@@ -101,8 +99,18 @@ export interface InstallFlowResult {
   externalTools: string[];
 }
 
-/** The previous install's files a reinstall no longer plans, split by whether the user edited them (#228). */
-type StaleFiles = Awaited<ReturnType<typeof splitByOwnContent>>;
+/** What the install moves out of the way, as planned once the answers are in. */
+interface InstallPlan {
+  /** The user's own content in the way, and a reinstall's untouched files. */
+  own: Collision[];
+  untouched: Collision[];
+  policy: 'backup' | 'overwrite';
+  /** The previous install's files this one no longer plans, split by whether the user edited them (#228). */
+  stale: Awaited<ReturnType<typeof splitByOwnContent>>;
+  /** The collision review stayed open since they were classified (the gate and wizard come before): files may have been edited meanwhile. */
+  prompted: boolean;
+  externalTools: string[];
+}
 
 export async function runInstallFlow(input: InstallFlowInput, io: InstallFlowIO): Promise<InstallFlowResult> {
   const { destination, defaults, force } = input;
@@ -120,7 +128,7 @@ export async function runInstallFlow(input: InstallFlowInput, io: InstallFlowIO)
   }
   // Before state is read: a plan made from a state another run is changing
   // would be stale (#253). --dry-run writes nothing and takes no lock.
-  if (!creating && !input.dryRun) io.takeLock();
+  if (!creating && !input.dryRun) io.lock();
   const existing = creating ? null : await readState(vaultRoot);
   if (defaults && existing && !force) {
     throw new ShardMindError(
@@ -221,22 +229,23 @@ async function planAndInstall(input: InstallFlowInput, io: InstallFlowIO, shard:
   // dry run and the run agree (#163).
   const stalePaths = staleOutputs(previous, plannedPaths);
   await assertSafeVaultPaths(vaultRoot, plannedPaths, stalePaths);
-  const collisions = await detectCollisions(vaultRoot, plannedPaths);
+  const [collisions, staleFound] = await Promise.all([detectCollisions(vaultRoot, plannedPaths), detectStale(vaultRoot, stalePaths)]);
   // Only the user's own content is prompted for, backed up or reported; a
   // reinstall's untouched files are simply replaced.
   const { own, untouched } = await splitByOwnContent(collisions, previous);
-  const stale = await splitByOwnContent(await detectStale(vaultRoot, stalePaths), previous);
+  const stale = await splitByOwnContent(staleFound, previous);
 
-  let policy: 'backup' | 'overwrite' = 'backup';
-  if (own.length > 0 && input.force) policy = 'overwrite';
+  const plan: InstallPlan = { own, untouched, policy: 'backup', stale, prompted: false, externalTools };
+  if (own.length > 0 && input.force) plan.policy = 'overwrite';
   else if (own.length > 0 && input.interactive && !input.yes && !input.defaults) {
     const action = await io.ask({ kind: 'collision', collisions: own, shard, answers });
     if (action === 'cancel') throw new FlowCancelled('User cancelled at collision review.');
-    policy = action;
+    plan.policy = action;
+    plan.prompted = true;
   }
   // Otherwise the user's files are backed up: `--yes`, `--defaults`, or a
   // `--values` run with no terminal to show the review on.
-  return execute(input, io, shard, answers, own, untouched, policy, stale, externalTools);
+  return execute(input, io, shard, answers, plan);
 }
 
 /**
@@ -251,36 +260,39 @@ async function execute(
   io: InstallFlowIO,
   shard: InstallShard,
   answers: ValueAnswers,
-  own: Collision[],
-  untouched: Collision[],
-  policy: 'backup' | 'overwrite',
-  stale: StaleFiles,
-  externalTools: string[],
+  plan: InstallPlan,
 ): Promise<InstallFlowResult> {
   const { destination, dryRun } = input;
   const vaultRoot = destination.root;
   const previous = shard.previous ?? null;
+  const { own, policy, stale } = plan;
   // Classified before a prompt that may have stayed open: a file edited
-  // since is the user's now, so check the untouched ones again.
-  const recheck = await splitByOwnContent(untouched, previous);
+  // since is the user's now, so check the untouched ones again. With no
+  // prompt, nothing changed since.
+  const recheck = plan.prompted ? await splitByOwnContent(plan.untouched, previous) : { own: [], untouched: plan.untouched };
   const ownNow = [...own, ...recheck.own];
   const replaced = policy === 'overwrite' ? ownNow.map((c) => c.outputPath) : [];
   // A stale file edited during the prompts is the user's now: kept (#228).
-  const staleNow = await splitByOwnContent(stale.untouched, previous);
+  const staleNow = plan.prompted ? await splitByOwnContent(stale.untouched, previous) : { own: [], untouched: stale.untouched };
   const removed = staleNow.untouched.map((c) => c.outputPath);
   // Only files still there are reported as kept: a folder at the path, or a
   // file deleted meanwhile, is not one the user edited.
-  const keptStale = await stillFiles(vaultRoot, [...stale.own, ...staleNow.own]);
-  const oldInstall = previous ? await detectCollisions(vaultRoot, [SHARDMIND_DIR, VALUES_FILE]) : [];
+  const [keptStale, oldInstall] = await Promise.all([
+    stillFiles(vaultRoot, [...stale.own, ...staleNow.own]),
+    previous ? detectCollisions(vaultRoot, [SHARDMIND_DIR, VALUES_FILE]) : Promise.resolve([]),
+  ]);
   const oldStatePath = oldInstall.find((c) => c.outputPath === SHARDMIND_DIR)?.absolutePath;
+  // A stale file whose set-aside copy could not be deleted is still in the
+  // vault under its backup name: listed as such, never as removed.
+  const removedNow = (left: BackupRecord[]): string[] => {
+    const leftPaths = new Set(left.map((r) => toPosix(vaultRoot, r.originalPath)));
+    return removed.filter((rel) => !leftPaths.has(rel));
+  };
 
   const start = Date.now();
   io.phase({ kind: 'installing', shard, answers });
-  // The transaction rolls itself back and marks the error when it did: a
-  // failure before it began rolled nothing back.
   const { result, hooks } = await runAndHooks(
     io,
-    { markOnFailure: false },
     (signal) =>
       runInstallTransaction({
         vaultRoot,
@@ -296,16 +308,7 @@ async function execute(
         moveAside: [...oldInstall, ...recheck.untouched, ...staleNow.untouched, ...ownNow],
         keep: new Set(policy === 'backup' ? ownNow.map((c) => c.absolutePath) : []),
         oldStatePath,
-        createRoot:
-          destination.create.length > 0
-            ? {
-                folders: destination.create,
-                lock: () => {
-                  io.takeLock();
-                  return { release: () => io.releaseLock() };
-                },
-              }
-            : undefined,
+        createRoot: destination.create.length > 0 ? { folders: destination.create, lock: io.lock } : undefined,
         onProgress: io.progress,
       }),
     (done) => ({
@@ -319,13 +322,11 @@ async function execute(
       modules: answers.selections,
       newFiles: [],
       // A reinstall removes the files the shard no longer has (#228).
-      removedFiles: dryRun ? [] : removedNow(done.left, removed),
+      removedFiles: dryRun ? [] : removedNow(done.left),
       dryRun,
     }),
   );
 
-  // A stale file whose set-aside copy could not be deleted is still in the
-  // vault under its backup name: listed as such, never as removed.
   const leftBackups = result.left.filter((r) => r.originalPath !== oldStatePath);
   return {
     kind: 'done',
@@ -336,15 +337,10 @@ async function execute(
     durationMs: Date.now() - start,
     backups: [...result.backups, ...leftBackups],
     replaced,
-    removed: dryRun ? removed : removedNow(result.left, removed),
+    removed: dryRun ? removed : removedNow(result.left),
     keptStale,
     hooks,
     dryRun,
-    externalTools,
+    externalTools: plan.externalTools,
   };
-
-  function removedNow(left: BackupRecord[], all: string[]): string[] {
-    const leftPaths = new Set(left.map((r) => toPosix(vaultRoot, r.originalPath)));
-    return all.filter((rel) => !leftPaths.has(rel));
-  }
 }

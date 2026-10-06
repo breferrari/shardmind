@@ -115,7 +115,7 @@ export async function runAdoptFlow(input: AdoptFlowInput, io: AdoptFlowIO): Prom
   if (input.fromVersion !== undefined) parseFromVersion(input.fromVersion);
   // Before the vault is read: a plan made from a vault another run is
   // changing would be stale (#253). Then the guard, before any download.
-  if (!dryRun) io.takeLock();
+  if (!dryRun) io.lock();
   await assertAdoptable(vaultRoot);
 
   let shard: PreparedShard | undefined;
@@ -255,10 +255,8 @@ async function execute(
 ): Promise<AdoptFlowResult> {
   const start = Date.now();
   io.phase({ kind: 'executing' });
-  // runAdopt rolls the vault back before throwing (a dry run wrote nothing).
   const { result, hooks } = await runAndHooks(
     io,
-    { markOnFailure: !input.dryRun },
     (signal) =>
       runAdopt({
         vaultRoot: input.vaultRoot,

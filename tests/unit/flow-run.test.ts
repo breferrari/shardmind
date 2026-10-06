@@ -9,13 +9,13 @@ const runHooks = vi.fn(async () => ({ outcomes: [{ stage: 'post-install' }], fin
 vi.mock('../../source/core/hook-orchestrator.js', () => ({ runHooks }));
 
 const { runAndHooks } = await import('../../source/core/flows/run.js');
-const { markRolledBack, wasRolledBack } = await import('../../source/core/rollback-report.js');
+const { markRolledBack, rolledBackError, wasRolledBack } = await import('../../source/core/rollback-report.js');
 
 function recordingIO() {
   const calls: string[] = [];
   const io = {
     hooks: { setPhase: () => {}, onStdout: () => {}, onStderr: () => {} },
-    takeLock: () => calls.push('takeLock'),
+    lock: () => ({ release: () => {} }),
     onCleanup: () => {},
     newRunAbort: () => {
       calls.push('newRunAbort');
@@ -36,7 +36,6 @@ describe('runAndHooks (#302)', () => {
     let seen: AbortSignal | undefined;
     const { result, hooks } = await runAndHooks(
       io,
-      { markOnFailure: true },
       async (signal) => {
         seen = signal;
         calls.push('run');
@@ -51,30 +50,43 @@ describe('runAndHooks (#302)', () => {
     expect(runHooks).toHaveBeenCalledWith(expect.objectContaining({ state: { v: 1 } }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
-  it('a failure is rethrown, marked as rolled back when the executor rolls back on any failure, and never commits', async () => {
+  it('a failure is rethrown as the executor threw it, and never commits', async () => {
     const { io, calls } = recordingIO();
     const boom = new Error('write failed');
-    await expect(runAndHooks(io, { markOnFailure: true }, async () => Promise.reject(boom), () => plan({}))).rejects.toBe(boom);
-    expect(wasRolledBack(boom)).toBe(true);
-    expect(calls).not.toContain('onCommitted');
-  });
-
-  it('with markOnFailure false (a dry run, or install, whose executor marks its own) the failure is not marked', async () => {
-    const { io } = recordingIO();
-    const boom = new Error('nothing rolled back');
-    await expect(runAndHooks(io, { markOnFailure: false }, async () => Promise.reject(boom), () => plan({}))).rejects.toBe(boom);
+    await expect(runAndHooks(io, async () => Promise.reject(boom), () => plan({}))).rejects.toBe(boom);
     expect(wasRolledBack(boom)).toBe(false);
+    expect(calls).not.toContain('onCommitted');
   });
 
   it('the hooks abort is cleared when a hook throws', async () => {
     const { io, calls } = recordingIO();
     runHooks.mockRejectedValueOnce(new Error('hook crashed'));
-    await expect(runAndHooks(io, { markOnFailure: true }, async () => ({ state: {} }) as never, () => plan({}))).rejects.toThrow('hook crashed');
+    await expect(runAndHooks(io, async () => ({ state: {} }) as never, () => plan({}))).rejects.toThrow('hook crashed');
     expect(calls.at(-1)).toBe('hookAbort cleared');
   });
 });
 
 describe('the rolled-back marker', () => {
+  it('rolledBackError after a clean rollback returns the error itself, marked', async () => {
+    const err = new Error('write failed');
+    const thrown = await rolledBackError(err, async () => []);
+    expect(thrown).toBe(err);
+    expect(wasRolledBack(thrown)).toBe(true);
+  });
+
+  it('rolledBackError after an incomplete rollback returns ROLLBACK_INCOMPLETE naming what was left, marked', async () => {
+    const err = new Error('write failed');
+    const thrown = (await rolledBackError(err, async () => [{ path: 'Home.md', reason: 'restore failed: EBUSY' }])) as {
+      code?: string;
+      cause?: unknown;
+      rollbackFailures?: unknown;
+    };
+    expect(thrown.code).toBe('ROLLBACK_INCOMPLETE');
+    expect(thrown.cause).toBe(err);
+    expect(thrown.rollbackFailures).toEqual([{ path: 'Home.md', reason: 'restore failed: EBUSY' }]);
+    expect(wasRolledBack(thrown)).toBe(true);
+  });
+
   it('marks objects only, and nothing unmarked', () => {
     const err = new Error('x');
     expect(wasRolledBack(err)).toBe(false);

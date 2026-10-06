@@ -56,7 +56,7 @@ export interface UseAdoptMachineInput {
 }
 
 /** The prepared shard, with the `--values` prefill the values page shows. */
-export type PreparedContext = PreparedShard & { prefillValues: Record<string, unknown> };
+type PreparedContext = PreparedShard & { prefillValues: Record<string, unknown> };
 
 export type Phase =
   | { kind: 'booting' }

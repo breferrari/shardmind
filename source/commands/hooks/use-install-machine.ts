@@ -43,15 +43,12 @@ import type { WizardResult } from '../../components/InstallWizard.js';
 import type { CollisionAction } from '../../components/CollisionReview.js';
 import type { GateChoice } from '../../components/ExistingInstallGate.js';
 
-/** The shard as the prompts show it: the wizard's prefill and module file counts. */
-export type PreparedContext = InstallShard;
-
 export type Phase =
   | { kind: 'booting' }
   | { kind: 'loading'; message: string }
-  | { kind: 'gate'; state: ShardState; ctx: PreparedContext }
-  | { kind: 'wizard'; ctx: PreparedContext }
-  | { kind: 'collision'; collisions: Collision[]; ctx: PreparedContext }
+  | { kind: 'gate'; state: ShardState; ctx: InstallShard }
+  | { kind: 'wizard'; ctx: InstallShard }
+  | { kind: 'collision'; collisions: Collision[]; ctx: InstallShard }
   | { kind: 'installing'; total: number; current: number; label: string; history: string[] }
   | RunningHookPhase // a lifecycle hook (bootstrap / personalize / legacy
       // post-install) is streaming output. We are already past the

@@ -41,7 +41,10 @@ describe('adopt flow, UI-free (#302)', () => {
       phase: (p) => phases.push(p.kind === 'loading' ? `loading: ${p.message.split(' ')[0]}` : p.kind),
       progress: () => {},
       hooks: { setPhase: () => {}, onStdout: () => {}, onStderr: () => {} },
-      takeLock: () => phases.push('lock'),
+      lock: () => {
+        phases.push('lock');
+        return { release: () => {} };
+      },
       onCleanup: () => {
         cleanups++;
       },

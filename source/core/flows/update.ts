@@ -151,7 +151,7 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
   }
   // Before the state is read: a plan made from a state another run is
   // changing would be stale (#253).
-  if (!dryRun) io.takeLock();
+  if (!dryRun) io.lock();
   io.phase({ kind: 'loading', message: 'Reading install state…' });
   const { state, source } = await readUpdateTarget(vaultRoot, input);
 
@@ -366,10 +366,8 @@ async function execute(
   const { vaultRoot, dryRun } = input;
   const start = Date.now();
   io.phase({ kind: 'writing' });
-  // runUpdate rolls the vault back before throwing (a dry run wrote nothing).
   const { result, hooks } = await runAndHooks(
     io,
-    { markOnFailure: !dryRun },
     (signal) =>
       runUpdate({
         vaultRoot,

@@ -36,7 +36,7 @@ interface PendingAnswer {
 
 /** What `launch`'s `start` gets: the flow's io, less the members each command adds. */
 export interface FlowRunContext<P> {
-  io: FlowRunIO & { releaseLock(): void };
+  io: FlowRunIO;
   /** Ask the flow's question: `show` renders it; the answer comes from `settle`. */
   ask<A>(question: { kind: string }, index: number | undefined, show: () => void): Promise<A>;
   /** Set the phase, unless this run was superseded. */
@@ -144,8 +144,12 @@ export function useFlowRun<P extends { kind: string }>(opts: {
               if (!disposed) appendHookOutput(setPhase, chunk);
             },
           },
-          takeLock,
-          releaseLock,
+          // A transaction that makes its vault folder takes the lock once it
+          // exists, and releases it if it rolls back (§4.28 step 1a).
+          lock: () => {
+            takeLock();
+            return { release: releaseLock };
+          },
           onCleanup: (cleanup) => {
             // A superseded run removes its own dir instead of taking the ref.
             if (disposed) void cleanup().catch(() => {});
@@ -220,5 +224,5 @@ export function useFlowRun<P extends { kind: string }>(opts: {
     else pending.resolve(outcome.value);
   }, []);
 
-  return { phase, setPhase, phaseRef, finish, launch, settle };
+  return { phase, setPhase, phaseRef, launch, settle };
 }
