@@ -124,7 +124,13 @@ export interface AdoptPlan {
   /** Total file count the planner would have written under a clean install. */
   totalShardFiles: number;
   /** `--from-version`: the base release, and why it could not be used, if so (#325). Set by the flow. */
-  base?: { version: string; unavailable?: string };
+  base?: AdoptBase;
+}
+
+/** `--from-version`'s base release (#325): its version, and why it could not be read, if so. */
+export interface AdoptBase {
+  version: string;
+  unavailable?: string;
 }
 
 export interface AdoptPlannerInput {

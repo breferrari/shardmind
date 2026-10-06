@@ -156,6 +156,7 @@ export default function Adopt({ args, options }: Props) {
             hooks={phase.hooks}
             dryRun={phase.dryRun}
             externalTools={phase.externalTools}
+            {...(phase.base ? { base: phase.base } : {})}
           />
         </CommandFrame>
       );

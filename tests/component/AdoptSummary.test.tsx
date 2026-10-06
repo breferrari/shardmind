@@ -24,6 +24,7 @@ function makeSummary(overrides: Partial<AdoptSummaryData> = {}): AdoptSummaryDat
     adoptedMine: [],
     adoptedShard: [],
     adoptedMerged: [],
+    updatedBehind: [],
     installedFresh: [],
     renamedFiles: [],
     totalManaged: 2,
@@ -99,6 +100,30 @@ describe('AdoptSummary', () => {
     const summary = makeSummary({ renamedFiles: [{ from: 'CLAUDE.md', to: 'AGENTS.md' }] });
     const { lastFrame } = render(<AdoptSummary {...baseProps} summary={summary} dryRun />);
     expect(lastFrame() ?? '').toContain('Would move to a new path');
+  });
+
+  it('reports files updated from the base release, with both versions (#325)', () => {
+    const { lastFrame } = render(
+      <AdoptSummary {...baseProps} summary={makeSummary({ updatedBehind: ['CLAUDE.md', 'Home.md'] })} base={{ version: '0.0.9' }} />,
+    );
+    expect(lastFrame()).toContain('2 updated to 0.1.0: unchanged since 0.0.9');
+  });
+
+  it('says a dry run would update them (#325)', () => {
+    const { lastFrame } = render(
+      <AdoptSummary {...baseProps} dryRun summary={makeSummary({ updatedBehind: ['CLAUDE.md'] })} base={{ version: '0.0.9' }} />,
+    );
+    expect(lastFrame()).toContain('1 would be updated to 0.1.0');
+  });
+
+  it('warns when the base release could not be read, and names it (#325)', () => {
+    const { lastFrame } = render(
+      <AdoptSummary {...baseProps} summary={makeSummary()} base={{ version: '0.0.9', unavailable: 'Version 0.0.9 not found' }} />,
+    );
+    const frame = (lastFrame() ?? '').replace(/\s+/g, ' ');
+    expect(frame).toContain('Could not read 0.0.9');
+    expect(frame).toContain('Version 0.0.9 not found');
+    expect(frame).toContain('treated as yours');
   });
 
   it('omits zero-count rows', () => {

@@ -12,12 +12,14 @@
  * tests/unit/adopt-behind.test.ts.)
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { cleanup } from 'ink-testing-library';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { setupFlowSuite, makeVaultDir, cleanupVault } from './helpers.js';
+import { setupFlowSuite, makeVaultDir, cleanupVault, mountAdopt } from './helpers.js';
+import { waitFor } from '../helpers.js';
 import { buildObsidianMindTarballs, type ObsidianMindTarballs } from '../../e2e/helpers/obsidian-mind-tarball.js';
 import { runAdoptFlow, type AdoptFlowInput, type AdoptFlowIO, type AdoptQuestion } from '../../../source/core/flows/adopt.js';
 import { readState } from '../../../source/core/state.js';
@@ -34,6 +36,10 @@ describe('adopt --from-version: files still at the base release (#325)', () => {
   beforeAll(async () => {
     om = await buildObsidianMindTarballs();
   }, 90_000);
+
+  afterEach(() => {
+    cleanup();
+  });
 
   function serve(): void {
     const { stub } = getCtx();
@@ -109,6 +115,20 @@ describe('adopt --from-version: files still at the base release (#325)', () => {
       const state = await readState(vault);
       expect(state!.files['CLAUDE.md']!.ownership).toBe('managed');
       expect(state!.files['AGENTS.md']!.ownership).toBe('modified');
+    } finally {
+      await cleanupVault(vault);
+    }
+  });
+
+  it('the adopt command reports the file it updated from the base release', async () => {
+    serve();
+    const vault = await clonedAt600();
+    try {
+      const r = mountAdopt({ shardRef: `${OM_REF}@6.1.0`, vaultRoot: vault, options: { yes: true, mode: 'keep-all-mine', fromVersion: '6.0.0' } });
+      const frame = await waitFor(r.lastFrame, (f) => f.includes('Adopted'), 30_000);
+      expect(frame).toContain('1 updated to 6.1.0: unchanged since 6.0.0');
+      expect(frame).toContain('1 kept your version');
+      expect(await fs.readFile(path.join(vault, 'CLAUDE.md'), 'utf-8')).toContain('(v6.1.0 update)');
     } finally {
       await cleanupVault(vault);
     }

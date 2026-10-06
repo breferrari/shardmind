@@ -25,7 +25,7 @@ import { useStdin } from 'ink';
 import { ShardMindError } from '../../runtime/types.js';
 import { resolveEngineVersion } from './cli-version.js';
 import { useFlowRun } from './use-flow-run.js';
-import type { AdoptPlan, AdoptClassification } from '../../core/adopt-planner.js';
+import type { AdoptBase, AdoptPlan, AdoptClassification } from '../../core/adopt-planner.js';
 import type { AdoptApplyKind, AdoptResolutions, AdoptSummary as AdoptSummaryData } from '../../core/adopt-executor.js';
 import type { ShardManifest } from '../../runtime/types.js';
 import { type RunningHookPhase } from '../../core/hook.js';
@@ -106,6 +106,8 @@ export type Phase =
       hooks: HookOutcome[];
       dryRun: boolean;
       externalTools: string[];
+      /** `--from-version`: the base release, and why it could not be read, if so (#325). */
+      base?: AdoptBase;
     }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
@@ -217,6 +219,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
           hooks: result.hooks,
           dryRun,
           externalTools: result.externalTools,
+          ...(result.base ? { base: result.base } : {}),
         };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -10,7 +10,7 @@
  */
 
 import { ShardMindError } from '../../runtime/types.js';
-import { baseOutputHashes, classifyAdoption, type AdoptClassification, type AdoptPlan } from '../adopt-planner.js';
+import { baseOutputHashes, classifyAdoption, type AdoptBase, type AdoptClassification, type AdoptPlan } from '../adopt-planner.js';
 import { twoWayUnionMerge } from '../adopt-merge.js';
 import { parseFromVersion, renamesBetween } from '../rename-migrations.js';
 import { sha256 } from '../fs-utils.js';
@@ -98,7 +98,7 @@ export type AdoptFlowResult =
       externalTools: string[];
       durationMs: number;
       /** With `--from-version`: the base release, and why it could not be read, if so (#325). */
-      base?: AdoptPlan['base'];
+      base?: AdoptBase;
     };
 
 
@@ -211,7 +211,7 @@ async function loadBase(
   io: AdoptFlowIO,
   shard: PreparedShard,
   answers: ValueAnswers,
-): Promise<{ hashes?: Map<string, string>; info: NonNullable<AdoptPlan['base']> }> {
+): Promise<{ hashes?: Map<string, string>; info: AdoptBase }> {
   const version = input.fromVersion!;
   let base: PreparedShard | undefined;
   try {
