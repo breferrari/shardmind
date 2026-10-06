@@ -1,14 +1,13 @@
 /**
- * `source/core/json-run.ts` (#198): which runs are `--json` runs of update,
- * adopt or status, and making stdout non-interactive for them.
- * See docs/IMPLEMENTATION.md §4.23.
+ * `source/core/json-run.ts` (#198, #302): which runs are `--json` runs of
+ * update, adopt, validate or status. See docs/IMPLEMENTATION.md §4.23.
  */
 
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dropTrailingBlankWrites, isJsonRun, markNonInteractive, subcommandOf } from '../../source/core/json-run.js';
+import { isJsonRun, subcommandOf } from '../../source/core/json-run.js';
 
 describe('isJsonRun', () => {
   it.each([
@@ -92,20 +91,6 @@ describe('every command with --json goes through the gate', () => {
   });
 });
 
-describe('markNonInteractive', () => {
-  it('makes a terminal stream report it is not a TTY', () => {
-    const stream = { isTTY: true } as { isTTY?: boolean };
-    markNonInteractive(stream);
-    expect(stream.isTTY).toBe(false);
-  });
-
-  it('leaves a piped stream as it is', () => {
-    const stream = {} as { isTTY?: boolean };
-    markNonInteractive(stream);
-    expect(stream.isTTY).toBeFalsy();
-  });
-});
-
 describe('root options before the subcommand', () => {
   // isJsonRun and jsonCommandOf take the first non-option argument as the
   // subcommand. That holds while every root option is a boolean flag: an
@@ -117,56 +102,5 @@ describe('root options before the subcommand', () => {
       expect(schema.safeParse(true).success, name).toBe(true);
       expect(schema.safeParse('update').success, name).toBe(false);
     }
-  });
-});
-
-describe('dropTrailingBlankWrites (#231)', () => {
-  /** A stand-in for process.stdout that records what reaches it. */
-  function recorder(): { stream: { write: (chunk: unknown, ...rest: unknown[]) => boolean }; out: string[] } {
-    const out: string[] = [];
-    const stream = {
-      write: (chunk: unknown, ...rest: unknown[]): boolean => {
-        out.push(String(chunk));
-        const callback = rest.find((r) => typeof r === 'function') as (() => void) | undefined;
-        callback?.();
-        return true;
-      },
-    };
-    return { stream, out };
-  }
-
-  it("drops Ink's lone newline after the document", () => {
-    const { stream, out } = recorder();
-    dropTrailingBlankWrites(stream);
-    stream.write('{\n  "ok": true\n}\n');
-    stream.write('\n');
-    expect(out.join('')).toBe('{\n  "ok": true\n}\n');
-  });
-
-  it('passes a lone newline written before any content', () => {
-    const { stream, out } = recorder();
-    dropTrailingBlankWrites(stream);
-    stream.write('\n');
-    stream.write('{}\n');
-    expect(out.join('')).toBe('\n{}\n');
-  });
-
-  it('passes every write that carries content', () => {
-    const { stream, out } = recorder();
-    dropTrailingBlankWrites(stream);
-    stream.write('{\n');
-    stream.write('}\n');
-    stream.write('x\n');
-    expect(out.join('')).toBe('{\n}\nx\n');
-  });
-
-  it("still calls a dropped write's callback, which Ink's exit barrier waits on", () => {
-    const { stream } = recorder();
-    dropTrailingBlankWrites(stream);
-    stream.write('{}\n');
-    let called = false;
-    const returned = stream.write('\n', () => (called = true));
-    expect(called).toBe(true);
-    expect(returned).toBe(true);
   });
 });

@@ -102,19 +102,6 @@ describe('load order in source/cli.ts', () => {
     expect(applyIndex).toBeGreaterThan(-1);
     expect(firstImportIndex).toBeGreaterThan(applyIndex);
   });
-
-  it('marks a --json run non-interactive at the top level before any statement that imports (#198)', () => {
-    const statements = parse('cli.ts').statements;
-    const hasDynamicImport = (node: ts.Node): boolean =>
-      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
-      (ts.forEachChild(node, hasDynamicImport) ?? false);
-    const markIndex = statements.findIndex(
-      (s) => ts.isIfStatement(s) && s.getText().includes('markNonInteractive('),
-    );
-    const firstImportIndex = statements.findIndex(hasDynamicImport);
-    expect(markIndex).toBeGreaterThan(-1);
-    expect(firstImportIndex).toBeGreaterThan(markIndex);
-  });
 });
 
 describe('sanitizeHookText', () => {

@@ -1,18 +1,14 @@
 /**
- * `--json` in a terminal (#198). Spec: docs/IMPLEMENTATION.md §4.23.
+ * Which runs are `--json` runs (#198, #302). Spec: docs/IMPLEMENTATION.md
+ * §4.23, §4.29.
  *
- * A mounted Ink app in a TTY writes synchronized-output and cursor codes
- * around its frame even when it renders nothing, so a `--json` document came
- * out wrapped in them. Ink decides from `stdout.isTTY` and Pastel passes no
- * render options, so `source/cli.ts` marks stdout non-interactive for a
- * `--json` run before anything loads Ink, and the run writes exactly what it
- * writes piped. stdin is left alone (the machines refuse prompts under
- * `--json` themselves). Imports nothing, so `cli.ts` can load it statically.
+ * `source/cli.ts` answers a `--json` run of these commands headless, before
+ * anything loads Ink, so the run writes in a terminal exactly what it writes
+ * piped, and a crash in it answers on stdout. Imports nothing, so `cli.ts` can
+ * load it statically.
  */
 
-// Commands with a `--json`. Install has none. `validate --json` never mounts
-// Ink (#34), so marking stdout changes nothing there; it is listed so a crash
-// outside its runner still answers on stdout (cli.ts).
+// Commands with a `--json`, each answered headless (#302). Install has none.
 const JSON_COMMANDS = new Set(['update', 'adopt', 'validate']);
 
 /** The arguments before any `--`. */
@@ -42,40 +38,4 @@ export function isJsonRun(argv: readonly string[]): boolean {
   if (args.some((arg) => arg === '-h' || arg === '--help' || arg === '-v' || arg === '--version')) return false;
   const subcommand = subcommandOf(argv);
   return subcommand === undefined || JSON_COMMANDS.has(subcommand);
-}
-
-/**
- * Makes `stream` (process.stdout) report that it is not a terminal, so Ink
- * renders non-interactively. Only Ink's interactive decision and the
- * self-update banner (already off under --json) read `stdout.isTTY`.
- */
-export function markNonInteractive(stream: { isTTY?: boolean }): void {
-  Object.defineProperty(stream, 'isTTY', { value: false, configurable: true, writable: true });
-}
-
-type Write = (chunk: string | Uint8Array, ...rest: unknown[]) => boolean;
-
-/**
- * Keeps a `--json` document's single trailing newline (#231). At unmount Ink
- * in non-interactive mode writes its last frame plus `'\n'`; under --json the
- * frame is empty, so a lone `'\n'` followed the document. Once a write has
- * carried content, a later write of exactly `'\n'` is dropped (its callback
- * still fires, since Ink waits on it before exiting). Nothing else is touched.
- */
-export function dropTrailingBlankWrites(stream: Pick<NodeJS.WritableStream, 'write'>): void {
-  const write = stream.write.bind(stream) as Write;
-  let wroteContent = false;
-  const filtered: Write = (chunk, ...rest) => {
-    const isNewline = typeof chunk === 'string' ? chunk === '\n' : chunk.length === 1 && chunk[0] === 0x0a;
-    if (wroteContent && isNewline) {
-      const callback = rest.find((r): r is () => void => typeof r === 'function');
-      callback?.();
-      return true;
-    }
-    // Decoded only until the document starts, not for every later write.
-    if (!wroteContent) wroteContent = (typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8')).trim() !== '';
-    return write(chunk, ...rest);
-  };
-  // `write` is overloaded; the filter forwards every overload's arguments as is.
-  stream.write = filtered as NodeJS.WritableStream['write'];
 }
