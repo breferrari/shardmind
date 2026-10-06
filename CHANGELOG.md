@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (internal: the tests are typechecked — #352)
+
+- Internal: `npm run typecheck` now typechecks `tests/` too (`tsconfig.tests.json`, the source's options), so a test object missing a member its interface requires fails before any test runs, locally and in CI. The first sweep fixed about 140 errors in the existing tests without loosening a type.
+
 ### Added (the bootstrap hook knows what a reinstall removed — #356)
 
 - **A `bootstrap` hook's context now carries `removedFiles` and `valuesAreDefaults`.**
