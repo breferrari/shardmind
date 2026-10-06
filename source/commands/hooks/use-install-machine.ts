@@ -43,6 +43,7 @@ import {
   type Collision,
 } from '../../core/install-planner.js';
 import { installRolledBack, runInstallTransaction, type BackupRecord } from '../../core/install-executor.js';
+import type { InstallDestination } from '../../core/install-destination.js';
 import { assertSafeVaultPaths } from '../../core/vault-path-guard.js';
 import { toPosix } from '../../core/fs-utils.js';
 import { type RunningHookPhase } from '../../core/hook.js';
@@ -94,7 +95,7 @@ export type Phase =
       // but does NOT roll the install back. See docs/ARCHITECTURE.md §9.3 for
       // the Helm-style contract. Shape shared with update via core/hook.ts so
       // `appendHookOutput` narrows generically.
-  | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; fileCount: number; durationMs: number; backups: BackupRecord[]; replaced: string[]; removed: string[]; keptStale: string[]; hooks: HookOutcome[]; dryRun: boolean; externalTools: string[] }
+  | { kind: 'summary'; manifest: ShardManifest; vaultRoot: string; folder: string | null; fileCount: number; durationMs: number; backups: BackupRecord[]; replaced: string[]; removed: string[]; keptStale: string[]; hooks: HookOutcome[]; dryRun: boolean; externalTools: string[] }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
 
@@ -139,7 +140,8 @@ export interface UseInstallMachineInput {
   force: boolean;
   verbose: boolean;
   dryRun: boolean;
-  vaultRoot: string;
+  /** Where the vault goes (#333), decided before the run (`install-destination.ts`). */
+  destination: InstallDestination;
 }
 
 export interface UseInstallMachineOutput {
@@ -152,7 +154,11 @@ export interface UseInstallMachineOutput {
 }
 
 export function useInstallMachine(input: UseInstallMachineInput): UseInstallMachineOutput {
-  const { shardRef, valuesFile, yes, defaults, force, verbose, dryRun, vaultRoot } = input;
+  const { shardRef, valuesFile, yes, defaults, force, verbose, dryRun, destination } = input;
+  const vaultRoot = destination.root;
+  // A folder this run makes is locked by its transaction, from the moment it
+  // exists (§4.28 step 1a); there is none to lock while the run plans.
+  const creating = destination.create.length > 0;
   const { exit } = useApp();
 
   // `--defaults` implies `--yes` semantics internally (single non-interactive
@@ -252,8 +258,9 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         }
         // Before state is read: a plan made from a state another run is
         // changing would be stale (#253).
-        takeLock();
-        const existing = await readState(vaultRoot);
+        if (!creating) takeLock();
+        // A folder the install will make holds no state yet (§4.31 step 4).
+        const existing = creating ? null : await readState(vaultRoot);
         if (defaults && existing && !force) {
           throw new ShardMindError(
             `Vault already shardmind-managed (${existing.shard}@${existing.version}); --defaults refuses to overwrite`,
@@ -453,6 +460,15 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           moveAside,
           keep,
           oldStatePath,
+          createRoot: creating
+            ? {
+                folders: destination.create,
+                lock: () => {
+                  takeLock();
+                  return { release: releaseLock };
+                },
+              }
+            : undefined,
           onProgress: (ev) => {
             if (ev.kind === 'start') {
               setPhase((prev) =>
@@ -534,6 +550,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           kind: 'summary',
           manifest: ctx.manifest,
           vaultRoot,
+          folder: destination.folder,
           fileCount: runResult.fileCount,
           durationMs: Date.now() - start,
           backups: [...runResult.backups, ...leftBackups],
@@ -562,7 +579,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         });
       }
     },
-    [vaultRoot, verbose, dryRun, finish],
+    [vaultRoot, verbose, dryRun, finish, destination, creating, takeLock, releaseLock],
   );
 
   /**

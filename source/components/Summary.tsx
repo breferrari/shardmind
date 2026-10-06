@@ -24,6 +24,8 @@ import type { HookOutcome } from '../core/hook-orchestrator.js';
 interface SummaryProps {
   manifest: ShardManifest;
   vaultRoot: string;
+  /** The folder the install made or was given, as written; null in place (`.`, #333). */
+  folder?: string | null;
   fileCount: number;
   durationMs: number;
   backups: BackupRecord[];
@@ -42,6 +44,7 @@ interface SummaryProps {
 export default function Summary({
   manifest,
   vaultRoot,
+  folder = null,
   fileCount,
   durationMs,
   backups,
@@ -59,7 +62,7 @@ export default function Summary({
     <Box flexDirection="column" gap={1}>
       <StatusMessage variant={dryRun ? 'info' : 'success'}>
         {dryRun
-          ? `Dry run complete — ${fileCount} files would be written`
+          ? `Dry run complete — ${fileCount} files would be written${folder === null ? '' : ` into ${folder}`}`
           : `Installed ${manifest.namespace}/${manifest.name}@${manifest.version} — ${fileCount} files in ${seconds}s`}
       </StatusMessage>
 
@@ -89,7 +92,9 @@ export default function Summary({
 
       {!dryRun && (
         <Box flexDirection="column">
+          {folder !== null && <Text>Your vault is in {vaultRoot}</Text>}
           <Text bold>Next:</Text>
+          {folder !== null && <Text>  {cdCommand(folder)}</Text>}
           <Text>  {openCmd}</Text>
         </Box>
       )}
@@ -118,6 +123,21 @@ function PathList({ title, paths }: { title: string; paths: string[] }) {
       {paths.length > PATHS_VISIBLE && <Text dimColor>  …and {paths.length - PATHS_VISIBLE} more</Text>}
     </Box>
   );
+}
+
+/**
+ * `cd` into the folder as written, safe to paste: bare when the shell would
+ * read it as is, else in single quotes, which neither a POSIX shell nor
+ * PowerShell (Windows' default) expands: `$`, a backtick and `%` stay as
+ * they are. Inside them a `'` is `'\''` in POSIX and `''` in PowerShell. A
+ * name starting with `-` gets `./`, so `cd` does not read it as an option;
+ * one starting with `@`, which PowerShell reads as splatting, is quoted.
+ */
+export function cdCommand(folder: string, platform: NodeJS.Platform = os.platform()): string {
+  const target = folder.startsWith('-') ? `./${folder}` : folder;
+  if (/^[\w./+-][\w./@+-]*$/.test(target)) return `cd ${target}`;
+  const quote = platform === 'win32' ? `''` : `'\\''`;
+  return `cd '${target.replace(/'/g, quote)}'`;
 }
 
 function openCommandForPlatform(vaultRoot: string): string {

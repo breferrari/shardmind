@@ -34,7 +34,8 @@ import { restoreDirExactly, restoreTree } from './restore-tree.js';
 import { caseJournal, sameFile, undoCaseHops, type CaseJournal } from './rename-migrations.js';
 import { throwIfCancelled } from './run-cancel.js';
 import { pathExists, removePath, settleAll, toPosix } from './fs-utils.js';
-import { isEnoent } from '../runtime/errno.js';
+import { errnoCode, isEnoent } from '../runtime/errno.js';
+import { destinationTaken } from './install-destination.js';
 import { ShardMindError } from '../runtime/types.js';
 import { wrapWriteError } from './bug-report.js';
 import { ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
@@ -60,6 +61,14 @@ export interface TransactionOptions {
    * rollback, and the snapshot is kept: the update summary points at it.
    */
   noPriorInstall: boolean;
+  /**
+   * Install into a folder it creates (#333): the missing levels, outermost
+   * first (`install-destination.ts`), and the caller's vault lock, taken
+   * once the folder exists (it lives inside it). Begin makes the folders and
+   * calls `lock`; the rollback releases the lock, then removes the folders
+   * once empty. On commit the lock stays the caller's to release.
+   */
+  createRoot?: CreateRoot;
 }
 
 /** A path moved out of the way under a backup name (absolute paths). */
@@ -206,6 +215,11 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
     return result;
   }
 
+  // Last, so nothing in begin can fail after the vault folder and its lock
+  // exist with no rollback to remove them (§4.28 step 1a). The steps above
+  // read a folder that does not exist yet, or keep their record in memory.
+  const createdRoot = opts.createRoot ? await createVaultRoot(vaultRoot, opts.createRoot) : null;
+
   return {
     dir,
     introduced,
@@ -258,8 +272,7 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
           await fsp.rm(abs, { force: true });
         } catch (err) {
           // A folder there is the user's, made during the run: left.
-          const isFolder = await fsp.lstat(abs).then((st) => st.isDirectory(), () => false);
-          if (!isFolder) failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
+          if (!(await isFolder(abs))) failures.push({ path: rel, reason: `unlink failed: ${reasonOf(err)}` });
         }
       }
       if (dir !== null && filesDir !== null) {
@@ -305,6 +318,8 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
           failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
         }
       }
+      // The vault this run made goes last, lock first: it lives inside it.
+      if (createdRoot) failures.push(...(await removeVaultRoot(createdRoot)));
       return failures;
     },
 
@@ -318,6 +333,73 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
       return { kept, left };
     },
   };
+}
+
+export interface CreateRoot {
+  folders: readonly string[];
+  /** Take the vault lock (`acquireVaultLock`, §4.25); returns its release. */
+  lock: () => { release(): void };
+}
+
+interface CreatedRoot {
+  /** The levels this begin made, outermost first. */
+  made: string[];
+  lock: { release(): void };
+}
+
+/**
+ * Make the vault folder and its missing parents, then lock it (#333). The
+ * vault folder is made with a plain `mkdir`, so of two runs racing for one
+ * name one wins; the other is refused, as is a file at any level. A parent
+ * another run made meanwhile is a folder all the same, and not ours.
+ */
+async function createVaultRoot(vaultRoot: string, root: CreateRoot): Promise<CreatedRoot> {
+  const made: string[] = [];
+  try {
+    for (const folder of root.folders) {
+      const created = await fsp.mkdir(folder).then(
+        () => true,
+        (err: unknown) => {
+          if (errnoCode(err) !== 'EEXIST') throw wrapWriteError('INSTALL_WRITE_FAILED', `Could not create ${folder}`, err);
+          return false;
+        },
+      );
+      if (created) made.push(folder);
+      // As the destination walk sees a level: a link to a folder is one.
+      else if (folder === vaultRoot || !(await fsp.stat(folder).then((st) => st.isDirectory(), () => false))) {
+        throw destinationTaken(vaultRoot, folder, 'appeared after this install planned');
+      }
+    }
+    return { made, lock: root.lock() };
+  } catch (err) {
+    await removeMadeFolders(made);
+    throw err;
+  }
+}
+
+const isFolder = (abs: string): Promise<boolean> => fsp.lstat(abs).then((st) => st.isDirectory(), () => false);
+
+/** The rollback's last step for a vault it made: release the lock, then remove the folders, once empty. */
+async function removeVaultRoot(root: CreatedRoot): Promise<RollbackFailure[]> {
+  root.lock.release();
+  return removeMadeFolders(root.made);
+}
+
+/**
+ * The folders a begin made, deepest first, each once empty. One already gone
+ * is skipped. One something else put a file into during the run is left, and
+ * named: it and the levels above it stay.
+ */
+async function removeMadeFolders(made: readonly string[]): Promise<RollbackFailure[]> {
+  for (const folder of [...made].reverse()) {
+    try {
+      await fsp.rmdir(folder);
+    } catch (err) {
+      if (isEnoent(err)) continue;
+      return [{ path: folder, reason: `remove failed: ${reasonOf(err)}` }];
+    }
+  }
+  return [];
 }
 
 async function uniqueBackupPath(absolutePath: string, stamp: string): Promise<string> {

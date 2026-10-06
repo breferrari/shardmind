@@ -87,7 +87,7 @@ async function install(vault: string, ref: string, extra: string[] = []) {
   const valuesFile = path.join(vault, '..', `${path.basename(vault)}-values.yaml`);
   await fs.writeFile(valuesFile, stringifyYaml(VALUES), 'utf-8');
   dirs.push(valuesFile);
-  return spawnCli(['install', `github:${SLUG}#${ref}`, '--values', valuesFile, '--yes', ...extra], { cwd: vault, env: env() });
+  return spawnCli(['install', `github:${SLUG}#${ref}`, '.', '--values', valuesFile, '--yes', ...extra], { cwd: vault, env: env() });
 }
 
 describe('external tools through the CLI (#138)', () => {
@@ -117,7 +117,7 @@ describe('external tools through the CLI (#138)', () => {
     const vault = await freshVault('gated');
     const valuesFile = path.join(scratch, 'gated-values.yaml');
     await fs.writeFile(valuesFile, stringifyYaml({ ...VALUES, qmd_enabled: false }), 'utf-8');
-    const result = await spawnCli(['install', `github:${SLUG}#gated`, '--values', valuesFile, '--yes'], { cwd: vault, env: env() });
+    const result = await spawnCli(['install', `github:${SLUG}#gated`, '.', '--values', valuesFile, '--yes'], { cwd: vault, env: env() });
     expect(result.exitCode, result.stderr + result.stdout).toBe(0);
     expect(await toolRan()).toBe(false);
   }, 120_000);

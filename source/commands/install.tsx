@@ -1,4 +1,5 @@
-import { Box, Text } from 'ink';
+import { Box, Text, useApp } from 'ink';
+import { useEffect, useState } from 'react';
 import { Spinner, Alert } from '../components/ui.js';
 import zod from 'zod';
 import { updateCheckOption } from './hooks/update-check-option.js';
@@ -16,10 +17,15 @@ import Summary from '../components/Summary.js';
 import CommandFrame from '../components/CommandFrame.js';
 
 import { useInstallMachine } from './hooks/use-install-machine.js';
+import { resolveInstallDestination, type InstallDestination } from '../core/install-destination.js';
 import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 
 export const args = zod.tuple([
   zod.string().describe('Shard reference, e.g. "breferrari/obsidian-mind" or "github:owner/repo"'),
+  zod
+    .string()
+    .optional()
+    .describe('Folder to install into (default: a new folder named after the shard; "." for the current folder)'),
 ]);
 
 export const options = zod.object({
@@ -37,8 +43,52 @@ type Props = {
   options: zod.infer<typeof options>;
 };
 
+/**
+ * Decides the folder first (#333): a new one named after the shard, the
+ * one given, or `.`. A refusal ends the run before the lock, the download
+ * or any prompt; otherwise the install runs on that folder.
+ */
 export default function Install({ args, options }: Props) {
-  const [shardRef] = args;
+  const [shardRef, folder] = args;
+  const { exit } = useApp();
+  const [destination, setDestination] = useState<InstallDestination | { error: unknown } | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    resolveInstallDestination(process.cwd(), shardRef, folder).then(
+      (dest) => !disposed && setDestination(dest),
+      (error: unknown) => {
+        if (disposed) return;
+        process.exitCode = 1;
+        setDestination({ error });
+        setTimeout(() => exit(), 100);
+      },
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [shardRef, folder, exit]);
+
+  if (destination !== null && !('error' in destination)) {
+    return <InstallRun shardRef={shardRef} options={options} destination={destination} />;
+  }
+  // Resolving takes a few file checks; a refusal shows as every error does.
+  return (
+    <CommandFrame dryRun={options.dryRun} showLegend={false}>
+      {destination === null ? null : <ErrorView error={destination.error} version={resolveEngineVersion()} />}
+    </CommandFrame>
+  );
+}
+
+function InstallRun({
+  shardRef,
+  options,
+  destination,
+}: {
+  shardRef: string;
+  options: Props['options'];
+  destination: InstallDestination;
+}) {
   const { values: valuesFile, yes, defaults, force, verbose, dryRun, updateCheck } = options;
 
   const {
@@ -49,14 +99,14 @@ export default function Install({ args, options }: Props) {
     onWizardError,
     onCollisionChoice,
   } = useInstallMachine({
-    shardRef: shardRef!,
+    shardRef,
     valuesFile,
     yes,
     defaults,
     force,
     verbose,
     dryRun,
-    vaultRoot: process.cwd(),
+    destination,
   });
 
   const { banner } = useSelfUpdateBanner({ updateCheck });
@@ -133,6 +183,7 @@ export default function Install({ args, options }: Props) {
           <Summary
             manifest={phase.manifest}
             vaultRoot={phase.vaultRoot}
+            folder={phase.folder}
             fileCount={phase.fileCount}
             durationMs={phase.durationMs}
             backups={phase.backups}
@@ -165,4 +216,4 @@ export default function Install({ args, options }: Props) {
   }
 }
 
-export const description = 'Install a shard into the current directory';
+export const description = 'Install a shard into a new folder named after it, or the folder given ("." for the current one)';

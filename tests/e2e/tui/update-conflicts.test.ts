@@ -256,7 +256,7 @@ describe.skipIf(noPty())(
           // (0xC000013A), the #57 pattern (#174).
           const requested = stub.waitForTarballRequest();
           const handle = await spawnCliPty(
-            ['install', SHARD_REF, '--yes', '--values', valuesPath],
+            ['install', SHARD_REF, '.', '--yes', '--values', valuesPath],
             {
               cwd: vault,
               env: { SHARDMIND_GITHUB_API_BASE: stub.url },

@@ -126,7 +126,7 @@ shardmind/
 │   ├── commands/
 │   │   ├── index.tsx                  # Status display (root command)
 │   │   ├── _app.tsx                   # Pastel custom app: wraps every command in CrashBoundary (#225)
-│   │   ├── install.tsx                # shardmind install <shard>
+│   │   ├── install.tsx                # shardmind install <shard> [folder]: a new folder by default, `.` in place (#333)
 │   │   ├── update.tsx                 # shardmind update
 │   │   ├── adopt.tsx                  # shardmind adopt <shard>
 │   │   ├── validate.tsx               # shardmind validate [dir|shard] — author-facing check (#34)
@@ -218,6 +218,7 @@ shardmind/
 │   │   ├── created-folders.ts         # The folders a run created, removed by its rollback (#258)
 │   │   ├── external-tools.ts          # Check external_tools against their ranges; no-shell probe (#138)
 │   │   ├── vault-transaction.ts       # One vault transaction: snapshot before each write, rollback, state.json last (#301)
+│   │   ├── install-destination.ts     # Where install puts the vault: shard-named folder, [folder] or `.`; refuses a non-empty one (#333)
 │   │   ├── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   │   └── flows/                     # UI-free command runs the Ink machines adapt (§4.30, #302): prepare-shard, values, adopt, update
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
@@ -411,6 +412,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `created-folders.ts` | §4.11b, §4.12 (4a), §4.18 | The folders a run created, for install / update / adopt rollbacks (#258) |
 | `external-tools.ts` | §4.26 | Check a shard's `external_tools` against their version ranges before install / adopt / update write (`EXTERNAL_TOOL_UNMET`); the probe runs without a shell (#138) |
 | `vault-transaction.ts` | §4.28 | One vault transaction for install, update and adopt: `recordWrite` snapshots a file just before its write (install refuses one), `recordSetAside` moves a collision aside, `commitEngineMetadata` writes `state.json` last, `rollback` never throws, `commit` discards what was set aside (#301) |
+| `install-destination.ts` | §4.31 | Where `install <shard> [folder]` puts the vault: a folder named after the shard, the one given, or `.`; refuses a non-empty one before any download (`INSTALL_DESTINATION_NOT_EMPTY`); the folders to make go to the transaction's `createRoot` (#333) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.

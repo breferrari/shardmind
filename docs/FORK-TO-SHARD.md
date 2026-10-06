@@ -57,14 +57,14 @@ From the fork's directory:
 shardmind validate
 ```
 
-It runs the install's own checks without installing: the manifest and schema, every module, and a render of every template with your defaults. It never runs your hooks. Then push to a branch and install it for real into an empty folder:
+It runs the install's own checks without installing: the manifest and schema, every module, and a render of every template with your defaults. It never runs your hooks. Then push to a branch and install it for real. The install makes a `my-mind` folder for the test vault, as `git clone` would:
 
 ```bash
 shardmind install github:your-github-user/my-mind#main --dry-run
 shardmind install github:your-github-user/my-mind#main
 ```
 
-After each push, `shardmind update` in that test vault pulls the branch again. That works because the vault was installed from `#main`: a vault installed from a release follows releases instead ([`AUTHORING.md` §7](AUTHORING.md#7-testing-your-shard-locally)).
+After each push, `shardmind update` inside that folder pulls the branch again. That works because the vault was installed from `#main`: a vault installed from a release follows releases instead ([`AUTHORING.md` §7](AUTHORING.md#7-testing-your-shard-locally)).
 
 ## 7. Release it
 

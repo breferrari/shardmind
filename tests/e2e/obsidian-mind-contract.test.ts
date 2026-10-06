@@ -171,7 +171,7 @@ describe('install (obsidian-mind-like)', () => {
     // values are defaults (engine-enforced Invariant 2), so no managed file
     // is touched.
     vault = await createEmptyVault('obs-mind-defaults');
-    const result = await spawnCli(['install', SHARD_REF, '--defaults'], {
+    const result = await spawnCli(['install', SHARD_REF, '.', '--defaults'], {
       cwd: vault.root,
       env: envWithStub(),
     });
@@ -224,7 +224,7 @@ describe('install (obsidian-mind-like)', () => {
     vault = await createEmptyVault('obs-mind-custom');
     const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
     const result = await spawnCli(
-      ['install', SHARD_REF, '--yes', '--values', valuesPath],
+      ['install', SHARD_REF, '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -269,7 +269,7 @@ describe('install (obsidian-mind-like)', () => {
 
     const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
     const result = await spawnCli(
-      ['install', SHARD_REF, '--yes', '--values', valuesPath],
+      ['install', SHARD_REF, '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -783,7 +783,7 @@ describe('refs + versions (obsidian-mind-like)', () => {
     vault = await createEmptyVault('obs-mind-ref-main');
     const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
     const result = await spawnCli(
-      ['install', `${SHARD_REF}#main`, '--yes', '--values', valuesPath],
+      ['install', `${SHARD_REF}#main`, '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -809,7 +809,7 @@ describe('refs + versions (obsidian-mind-like)', () => {
     vault = await createEmptyVault('obs-mind-ref-bump');
     const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
     const installResult = await spawnCli(
-      ['install', `${SHARD_REF}#main`, '--yes', '--values', valuesPath],
+      ['install', `${SHARD_REF}#main`, '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(installResult.exitCode).toBe(0);
@@ -934,6 +934,7 @@ describe('prerelease policy (obsidian-mind-like)', () => {
       [
         'install',
         'github:acme/obs-mind-prerel@6.0.1-beta.1',
+        '.',
         '--yes',
         '--values',
         valuesPath,
@@ -1128,7 +1129,7 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     vault = await createEmptyVault('obs-mind-hook-throw');
     const valuesPath = await writeValuesFile(vault, CUSTOM_VALUES);
     const result = await spawnCli(
-      ['install', SHARD_REF, '--yes', '--values', valuesPath],
+      ['install', SHARD_REF, '.', '--yes', '--values', valuesPath],
       {
         cwd: vault.root,
         env: envWithStub({ SHARDMIND_HOOK_EDIT_BEFORE_THROW: '1' }),
@@ -1155,7 +1156,7 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     // with a timed-out message; install still succeeds.
     vault = await createEmptyVault('obs-mind-hook-timeout');
     const result = await spawnCli(
-      ['install', 'github:acme/obs-mind-tiny-timeout', '--defaults'],
+      ['install', 'github:acme/obs-mind-tiny-timeout', '.', '--defaults'],
       {
         cwd: vault.root,
         env: {
@@ -1187,7 +1188,7 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     // (rejection must precede the metadata write).
     vault = await createEmptyVault('obs-mind-symlink');
     const result = await spawnCli(
-      ['install', 'github:acme/obs-mind-symlinked', '--defaults'],
+      ['install', 'github:acme/obs-mind-symlinked', '.', '--defaults'],
       {
         cwd: vault.root,
         env: { SHARDMIND_GITHUB_API_BASE: weirdStub.url },
@@ -1210,7 +1211,7 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     // the matcher correctly catches the planted needle.
     vault = await createEmptyVault('obs-mind-mass-ignore');
     const result = await spawnCli(
-      ['install', 'github:acme/obs-mind-mass-ignore', '--defaults'],
+      ['install', 'github:acme/obs-mind-mass-ignore', '.', '--defaults'],
       {
         cwd: vault.root,
         env: { SHARDMIND_GITHUB_API_BASE: weirdStub.url },
@@ -1236,7 +1237,7 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
     vault = await createEmptyVault('obs-mind-defaults-positive');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const positive = await spawnCli(
-      ['install', SHARD_REF, '--yes', '--values', valuesPath],
+      ['install', SHARD_REF, '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(positive.exitCode).toBe(0);
@@ -1262,7 +1263,7 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
       try {
         const valuesPath = await writeValuesFile(v, values);
         const result = await spawnCli(
-          ['install', SHARD_REF, '--yes', '--values', valuesPath],
+          ['install', SHARD_REF, '.', '--yes', '--values', valuesPath],
           { cwd: v.root, env: envWithStub() },
         );
         expect(result.exitCode, `flip ${label} install failed`).toBe(0);
@@ -1291,7 +1292,7 @@ describe('hook failure + adversarial (obsidian-mind-like)', () => {
         new URL('../fixtures/shards/obsidian-mind-like', import.meta.url),
       );
       vault = await createEmptyVault('obs-mind-case-insensitive');
-      const result = await spawnCli(['install', SHARD_REF, '--defaults'], {
+      const result = await spawnCli(['install', SHARD_REF, '.', '--defaults'], {
         cwd: vault.root,
         env: envWithStub(),
       });
@@ -1424,7 +1425,7 @@ describe('source repo without .shardmind/ (additive principle, install rejection
     // half-managed vault.
     vault = await createEmptyVault('obs-mind-noshardmind');
     const result = await spawnCli(
-      ['install', 'github:acme/no-shardmind', '--defaults'],
+      ['install', 'github:acme/no-shardmind', '.', '--defaults'],
       {
         cwd: vault.root,
         env: { SHARDMIND_GITHUB_API_BASE: noShardmindStub.url },

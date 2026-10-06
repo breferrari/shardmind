@@ -94,7 +94,7 @@ describe.skipIf(noPty())(
       '1. select default = first option → Enter advances under TTY (#103 regression)',
       async () => {
         const vault = await makeVault('s1');
-        const handle = await spawnCliPty(['install', SHARD_REF], {
+        const handle = await spawnCliPty(['install', SHARD_REF, '.'], {
           cwd: vault,
           env: { SHARDMIND_GITHUB_API_BASE: stub.url },
         });
@@ -135,7 +135,7 @@ describe.skipIf(noPty())(
       '9. full happy path → Summary frame contains shard slug + version',
       async () => {
         const vault = await makeVault('s9');
-        const handle = await spawnCliPty(['install', SHARD_REF], {
+        const handle = await spawnCliPty(['install', SHARD_REF, '.'], {
           cwd: vault,
           env: { SHARDMIND_GITHUB_API_BASE: stub.url },
         });
@@ -176,7 +176,7 @@ describe.skipIf(noPty())(
       'Ctrl+C at the first wizard prompt exits 130 and leaves the directory empty (#155)',
       async () => {
         const vault = await makeVault('s155');
-        const handle = await spawnCliPty(['install', SHARD_REF], {
+        const handle = await spawnCliPty(['install', SHARD_REF, '.'], {
           cwd: vault,
           env: { SHARDMIND_GITHUB_API_BASE: stub.url },
         });
@@ -205,7 +205,7 @@ describe.skipIf(noPty())(
       'Ctrl+C at a later prompt (confirm) also exits 130 with nothing written (#155)',
       async () => {
         const vault = await makeVault('s155b');
-        const handle = await spawnCliPty(['install', SHARD_REF], {
+        const handle = await spawnCliPty(['install', SHARD_REF, '.'], {
           cwd: vault,
           env: { SHARDMIND_GITHUB_API_BASE: stub.url },
         });
@@ -232,7 +232,7 @@ describe.skipIf(noPty())(
       '11. Confirm → Cancel → no vault writes (no .shardmind/, no rendered files)',
       async () => {
         const vault = await makeVault('s11');
-        const handle = await spawnCliPty(['install', SHARD_REF], {
+        const handle = await spawnCliPty(['install', SHARD_REF, '.'], {
           cwd: vault,
           env: { SHARDMIND_GITHUB_API_BASE: stub.url },
         });

@@ -40,6 +40,7 @@ import {
   planOutputs,
   detectCollisions,
 } from '../../source/core/install-planner.js';
+import { acquireVaultLock } from '../../source/core/vault-lock.js';
 import { runInstall, runInstallTransaction } from '../../source/core/install-executor.js';
 import { planUpdate, mergeModuleSelections } from '../../source/core/update-planner.js';
 import { runUpdate } from '../../source/core/update-executor.js';
@@ -85,9 +86,13 @@ interface Exception {
 }
 
 interface Pipeline {
-  name: 'install' | 'update' | 'adopt';
-  /** Builds the vault (and anything else the run needs) in `work`; returns the run. */
-  setUp: (work: string) => Promise<{ vault: string; run: (signal: AbortSignal) => Promise<void> }>;
+  name: 'install' | 'install into a new folder' | 'update' | 'adopt';
+  /**
+   * Builds the vault (and anything else the run needs) in `work`; returns the
+   * run. `vault` is the tree compared before and after; `root`, when the run
+   * makes the vault inside it (#333), is the vault itself.
+   */
+  setUp: (work: string) => Promise<{ vault: string; root?: string; run: (signal: AbortSignal) => Promise<void> }>;
   exceptions: Exception[];
 }
 
@@ -131,6 +136,48 @@ const install: Pipeline = {
       });
     };
     return { vault, run };
+  },
+  exceptions: [],
+};
+
+/**
+ * An install into a folder it makes, two levels deep, in an empty folder
+ * (#333): the transaction makes the levels and takes the lock, and a rollback
+ * must leave the parent as empty as it was.
+ */
+const installNewFolder: Pipeline = {
+  name: 'install into a new folder',
+  async setUp(work) {
+    const parent = path.join(work, 'parent');
+    await fsp.mkdir(parent, { recursive: true });
+    const root = path.join(parent, 'new vault', 'deep');
+    const { manifest, schema, selections, values } = await loadMinimal();
+    const run = async (signal: AbortSignal) => {
+      let lock: { release(): void } | undefined;
+      try {
+        await runInstallTransaction({
+          vaultRoot: root,
+          manifest,
+          schema,
+          tempDir: MINIMAL_SHARD,
+          resolved: RESOLVED,
+          tarballSha256: 'sha-0.1.0',
+          values,
+          selections,
+          signal,
+          moveAside: [],
+          keep: new Set(),
+          createRoot: {
+            folders: [path.join(parent, 'new vault'), root],
+            lock: () => (lock = acquireVaultLock(root, 'install')),
+          },
+        });
+      } finally {
+        // The run's caller releases on commit; a rollback has already.
+        lock?.release();
+      }
+    };
+    return { vault: parent, root, run };
   },
   exceptions: [],
 };
@@ -238,7 +285,7 @@ const adopt: Pipeline = {
   ],
 };
 
-const PIPELINES = [install, update, adopt];
+const PIPELINES = [install, installNewFolder, update, adopt];
 
 // ---------------------------------------------------------------------------
 // Rows
@@ -388,7 +435,7 @@ for (const pipeline of PIPELINES) {
   });
   // A created-folders record that is not a list (#292): update and adopt keep
   // one in their snapshot folder; install tracks its folders in memory.
-  if (pipeline.name !== 'install') {
+  if (!pipeline.name.startsWith('install')) {
     rows.push({
       id: `${pipeline.name}: fail write #${last} with an unreadable folder record`,
       pipeline,
@@ -431,7 +478,7 @@ describe('rollback contract (#267)', () => {
           'write',
           'rollback-remove',
           // Install rolls back from in-memory lists, so its rollback reads nothing.
-          ...(pipeline.name === 'install' ? [] : ['rollback-read', 'tracker']),
+          ...(pipeline.name.startsWith('install') ? [] : ['rollback-read', 'tracker']),
           ...(faults.has('rename') ? ['rename'] : []),
         ].sort(),
       );
@@ -458,7 +505,7 @@ describe('rollback contract (#267)', () => {
     it(row.id, async () => {
       const work = await freshWork();
       try {
-        const { vault, run } = await row.pipeline.setUp(work);
+        const { vault, root = vault, run } = await row.pipeline.setUp(work);
         const before = await treeOf(vault);
         const abort = new AbortController();
         const plan = row.plan(abort);
@@ -495,7 +542,7 @@ describe('rollback contract (#267)', () => {
           // starts after it besides the one under way and the bookkeeping its
           // step finishes, and state.json, which commits the run, never.
           const late = injector.writtenAfterHook
-            .map((p) => path.relative(vault, p).split(path.sep).join('/'))
+            .map((p) => path.relative(root, p).split(path.sep).join('/'))
             .filter((rel) => !isStepBookkeeping(rel));
           expect(late, 'written after Ctrl+C').toEqual([]);
         }
@@ -504,8 +551,8 @@ describe('rollback contract (#267)', () => {
           // The fault was tolerated: the run finished, and the vault is whole.
           // Only a fault in a best-effort step (or a Ctrl+C after the last
           // check, #249) may end here.
-          const state = (await readState(vault)) as ShardState;
-          const drift = await detectDrift(vault, state);
+          const state = (await readState(root)) as ShardState;
+          const drift = await detectDrift(root, state);
           expect(drift.missing.map((e) => e.path)).toEqual([]);
           expect(drift.modified.map((e) => e.path)).toEqual([]);
           return;
@@ -522,7 +569,12 @@ describe('rollback contract (#267)', () => {
               );
         expect(ours, `failed with the injected fault, not: ${String(error)}`).toBe(true);
 
-        const failures = rollbackFailuresOf(error);
+        // Reported paths are the vault's own, or absolute for the folders a
+        // run made around it (#333): named here from the compared tree.
+        const failures = rollbackFailuresOf(error).map((f) => ({
+          ...f,
+          path: path.relative(vault, path.resolve(root, f.path)).split(path.sep).join('/') || '.',
+        }));
         const after = await treeOf(vault);
         const isFolder = (p: string) => before.get(p) === 'dir' || after.get(p) === 'dir';
         // Only what this run's report names is excused (`rollback-explained.ts`).
@@ -560,8 +612,9 @@ describe('rollback contract (#267)', () => {
   // Last: the restore rows reached a restore in every pipeline, each known
   // defect still shows up (or its fix has landed and its entry must go), and
   // no entry lists a path its defect does not leave.
-  it('failed a restore in every pipeline', () => {
-    expect([...restoreFaultsFired].sort()).toEqual(PIPELINES.map((p) => p.name).sort());
+  it('failed a restore in every pipeline with something to restore', () => {
+    // A folder the install makes is empty: nothing in it is set aside (#333).
+    expect([...restoreFaultsFired].sort()).toEqual(PIPELINES.filter((p) => p !== installNewFolder).map((p) => p.name).sort());
   });
 
   it('corrupted a folder record in update and adopt (#292)', () => {
@@ -586,7 +639,7 @@ describe('rollback contract (#267)', () => {
 /** The `fsp` methods the injector wraps (`tests/helpers/fault-fs.ts`). */
 const WRAPPED = ['writeFile', 'copyFile', 'cp', 'rename', 'mkdir', 'rm', 'unlink', 'rmdir', 'readFile', 'readdir', 'lstat', 'stat'];
 /** The `fsp` methods that only read and that no rollback row fails. */
-const READ_ONLY = ['access', 'readlink', 'realpath'];
+const READ_ONLY = ['access', 'readlink', 'realpath', 'opendir'];
 
 /**
  * Files in the write paths' import closure allowed to use the filesystem in a

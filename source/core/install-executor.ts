@@ -28,7 +28,7 @@ import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { attemptRollback, withRollbackFailures } from './rollback-report.js';
 import { wrapWriteError } from './bug-report.js';
-import { beginTransaction, type BackupRecord, type VaultTransaction } from './vault-transaction.js';
+import { beginTransaction, type BackupRecord, type CreateRoot, type VaultTransaction } from './vault-transaction.js';
 import { VALUES_FILE } from '../runtime/vault-paths.js';
 
 export type { BackupRecord } from './vault-transaction.js';
@@ -274,6 +274,12 @@ export interface InstallTransactionOptions extends Omit<InstallRunnerOptions, 't
   moveAside: Collision[];
   /** Absolute paths kept as backups (the Backup policy); every other move is set aside. */
   keep: ReadonlySet<string>;
+  /**
+   * When the install makes its own folder (#333): the folder and its
+   * missing parents, and the lock to take once it exists. The transaction
+   * makes them, and its rollback releases the lock and removes them.
+   */
+  createRoot?: CreateRoot;
   /** Absolute path of a reinstall's old `.shardmind/`, set aside like the rest. */
   oldStatePath?: string;
 }
@@ -305,13 +311,13 @@ export function installRolledBack(err: unknown): boolean {
  * back. Spec: docs/IMPLEMENTATION.md §4.11b.
  */
 export async function runInstallTransaction(opts: InstallTransactionOptions): Promise<InstallTransactionResult> {
-  const { moveAside, keep, oldStatePath, signal, ...installOpts } = opts;
+  const { moveAside, keep, oldStatePath, signal, createRoot, ...installOpts } = opts;
   if (opts.dryRun) {
     const result = await runInstall(installOpts);
     return { ...result, backups: [], left: [] };
   }
 
-  const tx = await beginTransaction(opts.vaultRoot, { kind: 'install', noPriorInstall: true, signal });
+  const tx = await beginTransaction(opts.vaultRoot, { kind: 'install', noPriorInstall: true, signal, createRoot });
   let result: InstallResult;
   try {
     for (const collision of moveAside) await tx.recordSetAside(collision.absolutePath, keep.has(collision.absolutePath));

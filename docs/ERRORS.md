@@ -410,6 +410,12 @@ Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-fl
 
 **Remedy:** Run `shardmind update` to upgrade the existing install in place, or add `--force` to reinstall from scratch (#55). `--force` answers the gate with Reinstall and replaces your files at the shard's paths without a backup; the old install is kept until the new one succeeds, and restored if it fails.
 
+### `INSTALL_DESTINATION_NOT_EMPTY`
+
+**Meaning:** `shardmind install <shard> [folder]` installs into a new folder named after the shard, or `[folder]` (#333). That folder already exists and is not empty, or a file sits at its path or at one of its parent levels. Refused before any download or prompt: installing a vault over an unrelated folder's content is never what the default meant. Also raised at write time when the folder appeared after the install planned (another run took the name).
+
+**Remedy:** Give another folder name as the second argument (`shardmind install <shard> my-vault`). To install into that folder as it is, `cd` into it and run `shardmind install <shard> .`, which keeps the in-place behaviour, collision review included; `.` names the current folder, so running it from the parent would install there. If the folder is already a shardmind vault, `shardmind update` inside it upgrades it. Also raised when the destination's drive or share does not exist.
+
 ### `JSON_REQUIRES_DRY_RUN`
 
 **Meaning:** `--json` was passed without `--dry-run` on `adopt` or `update`. The JSON surface is currently the **plan** surface: the document is emitted at the dry-run decision point, before any conflict prompt. A decision the dry run itself would ask about fails with `UPDATE_JSON_NEEDS_ANSWERS` on update and `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES` on adopt.

@@ -8,6 +8,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (install makes a new folder, as git clone does — #333)
+
+- **`shardmind install <shard>` now installs into a new folder named after the shard**, where it used to install into the current folder. `shardmind install breferrari/wiki-mind` makes `./wiki-mind`. A second argument names the folder (`shardmind install <shard> my-vault`, a nested path too), and `.` installs into the current folder exactly as before, collision review included. **This changes the default:** a script or README that runs `mkdir my-vault && cd my-vault && shardmind install <shard>` now gets `my-vault/<name>`; add `.` to keep installing in place. Ships in the next minor release (0.3.0).
+- **A folder that exists and is not empty is refused before anything is downloaded**, with `INSTALL_DESTINATION_NOT_EMPTY`, naming it and suggesting another name or `.`. An empty folder is installed into.
+- **A folder the install made is removed if the install fails or is cancelled** before it finishes; a cancel before the install writes leaves nothing to remove. A folder that existed is never removed.
+- **The final message says where the vault is**, with a `cd` line.
+
 ### Changed (status, adopt and update --json run without the terminal UI — #302)
 
 - **`shardmind --json` with a flag it does not take now answers with a document.** It used to print the error on stderr and write nothing to stdout. It now writes a failure document with the code `ARGS_INVALID` and the same message, and exits 1, so a `--json` caller always gets a document.
