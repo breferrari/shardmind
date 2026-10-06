@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsup",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest watch",
