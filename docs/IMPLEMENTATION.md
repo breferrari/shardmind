@@ -1428,6 +1428,8 @@ classifyAdoption(input: {
   values: Record<string, unknown>;    // wizard answers; required for .njk render
   selections: ModuleSelections;
   now?: Date;                         // pin clock for deterministic tests
+  renames?: ReadonlyMap<string, string>;  // --from-version renames, old → new (#179)
+  base?: ReadonlyMap<string, string>;     // --from-version base release's outputs, path → sha256 (#325)
 }): Promise<AdoptPlan>;
 
 type AdoptClassification =
@@ -1440,8 +1442,10 @@ type AdoptClassification =
 interface AdoptPlan {
   matches: AdoptClassification[];
   differs: AdoptClassification[];
+  behind: AdoptClassification[];      // kind 'differs', bytes equal to the base release's (#325)
   shardOnly: AdoptClassification[];
   totalShardFiles: number;
+  base?: { version: string; unavailable?: string };  // set by the flow under --from-version (#325)
   // No userOnly bucket: classification is shard-source-driven; the user's
   // tree is never recursively walked, so paths in the vault but not in
   // the shard are silently left untouched and never enter the planner's
@@ -1459,6 +1463,8 @@ interface AdoptPlan {
    - `sha256(userBuf) === item.shardHash` → `matches`.
    - Otherwise → `differs` with `isBinary = looksBinary(userBuf) || looksBinary(item.shardContent)` (8 KB NUL-byte sniff, same heuristic git uses).
    - Non-ENOENT read error → `COLLISION_CHECK_FAILED` (mirrors install's collision-detection error code; user permissions / EACCES surface here).
+
+**Behind the target (#325)**: with `--from-version <X>`, the adopt flow (§4.30) prepares the base release, `<resolved.source>@<X>`, as it prepares the target, and renders its outputs with the same values and module selections (`renderShardOutputs`, shared with the target's render), keeping `path → sha256`. A file that would be `differs` whose user bytes equal the base's output at its path, or at its rename's old path (`movedFrom`), is classified into `behind` instead: the user never changed it, and it differs from the target because the shard moved on. Volatile outputs are unchanged (`matches`). A base output that fails to render is left out of the map, so its file stays `differs`. A base that cannot be resolved, downloaded or parsed (a missing tag, no network) does not fail the run: the flow sets `plan.base = { version: X, unavailable: <reason> }`, passes no base, and the plan is what it was before #325; the summary and the `--json` plan carry the reason. A key the base needs and the target's values lack renders empty, so the file matches neither side and stays `differs`, the behaviour before #325.
 
 **Symlink handling**: source-side rejection delegates to `walkShardSource` (`WALK_SYMLINK_REJECTED`). User-side classification is per-shard-output-path — only one specific path is stat'd per shard file, so a symlink under the user's vault is never followed by adopt classification.
 
@@ -1495,7 +1501,7 @@ runAdopt(opts: {
 }): Promise<{
   state: ShardState;
   summary: AdoptSummary;     // matchedAuto / adoptedMine / adoptedShard /
-                             // installedFresh / totalManaged
+                             // updatedBehind (#325) / installedFresh / totalManaged
 }>;
 
 assertAdoptable(vaultRoot: string): Promise<void>;
@@ -1511,6 +1517,7 @@ assertAdoptable(vaultRoot: string): Promise<void>;
    - `differs+keep_mine` → record `ownership: 'modified'` with `rendered_hash = shardHash`. No write. Recording the user's hash would make the next update's drift read their bytes as engine-owned and overwrite them (#150); the shard's hash makes them an edit, three-way merged against the adopt-time cache.
    - `differs+merged` → `writeFile(union bytes)`; record `rendered_hash = shardHash`, for the same reason, with `ownership: 'modified'` — or `'managed'` when the union is byte-identical to the shard's bytes (it holds no user line).
    - `differs+use_shard` → `writeFile(shardContent)`; record `ownership: 'managed'` with `rendered_hash = shardHash`.
+   - `behind` (#325) → as `differs+use_shard`, whatever the mode: the user never changed it, so it takes the target's bytes, as an update would. Listed in `summary.updatedBehind`, never in `resolutions`; the mode picker and per-file prompts see only `differs`.
 5. `commitEngineMetadata`: the engine entries already there set aside (a clone of the shard repo ships `.shardmind/shard.yaml` and `shard-schema.yaml`, §4.28 step 4), `initShardDir`, `cacheTemplates(tempDir)`, `cacheManifest(manifest, schema)`, `writeValuesFile(values, { flag: 'wx' })`, then `writeState(state)` last; then `tx.commit()` discards what was set aside. The `wx` flag is a belt-and-braces second defense against a values file appearing between guard and write.
 6. Any throw between (3) and (5) lands in the catch and runs the transaction's `rollback()` (§4.28). Best-effort; when it returns failures, the catch throws `ROLLBACK_INCOMPLETE` naming each one and its snapshot copy (§4.11b, #247).
 
