@@ -384,7 +384,7 @@ Thrown by `source/core/install-planner.ts` and `source/core/install-executor.ts`
 
 ### `CANCELLED`
 
-**Meaning:** An install, update or adopt was cancelled with Ctrl+C while it was writing (#249). Thrown by `throwIfCancelled` in `source/core/run-cancel.ts`, which each executor calls before every write, so the run stops between two writes and is then rolled back once. The process exits 130.
+**Meaning:** An install, update or adopt was cancelled with Ctrl+C while it was writing (#249). Thrown by `throwIfCancelled` in `source/core/run-cancel.ts`, which each executor calls before every write, so the run stops between two writes and is then rolled back once. The process exits 130. Under `--json` it is the run's one failure document (#348).
 
 **Remedy:** None needed: the vault is as it was before the run. If the rollback could not put everything back, the list printed on exit names what is left (`ROLLBACK_INCOMPLETE`). A Ctrl+C after the run's last check, just before `state.json`, lets it finish instead, and the exit says so.
 
@@ -433,14 +433,6 @@ Thrown during install's pre-flight, before any network call: by the install flow
 **Meaning:** `shardmind install <shard>` with no folder argument installs into a new folder named after the shard (#333). It was run from inside an existing vault: the current folder, or a folder above it, holds `.shardmind/state.json` (a shardmind vault) or `.obsidian/` (an Obsidian vault). A second vault nested inside the first is almost never what was meant (#337). Refused before any download or prompt; the message names the vault found.
 
 **Remedy:** To install into a new folder anyway, name it: `shardmind install <shard> my-vault` (a folder argument skips the check). To install into the vault in place, `cd` to the vault the message names (it can be above the current folder) and run `shardmind install <shard> .`, which keeps the existing-install gate and collision review. To upgrade it, `cd` there and run `shardmind update` for a shardmind vault, or `shardmind adopt <shard>` for an Obsidian vault with no shard yet. Also raised when a folder on the way up cannot be read: the check cannot tell whether it is a vault, and naming the folder skips it. An empty folder argument (an unset `$DEST`) counts as none.
-
-### `JSON_REQUIRES_DRY_RUN`
-
-**Meaning:** `--json` was passed without `--dry-run` on `adopt` or `update`. The JSON surface is currently the **plan** surface: the document is emitted at the dry-run decision point, before any conflict prompt. A decision the dry run itself would ask about fails with `UPDATE_JSON_NEEDS_ANSWERS` on update and `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES` on adopt.
-
-Allowing it on a real run would render no UI (the command renders nothing under `--json`) and emit no document, so the process would sit at a prompt nobody can answer and exit 0 — a silent no-op reporting success. The engine refuses instead.
-
-**Remedy:** Add `--dry-run` to get the machine-readable plan, or drop `--json` to execute with the normal interface.
 
 ### `INSTALL_NON_INTERACTIVE_WITHOUT_VALUES`
 

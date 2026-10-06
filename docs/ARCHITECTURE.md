@@ -823,6 +823,10 @@ Full diagnostic output. Replaces the old `doctor` command concept.
 
 Lists are uncapped and sorted by path. The terminal views sample at 20 entries, and the document never does.
 
+### 10.3b `update --json` and `adopt --json` — Plan or Run
+
+`--dry-run --json` is the plan: every file and what would happen to it, before any question. `--json` alone runs the command headless and answers with one result document: every file's outcome, the backup folder, the hooks, and an exit code that agrees with `ok` (#348). A real run never prompts: conflicts resolve as `--yes` resolves them, and any other question needs the flags its dry run needs, so a real run does exactly what its plan said. The exit codes and outcome names are 1.0 contract, listed in [`OPERATIONS.md §--json runs`](OPERATIONS.md).
+
 ### 10.4 `shardmind install <shard> [folder]` — Install Flow
 
 ```

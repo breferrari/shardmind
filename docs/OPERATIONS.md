@@ -136,6 +136,59 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 
 ---
 
+## `--json` runs
+
+`shardmind update --json` and `shardmind adopt --json` **run** the command when `--dry-run` is absent, and write exactly one JSON document on stdout, ending in a newline, then exit (#348). With `--dry-run` they write the plan instead. The exit codes and `outcome` names below are part of the 1.0 contract.
+
+**Never prompts.**
+- **Conflicts** resolve as `--yes` resolves them, whether or not `--yes` is passed:
+  - update keeps your version of each conflicting file;
+  - adopt with no `--mode` keeps all your differing files;
+  - adopt with `--mode` lets that mode decide.
+
+  Each such file is listed with `conflict: { resolution, by }`, where `by` is `"json-default"` or `"mode"`, so a script can find every file it never chose.
+- **Any other decision** needs the flags its dry run needs, so the real run does exactly what `--dry-run --json` with the same flags planned:
+  - update's new optional modules or removed files you edited need `--yes`, else `UPDATE_JSON_NEEDS_ANSWERS`;
+  - adopt's values need `--values` or `--yes`.
+
+**Exit codes**
+
+| Case | `ok` | Exit |
+|---|---|---|
+| Finished, whatever the hooks did (they are non-fatal) | `true` | 0 |
+| Update with nothing to do (`upToDate: true`) | `true` | 0 |
+| Refused before writing (needs answers, vault locked, bad flags, network, …) | `false` | 1 |
+| Failed and rolled back, or could not roll back (`ROLLBACK_INCOMPLETE`) | `false` | 1 |
+| Ctrl+C before or during the write: rolled back | `false`, `error.code: "CANCELLED"` | 130 |
+| Ctrl+C during the hooks: the update or adopt is committed, the hooks were cut short | `true` | 130 |
+
+**`result` of a real run** (`dryRun: false`):
+
+- **`files`**: every path, sorted, each with an `outcome`, plus `shardHash` / `userHash` / `renamedFrom` / `conflict` where they apply.
+- **Run details:** `backupDir` (the snapshot of what the run replaced), `hooks` (`slot`, `outcome`: `completed` / `failed` / `skipped`, `exitCode`, `message`, `log`), `warnings` and `durationMs`.
+- **update** also has `fromVersion`, `toVersion` and `counts`, and `upToDate: true` when there was nothing to do.
+- **adopt** also has `mode`, `version` and `counts`.
+
+| update `outcome` | Meaning |
+|---|---|
+| `written` | A new file the shard added |
+| `replaced` | Your untouched file, replaced by the new version |
+| `merged` | Your edits merged with the new version |
+| `restored` | A file you had deleted, put back |
+| `kept` | Your version kept (a conflict, or a removed file you edited) |
+| `kept-untracked` | Your file at a path the new version adds, left yours and untracked |
+| `deleted` | A file the new version dropped |
+| `unchanged` | Nothing to do |
+
+| adopt `outcome` | Meaning |
+|---|---|
+| `matched` | Already the shard's bytes |
+| `kept-mine` | Differed; your bytes kept |
+| `used-shard` | Differed; the shard's bytes written |
+| `merged` | Differed; auto-merged (experimental) |
+| `updated-behind` | Still the `--from-version` release's bytes; the new release written (#325) |
+| `installed` | The shard's file, new to the vault |
+
 ## Versioning
 
 ShardMind's own version is semver-pinned. Shards are semver-pinned by their GitHub tags (the `v` prefix is stripped before parsing).
