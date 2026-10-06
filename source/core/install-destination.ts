@@ -13,53 +13,57 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { shardNameOf } from './registry.js';
 import { ShardMindError } from '../runtime/types.js';
-import { isEnoent } from '../runtime/errno.js';
+import { errnoCode } from '../runtime/errno.js';
 
 export interface InstallDestination {
   /** The vault folder, absolute. */
   root: string;
-  /** As the user wrote it, or the default name; `.` in place. */
-  display: string;
-  /** `.`: the current folder, installed into as before #333. */
-  inPlace: boolean;
+  /** The folder as the user wrote it, or the default name; null in place (`.`). */
+  folder: string | null;
   /** The levels to make, outermost first; empty when the folder exists. */
   create: readonly string[];
 }
 
 export async function resolveInstallDestination(cwd: string, shardRef: string, folder?: string): Promise<InstallDestination> {
-  const display = folder ?? shardNameOf(shardRef);
-  const root = path.resolve(cwd, display);
-  if (root === path.resolve(cwd)) return { root, display: '.', inPlace: true, create: [] };
-  // A malformed ref is refused even with a folder given, as it would be later.
-  if (folder !== undefined) shardNameOf(shardRef);
+  // A malformed ref is refused first, whether or not a folder is given.
+  const name = shardNameOf(shardRef);
+  const given = folder ?? name;
+  const root = path.resolve(cwd, given);
+  if (root === path.resolve(cwd)) return { root, folder: null, create: [] };
 
-  // Each level from the nearest existing ancestor down: a folder, missing,
-  // or something else in the way.
-  const levels: string[] = [];
-  for (let at = root; ; at = path.dirname(at)) {
-    levels.unshift(at);
-    if (path.dirname(at) === at) break;
-  }
+  // Up from the vault folder to the nearest level that exists: everything
+  // below it is to make. A file at a level makes the levels under it ENOTDIR.
   const create: string[] = [];
-  for (const level of levels) {
-    if (create.length > 0) {
-      create.push(level);
-      continue;
-    }
-    const stat = await fsp.lstat(level).catch((err: unknown) => {
-      if (isEnoent(err)) return null;
+  for (let at = root; ; at = path.dirname(at)) {
+    const stat = await fsp.lstat(at).catch((err: unknown) => {
+      const code = errnoCode(err);
+      if (code === 'ENOENT' || code === 'ENOTDIR') return null;
       throw err;
     });
-    if (stat === null) create.push(level);
-    else if (!stat.isDirectory()) throw notEmpty(level, display, level === root ? 'is a file' : 'is a file, not a folder');
+    if (stat === null) {
+      create.unshift(at);
+      continue;
+    }
+    if (!stat.isDirectory()) throw notEmpty(at, given, 'is a file, not a folder');
+    break;
   }
-  if (create.length === 0 && (await fsp.readdir(root)).length > 0) throw notEmpty(root, display, 'is not empty');
-  return { root, display, inPlace: false, create };
+  if (create.length === 0 && !(await isEmptyFolder(root))) throw notEmpty(root, given, 'is not empty');
+  return { root, folder: given, create };
 }
 
-function notEmpty(at: string, display: string, what: string): ShardMindError {
+/** One entry read, not the whole listing. */
+async function isEmptyFolder(folder: string): Promise<boolean> {
+  const dir = await fsp.opendir(folder);
+  try {
+    return (await dir.read()) === null;
+  } finally {
+    await dir.close();
+  }
+}
+
+function notEmpty(at: string, given: string, what: string): ShardMindError {
   return new ShardMindError(
-    `Cannot install into ${display}: ${at} ${what}`,
+    `Cannot install into ${given}: ${at} ${what}`,
     'INSTALL_DESTINATION_NOT_EMPTY',
     `Give another folder name (\`shardmind install <shard> my-vault\`), or install into the current folder with \`.\`.`,
   );

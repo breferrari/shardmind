@@ -518,15 +518,6 @@ describe('vault transaction for an install into a folder it creates (#333)', () 
     expect(await fsp.readdir(vault)).toEqual([]);
   });
 
-  it('a level that existed is never removed', async () => {
-    await fsp.mkdir(path.join(vault, 'a'));
-    const root = path.join(vault, 'a', 'b');
-    const tx = await beginInto([root]);
-    expect(await tx.rollback()).toEqual([]);
-    expect(await exists(root)).toBe(false);
-    expect(await exists(path.join(vault, 'a'))).toBe(true);
-  });
-
   it('a file something else put in the folder during the run keeps it, named as a failure', async () => {
     const root = path.join(vault, 'wiki-mind');
     const tx = await beginInto([root]);
@@ -562,7 +553,7 @@ describe('vault transaction for an install into a folder it creates (#333)', () 
     expect((await fsp.lstat(path.join(vault, 'a', 'b'))).isFile()).toBe(true);
   });
 
-  it('a parent level another run made meanwhile is used, and not removed', async () => {
+  it('a parent level that exists, from before or made meanwhile by another run, is used and never removed', async () => {
     const levels = [path.join(vault, 'a'), path.join(vault, 'a', 'b')];
     await fsp.mkdir(levels[0]!);
     const tx = await beginInto(levels);

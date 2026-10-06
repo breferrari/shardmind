@@ -1475,33 +1475,20 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       }
     }, 45_000);
 
-    it('a failed write removes the folders the install made', async () => {
+    it.each([
+      ['removes the folders the install made', 'a/b', false, []],
+      ['into an existing empty folder keeps the folder', undefined, true, ['demo']],
+    ])('a failed write %s', async (_case, folder, preExisting, left) => {
       const { stub, fixtures } = getCtx();
       stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
       const cwd = await makeVaultDir('new-folder-fail');
-      const spy = failWritesUnder(path.join(cwd, 'a'));
+      if (preExisting) await fs.mkdir(path.join(cwd, 'demo'));
+      const spy = failWritesUnder(path.join(cwd, (folder ?? 'demo').split('/')[0]!));
       try {
-        const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: cwd, folder: 'a/b', options: { defaults: true } });
+        const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: cwd, folder, options: { defaults: true } });
         await waitFor(r.lastFrame, (f) => /EIO: injected/.test(f), 30_000);
-        expect(await fs.readdir(cwd)).toEqual([]);
-      } finally {
-        spy.mockRestore();
-        process.exitCode = undefined;
-        await cleanupVault(cwd);
-      }
-    }, 45_000);
-
-    it('a failed write into an existing empty folder keeps the folder', async () => {
-      const { stub, fixtures } = getCtx();
-      stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
-      const cwd = await makeVaultDir('new-folder-existing-fail');
-      await fs.mkdir(path.join(cwd, 'demo'));
-      const spy = failWritesUnder(path.join(cwd, 'demo'));
-      try {
-        const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: cwd, folder: undefined, options: { defaults: true } });
-        await waitFor(r.lastFrame, (f) => /EIO: injected/.test(f), 30_000);
-        expect(await fs.readdir(cwd)).toEqual(['demo']);
-        expect(await fs.readdir(path.join(cwd, 'demo'))).toEqual([]);
+        expect(await fs.readdir(cwd)).toEqual(left);
+        if (preExisting) expect(await fs.readdir(path.join(cwd, 'demo'))).toEqual([]);
       } finally {
         spy.mockRestore();
         process.exitCode = undefined;

@@ -2039,8 +2039,7 @@ Where `shardmind install <shard> [folder]` installs (#333; ARCHITECTURE §10.6).
 ```typescript
 interface InstallDestination {
   root: string;               // the vault folder, absolute
-  display: string;            // as the user wrote it, or the default name; '.' in place
-  inPlace: boolean;           // '.': the current folder, as before #333
+  folder: string | null;      // as the user wrote it, or the default name; null in place ('.')
   create: readonly string[];  // the levels to make, outermost first; [] when the folder exists
 }
 resolveInstallDestination(cwd: string, shardRef: string, folder?: string): Promise<InstallDestination>
@@ -2048,12 +2047,9 @@ resolveInstallDestination(cwd: string, shardRef: string, folder?: string): Promi
 shardNameOf(shardRef: string): string  // the <name> of <namespace>/<name>, from parseRef; REGISTRY_INVALID_REF otherwise
 ```
 
-1. `folder` absent: `shardNameOf(shardRef)`. `.` (or a path that resolves to `cwd`): `{ root: cwd, inPlace: true, create: [] }`, with no check here; the in-place install's own checks apply as before.
-2. Otherwise the path is resolved against `cwd`, and each level from `cwd` down is looked at (`lstat`):
-   - a missing level: it and every level below it go to `create`;
-   - a folder: the next level;
-   - anything else (a file, a link): `INSTALL_DESTINATION_NOT_EMPTY`, naming that path.
-3. The vault folder itself, when it exists: empty, it is installed into (`create: []`); not empty, `INSTALL_DESTINATION_NOT_EMPTY`, naming it and suggesting another name or `.`.
+1. `shardNameOf(shardRef)` first, so a malformed ref is refused whatever the folder. `folder` absent: that name. `.` (or a path that resolves to `cwd`): `{ root: cwd, folder: null, create: [] }`, with no check here; the in-place install's own checks apply as before.
+2. Otherwise the path is resolved against `cwd`, and walked up (`lstat`) to the nearest level that exists. Every level below it goes to `create`. A file at a level makes the ones under it `ENOTDIR`, so the walk reaches it: anything there but a folder (a file, a link) is `INSTALL_DESTINATION_NOT_EMPTY`, naming that path.
+3. The vault folder itself, when it exists: empty (one entry read, not the listing), it is installed into (`create: []`); not empty, `INSTALL_DESTINATION_NOT_EMPTY`, naming it and suggesting another name or `.`.
 4. With `create` non-empty, the install takes no lock at plan time (there is no folder to hold it), reads no state (there is none), and hands `create` to its transaction (`createRoot`, §4.28 step 0), which makes the folders when the install writes. `--dry-run` never does.
 
 ## 5. Runtime Module: `shardmind/runtime`

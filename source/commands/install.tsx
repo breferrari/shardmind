@@ -69,24 +69,15 @@ export default function Install({ args, options }: Props) {
     };
   }, [shardRef, folder, exit]);
 
-  if (destination === null) {
-    return (
-      <CommandFrame dryRun={options.dryRun} showLegend={false}>
-        <Box gap={1}>
-          <Spinner />
-          <Text>Starting…</Text>
-        </Box>
-      </CommandFrame>
-    );
+  if (destination !== null && !('error' in destination)) {
+    return <InstallRun shardRef={shardRef} options={options} destination={destination} />;
   }
-  if ('error' in destination) {
-    return (
-      <CommandFrame dryRun={options.dryRun} showLegend={false}>
-        <ErrorView error={destination.error} version={resolveEngineVersion()} />
-      </CommandFrame>
-    );
-  }
-  return <InstallRun shardRef={shardRef} options={options} destination={destination} />;
+  // Resolving takes a few file checks; a refusal shows as every error does.
+  return (
+    <CommandFrame dryRun={options.dryRun} showLegend={false}>
+      {destination === null ? null : <ErrorView error={destination.error} version={resolveEngineVersion()} />}
+    </CommandFrame>
+  );
 }
 
 function InstallRun({

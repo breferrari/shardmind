@@ -549,7 +549,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
           kind: 'summary',
           manifest: ctx.manifest,
           vaultRoot,
-          folder: destination.inPlace ? null : destination.display,
+          folder: destination.folder,
           fileCount: runResult.fileCount,
           durationMs: Date.now() - start,
           backups: [...runResult.backups, ...leftBackups],

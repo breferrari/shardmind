@@ -354,42 +354,51 @@ async function createVaultRoot(vaultRoot: string, root: CreateRoot): Promise<Cre
   const made: string[] = [];
   try {
     for (const folder of root.folders) {
-      try {
-        await fsp.mkdir(folder);
-        made.push(folder);
-      } catch (err) {
-        const isFolder = await fsp.lstat(folder).then((st) => st.isDirectory(), () => false);
-        if (folder === vaultRoot || !isFolder) {
+      const created = await fsp.mkdir(folder).then(
+        () => true,
+        (err: unknown) => {
           if (errnoCode(err) !== 'EEXIST') throw wrapWriteError('INSTALL_WRITE_FAILED', `Could not create ${folder}`, err);
-          throw new ShardMindError(
-            `Cannot install into ${vaultRoot}: ${folder} appeared after this install planned`,
-            'INSTALL_DESTINATION_NOT_EMPTY',
-            'Another run, or another program, took that folder. Give another folder name, or install into the current folder with `.`.',
-          );
-        }
+          return false;
+        },
+      );
+      if (created) made.push(folder);
+      else if (folder === vaultRoot || !(await isFolder(folder))) {
+        throw new ShardMindError(
+          `Cannot install into ${vaultRoot}: ${folder} appeared after this install planned`,
+          'INSTALL_DESTINATION_NOT_EMPTY',
+          'Another run, or another program, took that folder. Give another folder name, or install into the current folder with `.`.',
+        );
       }
     }
     return { made, lock: root.lock() };
   } catch (err) {
-    for (const folder of [...made].reverse()) await fsp.rmdir(folder).catch(() => {});
+    await removeMadeFolders(made);
     throw err;
   }
 }
 
+const isFolder = (abs: string): Promise<boolean> => fsp.lstat(abs).then((st) => st.isDirectory(), () => false);
+
 /** The rollback's last step for a vault it made: release the lock, then remove the folders, once empty. */
 async function removeVaultRoot(root: CreatedRoot): Promise<RollbackFailure[]> {
   root.lock.release();
-  const failures: RollbackFailure[] = [];
-  for (const folder of [...root.made].reverse()) {
+  return removeMadeFolders(root.made);
+}
+
+/**
+ * The folders a begin made, deepest first, each once empty. One something
+ * else put a file into during the run is left, and named: it and the levels
+ * above it stay.
+ */
+async function removeMadeFolders(made: readonly string[]): Promise<RollbackFailure[]> {
+  for (const folder of [...made].reverse()) {
     try {
       await fsp.rmdir(folder);
     } catch (err) {
-      // Something else put a file there during the run: left, and named.
-      if (!isEnoent(err)) failures.push({ path: folder, reason: `remove failed: ${reasonOf(err)}` });
-      break;
+      return isEnoent(err) ? [] : [{ path: folder, reason: `remove failed: ${reasonOf(err)}` }];
     }
   }
-  return failures;
+  return [];
 }
 
 async function uniqueBackupPath(absolutePath: string, stamp: string): Promise<string> {
