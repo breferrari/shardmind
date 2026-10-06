@@ -1967,7 +1967,7 @@ beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTran
 
 ### 4.29 Headless `--json` runs: `commands/headless/` and `cli-kit/parse.ts`
 
-A `--json` run of a command listed in `cli.ts`'s `HEADLESS_JSON` never loads Ink (#34, #302): a mounted Ink app writes terminal codes around a document, adds a blank line at unmount (§4.23) and offers prompts. `validate` was the first; status follows, then adopt and update as each moves to a UI-free flow (#302).
+A `--json` run of a command listed in `cli.ts`'s `HEADLESS_JSON` never loads Ink (#34, #302): a mounted Ink app writes terminal codes around a document, adds a blank line at unmount (§4.23) and offers prompts. `validate` was the first; status and adopt follow (adopt through its UI-free flow, §4.30), then update.
 
 ```typescript
 // cli-kit/parse.ts (Ink-free)
@@ -1981,6 +1981,37 @@ run<Command>Json(argv: readonly string[], engineVersion: string | undefined, wri
 3. **Run.** The runner calls the command's core directly: status calls `buildStatusReport(cwd, { verbose, skipUpdateCheck: false, uncapped: true })`.
 4. **Answer.** One document through `emitJson`: `jsonSuccess(command, result)` and exit 0, or `jsonFailure(command, err)` and exit 1. A parse error is a failure document too, as `ARGS_INVALID` with the parser's message, where the Ink run printed the message and wrote no document: a `--json` caller never gets an empty stdout (§4.23). Status answers `statusResult(null)` (`{ installed: false }`) outside a vault, exit 0, as before.
 5. **Exit.** `cli.ts` sets the exit code, waits for stdout to drain (a pipe write can still be queued on Windows and macOS), and exits. A crash inside a runner reaches the top-level handler, which answers on stdout unless the runner already wrote its document (§4.23). A runner with something to clean up (validate's downloaded shard) installs its own SIGINT handler, which cleans up and exits 130; status, which only reads, has none.
+
+### 4.30 UI-free flows: `core/flows/`
+
+A command's whole run, from its flags to its summary, as a function of its input and an `io` it is given, with no Ink, React or terminal in it (#302). The Ink machine (`commands/hooks/use-<command>-machine.ts`) becomes an adapter: it renders each question with its prompt component and each phase it is told of, and answers `ask` from the component's handler. A headless `--json` run (§4.29) calls the same flow with an `io` that never prompts. Adopt is the first; update and install follow.
+
+```typescript
+// core/flows/prepare-shard.ts
+interface PreparedShard { resolved: ResolvedShard; manifest: ShardManifest; schema: ShardSchema; tempDir: string; tarballSha256: string; cleanup(): Promise<void> }
+prepareShard(ref: string, opts: { command: 'install' | 'adopt'; engineVersion: string | undefined; onLoading(message: string): void; onCleanup(cleanup: () => Promise<void>): void }): Promise<PreparedShard>
+// core/flows/values.ts
+interface ValueAnswers { values: Record<string, unknown>; selections: ModuleSelections }
+loadValuesFile(path: string, schema: ShardSchema): Promise<Record<string, unknown>>
+answersWithoutPrompting(schema: ShardSchema, prefill: Record<string, unknown>, yes: boolean): ValueAnswers
+// core/flows/adopt.ts
+runAdoptFlow(input: AdoptFlowInput, io: AdoptFlowIO): Promise<AdoptFlowResult>
+```
+
+1. **`prepareShard`**: `resolve(ref, { command })`, then `downloadShard`, with the cleanup handed to `onCleanup` before the fetch, so a Ctrl+C during the download removes the temp dir (#57), then `parseManifest`, `assertEngineCompatible` (#121) and `parseSchema`. Each step is announced through `onLoading` ("Resolving …", "Downloading …", "Parsing manifest and schema…").
+2. **`answersWithoutPrompting`**: the prefill merged over the schema's defaults (`mergePrefill`). A required value still missing is `VALUES_MISSING`, whose hint names the way the run got here (`--yes`, or `--values` without a terminal). Then `resolveComputedDefaults` and the schema's validator, with the default module selections.
+3. **The adopt flow**, in the order the machine ran it:
+   1. `--json` without `--dry-run` is `JSON_REQUIRES_DRY_RUN`; `--from-version` is checked (`parseFromVersion`); then, unless dry run, `io.takeLock()` (#253) and `assertAdoptable`; then `prepareShard` and the `--values` file.
+   2. The values: `--yes` → `answersWithoutPrompting`. No terminal (`input.interactive` false) or `--json`: with `--values`, the same; without, `ADOPT_NON_INTERACTIVE_WITHOUT_VALUES` (#139, #198). Otherwise `io.ask({ kind: 'values' })`.
+   3. Validate the answers, `checkExternalToolsForRun` (#138), `io.phase({ kind: 'planning' })`, `classifyAdoption` (with the renames since `--from-version`, #179).
+   4. `--json --dry-run`: return `{ kind: 'plan', plan, mode }`, before any mode is resolved (#139).
+   5. The mode: none needed when nothing differs; else `--mode`, or `keep-all-mine` under `--yes`, or `io.ask({ kind: 'mode' })`. `keep-all-mine` / `use-all-theirs` decide every file; `decide-per-file` asks about each; `auto-merge` merges each differing file two ways (`twoWayUnionMerge`) and asks about the conflicting ones, or keeps the user's under a mode given without a prompt.
+   6. Each file left to decide: `io.ask({ kind: 'per-file', queue, currentIndex, resolutions })`, in order.
+   7. `runAdopt` with a signal from `io.newRunAbort()`, the run handed to `io.onRun(abort, run)` so a Ctrl+C waits for its rollback (#249), and its progress to `io.progress`. Once it returns, `io.onCommitted()`: past `state.json`, a Ctrl+C no longer rolls back.
+   8. `runHooks({ command: 'adopt' })` (§4.16a) with `io.hooks`, under an abort the flow hands to `io.onHookAbort` and clears after.
+   9. Return `{ kind: 'done', … }` with the summary, the hook outcomes and the external-tools lines. The temp dir is removed in a `finally`, whatever the outcome.
+4. **Answers that end the run**: `ask` rejects with `FlowCancelled` (a user cancelling a prompt); the flow lets it through. An executor failure is rethrown marked so that `adoptRolledBack(err)` says the vault was rolled back, as `installRolledBack` does for install.
+5. **Headless `adopt --json`** (`commands/headless/adopt.ts`): parses with `commands/options/adopt.ts` (§4.29), runs the flow with `interactive: false` and an `ask` that is never called (a dry run stops at the plan, and the values never prompt without a terminal), writes `jsonSuccess('adopt', adoptPlanResult(plan, …))` or `jsonFailure('adopt', err)`. A Ctrl+C during the download removes the temp dir and exits 130.
 
 ## 5. Runtime Module: `shardmind/runtime`
 
