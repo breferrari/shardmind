@@ -235,6 +235,17 @@ describe('status (adversarial)', () => {
     expect(report!.manifest.name).toBe('unknown');
   });
 
+  it('reports over a state.json whose version is not a string, or whose modules are null (#343)', async () => {
+    await installMinimal(vault);
+    const state = (await readState(vault)) as ShardState;
+    await fsp.writeFile(path.join(vault, STATE_FILE), JSON.stringify({ ...state, version: 1, modules: null }), 'utf-8');
+
+    const report = await buildStatusReport(vault, { verbose: false, skipUpdateCheck: true });
+    expect(report).not.toBeNull();
+    expect(report!.modules.included).toEqual([]);
+    expect(report!.warnings.some((w) => w.severity === 'error' && w.message.includes('Corrupt state.json'))).toBe(true);
+  });
+
   it('synthesizes a safe manifest when state.shard is whitespace-only', async () => {
     await installMinimal(vault);
     await fsp.rm(path.join(vault, CACHED_MANIFEST));

@@ -131,7 +131,7 @@ export async function buildStatusReport(
   // here so every `UpdateStatus.current` (via this closure or `resolveUpdate`)
   // and every equality check against `latest_version` uses the same value.
   // Mirrors the synthesizeManifest fallback for `state.shard`.
-  const currentVersion = state.version?.trim() || 'unknown';
+  const currentVersion = (typeof state.version === 'string' ? state.version.trim() : '') || 'unknown';
 
   const manifest = await loadCachedManifest(vaultRoot, warnings);
   const schema = await loadCachedSchema(vaultRoot, warnings);
@@ -183,7 +183,7 @@ export async function buildStatusReport(
               drift.modified.slice(0, cap(MAX_PATHS_PER_BUCKET)),
               effectiveManifest,
               rawValues,
-              state.modules,
+              state.modules && typeof state.modules === 'object' ? state.modules : {},
             )
           : Promise.resolve(null),
         // The lint walks drift's files; after a failed detection it would
@@ -322,7 +322,9 @@ function summarizeDrift(drift: DriftReport, limit: number, failed: boolean): Sta
 function buildModuleSummary(state: ShardState): StatusModuleSummary {
   const included: string[] = [];
   const excluded: string[] = [];
-  for (const [id, status] of Object.entries(state.modules).sort(([a], [b]) =>
+  // A hand-broken state.json can hold anything here (#343): no modules then.
+  const modules = state.modules && typeof state.modules === 'object' ? state.modules : {};
+  for (const [id, status] of Object.entries(modules).sort(([a], [b]) =>
     a.localeCompare(b),
   )) {
     if (status === 'included') included.push(id);

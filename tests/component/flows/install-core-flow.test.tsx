@@ -18,6 +18,7 @@ import {
 } from '../../../source/core/flows/install.js';
 import { FlowCancelled } from '../../../source/core/flows/cancelled.js';
 import { createInstalledVault } from '../../e2e/helpers/vault.js';
+import { readState } from '../../../source/core/state.js';
 
 describe('install flow, UI-free (#302)', () => {
   const getCtx = setupFlowSuite({ shards: { [SHARD_SLUG]: { versions: {} as Record<string, string>, latest: '0.1.0' } } });
@@ -137,6 +138,44 @@ describe('install flow, UI-free (#302)', () => {
       expect(result.backups.map((b) => path.basename(b.originalPath))).toEqual(['Home.md']);
     } finally {
       await fs.rm(valuesFile, { force: true });
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  /** A vault installed in place, then its state.json broken against the contract (#343). */
+  async function brokenStateVault(): Promise<string> {
+    const vault = await makeVaultDir('install-core-broken-state');
+    const done = await runInstallFlow(input(vault, { defaults: true }), scriptedIO(() => 'backup').io);
+    expect(done.kind).toBe('done');
+    const file = path.join(vault, '.shardmind', 'state.json');
+    const state = JSON.parse(await fs.readFile(file, 'utf-8')) as Record<string, unknown>;
+    await fs.writeFile(file, JSON.stringify({ ...state, modules: { brain: 'maybe' } }), 'utf-8');
+    return vault;
+  }
+
+  it('over a state.json that breaks its contract: STATE_CORRUPT, naming the field and pointing at --force (#343)', async () => {
+    pinShard();
+    const vault = await brokenStateVault();
+    try {
+      await expect(runInstallFlow(input(vault, { defaults: true }), scriptedIO(() => 'backup').io)).rejects.toMatchObject({
+        code: 'STATE_CORRUPT',
+        message: expect.stringContaining('modules["brain"]'),
+        hint: expect.stringContaining('--force'),
+      });
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
+  it('--force reinstalls over a state.json that breaks its contract, and writes a valid one (#343)', async () => {
+    pinShard();
+    const vault = await brokenStateVault();
+    try {
+      const result = await runInstallFlow(input(vault, { defaults: true, force: true }), scriptedIO(() => 'backup').io);
+      expect(result.kind).toBe('done');
+      const state = await readState(vault);
+      expect(Object.values(state!.modules).every((m) => m === 'included' || m === 'excluded')).toBe(true);
+    } finally {
       await cleanupVault(vault);
     }
   }, 60_000);
