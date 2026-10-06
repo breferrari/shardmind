@@ -446,6 +446,12 @@ Criterion: **obsidian-mind v6 does not need these to install, configure, or upgr
 | `shardmind init` ([#84](https://github.com/breferrari/shardmind/issues/84)) | The obsidian-mind author already has the shard; copying `examples/minimal-shard/` works | A new command; it does not interact with install or update |
 | `shardmind eject` ([#83](https://github.com/breferrari/shardmind/issues/83)) | Deleting `.shardmind/` and `shard-values.yaml` leaves a working vault (VISION: "ShardMind is additive, not load-bearing") | A new command that does those deletes, with an optional backup |
 
+**Reserved for composition** (#81, reserved in 1.0 by #368, so composition lands in 1.x without a breaking change):
+
+- **The state schema bumps.** A vault with one shard stays at `state.json` `schema_version` 2. The first overlay rewrites it at a new schema version, with a forward migration (`state-migrator.ts`). An engine that predates composition refuses a composed vault: update and adopt with `STATE_UNSUPPORTED_VERSION`, status with its newer-state notice (#344), and the runtime's `loadState` with the same error (#368), never a misread.
+- **`.shardmind/shards/`** is reserved for each overlay's cached `shard.yaml`, `shard-schema.yaml` and templates, at `.shardmind/shards/<namespace>/<name>/`. No engine writes there before composition, and a shard never ships it (`.shardmind/` is Tier 1).
+- **Overlay values live at the vault root as `shard-values.<namespace>.<name>.yaml`**, beside the base shard's `shard-values.yaml`, which keeps its name. A shard does not ship a file matching `shard-values.*.yaml`.
+
 Also planned in Phase 15, outside the layout contract:
 
 - Named registries in a user config, with `--registry` ([#39](https://github.com/breferrari/shardmind/issues/39)). Today `SHARDMIND_REGISTRY_INDEX_URL` points at another index (docs/OPERATIONS.md), and `github:owner/repo` bypasses the registry.
