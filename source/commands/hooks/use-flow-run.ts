@@ -118,8 +118,10 @@ export function useFlowRun<P extends { kind: string }>(opts: {
       const show = (next: P | ((prev: P) => P)) => {
         if (!disposed) setPhase(next);
       };
-      // This run's handle: a superseded run never clears its successor's.
+      // This run's handle and hooks' abort: a superseded run never clears
+      // its successor's.
       let mine: RunInFlight | null = null;
+      let myHookAbort: AbortController | null = null;
       const dropMine = () => {
         if (runRef.current === mine) runRef.current = null;
       };
@@ -157,7 +159,13 @@ export function useFlowRun<P extends { kind: string }>(opts: {
             if (disposed) void cleanup().catch(() => {});
             else ctxCleanupRef.current = cleanup;
           },
-          newRunAbort,
+          // A run superseded after its last question goes no further: its
+          // executor gets an aborted signal and stops before it writes.
+          newRunAbort: () => {
+            const abort = newRunAbort();
+            if (disposed) abort.abort();
+            return abort;
+          },
           onRun: (abort, run) => {
             mine = trackRun(abort, run);
             runRef.current = mine;
@@ -166,7 +174,12 @@ export function useFlowRun<P extends { kind: string }>(opts: {
           // during them can't walk the run back.
           onCommitted: dropMine,
           onHookAbort: (abort) => {
-            hookAbortRef.current = abort;
+            if (abort) {
+              myHookAbort = abort;
+              hookAbortRef.current = abort;
+            } else if (hookAbortRef.current === myHookAbort) {
+              hookAbortRef.current = null;
+            }
           },
         },
       };
