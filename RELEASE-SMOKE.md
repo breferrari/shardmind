@@ -74,6 +74,7 @@ cd "$INSTALL_DIR"
 "$SHARDMIND_CLI" install github:breferrari/obsidian-mind
 ```
 
+- **The vault lands in `$INSTALL_DIR/obsidian-mind`**, a folder the install made (#333), and the summary ends with `Your vault is in …` and a `cd obsidian-mind` line. `cd obsidian-mind` before the checks below that read the vault.
 - **Wizard advances on every value prompt**, including the select with `default = first option` (the #103 regression check). Pressing Enter on the default-focused option must advance — not freeze.
 - **Module multiselect** accepts arrow + space + Enter; live file count updates as modules toggle.
 - **Computed-default preview** renders in the summary frame before the confirm screen (values computed from entered module selections).
@@ -91,8 +92,8 @@ cd "$CANCEL_DIR"
 ```
 
 - Process exits with status 130 (SIGINT) within ~1s.
-- `.shardmind/` does not exist; `shard-values.yaml` does not exist; no `*.shardmind-backup-*` files; no managed-path content. The dir is exactly as it was pre-run modulo the empty mktemp shell.
-- Repeat with Ctrl+C during the `running-hook` phase (post-confirm, after the wizard). The process exits 130 and the install **stays committed**: `.shardmind/state.json` and `shard-values.yaml` exist and the managed files are written. The machines clear their rollback flags before the hook runs (`docs/IMPLEMENTATION.md §4.16`), because the vault is complete by then and a hook is non-fatal. Only the hook's own work is cut short (#155).
+- No `obsidian-mind` folder: a cancel before the install writes leaves nothing to remove (#333). No `.shardmind/`, no `shard-values.yaml`, no `*.shardmind-backup-*` files. The dir is exactly as it was pre-run, the empty mktemp shell.
+- Repeat with Ctrl+C during the `running-hook` phase (post-confirm, after the wizard). The process exits 130 and the install **stays committed**: `obsidian-mind/.shardmind/state.json` and `obsidian-mind/shard-values.yaml` exist and the managed files are written. The machines clear their rollback flags before the hook runs (`docs/IMPLEMENTATION.md §4.16`), because the vault is complete by then and a hook is non-fatal. Only the hook's own work is cut short (#155).
 
 ## Result table
 

@@ -70,9 +70,11 @@ shardmind --version
 Node 22+ required.
 
 ```bash
-# In an empty directory you want to make into a vault
+# Makes ./obsidian-mind and installs the vault into it, as git clone does
 shardmind install github:breferrari/obsidian-mind                # interactive wizard
 shardmind install --defaults github:breferrari/obsidian-mind     # accept all defaults
+shardmind install github:breferrari/obsidian-mind my-vault       # into ./my-vault instead
+shardmind install github:breferrari/obsidian-mind .              # into the current folder
 
 # In an existing vault you cloned before shardmind support
 shardmind adopt github:breferrari/obsidian-mind
@@ -115,8 +117,8 @@ shardmind --verbose                      # Full diagnostics (values, modules, fi
 shardmind --json                         # Status as one JSON document (uncapped file lists)
 shardmind --version                      # Print package version
 
-# Install a shard into the current directory
-shardmind install <shard>
+# Install a shard into a new folder named after it, or [folder] ("." for the current one)
+shardmind install <shard> [folder]
   --values <file>                          # Prefill answers from YAML
   --defaults                               # Use schema defaults; skip wizard (Invariant 1 mode)
   --yes                                    # Accept defaults for every prompt

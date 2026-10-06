@@ -164,7 +164,7 @@ Each authoring and CLI proposal is built, or declined with a reason that survive
 | ✅ | Show a stack trace and a report link for an unexpected error | [#225](https://github.com/breferrari/shardmind/issues/225) |
 | ✅ | End every --json document with a single newline | [#231](https://github.com/breferrari/shardmind/issues/231) |
 | ✅ | Refuse a second shardmind run on a vault while one is in progress | [#253](https://github.com/breferrari/shardmind/issues/253) |
-| ⬜ | Install into a new folder named after the shard, with an optional name, as git clone does | [#333](https://github.com/breferrari/shardmind/issues/333) |
+| ✅ | Install into a new folder named after the shard, with an optional name, as git clone does | [#333](https://github.com/breferrari/shardmind/issues/333) |
 
 ## Phase 8 — release and test tooling
 

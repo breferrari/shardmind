@@ -527,9 +527,9 @@ It renders with your schema's defaults; pass `--values <file>` to check the temp
 The fastest dev loop avoids cutting a tag for every change. Install once from a branch or commit SHA via the `#<ref>` syntax, then push and run `shardmind update` to pull each new commit.
 
 1. Push your work-in-progress to a branch on your GitHub account (default branch is fine; a feature branch is fine).
-2. In an empty directory: `shardmind install github:<user>/<shard>#<branch> --dry-run`. Fix anything broken.
-3. Drop `--dry-run` for a real install. Inspect the resulting vault.
-4. **Iterate**. After each push, run `shardmind update` from the same vault — the engine re-resolves the branch HEAD, fetches the new commit's tarball, and three-way-merges your local edits with the upstream changes.
+2. `shardmind install github:<user>/<shard>#<branch> --dry-run`. Fix anything broken. A dry run makes no folder.
+3. Drop `--dry-run` for a real install: it makes a folder named after the shard (or give one as the second argument). Inspect the resulting vault.
+4. **Iterate**. After each push, run `shardmind update` from inside that vault — the engine re-resolves the branch HEAD, fetches the new commit's tarball, and three-way-merges your local edits with the upstream changes.
 5. Use `scripts/smoke-install.sh` in the shardmind repo as a template for your own smoke harness.
 
 When you're ready to publish a stable release, tag it (`git tag v6.0.0 && git push --tags`) and re-install via `shardmind install github:<user>/<shard>` (no `#<ref>` — the latest stable release wins).
