@@ -85,6 +85,8 @@ export type AdoptFlowPhase =
 
 export interface AdoptFlowIO extends FlowRunIO {
   ask<Q extends AdoptQuestion>(question: Q): Promise<AdoptAnswer<Q>>;
+  /** A one-line warning for stderr, never stdout: a terminal run and a `--json` run alike (#347). */
+  warn(message: string): void;
   phase(phase: AdoptFlowPhase): void;
   progress(event: AdoptProgressEvent): void;
 }
@@ -103,12 +105,18 @@ export type AdoptFlowResult =
     };
 
 
+/** Printed once when auto-merge is chosen: it is outside the semver promise (#347). */
+export const AUTO_MERGE_EXPERIMENTAL =
+  "adopt: auto-merge is experimental. It keeps your lines and the shard's, ignores lines the shard deleted, and can duplicate lines. Review the merged files.";
+
 export async function runAdoptFlow(given: AdoptFlowInput, io: AdoptFlowIO): Promise<AdoptFlowResult> {
   // Refused before the network call: nothing downloaded can fix it. Kept
   // normalized (`v5.1.0` → `5.1.0`) for the renames and the base release.
   const input: AdoptFlowInput =
     given.fromVersion === undefined ? given : { ...given, fromVersion: parseFromVersion(given.fromVersion) };
   const { vaultRoot, dryRun, json, yes, mode } = input;
+  // A mode given on the command line is in force from the start, a dry run included.
+  if (mode === 'auto-merge') io.warn(AUTO_MERGE_EXPERIMENTAL);
   // `--json` is the plan surface only: executing under it would render
   // nothing and wait at a prompt nobody sees.
   if (json && !dryRun) {
@@ -277,6 +285,8 @@ async function resolveDiffers(
   const selected = given ?? (await io.ask({ kind: 'mode', shard, answers, plan }));
   // A mode given on the command line settles conflicts without a prompt.
   const interactive = given === undefined;
+  // Chosen in the picker; a --mode auto-merge warned when the run started.
+  if (interactive && selected === 'auto-merge') io.warn(AUTO_MERGE_EXPERIMENTAL);
 
   if (selected === 'keep-all-mine' || selected === 'use-all-theirs') {
     const decision: AdoptFileChoice = selected === 'keep-all-mine' ? 'keep_mine' : 'use_shard';

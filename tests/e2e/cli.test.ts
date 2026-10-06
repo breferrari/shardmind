@@ -1858,6 +1858,33 @@ describe('shardmind adopt', () => {
     expect(await vault.exists('.shardmind/state.json')).toBe(false);
   });
 
+  it('--mode auto-merge --dry-run --json: one document on stdout, the experimental warning on stderr (#347)', async () => {
+    vault = await createEmptyVault('adopt-json-auto-merge');
+    await vault.writeFile('Home.md', '# My own home (not the shard version)');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['adopt', SHARD_REF, '--values', valuesPath, '--mode', 'auto-merge', '--dry-run', '--json'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    // The whole of stdout parses: the warning never reaches it.
+    const doc = JSON.parse(result.stdout);
+    expect(doc).toMatchObject({ ok: true, command: 'adopt', result: { dryRun: true, mode: 'auto-merge' } });
+    expect(result.stdout).not.toMatch(/experimental/);
+    expect(result.stderr).toMatch(/auto-merge is experimental/);
+  });
+
+  it('--mode keep-all-mine --dry-run --json prints no experimental warning (#347)', async () => {
+    vault = await createEmptyVault('adopt-json-keep-all');
+    const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
+    const result = await spawnCli(
+      ['adopt', SHARD_REF, '--values', valuesPath, '--mode', 'keep-all-mine', '--dry-run', '--json'],
+      { cwd: vault.root, env: envWithStub() },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toMatch(/experimental/);
+  });
+
   it('exits cleanly on SIGINT mid-download and leaves the vault and temp dir as they were (#57)', async () => {
     vault = await createEmptyVault('adopt-sigint');
     await vault.writeFile('Home.md', '# My own home\n');

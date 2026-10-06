@@ -51,6 +51,7 @@ describe('adopt --from-version: files still at the base release (#325)', () => {
   function scriptedIO(answer: (q: AdoptQuestion) => unknown) {
     const asked: AdoptQuestion[] = [];
     const io: AdoptFlowIO = {
+      warn: () => {},
       ask: async (q) => {
         asked.push(q);
         return answer(q) as never;
