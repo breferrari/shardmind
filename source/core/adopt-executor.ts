@@ -138,6 +138,8 @@ export interface AdoptSummary {
   adoptedShard: string[];
   /** Files written by the auto-merge mode's union merge (#120). */
   adoptedMerged: string[];
+  /** Files still at the `--from-version` base release, given the shard's bytes (#325). */
+  updatedBehind: string[];
   installedFresh: string[];
   totalManaged: number;
   /** Files moved to a rename migration's new path (`--from-version`, #179). */
@@ -218,12 +220,17 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
   } = opts;
 
   await assertAdoptable(vaultRoot);
+  // A file still at the base release takes the shard's bytes, whatever the
+  // mode (#325): the user never changed it.
+  const behind = new Set(plan.behind.map((c) => c.path));
+  const decided: AdoptResolutions = { ...resolutions, ...Object.fromEntries([...behind].map((p) => [p, 'use_shard' as const])) };
+  const differing = [...plan.differs, ...plan.behind];
   const moves = plannedMoves(plan);
   // Every path adopt writes or starts tracking, before any of them (#163),
   // and the old paths of the files it moves, checked as writes: a moved link
   // would land at a managed path (#179).
   await assertSafeVaultPaths(vaultRoot, [
-    ...[...plan.matches, ...plan.shardOnly, ...plan.differs].map((c) => c.path),
+    ...[...plan.matches, ...plan.shardOnly, ...differing].map((c) => c.path),
     ...moves.map((m) => m.from),
   ]);
   // A move's new path was free when classified; refuse before any write if
@@ -234,7 +241,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
   // progress emission. Order: matches → shard-only → differs (the differs
   // bucket fans out into keep_mine vs use_shard inside the loop).
   const totalActions =
-    plan.matches.length + plan.shardOnly.length + plan.differs.length;
+    plan.matches.length + plan.shardOnly.length + differing.length;
   onProgress?.({ kind: 'start', total: totalActions });
 
   // The run's snapshot, introduced paths and created folders (#301). A
@@ -249,6 +256,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     adoptedMine: [],
     adoptedShard: [],
     adoptedMerged: [],
+    updatedBehind: [],
     installedFresh: [],
     totalManaged: 0,
     renamedFiles: [],
@@ -300,11 +308,11 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
       summary.installedFresh.push(c.path);
     }
 
-    for (const c of plan.differs) {
+    for (const c of differing) {
       index++;
       if (c.kind !== 'differs') continue;
       if (!dryRun) throwIfCancelled(signal);
-      const resolution = resolutions[c.path];
+      const resolution = decided[c.path];
       if (resolution === undefined) {
         throw new ShardMindError(
           `Missing adopt resolution for ${c.path}`,
@@ -342,7 +350,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
           await tx.recordWrite(c.path);
           await writeVaultFileBuffer(vaultRoot, c.path, c.shardContent);
         }
-        summary.adoptedShard.push(c.path);
+        (behind.has(c.path) ? summary.updatedBehind : summary.adoptedShard).push(c.path);
       } else {
         // Auto-merge (#120): write the union-merged bytes. The result is
         // user-customized content (it contains the user's lines), so it is
@@ -362,7 +370,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
     for (const move of moves) {
       if (tx) {
         throwIfCancelled(signal);
-        await completeMove(vaultRoot, move, resolutions[move.to], tx.introduced);
+        await completeMove(vaultRoot, move, decided[move.to], tx.introduced);
       }
       summary.renamedFiles.push({ from: move.from, to: move.to });
     }
@@ -423,7 +431,7 @@ interface PlannedMove {
 
 function plannedMoves(plan: AdoptPlan): PlannedMove[] {
   const moves: PlannedMove[] = [];
-  for (const c of [...plan.matches, ...plan.differs]) {
+  for (const c of [...plan.matches, ...plan.differs, ...plan.behind]) {
     const from = movedFromOf(c);
     if (from !== undefined) moves.push({ from, to: c.path, matched: c.kind === 'matches' });
   }

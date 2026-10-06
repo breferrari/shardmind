@@ -123,10 +123,13 @@ export interface AdoptPlanFile {
    * `differs`   — the file exists in both and diverges; the only bucket a
    *               `--mode` actually decides.
    * `shard-only`— the shard would add it; the vault has nothing there.
+   * `behind`    — differs from the shard but equals the `--from-version`
+   *               base release: never edited, so it takes the shard's
+   *               bytes whatever the mode (#325).
    */
-  readonly classification: 'matches' | 'differs' | 'shard-only';
+  readonly classification: 'matches' | 'differs' | 'behind' | 'shard-only';
   readonly shardHash: string;
-  /** Present only for `differs` — the user's on-disk bytes. */
+  /** Present only for `differs` and `behind` — the user's on-disk bytes. */
   readonly userHash?: string;
   readonly shardBytes?: number;
   readonly userBytes?: number;
@@ -169,9 +172,12 @@ export interface AdoptPlanResult {
   readonly counts: {
     readonly matches: number;
     readonly differs: number;
+    readonly behind: number;
     readonly shardOnly: number;
     readonly totalShardFiles: number;
   };
+  /** With `--from-version`: the base release, and why it could not be read, if so (#325). */
+  readonly base?: { readonly version: string; readonly unavailable?: string };
   /** Every file, uncapped — sorted by path so diffs between runs are stable. */
   readonly files: readonly AdoptPlanFile[];
 }
@@ -183,6 +189,7 @@ export function adoptPlanResult(
   const files = [
     ...plan.matches.map((e) => adoptFile(e, 'matches')),
     ...plan.differs.map((e) => adoptFile(e, 'differs')),
+    ...plan.behind.map((e) => adoptFile(e, 'behind')),
     ...plan.shardOnly.map((e) => adoptFile(e, 'shard-only')),
   ].sort((a, b) => byPath(a.path, b.path));
 
@@ -192,9 +199,11 @@ export function adoptPlanResult(
     counts: {
       matches: plan.matches.length,
       differs: plan.differs.length,
+      behind: plan.behind.length,
       shardOnly: plan.shardOnly.length,
       totalShardFiles: plan.totalShardFiles,
     },
+    ...(plan.base ? { base: plan.base } : {}),
     files,
   };
 }

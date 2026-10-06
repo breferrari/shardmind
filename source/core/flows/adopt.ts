@@ -10,7 +10,7 @@
  */
 
 import { ShardMindError } from '../../runtime/types.js';
-import { classifyAdoption, type AdoptClassification, type AdoptPlan } from '../adopt-planner.js';
+import { baseOutputHashes, classifyAdoption, type AdoptClassification, type AdoptPlan } from '../adopt-planner.js';
 import { twoWayUnionMerge } from '../adopt-merge.js';
 import { parseFromVersion, renamesBetween } from '../rename-migrations.js';
 import { sha256 } from '../fs-utils.js';
@@ -97,6 +97,8 @@ export type AdoptFlowResult =
       hooks: HookOutcome[];
       externalTools: string[];
       durationMs: number;
+      /** With `--from-version`: the base release, and why it could not be read, if so (#325). */
+      base?: AdoptPlan['base'];
     };
 
 
@@ -171,8 +173,11 @@ async function planAndAdopt(
 
   // With the values final, before the plan and any diff prompt (#138).
   const externalTools = await checkExternalToolsForRun({ manifest: shard.manifest, values, dryRun: input.dryRun });
+  // The release the vault was cloned from, rendered as this run renders the
+  // target: a file still at it was never changed (#325).
+  const base = input.fromVersion === undefined ? undefined : await loadBase(input, io, shard, answers);
   io.phase({ kind: 'planning', shard, answers });
-  const plan = await classifyAdoption({
+  const classified = await classifyAdoption({
     vaultRoot: input.vaultRoot,
     schema: shard.schema,
     manifest: shard.manifest,
@@ -182,7 +187,9 @@ async function planAndAdopt(
     // Rename migrations since the cloned release (#179).
     renames:
       input.fromVersion === undefined ? undefined : renamesBetween(shard.manifest.migrations, input.fromVersion, shard.manifest.version),
+    ...(base?.hashes ? { base: base.hashes } : {}),
   });
+  const plan: AdoptPlan = base ? { ...classified, base: base.info } : classified;
 
   // `--json --dry-run` is the agent's decision step: the per-file plan,
   // before any mode is resolved, since choosing `--mode` is what it informs.
@@ -191,6 +198,54 @@ async function planAndAdopt(
 
   const resolutions = plan.differs.length === 0 ? {} : await resolveDiffers(io, shard, answers, plan, mode, yes);
   return execute(input, io, shard, answers, plan, resolutions, externalTools);
+}
+
+/**
+ * The `--from-version` base release's output hashes (#325): fetched as the
+ * target was, rendered with this run's values and selections. A base that
+ * cannot be resolved, downloaded, parsed or rendered leaves the run as it
+ * was before #325, with the reason in the plan.
+ */
+async function loadBase(
+  input: AdoptFlowInput,
+  io: AdoptFlowIO,
+  shard: PreparedShard,
+  answers: ValueAnswers,
+): Promise<{ hashes?: Map<string, string>; info: NonNullable<AdoptPlan['base']> }> {
+  const version = input.fromVersion!;
+  let base: PreparedShard | undefined;
+  try {
+    base = await prepareShard(`${shard.resolved.source}@${version}`, {
+      resolve: (ref) => resolveRef(ref, { command: 'adopt' }),
+      // Never rendered into the vault: an engine range that no longer fits
+      // is no reason to give up the comparison.
+      engineVersion: undefined,
+      onLoading: (message) => io.phase({ kind: 'loading', message }),
+      // A Ctrl+C during the base download removes both downloads (#57).
+      onCleanup: (cleanup) =>
+        io.onCleanup(async () => {
+          await cleanup();
+          await shard.cleanup();
+        }),
+      parseMessage: `Reading ${version}, the release the vault was cloned from…`,
+    });
+    if (input.stop?.aborted) throw new FlowCancelled('Superseded by a newer run.');
+    const hashes = await baseOutputHashes({
+      schema: base.schema,
+      manifest: base.manifest,
+      tempDir: base.tempDir,
+      values: answers.values,
+      selections: answers.selections,
+      vaultRoot: input.vaultRoot,
+    });
+    return { hashes, info: { version } };
+  } catch (err) {
+    if (err instanceof FlowCancelled) throw err;
+    return { info: { version, unavailable: err instanceof Error ? err.message : String(err) } };
+  } finally {
+    await base?.cleanup().catch(() => {});
+    io.onCleanup(shard.cleanup);
+  }
 }
 
 /**
@@ -291,5 +346,13 @@ async function execute(
     }),
   );
 
-  return { kind: 'done', shard, summary: result.summary, hooks, externalTools, durationMs: Date.now() - start };
+  return {
+    kind: 'done',
+    shard,
+    summary: result.summary,
+    hooks,
+    externalTools,
+    durationMs: Date.now() - start,
+    ...(plan.base ? { base: plan.base } : {}),
+  };
 }
