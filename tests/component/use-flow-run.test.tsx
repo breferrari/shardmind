@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { Text } from 'ink';
 import { render, cleanup } from 'ink-testing-library';
 import os from 'node:os';

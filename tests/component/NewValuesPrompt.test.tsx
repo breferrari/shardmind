@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import NewValuesPrompt from '../../source/components/NewValuesPrompt.js';
 import type { ShardSchema } from '../../source/runtime/types.js';
 import { ENTER, tick, typeText, waitFor } from './helpers.js';

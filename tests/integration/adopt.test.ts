@@ -750,6 +750,7 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     await fsp.writeFile(path.join(vault, 'Home.md'), 'first\n', 'utf-8');
     await adopt(vault, { 'Home.md': 'use_shard' }, now);
     const [first] = await snapshotsOf(vault);
+    if (!first) throw new Error('expected the first adopt to leave a snapshot');
     // Make the vault adoptable again: only the first snapshot under
     // .shardmind/ and a Home.md with different user bytes.
     for (const name of await fsp.readdir(vault)) {
@@ -773,6 +774,7 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     await fsp.writeFile(path.join(vault, 'Home.md'), 'first\n', 'utf-8');
     await adopt(vault, { 'Home.md': 'use_shard' }, now);
     const [first] = await snapshotsOf(vault);
+    if (!first) throw new Error('expected the first adopt to leave a snapshot');
     for (const name of await fsp.readdir(vault)) {
       if (name !== '.shardmind') await fsp.rm(path.join(vault, name), { recursive: true });
     }
@@ -993,7 +995,7 @@ describe('adopt pipeline (against examples/minimal-shard)', () => {
     // "empty plan" footnote — this test makes sure runAdopt actually
     // exercises that branch end-to-end rather than crashing on a zero
     // total or skipping the metadata writes.
-    const { manifest, schema } = await loadShard();
+    const { schema } = await loadShard();
     const validator = buildValuesValidator(schema);
     const values = validator.parse(resolveComputedDefaults(schema, VALUES));
     // Exclude every removable module. `brain` is non-removable, so

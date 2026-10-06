@@ -18,7 +18,7 @@ import { parseSchema, buildValuesValidator } from '../../source/core/schema.js';
 import { readState } from '../../source/core/state.js';
 import { defaultModuleSelections, resolveComputedDefaults } from '../../source/core/install-planner.js';
 import { runInstall } from '../../source/core/install-executor.js';
-import { classifyAdoption } from '../../source/core/adopt-planner.js';
+import { classifyAdoption, movedFromOf } from '../../source/core/adopt-planner.js';
 import { runAdopt, type AdoptResolution } from '../../source/core/adopt-executor.js';
 import { renamesBetween } from '../../source/core/rename-migrations.js';
 import { sha256 } from '../../source/core/fs-utils.js';
@@ -87,11 +87,19 @@ describe('adopt --from-version applies rename migrations (#179)', () => {
     await fsp.rm(path.join(vault, 'shard-values.yaml'), { force: true });
   }
 
+  /** The plan alone: classified with the given renames, nothing run. */
+  async function classify(shardDir: string, renames: Map<string, string>) {
+    const manifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(shardDir, '.shardmind', 'shard-schema.yaml'));
+    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, BASE_VALUES)) as Record<string, unknown>;
+    return classifyAdoption({ vaultRoot: vault, schema, manifest, tempDir: shardDir, values, selections: defaultModuleSelections(schema), renames });
+  }
+
   async function adopt(
     shardDir: string,
     fromVersion?: string,
     resolve: (userBytes: Buffer) => AdoptResolution = () => 'keep_mine',
-    opts: { renames?: Map<string, string>; beforeRun?: () => Promise<void>; classifyOnly?: boolean } = {},
+    opts: { renames?: Map<string, string>; beforeRun?: () => Promise<void> } = {},
   ) {
     const manifest = await parseManifest(path.join(shardDir, '.shardmind', 'shard.yaml'));
     const schema = await parseSchema(path.join(shardDir, '.shardmind', 'shard-schema.yaml'));
@@ -99,7 +107,6 @@ describe('adopt --from-version applies rename migrations (#179)', () => {
     const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, BASE_VALUES)) as Record<string, unknown>;
     const renames = opts.renames ?? (fromVersion ? renamesBetween(manifest.migrations, fromVersion, manifest.version) : undefined);
     const plan = await classifyAdoption({ vaultRoot: vault, schema, manifest, tempDir: shardDir, values, selections, renames });
-    if (opts.classifyOnly) return { plan, result: undefined };
     const resolutions: Record<string, AdoptResolution> = {};
     for (const c of plan.differs) {
       if (c.kind === 'differs') resolutions[c.path] = resolve(c.userContent);
@@ -129,7 +136,8 @@ describe('adopt --from-version applies rename migrations (#179)', () => {
     await cloneOfV1();
     const before = await read(COPY);
     const { plan, result } = await adopt(await shardV2(), '0.1.0');
-    expect(plan.matches.find((c) => c.path === 'AGENTS.md')?.movedFrom).toBe(COPY);
+    const moved = plan.matches.find((c) => c.path === 'AGENTS.md');
+    expect(moved && movedFromOf(moved)).toBe(COPY);
     expect(await exists(COPY)).toBe(false);
     expect(await read('AGENTS.md')).toBe(before);
     expect((await files())['AGENTS.md']?.ownership).toBe('managed');
@@ -208,7 +216,7 @@ describe('adopt --from-version applies rename migrations (#179)', () => {
     await write('agents', 'a file, not a folder\n');
     const renames = new Map([[COPY, 'agents/AGENTS.md']]);
     // Windows reports ENOENT, not ENOTDIR, under a file: the folder check catches it.
-    const { plan } = await adopt(v2, undefined, undefined, { renames, classifyOnly: true });
+    const plan = await classify(v2, renames);
     expect(plan.shardOnly.map((c) => c.path)).toContain('agents/AGENTS.md');
     expect([...plan.matches, ...plan.differs].some((c) => c.kind !== 'shard-only' && c.movedFrom !== undefined)).toBe(false);
   });

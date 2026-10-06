@@ -401,12 +401,12 @@ describe('buildValuesValidator', () => {
       plugins: ['dataview', 'templater'],
       tags: ['notes'],
     });
-    expect(valid.user_name).toBe('Alice');
-    expect(valid.dark_mode).toBe(true);
-    expect(valid.max_notes).toBe(50);
-    expect(valid.vault_purpose).toBe('engineering');
-    expect(valid.plugins).toEqual(['dataview', 'templater']);
-    expect(valid.tags).toEqual(['notes']);
+    expect(valid['user_name']).toBe('Alice');
+    expect(valid['dark_mode']).toBe(true);
+    expect(valid['max_notes']).toBe(50);
+    expect(valid['vault_purpose']).toBe('engineering');
+    expect(valid['plugins']).toEqual(['dataview', 'templater']);
+    expect(valid['tags']).toEqual(['notes']);
   });
 
   it('enforces min/max on number type', async () => {
@@ -424,12 +424,12 @@ describe('buildValuesValidator', () => {
     // `agents` has min: 1 — an empty selection must be rejected.
     expect(() => validator.parse({ agents: [] })).toThrow();
     // A single valid selection passes.
-    expect(validator.parse({ agents: ['codex'] }).agents).toEqual(['codex']);
+    expect(validator.parse({ agents: ['codex'] })['agents']).toEqual(['codex']);
     // Omitting `agents` falls back to the synthesized default ['claude'] (length 1, ok).
-    expect(validator.parse({}).agents).toEqual(['claude']);
+    expect(validator.parse({})['agents']).toEqual(['claude']);
     // `themes` has max: 1 — selecting two must be rejected.
     expect(() => validator.parse({ agents: ['claude'], themes: ['dark', 'light'] })).toThrow();
-    expect(validator.parse({ agents: ['claude'], themes: ['dark'] }).themes).toEqual(['dark']);
+    expect(validator.parse({ agents: ['claude'], themes: ['dark'] })['themes']).toEqual(['dark']);
   });
 
   it('rejects invalid select values', async () => {
@@ -448,7 +448,7 @@ describe('buildValuesValidator', () => {
       user_name: 'Alice',
       vault_purpose: 'engineering',
     });
-    expect(result.user_name).toBe('Alice');
+    expect(result['user_name']).toBe('Alice');
   });
 
   it('applies .default() for non-computed defaults', async () => {
@@ -459,9 +459,9 @@ describe('buildValuesValidator', () => {
       user_name: 'Alice',
       vault_purpose: 'engineering',
     });
-    expect(result.dark_mode).toBe(true);
-    expect(result.max_notes).toBe(10);
-    expect(result.tags).toEqual(['notes', 'vault']);
+    expect(result['dark_mode']).toBe(true);
+    expect(result['max_notes']).toBe(10);
+    expect(result['tags']).toEqual(['notes', 'vault']);
   });
 
   it('skips .default() for computed defaults ({{ expressions }})', async () => {
@@ -471,7 +471,7 @@ describe('buildValuesValidator', () => {
     // is_engineering has a computed default — should not be applied as zod default
     // Passing without is_engineering should work (it's optional) but not pre-fill
     const result = validator.parse({ vault_purpose: 'engineering' });
-    expect(result.is_engineering).toBeUndefined();
+    expect(result['is_engineering']).toBeUndefined();
   });
 });
 

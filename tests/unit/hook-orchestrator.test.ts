@@ -3,7 +3,6 @@ import os from 'node:os';
 import fsp from 'node:fs/promises';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { runHooks, bootstrapShouldRerun, type HookRunPlan, type HookRunResult, type HookRunUi } from '../../source/core/hook-orchestrator.js';
-import { writeState } from '../../source/core/state.js';
 import { sha256 } from '../../source/core/fs-utils.js';
 import { makeShardState, makeFileState } from '../helpers/shard-state.js';
 import type { HookSlot, ShardManifest, ShardSchema } from '../../source/runtime/types.js';
@@ -761,7 +760,7 @@ describe('runHooks — user edits made before the hook phase (#150)', () => {
   it('runs no re-hash when no slot runs', async () => {
     const files = { 'mine.md': await edited('mine.md') };
     const result = await runHooks(
-      updatePlan({ manifest: manifest(undefined), state: makeShardState({ files }) }),
+      updatePlan({ manifest: manifest({}), state: makeShardState({ files }) }),
       NOOP_UI,
     );
     expect(result.stateChanged).toBe(false);

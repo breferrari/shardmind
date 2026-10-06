@@ -100,10 +100,10 @@ describe('InstallWizard', () => {
     const [{ values, selections }] = onComplete.mock.calls[0] as [
       { values: Record<string, unknown>; selections: ModuleSelections },
     ];
-    expect(values.user_name).toBe('Alice');
-    expect(values.org_name).toBe('Independent');
-    expect(selections.core).toBe('included');
-    expect(selections.extras).toBe('included');
+    expect(values['user_name']).toBe('Alice');
+    expect(values['org_name']).toBe('Independent');
+    expect(selections['core']).toBe('included');
+    expect(selections['extras']).toBe('included');
     expect(onCancel).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
   });

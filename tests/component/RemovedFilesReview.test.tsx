@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import RemovedFilesReview from '../../source/components/RemovedFilesReview.js';
 import { ARROW_DOWN, ENTER, tick, waitFor } from './helpers.js';
 

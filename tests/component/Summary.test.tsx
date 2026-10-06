@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import Summary, { cdCommand } from '../../source/components/Summary.js';
 import type { ShardManifest } from '../../source/runtime/types.js';
 import type { BackupRecord } from '../../source/core/install-executor.js';

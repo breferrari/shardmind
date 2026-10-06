@@ -433,9 +433,9 @@ describe.skipIf(noPty())('Layer 2 harness — fixture builders', () => {
           'utf-8',
         ),
       ) as Record<string, unknown>;
-      expect(manifest.name).toBe('phase3-named-shard');
-      expect(manifest.namespace).toBe('l2test');
-      expect(manifest.version).toBe('0.1.0');
+      expect(manifest['name']).toBe('phase3-named-shard');
+      expect(manifest['namespace']).toBe('l2test');
+      expect(manifest['version']).toBe('0.1.0');
     } finally {
       await fs.rm(outDir, { recursive: true, force: true });
     }

@@ -3,7 +3,6 @@
  * tree, mounted as Pastel mounts it, on a local shard directory.
  */
 
-import React from 'react';
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
 import fs from 'node:fs/promises';

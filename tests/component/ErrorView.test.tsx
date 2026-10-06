@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import ErrorView from '../../source/components/ErrorView.js';
 import { ShardMindError } from '../../source/runtime/types.js';
 

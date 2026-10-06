@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import AdoptDiffView, {
   type AdoptDiffAction,
 } from '../../source/components/AdoptDiffView.js';

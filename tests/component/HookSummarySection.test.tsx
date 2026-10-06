@@ -11,7 +11,6 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import chalk from 'chalk';
 import HookSummarySection from '../../source/components/HookSummarySection.js';
 import type { HookOutcome } from '../../source/core/hook-orchestrator.js';

@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import React from 'react';
 import { render } from 'ink-testing-library';
 import ExternalToolsSection from '../../source/components/ExternalToolsSection.js';
 

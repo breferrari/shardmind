@@ -374,7 +374,7 @@ describe('statusResult (#139)', () => {
         },
       }),
     );
-    expect(out.installed && out.files.modified).toEqual([
+    expect(out.installed && out.files?.modified).toEqual([
       { path: 'Home.md', linesAdded: 3, linesRemoved: 1 },
       { path: 'brain/Notes.md', diffSkipped: 'no-template' },
     ]);
@@ -396,11 +396,11 @@ describe('statusResult (#139)', () => {
         },
       }),
     );
-    expect(out.installed && out.files.modified).toEqual([
+    expect(out.installed && out.files?.modified).toEqual([
       { path: 'a.md', linesAdded: 1, linesRemoved: 2 },
       { path: 'z.md', linesAdded: 9, linesRemoved: 0 },
     ]);
-    expect(out.installed && out.files.missing).toEqual(['b.md', 'y.md']);
+    expect(out.installed && out.files?.missing).toEqual(['b.md', 'y.md']);
   });
 
   it('gives files: null when drift detection failed, never a clean zero count', () => {

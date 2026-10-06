@@ -36,7 +36,7 @@ afterAll(async () => {
   await dist?.cleanup();
 });
 
-function runCli(args: string[], opts: { tty?: boolean } = {}) {
+function runCli(args: readonly string[], opts: { tty?: boolean } = {}) {
   return spawnSync(process.execPath, [...(opts.tty ? ['--import', FAKE_TTY_IMPORT] : []), dist.cli, ...args], {
     cwd: dist.root,
     env: { ...process.env, CI: '1', NO_COLOR: '1', SHARDMIND_NO_UPDATE_CHECK: '1' },

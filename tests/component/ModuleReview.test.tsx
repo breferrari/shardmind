@@ -3,7 +3,7 @@ import { render, cleanup } from 'ink-testing-library';
 import React from 'react';
 import ModuleReview from '../../source/components/ModuleReview.js';
 import type { ModuleDefinition, ModuleSelections } from '../../source/runtime/types.js';
-import { ENTER, SPACE, ARROW_DOWN, tick, waitFor } from './helpers.js';
+import { ENTER, SPACE, tick, waitFor } from './helpers.js';
 
 afterEach(() => {
   cleanup();
@@ -95,9 +95,9 @@ describe('ModuleReview', () => {
     await waitFor(() => (onSubmit.mock.calls.length > 0 ? 'ok' : ''), (f) => f === 'ok');
 
     const [selections] = onSubmit.mock.calls[0] as [ModuleSelections];
-    expect(selections.core).toBe('included');
-    expect(selections.qmd).toBe('excluded');
-    expect(selections.research).toBe('included');
+    expect(selections['core']).toBe('included');
+    expect(selections['qmd']).toBe('excluded');
+    expect(selections['research']).toBe('included');
   });
 
   it('renders ↓ N more below when removable modules overflow the viewport (#100)', async () => {

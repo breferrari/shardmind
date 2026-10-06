@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import Header from '../../source/components/Header.js';
 import type { ShardManifest } from '../../source/runtime/types.js';
 

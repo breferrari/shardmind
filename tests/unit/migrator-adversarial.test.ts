@@ -36,7 +36,7 @@ describe('applyMigrations — hostile inputs', () => {
       { from_version: '2.0.0', changes: [{ type: 'added', key: 'safe_key', default: true }] },
     ]);
     // Nothing leaked onto the real prototype.
-    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
   });
 
   it('survives a migration whose transform throws a non-Error value', () => {

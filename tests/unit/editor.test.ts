@@ -194,7 +194,7 @@ describe('withTerminalReleased (#50)', () => {
   it('leaves raw mode for the call and restores it after', () => {
     const calls: boolean[] = [];
     const result = withTerminalReleased((on) => calls.push(on), () => {
-      calls.push(true === false);
+      calls.push(false);
       return 7;
     });
     expect(result).toBe(7);

@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 
 import StatusView from '../../source/components/StatusView.js';
 import type {
@@ -53,6 +52,7 @@ function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
       orphanedPaths: [],
       missingPaths: [],
       truncated: false,
+      failed: false,
     },
     update: { kind: 'up-to-date', current: '3.5.0' },
     modules: { included: ['brain'], excluded: ['extras'] },
@@ -62,6 +62,7 @@ function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
       invalidKeys: [],
       invalidCount: 0,
       fileMissing: false,
+      checked: true,
     },
     frontmatter: null,
     environment: null,

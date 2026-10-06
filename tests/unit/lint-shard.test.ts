@@ -8,7 +8,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // A template named `Unreadable…` fails to read with EACCES: an I/O failure,
 // not a problem in the shard (#35).
 vi.mock('node:fs/promises', async (importOriginal) => {
-  const real = await importOriginal<typeof import('node:fs/promises')>();
+  // `import fsp from 'node:fs/promises'` reads the default export: the module
+  // itself, which the import type does not name.
+  const real = await importOriginal<typeof import('node:fs/promises') & { default: typeof import('node:fs/promises') }>();
   const readFile = ((p: unknown, ...rest: unknown[]) =>
     String(p).includes('Unreadable')
       ? Promise.reject(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }))

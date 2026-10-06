@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup } from 'ink-testing-library';
-import React from 'react';
 import NewModulesReview from '../../source/components/NewModulesReview.js';
 import type { ModuleDefinition } from '../../source/runtime/types.js';
 import { ENTER, SPACE, tick, waitFor } from './helpers.js';

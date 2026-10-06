@@ -24,12 +24,11 @@ import {
 import { sha256 } from '../../source/core/fs-utils.js';
 import type {
   ShardSchema,
-  ShardState,
   ModuleSelections,
   RenderContext,
   DriftReport,
 } from '../../source/runtime/types.js';
-import { SHARDMIND_DIR, CACHED_TEMPLATES } from '../../source/runtime/vault-paths.js';
+import { CACHED_TEMPLATES } from '../../source/runtime/vault-paths.js';
 import { makeShardState, makeFileState, makeShardSource } from '../helpers/index.js';
 
 const NOW = new Date('2026-04-20T00:00:00Z');
@@ -54,6 +53,8 @@ function renderCtx(values: Record<string, unknown> = {}): RenderContext {
     shard: { name: 'test', version: '1.0.0' },
     install_date: NOW.toISOString(),
     year: '2026',
+    vault_name: '',
+    vault_slug: '',
   };
 }
 

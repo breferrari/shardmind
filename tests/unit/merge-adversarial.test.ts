@@ -23,6 +23,8 @@ const CTX: RenderContext = {
   shard: { name: 'test', version: '0.1.0' },
   install_date: '2026-04-19',
   year: '2026',
+  vault_name: '',
+  vault_slug: '',
 };
 
 describe('merge adversarial — control characters in line content', () => {
@@ -634,7 +636,7 @@ describe('merge adversarial — duplicate-density stress', () => {
   });
 
   it('all lines unique is the sparsest duplicate case', () => {
-    const lines = Array.from({ length: 500 }, (_, i) => crypto.randomUUID());
+    const lines = Array.from({ length: 500 }, () => crypto.randomUUID());
     const content = lines.join('\n') + '\n';
     const result = threeWayMerge(content, content, content);
     expect(result.content).toBe(content);

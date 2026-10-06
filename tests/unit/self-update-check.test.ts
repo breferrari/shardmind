@@ -378,7 +378,7 @@ describe('self-update-check', () => {
       // exceed vitest's per-test timeout.
       globalThis.fetch = vi.fn(
         (_url: string | URL | Request, init?: RequestInit) =>
-          new Promise((_, reject) => {
+          new Promise<Response>((_, reject) => {
             init?.signal?.addEventListener('abort', () => {
               const err = new Error('The operation was aborted.');
               err.name = 'AbortError';
@@ -406,7 +406,7 @@ describe('self-update-check', () => {
       const controller = new AbortController();
       globalThis.fetch = vi.fn(
         (_url: string | URL | Request, init?: RequestInit) =>
-          new Promise((_, reject) => {
+          new Promise<Response>((_, reject) => {
             init?.signal?.addEventListener('abort', () => {
               const err = new Error('aborted');
               err.name = 'AbortError';
