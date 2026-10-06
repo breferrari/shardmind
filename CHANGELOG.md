@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Changed (shards that use newer fields declare the engine they need — #370)
+
+- Docs: a shard that uses a `shard.yaml` or `shard-schema.yaml` field added after 1.0 must declare `requires.shardmind` with the version that added it. An older ShardMind ignores fields it does not know and would install the shard without them, silently; with the range declared, it refuses before writing anything (AUTHORING, SHARD-LAYOUT "Fields added after 1.0").
+
 ### Changed (`dependencies` in shard.yaml is defined and validated — #369)
 
 - **`shard.yaml`'s `dependencies` now has a defined meaning and is validated**: it names other shards this shard needs installed alongside it. Each entry's `name` and `namespace` follow the manifest's own rule (lowercase letters, digits, hyphens), and its `version` must be a semver range such as `^1.0.0`. An entry that breaks these is refused (`MANIFEST_VALIDATION_FAILED`, naming it), where before any strings were accepted and ignored. The engine still does not fetch them; fetching is planned (#82), and defining the field now means it gains no new meaning when that lands. No published shard declares `dependencies`.
