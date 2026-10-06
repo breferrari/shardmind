@@ -319,7 +319,7 @@ Use `npm ci` for routine syncing after `git pull` — it installs exactly what t
 
 - **Language**: TypeScript, ESM, strict mode.
 - **Formatting**: follow the existing style in the codebase. No formatter configured yet — consistency by convention.
-- **No `any`** except in `source/core/schema.ts` and `source/runtime/values.ts` zod dynamic generation (documented in spec; the runtime copy is a necessary duplicate because `runtime/` can't import from `core/`). Prefer `unknown` + type narrowing everywhere else.
+- **No `any`** except in `source/runtime/values-validator.ts` zod dynamic generation (documented in spec; one validator shared by the engine and the runtime, in `runtime/` because `runtime/` can't import from `core/`). Prefer `unknown` + type narrowing everywhere else.
 - **No `as unknown as` casts** in `source/` except in `source/commands/hooks/shared.ts::appendHookOutput` — the cast narrows the generic `P extends { kind: string }` to `RunningHookPhase` inside the `kind === 'running-hook'` branch. Both machines' Phase unions intersect `RunningHookPhase`, so the runtime is sound; the cast is what lets the helper be shared across install and update without exposing their internal phase shapes. Documented in place.
 - **No `@ts-ignore` or `@ts-nocheck`**. Fix root causes. If a suppression is truly needed, comment why.
 - **Prefer `zod`** for validation at external boundaries: shard.yaml parsing, values validation, CLI arg parsing (Pastel handles this).

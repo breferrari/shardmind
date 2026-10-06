@@ -6,7 +6,10 @@ export default defineConfig([
     entry: { cli: 'source/cli.ts' },
     format: ['esm'],
     dts: true,
-    clean: true,
+    // No `clean` here: the configs build in parallel, and this one's
+    // declaration step deletes every `.d.ts` in dist/ when it starts, which
+    // wiped dist/runtime/index.d.ts whenever the runtime's types finished
+    // first (#358). `npm run build` empties dist/ once, before tsup starts.
     target: 'node18',
     banner: { js: '#!/usr/bin/env node' },
   },

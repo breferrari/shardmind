@@ -2125,6 +2125,16 @@ exitProcess(code?: number): void
 
 ## 5. Runtime Module: `shardmind/runtime`
 
+What a hook script or a shard's own scripts may import. After 1.0 every export is semver-bound, and ShardMind serves anyone's shards, so the surface is complete rather than trimmed to what one shard uses (#358). `tests/unit/runtime-exports.test.ts` pins the list, in the source and in the built `dist/runtime/index.d.ts`.
+
+- **Functions:** `resolveVaultRoot`, `loadValues`, `loadState`, `loadSchema`, `getIncludedModules`, `validateValues`, `validateFrontmatter` (§5.1–5.7).
+- **`ShardMindError`:** what they throw; `err.code` is an `ErrorCode` (`docs/ERRORS.md`).
+- **Constants:** `SHARDMIND_DIR` (`.shardmind`), `STATE_FILE` (`.shardmind/state.json`, joined with the platform's separator) and `VALUES_FILE` (`shard-values.yaml`), relative to the vault root.
+- **Types**, type-only:
+  - the hook contexts: `BootstrapContext`, `PersonalizeContext`, `PostUpdateContext`, `HookContextBase`, `HookSlot` and `SlottedHookContext`, plus the deprecated flat `HookContext`, which goes when `post-install` does;
+  - `ErrorCode`;
+  - the shapes the functions return: `ShardState`, `FileState`, `ModuleSelections`, `ShardSchema`, `ValueDefinition`, `GroupDefinition`, `ModuleDefinition`, `SignalDefinition`, `FrontmatterRule`, `Migration`, `MigrationChange`, `ValidationResult`, `FrontmatterValidationResult`, `ShardManifest`.
+
 ### 5.1 `resolveVaultRoot()`
 
 Walk up from `process.cwd()` looking for `.shardmind/state.json`. Max 20 levels. Return absolute path or throw.
@@ -2147,7 +2157,7 @@ Load state → filter `state.modules` where value is `'included'` → return key
 
 ### 5.6 `validateValues()`
 
-Build zod schema from `ShardSchema` (same logic as `schema.ts:buildValuesValidator`). Run `.safeParse()`. Return `ValidationResult`.
+Run the engine's own values validator (`buildValuesValidator`, in `runtime/values-validator.ts`; `core/schema.ts` re-exports it) with `.safeParse()`. Return `ValidationResult`. One implementation, so a hook and the engine always agree on what a valid value is; a computed default (`{{ … }}`) is left unset, as the engine leaves it until install resolves it.
 
 ### 5.7 `validateFrontmatter(filePath, content)`
 

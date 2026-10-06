@@ -251,7 +251,7 @@ Everything 1.0 freezes is either decided or built: the contract review's behavio
 |---|---|---|
 | ✅ | Validate state.json on read | [#343](https://github.com/breferrari/shardmind/issues/343) |
 | ✅ | Report a state.json from a newer ShardMind in status instead of failing | [#344](https://github.com/breferrari/shardmind/issues/344) |
-| ⬜ | Pin the shardmind/runtime surface for 1.0 (supersedes the reversed trim, [#345](https://github.com/breferrari/shardmind/issues/345)) | [#358](https://github.com/breferrari/shardmind/issues/358) |
+| ✅ | Pin the shardmind/runtime surface for 1.0 (supersedes the reversed trim, [#345](https://github.com/breferrari/shardmind/issues/345)) | [#358](https://github.com/breferrari/shardmind/issues/358) |
 | ✅ | Document the reserved transform error code and report invalid values clearly | [#346](https://github.com/breferrari/shardmind/issues/346) |
 | ✅ | Mark adopt --mode auto-merge experimental | [#347](https://github.com/breferrari/shardmind/issues/347) |
 | ⬜ | Give the slotted hooks a reinstall's removed files and the defaults flag | [#356](https://github.com/breferrari/shardmind/issues/356) |

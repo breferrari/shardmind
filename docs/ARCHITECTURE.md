@@ -1398,7 +1398,14 @@ export async function getIncludedModules(): Promise<string[]>;
 
 /** Resolve vault root by walking up from cwd looking for .shardmind/. */
 export function resolveVaultRoot(): string;
+
+/** Vault paths, relative to the vault root. */
+export const SHARDMIND_DIR: string;  // '.shardmind'
+export const STATE_FILE: string;     // '.shardmind/state.json'
+export const VALUES_FILE: string;    // 'shard-values.yaml'
 ```
+
+`validateValues` runs the engine's own validator, so the runtime and the engine cannot disagree. The types in §16.3 are exported type-only, with `ErrorCode` and the hook contexts. IMPLEMENTATION §5 has the full list, and `tests/unit/runtime-exports.test.ts` pins it.
 
 ### 16.3 Types
 
