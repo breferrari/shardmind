@@ -101,16 +101,25 @@ describe('updateRunResult (#348)', () => {
     const hooks: HookOutcome[] = [
       { slot: 'bootstrap', summary: { exitCode: 0, stdout: 'ok', stderr: '', logPath: '.shardmind/logs/bootstrap.log' } },
       { slot: 'personalize', summary: { skipped: 'values-are-defaults' } },
-      { slot: 'post-update', summary: { exitCode: 1, stderr: '\nhook timed out after 60s\nmore' } },
-      { slot: 'post-install', summary: null },
+      { slot: 'post-update', summary: { exitCode: 1, stderr: '\nhook timed out after 60s\nmore', failure: 'timeout' } },
+      { slot: 'post-update', summary: null },
       { slot: 'post-update', summary: { deferred: true } },
     ] as unknown as HookOutcome[];
     const doc = updateRunResult({ plan: plan([]), resolutions: {}, summary: summary(), hooks, backupDir: null, migrationWarnings: [], externalTools: [], durationMs: 0 });
     expect(doc.hooks).toEqual([
       { slot: 'bootstrap', outcome: 'completed', exitCode: 0, log: '.shardmind/logs/bootstrap.log' },
       { slot: 'personalize', outcome: 'skipped' },
-      { slot: 'post-update', outcome: 'failed', exitCode: 1, message: 'hook timed out after 60s' },
+      { slot: 'post-update', outcome: 'failed', exitCode: 1, failure: 'timeout', message: 'hook timed out after 60s' },
     ]);
+  });
+
+  it('gives every failed hook a failure, even a summary that carries none (an exit, or a signal death)', () => {
+    const hooks = [
+      { slot: 'bootstrap', summary: { exitCode: 2, stderr: '' } },
+      { slot: 'post-update', summary: { exitCode: -1, stderr: '' } },
+    ] as unknown as HookOutcome[];
+    const doc = updateRunResult({ plan: plan([]), resolutions: {}, summary: summary(), hooks, backupDir: null, migrationWarnings: [], externalTools: [], durationMs: 0 });
+    expect(doc.hooks.map((h) => h.failure)).toEqual(['exit', 'killed']);
   });
 
   it('turns a hook boundary violation into a warning', () => {
