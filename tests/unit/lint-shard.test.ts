@@ -62,6 +62,17 @@ describe('lintShard (#34)', () => {
     expect(result.findings).toEqual([]);
   });
 
+  it('reports a dependency whose version is no semver range, naming the entry (#369)', async () => {
+    await edit('.shardmind/shard.yaml', (y) => `${y}
+dependencies:
+  - name: skills
+    namespace: kepano
+    version: latest
+`);
+    const found = errors(await lintShard(shard, {}));
+    expect(found).toContainEqual(expect.objectContaining({ code: 'MANIFEST_VALIDATION_FAILED', message: expect.stringContaining('dependencies.0.version') }));
+  });
+
   describe('external_tools (#138)', () => {
     const declareTool = (extra: string) =>
       edit('.shardmind/shard.yaml', (y) =>

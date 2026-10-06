@@ -91,10 +91,13 @@ export const ShardManifestSchema = z.object({
     // Deliberate match-all (`*`, `x`) stays valid.
     shardmind: SemverRangeSchema.optional(),
   }).optional(),
+  // Other shards this shard needs installed alongside it (#369): `name` and
+  // `namespace` as the manifest's own, `version` a semver range. Validated,
+  // not fetched; defined in 1.0 so that fetching (#82) gives it no new meaning.
   dependencies: z.array(z.object({
-    name: z.string(),
-    namespace: z.string(),
-    version: z.string(),
+    name: z.string().regex(/^[a-z0-9-]+$/, 'Must be lowercase alphanumeric with hyphens'),
+    namespace: z.string().regex(/^[a-z0-9-]+$/, 'Must be lowercase alphanumeric with hyphens'),
+    version: SemverRangeSchema,
   })).default([]),
   hooks: z.object({
     // `bootstrap` accepts the bare-string form (`bootstrap: path`) or the
