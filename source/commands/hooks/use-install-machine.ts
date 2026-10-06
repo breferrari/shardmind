@@ -259,7 +259,8 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
         // Before state is read: a plan made from a state another run is
         // changing would be stale (#253).
         if (!creating) takeLock();
-        const existing = await readState(vaultRoot);
+        // A folder the install will make holds no state yet (§4.31 step 4).
+        const existing = creating ? null : await readState(vaultRoot);
         if (defaults && existing && !force) {
           throw new ShardMindError(
             `Vault already shardmind-managed (${existing.shard}@${existing.version}); --defaults refuses to overwrite`,

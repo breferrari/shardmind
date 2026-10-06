@@ -539,11 +539,14 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       r.stdin.write(ENTER); // modules → confirm
       await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
       r.stdin.write(ENTER);
-      await waitFor(
+      const done = await waitFor(
         r.lastFrame,
         (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f),
         15_000,
       );
+      // In place (`.`, #333): no folder to point at, no cd line.
+      expect(done).not.toContain('Your vault is in');
+      expect(done).not.toMatch(/cd /);
       // Vault was actually written.
       const stateExists = await fs
         .stat(path.join(vault, '.shardmind', 'state.json'))

@@ -92,14 +92,9 @@ export default function Summary({
 
       {!dryRun && (
         <Box flexDirection="column">
-          {folder !== null && (
-            <>
-              <Text>Your vault is in {vaultRoot}</Text>
-              <Text bold>Next:</Text>
-              <Text>  {cdCommand(folder)}</Text>
-            </>
-          )}
-          {folder === null && <Text bold>Next:</Text>}
+          {folder !== null && <Text>Your vault is in {vaultRoot}</Text>}
+          <Text bold>Next:</Text>
+          {folder !== null && <Text>  {cdCommand(folder)}</Text>}
           <Text>  {openCmd}</Text>
         </Box>
       )}
