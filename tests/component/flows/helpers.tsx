@@ -209,12 +209,14 @@ export interface InstallOptions {
 export function mountInstall(opts: {
   shardRef: string;
   vaultRoot: string;
+  /** The folder argument (#333); `.` by default: these tests install in place. */
+  folder?: string | undefined;
   options?: InstallOptions;
 }): RenderResult {
   mockCwd(opts.vaultRoot);
   return render(
     <Install
-      args={[opts.shardRef]}
+      args={[opts.shardRef, 'folder' in opts ? opts.folder : '.']}
       options={{
         yes: false,
         defaults: false,

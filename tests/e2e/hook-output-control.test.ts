@@ -99,7 +99,7 @@ function install(
   });
   const child = spawn(
     process.execPath,
-    [...(tty ? ['--import', FAKE_TTY_IMPORT] : []), DIST_CLI, 'install', 'github:acme/hook-ctrl', '--yes', '--values', valuesPath],
+    [...(tty ? ['--import', FAKE_TTY_IMPORT] : []), DIST_CLI, 'install', 'github:acme/hook-ctrl', '.', '--yes', '--values', valuesPath],
     { cwd: vault.root, env, stdio: ['ignore', 'pipe', 'pipe'] },
   );
   let stdout = '';

@@ -174,7 +174,7 @@ export async function createInstalledVault(input: {
     const valuesPath = path.join(vault.root, `.values-${crypto.randomUUID()}.yaml`);
     await fs.writeFile(valuesPath, valuesYaml, 'utf-8');
 
-    const result = await install(['install', input.shardRef, '--yes', '--values', valuesPath], {
+    const result = await install(['install', input.shardRef, '.', '--yes', '--values', valuesPath], {
       cwd: vault.root,
       env: { SHARDMIND_GITHUB_API_BASE: input.stub.url },
     });

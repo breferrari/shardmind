@@ -399,7 +399,7 @@ describe('shardmind install', () => {
   it('--yes + --values installs the shard and writes state/values', async () => {
     vault = await createEmptyVault('install-happy');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
-    const result = await spawnCli(['install', SHARD_REF, '--yes', '--values', valuesPath], {
+    const result = await spawnCli(['install', SHARD_REF, '.', '--yes', '--values', valuesPath], {
       cwd: vault.root,
       env: envWithStub(),
     });
@@ -426,7 +426,7 @@ describe('shardmind install', () => {
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const filesBefore = await vault.listFiles();
     const result = await spawnCli(
-      ['install', SHARD_REF, '--dry-run', '--yes', '--values', valuesPath],
+      ['install', SHARD_REF, '.', '--dry-run', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -440,7 +440,7 @@ describe('shardmind install', () => {
   it('summary includes a platform-appropriate open hint', async () => {
     vault = await createEmptyVault('install-open-hint');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
-    const result = await spawnCli(['install', SHARD_REF, '--yes', '--values', valuesPath], {
+    const result = await spawnCli(['install', SHARD_REF, '.', '--yes', '--values', valuesPath], {
       cwd: vault.root,
       env: envWithStub(),
     });
@@ -463,7 +463,7 @@ describe('shardmind install', () => {
     vault = await createEmptyVault('install-pin');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const result = await spawnCli(
-      ['install', `${SHARD_REF}@0.1.0`, '--yes', '--values', valuesPath],
+      ['install', `${SHARD_REF}@0.1.0`, '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -474,7 +474,7 @@ describe('shardmind install', () => {
   it('rejects an unknown version with VERSION_NOT_FOUND', async () => {
     vault = await createEmptyVault('install-bad-version');
     const result = await spawnCli(
-      ['install', `${SHARD_REF}@9.9.9`, '--yes'],
+      ['install', `${SHARD_REF}@9.9.9`, '.', '--yes'],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(1);
@@ -484,7 +484,7 @@ describe('shardmind install', () => {
   it('rejects an unknown repo with a network / not-found error', async () => {
     vault = await createEmptyVault('install-unknown-repo');
     const result = await spawnCli(
-      ['install', 'github:unknown/repo', '--yes'],
+      ['install', 'github:unknown/repo', '.', '--yes'],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(1);
@@ -497,7 +497,7 @@ describe('shardmind install', () => {
   it('rejects a malformed ref with REGISTRY_INVALID_REF', async () => {
     vault = await createEmptyVault('install-bad-ref');
     const result = await spawnCli(
-      ['install', 'not-a-valid-ref', '--yes'],
+      ['install', 'not-a-valid-ref', '.', '--yes'],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(1);
@@ -507,7 +507,7 @@ describe('shardmind install', () => {
   it('--yes installs successfully without --values when every schema value has a default', async () => {
     vault = await createEmptyVault('install-yes-defaults');
     const result = await spawnCli(
-      ['install', SHARD_REF, '--yes'],
+      ['install', SHARD_REF, '.', '--yes'],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -520,7 +520,7 @@ describe('shardmind install', () => {
     // happy path the byte-equivalence test (later in this file) builds on.
     vault = await createEmptyVault('install-defaults');
     const result = await spawnCli(
-      ['install', SHARD_REF, '--defaults'],
+      ['install', SHARD_REF, '.', '--defaults'],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -544,7 +544,7 @@ describe('shardmind install', () => {
     vault = await createEmptyVault('install-defaults-with-values');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const result = await spawnCli(
-      ['install', SHARD_REF, '--defaults', '--values', valuesPath],
+      ['install', SHARD_REF, '.', '--defaults', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(1);
@@ -568,7 +568,7 @@ describe('shardmind install', () => {
       org_name: 'Acme',
     });
     const result = await spawnCli(
-      ['install', SHARD_REF, '--values', valuesPath],
+      ['install', SHARD_REF, '.', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -586,7 +586,7 @@ describe('shardmind install', () => {
     // nobody chose: `user_name: ""` would land in shard-values.yaml looking
     // exactly like a deliberate answer (#139 finding 6).
     vault = await createEmptyVault('install-no-tty-no-values');
-    const result = await spawnCli(['install', SHARD_REF], {
+    const result = await spawnCli(['install', SHARD_REF, '.'], {
       cwd: vault.root,
       env: envWithStub(),
     });
@@ -607,7 +607,7 @@ describe('shardmind install', () => {
       values: DEFAULT_VALUES,
       prefix: 'install-gate-no-tty',
     });
-    const result = await spawnCli(['install', SHARD_REF, '--yes'], {
+    const result = await spawnCli(['install', SHARD_REF, '.', '--yes'], {
       cwd: vault.root,
       env: envWithStub(),
     });
@@ -629,7 +629,7 @@ describe('shardmind install', () => {
       prefix: 'install-defaults-over-existing',
     });
     const result = await spawnCli(
-      ['install', SHARD_REF, '--defaults'],
+      ['install', SHARD_REF, '.', '--defaults'],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(1);
@@ -644,7 +644,7 @@ describe('shardmind install', () => {
     // sees a prompt that would block on stdin.
     vault = await createEmptyVault('install-defaults-no-wizard');
     const result = await spawnCli(
-      ['install', SHARD_REF, '--defaults'],
+      ['install', SHARD_REF, '.', '--defaults'],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -665,7 +665,7 @@ describe('shardmind install', () => {
     vault = await createEmptyVault('install-defaults-collision');
     await vault.writeFile('Home.md', 'hand-crafted user content\n');
     const result = await spawnCli(
-      ['install', SHARD_REF, '--defaults'],
+      ['install', SHARD_REF, '.', '--defaults'],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -683,7 +683,7 @@ describe('shardmind install', () => {
     vault = await createEmptyVault('install-collision');
     await vault.writeFile('Home.md', 'hand-crafted user content\n');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
-    const result = await spawnCli(['install', SHARD_REF, '--yes', '--values', valuesPath], {
+    const result = await spawnCli(['install', SHARD_REF, '.', '--yes', '--values', valuesPath], {
       cwd: vault.root,
       env: envWithStub(),
     });
@@ -704,7 +704,7 @@ describe('shardmind install', () => {
     await vault.writeFile('Home.md', 'untouched user content\n');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const result = await spawnCli(
-      ['install', SHARD_REF, '--dry-run', '--yes', '--values', valuesPath],
+      ['install', SHARD_REF, '.', '--dry-run', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -719,7 +719,7 @@ describe('shardmind install', () => {
   // An install run with --yes --force and these values, in the test's vault.
   async function installForce(values: Record<string, unknown>, extra: string[] = []) {
     const valuesPath = await writeValuesFile(vault, values);
-    return spawnCli(['install', SHARD_REF, '--yes', '--force', '--values', valuesPath, ...extra], {
+    return spawnCli(['install', SHARD_REF, '.', '--yes', '--force', '--values', valuesPath, ...extra], {
       cwd: vault.root,
       env: envWithStub(),
     });
@@ -811,7 +811,7 @@ describe('shardmind install', () => {
 
   it('--defaults --force reinstalls over an existing install', async () => {
     vault = await installed('install-force-defaults');
-    const result = await spawnCli(['install', SHARD_REF, '--defaults', '--force'], {
+    const result = await spawnCli(['install', SHARD_REF, '.', '--defaults', '--force'], {
       cwd: vault.root,
       env: envWithStub(),
     });
@@ -834,7 +834,7 @@ describe('shardmind install', () => {
     vault = await installed('install-force-dry-reinstall');
     const stateBefore = await vault.readFile('.shardmind/state.json');
     const valuesBefore = await vault.readFile('shard-values.yaml');
-    const result = await spawnCli(['install', SHARD_REF, '--dry-run', '--yes', '--force'], {
+    const result = await spawnCli(['install', SHARD_REF, '.', '--dry-run', '--yes', '--force'], {
       cwd: vault.root,
       env: envWithStub(),
     });
@@ -848,7 +848,7 @@ describe('shardmind install', () => {
   it('--force --values reinstalls without a TTY and without --yes', async () => {
     vault = await installed('install-force-headless-values');
     const valuesPath = await writeValuesFile(vault, { ...DEFAULT_VALUES, user_name: 'Bob' });
-    const result = await spawnCli(['install', SHARD_REF, '--force', '--values', valuesPath], {
+    const result = await spawnCli(['install', SHARD_REF, '.', '--force', '--values', valuesPath], {
       cwd: vault.root,
       env: envWithStub(),
     });
@@ -860,7 +860,7 @@ describe('shardmind install', () => {
   it('--force without a TTY and without values refuses and keeps the existing install', async () => {
     vault = await installed('install-force-headless-novalues');
     const stateBefore = await vault.readFile('.shardmind/state.json');
-    const result = await spawnCli(['install', SHARD_REF, '--force'], {
+    const result = await spawnCli(['install', SHARD_REF, '.', '--force'], {
       cwd: vault.root,
       env: envWithStub(),
     });
@@ -895,7 +895,7 @@ describe('shardmind install', () => {
         const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
         tmp = await childTmpDir();
         const result = await spawnCli(
-          ['install', SHARD_REF, '--yes', '--values', valuesPath],
+          ['install', SHARD_REF, '.', '--yes', '--values', valuesPath],
           {
             cwd: vault.root,
             env: { ...envWithStub(), ...tmp.env },
@@ -957,7 +957,7 @@ describe('shardmind install — Invariant 1', () => {
     // extras beyond engine metadata.
     vault = await createEmptyVault('install-invariant1');
     const installResult = await spawnCli(
-      ['install', SHARD_REF, '--defaults'],
+      ['install', SHARD_REF, '.', '--defaults'],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(installResult.exitCode).toBe(0);
@@ -1069,7 +1069,7 @@ describe('shardmind install — post-install hook', () => {
     vault = await createEmptyVault('install-hook');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const result = await spawnCli(
-      ['install', 'github:acme/hook-demo', '--yes', '--values', valuesPath],
+      ['install', 'github:acme/hook-demo', '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: hookStub.url } },
     );
     expect(result.exitCode).toBe(0);
@@ -1092,7 +1092,7 @@ describe('shardmind install — post-install hook', () => {
     vault = await createEmptyVault('install-hook-ctx');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const result = await spawnCli(
-      ['install', 'github:acme/hook-demo', '--yes', '--values', valuesPath],
+      ['install', 'github:acme/hook-demo', '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: hookStub.url } },
     );
     expect(result.exitCode).toBe(0);
@@ -1124,7 +1124,7 @@ describe('shardmind install — post-install hook', () => {
       qmd_enabled: false,
     });
     const result = await spawnCli(
-      ['install', 'github:acme/hook-demo', '--yes', '--values', valuesPath],
+      ['install', 'github:acme/hook-demo', '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: hookStub.url } },
     );
     expect(result.exitCode).toBe(0);
@@ -1142,7 +1142,7 @@ describe('shardmind install — post-install hook', () => {
     // resolution) would silently break Invariant 2 for hook authors.
     vault = await createEmptyVault('install-defaults-hook-ctx');
     const result = await spawnCli(
-      ['install', 'github:acme/hook-demo', '--defaults'],
+      ['install', 'github:acme/hook-demo', '.', '--defaults'],
       { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: hookStub.url } },
     );
     expect(result.exitCode).toBe(0);
@@ -1165,7 +1165,7 @@ describe('shardmind install — post-install hook', () => {
     vault = await createEmptyVault('install-hook-rehash');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const result = await spawnCli(
-      ['install', 'github:acme/hook-demo', '--yes', '--values', valuesPath],
+      ['install', 'github:acme/hook-demo', '.', '--yes', '--values', valuesPath],
       {
         cwd: vault.root,
         env: { SHARDMIND_GITHUB_API_BASE: hookStub.url, SHARDMIND_REHASH_TEST: '1' },
@@ -1199,7 +1199,7 @@ describe('shardmind install — post-install hook', () => {
     vault = await createEmptyVault('install-hook-dryrun');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const result = await spawnCli(
-      ['install', 'github:acme/hook-demo', '--dry-run', '--yes', '--values', valuesPath],
+      ['install', 'github:acme/hook-demo', '.', '--dry-run', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: hookStub.url } },
     );
     expect(result.exitCode).toBe(0);
@@ -1451,7 +1451,7 @@ describe('shardmind install — #ref syntax', () => {
     vault = await createEmptyVault('install-ref-main');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const result = await spawnCli(
-      ['install', `${SHARD_REF}#main`, '--yes', '--values', valuesPath],
+      ['install', `${SHARD_REF}#main`, '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(0);
@@ -1471,7 +1471,7 @@ describe('shardmind install — #ref syntax', () => {
   it('exits 1 with REF_NOT_FOUND for an unknown ref', async () => {
     vault = await createEmptyVault('install-ref-bogus');
     const result = await spawnCli(
-      ['install', `${SHARD_REF}#does-not-exist`, '--yes'],
+      ['install', `${SHARD_REF}#does-not-exist`, '.', '--yes'],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(result.exitCode).toBe(1);
@@ -1495,7 +1495,7 @@ describe('shardmind update — #ref re-resolution', () => {
 
     // Install via ref: state.ref='main', state.resolvedSha=BASE.
     const installResult = await spawnCli(
-      ['install', `${SHARD_REF}#main`, '--yes', '--values', valuesPath],
+      ['install', `${SHARD_REF}#main`, '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(installResult.exitCode).toBe(0);
@@ -1527,7 +1527,7 @@ describe('shardmind update — #ref re-resolution', () => {
     vault = await createEmptyVault('update-ref-stable');
     const valuesPath = await writeValuesFile(vault, DEFAULT_VALUES);
     const installResult = await spawnCli(
-      ['install', `${SHARD_REF}#main`, '--yes', '--values', valuesPath],
+      ['install', `${SHARD_REF}#main`, '.', '--yes', '--values', valuesPath],
       { cwd: vault.root, env: envWithStub() },
     );
     expect(installResult.exitCode).toBe(0);
@@ -1693,11 +1693,11 @@ describe('install — property-based invariants', () => {
               writeValuesFile(b, values),
             ]);
             const [resA, resB] = await Promise.all([
-              spawnCli(['install', SHARD_REF, '--yes', '--values', valuesPathA], {
+              spawnCli(['install', SHARD_REF, '.', '--yes', '--values', valuesPathA], {
                 cwd: a.root,
                 env: envWithStub(),
               }),
-              spawnCli(['install', SHARD_REF, '--yes', '--values', valuesPathB], {
+              spawnCli(['install', SHARD_REF, '.', '--yes', '--values', valuesPathB], {
                 cwd: b.root,
                 env: envWithStub(),
               }),
@@ -1754,7 +1754,7 @@ describe('install — property-based invariants', () => {
             const valuesPath = await writeValuesFile(vault, values);
             const before = (await vault.listFiles()).sort();
             const result = await spawnCli(
-              ['install', SHARD_REF, '--dry-run', '--yes', '--values', valuesPath],
+              ['install', SHARD_REF, '.', '--dry-run', '--yes', '--values', valuesPath],
               { cwd: vault.root, env: envWithStub() },
             );
             if (result.exitCode !== 0) {
@@ -2132,7 +2132,7 @@ describe('a bare owner/repo the registry cannot resolve (#200)', () => {
     vault = await createEmptyVault('bare-ref-install');
     // The stub is the suite's: count only this run's requests, for a slug no other test uses.
     const before = stub.requestedPaths().length;
-    const result = await spawnCli(['install', 'nobody/bare-ref', '--defaults'], { cwd: vault.root, env: missingIndex() });
+    const result = await spawnCli(['install', 'nobody/bare-ref', '.', '--defaults'], { cwd: vault.root, env: missingIndex() });
     expect(result.exitCode).toBe(1);
     const out = (result.stdout + result.stderr).replace(/\s+/g, ' ');
     expect(out).toContain('Run shardmind install github:nobody/bare-ref to take it straight from GitHub.');

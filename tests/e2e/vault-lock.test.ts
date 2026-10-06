@@ -113,7 +113,7 @@ describe('one run per vault (#253)', () => {
       expect(ok.exitCode, ok.stdout + ok.stderr).toBe(0);
       await expect(fs.access(lockOf(vault))).rejects.toThrow();
       // An install over the managed vault without --force refuses (non-interactive gate).
-      const refused = await spawnCli(['install', REF], { cwd: vault.root, env: env() });
+      const refused = await spawnCli(['install', REF, '.'], { cwd: vault.root, env: env() });
       expect(refused.exitCode).toBe(1);
       await expect(fs.access(lockOf(vault))).rejects.toThrow();
     } finally {

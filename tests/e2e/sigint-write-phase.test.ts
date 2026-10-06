@@ -107,7 +107,7 @@ describe('SIGINT while the executor writes the vault (#186)', () => {
     await fs.writeFile(path.join(vault.root, 'mine.md'), 'my own note\n');
     const before = await snapshot(vault.root);
 
-    const { result, held } = await interruptMidWrite(vault, ['install', REF, '--yes', '--values', await valuesFile('install')]);
+    const { result, held } = await interruptMidWrite(vault, ['install', REF, '.', '--yes', '--values', await valuesFile('install')]);
 
     expectCancelled(result, held);
     expect(await snapshot(vault.root)).toEqual(before);

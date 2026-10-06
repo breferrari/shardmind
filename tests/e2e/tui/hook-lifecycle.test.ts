@@ -163,6 +163,7 @@ describe.skipIf(noPty())(
             [
               'install',
               `github:${STDOUT_SLUG}`,
+              '.',
               '--yes',
               '--values',
               valuesPath,
@@ -233,6 +234,7 @@ describe.skipIf(noPty())(
             [
               'install',
               `github:${THROW_SLUG}`,
+              '.',
               '--yes',
               '--values',
               valuesPath,
@@ -308,6 +310,7 @@ describe.skipIf(noPty())(
             [
               'install',
               `github:${TIMEOUT_SLUG}`,
+              '.',
               '--yes',
               '--values',
               valuesPath,
