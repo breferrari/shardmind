@@ -10,7 +10,9 @@ import { useOncePerKey } from './use-once-per-key.js';
  * bytes as managed (`ownership: 'modified'`); `use_shard` overwrites
  * with the rendered/copied shard bytes.
  */
-export type AdoptDiffAction = 'keep_mine' | 'use_shard';
+// The per-file answer, defined with the flow that asks for it (#302).
+import type { AdoptFileChoice } from '../core/flows/adopt.js';
+export type AdoptDiffAction = AdoptFileChoice;
 
 const ADOPT_DIFF_ACTIONS = new Set<AdoptDiffAction>(['keep_mine', 'use_shard']);
 

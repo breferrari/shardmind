@@ -105,10 +105,10 @@ describe('a bug no error view catches (#225)', () => {
   // there with one failure document, the same piped and in a terminal. The
   // plain-text report stays on stderr for a human.
   it.each([
-    // status --json loads its headless runner, not the root command (#302).
+    // status --json and adopt --json load their headless runners, not the root command (#302).
     ['status --json', ['--json'], 'status', () => dist.setChunk('status', "throw new TypeError('boom from a broken module under json');\n")],
     ['update --dry-run --json', ['update', '--dry-run', '--json'], 'update', () => dist.setRootCommand("throw new TypeError('boom from a broken module under json');\n")],
-    ['adopt --dry-run --json', ['adopt', 'github:acme/demo', '--dry-run', '--json'], 'adopt', () => dist.setRootCommand("throw new TypeError('boom from a broken module under json');\n")],
+    ['adopt --dry-run --json', ['adopt', 'github:acme/demo', '--dry-run', '--json'], 'adopt', () => dist.setChunk('adopt', "throw new TypeError('boom from a broken module under json');\n")],
   ] as const)('writes a throw that escapes every command in %s as one failure document on stdout', async (_name, args, command, breakIt) => {
     await breakIt();
     const piped = runCli(args);

@@ -13,10 +13,9 @@ import {
 } from '../core/install-planner.js';
 import { isComputedDefault } from '../core/schema.js';
 
-export interface WizardResult {
-  values: Record<string, unknown>;
-  selections: ModuleSelections;
-}
+// The answers, defined with the flows that use them (#302).
+import type { ValueAnswers } from '../core/flows/values.js';
+export type WizardResult = ValueAnswers;
 
 interface InstallWizardProps {
   manifest: ShardManifest;

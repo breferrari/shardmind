@@ -10,11 +10,9 @@ import { Select } from './ui.js';
  * (component-owned) so the command machine imports it the same way it imports
  * `AdoptDiffAction` / `WizardResult` — components never import from commands.
  */
-export type AdoptMode =
-  | 'keep-all-mine'
-  | 'use-all-theirs'
-  | 'auto-merge'
-  | 'decide-per-file';
+// Defined with the flow that asks for it (#302).
+import type { AdoptMode } from '../core/flows/adopt.js';
+export type { AdoptMode };
 
 interface AdoptModePickerProps {
   /** Number of files that differ from the shard (drives the header count). */
