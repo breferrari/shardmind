@@ -8,6 +8,27 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-06
+
+Major release: the 1.0 contract. From here, the CLI, its exit codes, the `--json` documents, `state.json`, the shard layout and `shardmind/runtime` follow semver ([`docs/OPERATIONS.md`](docs/OPERATIONS.md), [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md)).
+
+- **Install makes a new folder**, as `git clone` does, and never nests one vault in another.
+- **`--json` runs `update` and `adopt`**, not only plans them, so a script or an agent can drive them end to end.
+- **`state.json` is a checked contract**: every read and write is validated, and status reports a vault from a newer ShardMind instead of failing.
+- **Hooks import `shardmind/runtime` from the running engine**, with no vendoring, and get a stable, pinned surface.
+- **For shard authors:** the post-install hook is gone (use `bootstrap` and `personalize`), `dependencies` has a defined meaning, and a shard that uses a field added after 1.0 declares the ShardMind it needs.
+
+**Before you upgrade (breaking changes):**
+
+- **`shardmind install <shard>` installs into a new folder named after the shard**, no longer into the current one (#333). Add `.` to install in place, as before: `shardmind install <shard> .`. A script that runs `mkdir my-vault && cd my-vault && shardmind install <shard>` now gets `my-vault/<name>`.
+- **Install refuses to nest a vault** (`INSTALL_INSIDE_VAULT`, #337): run with no folder from inside a vault, it stops. Pass a folder name, or `.` to install in place.
+- **The `post-install` hook is removed** (#357). A `shard.yaml` that declares it fails to load with `HOOK_SLOT_REMOVED`: move unmanaged setup to `hooks.bootstrap` and managed-file edits to `hooks.personalize` (AUTHORING §6). `shardmind/runtime` no longer exports `HookContext`; type a hook against `BootstrapContext`, `PersonalizeContext` or `PostUpdateContext`.
+- **`state.json` is validated on every read and write** (#343). A hand-edited file that breaks its contract is refused with `STATE_CORRUPT`, naming the field, where it used to be read as-is. Every `state.json` a released ShardMind wrote passes; `shardmind` (status) shows the problem as a warning, and `install <shard> . --force` reinstalls over it.
+- **`shard.yaml`'s `dependencies` is validated** (#369): each entry needs a shard `name` and `namespace` and a semver-range `version`, else `MANIFEST_VALIDATION_FAILED`. No published shard declares it.
+- **`update --json` and `adopt --json` without `--dry-run` now run the command** (#348), where they used to refuse with `JSON_REQUIRES_DRY_RUN`. A script that relied on that refusal now changes the vault: add `--dry-run` to keep getting only the plan.
+- **`adopt --from-version` gives files you never changed the new release's bytes**, in every mode (#325). Under `keep-all-mine` or `--yes` they used to keep the old release's bytes as your edit.
+- **`adopt --mode auto-merge` is experimental** (#347): outside the semver promise, and it warns on stderr when used.
+
 ### Fixed (a hook can import shardmind/runtime — #373)
 
 - **A hook's `import ... from 'shardmind/runtime'` now works without vendoring.** The engine resolves it to its own runtime, so the helpers AUTHORING documents (`loadValues`, `loadState`, `validateValues` and the rest) are reachable from a shard with no `node_modules`. Before, the import failed unless the shard vendored `shardmind` together with `zod` and `yaml`.
