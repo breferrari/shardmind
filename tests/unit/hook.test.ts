@@ -405,7 +405,7 @@ describe('executeHook — subprocess runtime', () => {
     // Waiting on the hook's interval would end in the 20s timeout, which
     // reports `failed`, not `ran` with exit code 1.
     const result = await executeHook(hookPath, baseCtx(), { timeoutMs: 20_000 });
-    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}: ${result.message}`);
+    if (result.kind !== 'ran') throw new Error(`expected ran, got ${result.kind}: ${'message' in result ? result.message : ''}`);
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain('before throw');
   }, 30_000);

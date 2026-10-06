@@ -65,7 +65,8 @@ describe('vendor:check (#280)', () => {
     const body = (await fsp.readFile(path.join(kitDir, 'b.ts'), 'utf-8')).split('*/\n\n')[1]!;
     await fsp.writeFile(path.join(kitDir, 'b.ts'), headerFor(next, 'b.ts') + body);
     const [status] = await checkKits({ root, source });
-    expect(status!.wrongModified).toEqual(['b.ts']);
+    if (!status || 'error' in status) throw new Error(`expected a kit status, got ${JSON.stringify(status)}`);
+    expect(status.wrongModified).toEqual(['b.ts']);
   });
 
   it('always exits 0, and writes the report to --summary', async () => {

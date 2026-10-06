@@ -760,7 +760,7 @@ describe('runHooks — user edits made before the hook phase (#150)', () => {
   it('runs no re-hash when no slot runs', async () => {
     const files = { 'mine.md': await edited('mine.md') };
     const result = await runHooks(
-      updatePlan({ manifest: manifest(undefined), state: makeShardState({ files }) }),
+      updatePlan({ manifest: manifest({}), state: makeShardState({ files }) }),
       NOOP_UI,
     );
     expect(result.stateChanged).toBe(false);

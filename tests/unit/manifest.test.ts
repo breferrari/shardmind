@@ -323,6 +323,7 @@ describe('assertEngineCompatible (#121)', () => {
       } catch (e) {
         return e as { code?: string; message?: string; hint?: string };
       }
+      return undefined;
     })();
     expect(err?.code).toBe('SHARDMIND_VERSION_MISMATCH');
     expect(err?.message).toContain('>=0.2.0');
@@ -392,7 +393,8 @@ describe('hooks lifecycle slots (#102)', () => {
       hooks: { bootstrap: { script: 'b.ts' } },
     });
     expect(parsed.hooks.bootstrap).toEqual({ script: 'b.ts' });
-    expect(parsed.hooks.bootstrap?.fingerprint).toBeUndefined();
+    const bootstrap = parsed.hooks.bootstrap;
+    expect(bootstrap && 'fingerprint' in bootstrap ? bootstrap.fingerprint : undefined).toBeUndefined();
   });
 
   it('parses all three new slots together', () => {

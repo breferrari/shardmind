@@ -327,7 +327,7 @@ describe('update-check', () => {
       // vitest's default 5s — with wiring it resolves as soon as abort fires.
       globalThis.fetch = vi.fn(
         (_url: string | URL | Request, init?: RequestInit) =>
-          new Promise((_, reject) => {
+          new Promise<Response>((_, reject) => {
             init?.signal?.addEventListener('abort', () => {
               const err = new Error('The operation was aborted.');
               err.name = 'AbortError';
@@ -357,7 +357,7 @@ describe('update-check', () => {
 
       globalThis.fetch = vi.fn(
         (_url: string | URL | Request, init?: RequestInit) =>
-          new Promise((_, reject) => {
+          new Promise<Response>((_, reject) => {
             init?.signal?.addEventListener('abort', () => {
               const err = new Error('The operation was aborted.');
               err.name = 'AbortError';

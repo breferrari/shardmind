@@ -3,6 +3,17 @@ import * as fc from 'fast-check';
 import { resolve } from '../../source/core/registry.js';
 import { ShardMindError } from '../../source/runtime/types.js';
 
+/** The ShardMindError `promise` rejects with; fails the test if it resolves or rejects otherwise. */
+async function rejected(promise: Promise<unknown>): Promise<ShardMindError> {
+  try {
+    await promise;
+  } catch (err) {
+    if (err instanceof ShardMindError) return err;
+    throw err;
+  }
+  throw new Error('expected a rejection, but it resolved');
+}
+
 const REGISTRY_URL = 'https://raw.githubusercontent.com/shardmind/registry/main/index.json';
 
 /** A registry index response; a version-1 index unless `body` sets `schema_version` itself (#29). */
@@ -482,8 +493,8 @@ describe('registry.resolve', () => {
         throw new Error(`Unexpected fetch: ${u}`);
       };
       globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => answer(url, init)) as typeof fetch;
-      const bare = await resolve('breferrari/obsidian-mind@9.9.9').catch((e: unknown) => e as ShardMindError);
-      const direct = await resolve('github:breferrari/obsidian-mind@9.9.9').catch((e: unknown) => e as ShardMindError);
+      const bare = await rejected(resolve('breferrari/obsidian-mind@9.9.9'));
+      const direct = await rejected(resolve('github:breferrari/obsidian-mind@9.9.9'));
       expect(bare).toBeInstanceOf(ShardMindError);
       expect(bare.code).toBe('VERSION_NOT_FOUND');
       expect({ code: bare.code, message: bare.message, hint: bare.hint }).toEqual({
@@ -1182,7 +1193,7 @@ describe('registry.resolve', () => {
       ['a repo that is not a string', { repo: 42 }],
     ])('rejects the requested entry with %s, naming the shard and repo', async (_label, entry) => {
       serve(() => indexResponse({ shards: { 'breferrari/obsidian-mind': entry } }));
-      const err = await resolve('breferrari/obsidian-mind').catch((e: unknown) => e as ShardMindError);
+      const err = await rejected(resolve('breferrari/obsidian-mind'));
       expect(err).toMatchObject({ code: 'REGISTRY_NETWORK', hint: RUN });
       expect(err.message).toContain("'breferrari/obsidian-mind'");
       expect(err.message).toContain('repo');

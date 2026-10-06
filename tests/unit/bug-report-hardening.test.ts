@@ -36,7 +36,8 @@ describe('ShardMindError across bundles (#225)', () => {
   it('still is one for an error built here', () => {
     expect(new ShardMindError('x', 'SHARD_NOT_FOUND') instanceof ShardMindError).toBe(true);
     expect(new Error('x') instanceof ShardMindError).toBe(false);
-    expect(null instanceof ShardMindError).toBe(false);
+    const nothing: unknown = null;
+    expect(nothing instanceof ShardMindError).toBe(false);
   });
 });
 
