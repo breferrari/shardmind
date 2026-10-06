@@ -414,7 +414,7 @@ Thrown by `source/commands/hooks/use-install-machine.ts` during boot-time pre-fl
 
 **Meaning:** `shardmind install <shard> [folder]` installs into a new folder named after the shard, or `[folder]` (#333). That folder already exists and is not empty, or a file sits at its path or at one of its parent levels. Refused before any download or prompt: installing a vault over an unrelated folder's content is never what the default meant. Also raised at write time when the folder appeared after the install planned (another run took the name).
 
-**Remedy:** Give another folder name as the second argument (`shardmind install <shard> my-vault`), or install into the current folder with `.` (`shardmind install <shard> .`), which keeps the in-place behaviour, collision review included.
+**Remedy:** Give another folder name as the second argument (`shardmind install <shard> my-vault`). To install into that folder as it is, `cd` into it and run `shardmind install <shard> .`, which keeps the in-place behaviour, collision review included; `.` names the current folder, so running it from the parent would install there. If the folder is already a shardmind vault, `shardmind update` inside it upgrades it. Also raised when the destination's drive or share does not exist.
 
 ### `JSON_REQUIRES_DRY_RUN`
 
