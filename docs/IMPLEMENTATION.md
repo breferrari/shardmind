@@ -413,7 +413,7 @@ const ShardManifestSchema = z.object({
     'post-update': z.string().optional(),
     // Deprecated combined hook — mutually exclusive with bootstrap/personalize
     // (rejected post-parse as HOOK_SLOT_CONFLICT). Honored ≥1 minor release.
-    'post-install': z.string().optional(),
+    'post-install': z.string().optional(),   // removed in 1.0: declared → HOOK_SLOT_REMOVED (#357)
     // Per-shard hook execution timeout in milliseconds. Default 30_000
     // when absent; clamped to 1_000..600_000 at validation time.
     timeout_ms: z.number().int().min(1_000).max(600_000).optional(),
@@ -445,7 +445,7 @@ and enforced before any vault write by `assertEngineCompatible` (#121).
 **Error cases**:
 - YAML parse error → `MANIFEST_INVALID_YAML`
 - Zod validation error → `MANIFEST_VALIDATION_FAILED` (`"{field}: {message}"`)
-- Deprecated `post-install` declared alongside `bootstrap`/`personalize` → `HOOK_SLOT_CONFLICT` (#102)
+- `hooks.post-install` declared at all → `HOOK_SLOT_REMOVED` (#357): removed in 1.0; the message names `bootstrap` and `personalize` and AUTHORING's worked split. (`HOOK_SLOT_CONFLICT`, its alongside-the-slots predecessor, is no longer raised.)
 - Running engine can't satisfy `requires.shardmind` → `SHARDMIND_VERSION_MISMATCH` (#121, thrown by `assertEngineCompatible`, not `parseManifest`)
 
 **Dependencies**: `yaml`, `zod`, `semver`.
@@ -1146,7 +1146,7 @@ interface PlanUpdateInput {
 4. **Delete pass**: runs after all writes so a rename-style move (delete + add at a different path) can't clobber the incoming file.
 4a. **Renames (#178)**: before any write, each rename's new path is checked still free (`isFreeFor`: nothing there, not even a dangling symlink, and no file where a folder on its way should be; refused with `UPDATE_WRITE_FAILED` otherwise), both paths are recorded (`recordMove`: the old one snapshotted, the new one introduced; a case-only pair that is one file, snapshotted once under its old name). After the write pass, for each action with `renamedFrom`: if the write pass wrote its new path the old path is unlinked; otherwise (`noop`, `skip_volatile`, conflict `keep_mine` / `skip`) the old file is moved to the new path, after checking it is still free, and a missing old file (a deleted volatile one) is skipped. A case-only pair whose two paths are the same file (a case-folding filesystem) is never unlinked: it is renamed in place, old path → a temporary name in the same folder → new path, with the temporary name in `introduced` before the first rename so a rollback removes it and restores the old file from the snapshot. Before the write pass, on a case-folding filesystem, each folder a pair changes the case of is renamed in place the same way (`renameCaseInPlace`, shallowest first). Every in-place hop, file or folder, is journaled to `<backupDir>/case-renames.json` (`tx.journal`, written whole through a temporary file) before its first rename, and a folder renamed in place is recorded first (`recordFolder`), as the folders on the way to every write are (#258). The rollback (§4.28 step 5) undoes the journal newest first, removes what was introduced, restores the snapshot, then removes the recorded folders that are empty again. On a case-sensitive filesystem, after the renames and deletes, each old folder spelling a pair vacated is removed if it is empty (`rmdir`, never recursive), deepest first. The vault path guard takes the pairs (`pathsTheUpdateTouches().caseRenames`) and does not report a pair's spelling of any segment as a `case-mismatch` of the other. The state entry moves with it under the new template keys (`renamedKeys`), and `summary.renamedFiles` lists `{ from, to }`.
 5. **Cache + state**: `commitEngineMetadata` (§4.28): `initShardDir`, `cacheTemplates`, `cacheManifest`, `writeValuesFile`, then `writeState` last.
-6. **Hook**: call `runPostUpdateHook` with a built `HookContext` and an `AbortController` signal. Behavior is full-execution (spawn the hook through the bundled `tsx` loader via `source/internal/hook-runner.ts`), capture stdout + stderr separately (256 KB per-stream cap), enforce the shard's `hooks.timeout_ms` (default 30 s). Non-fatal per Helm pattern: a throw / non-zero exit / timeout / cancel surface as `HookResult.failed` with captured output, the update summary renders a yellow warning, and the process exit code stays 0. No rollback past this point. See §4.14a for the execution algorithm.
+6. **Hook**: run the `post-update` slot through the orchestrator (§4.16a) with a built `PostUpdateContext` and an `AbortController` signal. Behavior is full-execution (spawn the hook through the bundled `tsx` loader via `source/internal/hook-runner.ts`), capture stdout + stderr separately (256 KB per-stream cap), enforce the shard's `hooks.timeout_ms` (default 30 s). Non-fatal per Helm pattern: a throw / non-zero exit / timeout / cancel surface as `HookResult.failed` with captured output, the update summary renders a yellow warning, and the process exit code stays 0. No rollback past this point. See §4.14a for the execution algorithm.
 7. **Rollback**: any exception between snapshot and state-write runs the transaction's `rollback()` (§4.28 step 5). It removes every introduced path, then restores every snapshotted file from `files/` and `cache/`. The template cache (`.shardmind/templates/`) is restored exactly, not copied over: `cacheTemplates` rewrote it whole, so a copy would leave the new version's added templates beside the old ones (#264). The rest of the snapshot is copied back with `restoreTree`; the template cache with `restoreDirExactly` (`core/restore-tree.ts`).
    - **Snapshot marker.** The snapshot writes `<backupDir>/templates-snapshot.json`, `{ existed }`, only after its template copy finishes. The other snapshot copies run alongside it, so a failure can cut it short.
    - **Restoring by the marker.** With `existed: true`, every file and folder the snapshot lacks is removed and the rest restored. With `existed: false`, the cache is removed, since there was none before the update. With no marker (a snapshot cut short), the old copy-over restore runs, which never removes a template the snapshot did not hold. Only a missing marker (ENOENT) means that. A marker that cannot be read, or that is not `{ existed: boolean }`, is a rollback failure (#294). The copy-over restore still runs, so the snapshot's templates come back, and the failure names `.shardmind/templates`, with the cache snapshot as its backup. The update then fails with `ROLLBACK_INCOMPLETE` and never leaves the new release's templates unreported.
@@ -1302,7 +1302,7 @@ type UpdateCheckResult = (
 ```typescript
 executeHook(
   hookPath: string,
-  ctx: AnyHookContext,
+  ctx: SlottedHookContext,
   opts: HookExecOpts = {},
 ): Promise<HookResult>
 
@@ -1324,7 +1324,7 @@ type HookResult =
 1. **Resolve tsx loader**: `createRequire(import.meta.url).resolve('tsx')`. If it throws (node_modules pruned) → return `failed` with reinstall hint.
 2. **Resolve hook-runner**: first try `require.resolve('shardmind/internal/hook-runner')` against the package's own `exports` map. Fall back to the source path `../internal/hook-runner.ts` (dev / vitest with no dist). If neither exists → return `failed`.
 3. **Write ctx tempfile**: `os.tmpdir() / shardmind-hook-<rand>.json`, mode 0o600. JSON-serialize the ctx. Register a `process.once('SIGINT', unlinkSync)` fallback in case a parent interrupt lands between write and unlink.
-4. **Spawn**: `process.execPath` with argv `['--import', pathToFileURL(tsxLoaderPath).href, hookRunnerPath, hookPath, ctxPath]`. Options: `cwd: ctx.vaultRoot`, `stdio: ['ignore', 'pipe', 'pipe']`, `env: { ...process.env, SHARDMIND_HOOK: '1', SHARDMIND_HOOK_PHASE: phase }`, and the caller-supplied `signal`. The phase is `ctx.slot` for a slotted context (`'bootstrap'` | `'personalize'` | `'post-update'`) — read directly rather than inferred from `previousVersion`, since `bootstrap` can carry a `previousVersion` on an update re-bootstrap. The legacy flat `HookContext` has no `slot`, so it falls back to the `previousVersion === undefined ? 'post-install' : 'post-update'` heuristic (a lone legacy `post-install` never sets `previousVersion`, so it resolves to `'post-install'`).
+4. **Spawn**: `process.execPath` with argv `['--import', pathToFileURL(tsxLoaderPath).href, hookRunnerPath, hookPath, ctxPath]`. Options: `cwd: ctx.vaultRoot`, `stdio: ['ignore', 'pipe', 'pipe']`, `env: { ...process.env, SHARDMIND_HOOK: '1', SHARDMIND_HOOK_PHASE: phase }`, and the caller-supplied `signal`. The phase is `ctx.slot` for a slotted context (`'bootstrap'` | `'personalize'` | `'post-update'`) — read directly rather than inferred from `previousVersion`, since `bootstrap` can carry a `previousVersion` on an update re-bootstrap.
 5. **Stream capture**: attach `utf-8`-decoded data listeners on stdout and stderr. Each chunk appends into a per-stream buffer capped at 256 KB — overflow truncates and records a dropped-byte count used in the final marker. Chunks are forwarded live via `onStdout` / `onStderr` callbacks so the command TUI can render a tail-only "running-hook" phase.
 6. **Timeout + abort**: `setTimeout(timeoutMs)` and the caller's `AbortSignal` both land in a `terminate(reason)` closure that sets `timedOut` / `cancelled` and issues `child.kill('SIGTERM')`. A 2-second grace setTimeout follows with `child.kill('SIGKILL')` if the child hasn't exited.
 7. **Await exit**: `Promise<{ code, signalName, spawnErr? }>` races `child.on('error')` vs `child.on('close')`. Clear the timeout; remove the abort listener.
@@ -1383,7 +1383,7 @@ This is what makes Invariant 2's claim observable: a hook that legitimately edit
 runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRunResult>
 
 interface HookRunResult {
-  outcomes: HookOutcome[];   // one per slot considered (incl. skipped / violation / deprecated)
+  outcomes: HookOutcome[];   // one per slot considered (incl. skipped / violation)
   finalState: ShardState;    // after re-hash + fingerprint write (orchestrator persists internally;
   stateChanged: boolean;     //   finalState/stateChanged are the observable outcome, asserted by tests)
 }
@@ -1394,7 +1394,6 @@ interface HookOutcome { slot: HookStage; summary: HookSummary | null; }
 
 - **install / adopt**: `bootstrap` → `personalize`. `personalize` is invoked **only if `!valuesAreDefaults`** (engine-enforced Invariant 2); otherwise it records a `skipped` outcome and never spawns.
 - **update**: `bootstrap` (only if `fingerprintChanged(state.bootstrap_fingerprint, manifest.hooks.bootstrap?.fingerprint)`) → `post-update`.
-- **legacy**: if the manifest declares `post-install` (and neither new slot — enforced at parse, §4.3), run it once on install/adopt with the legacy flat ctx (incl. `valuesAreDefaults`, `newFiles: []`, `removedFiles: []`), no boundary check, plus a `deprecated` outcome.
 
 **Per-slot ctx**: built from the plan — `bootstrap`/`personalize`/`post-update` get only their slot's fields (ARCHITECTURE §9.3). `valuesAreDefaults` is computed once via `values-defaults.ts::valuesAreDefaults(values, schema)` (deep-equal, array-order-significant, computed-default failures → `false`) and consumed by the orchestrator to gate `personalize`. It is **not** placed on `PersonalizeContext`, which only ever runs with non-default values; it **is** placed on `BootstrapContext`, which always runs (#356). `bootstrap` also gets the plan's `removedFiles`: a reinstall's on install (#228), `[]` on adopt, and the update's deletions on an update re-bootstrap. `post-update`'s `newFiles` = `result.summary.addedFiles` (`UpdateAction.kind === 'add'` only; `overwrite`/`auto_merge`/`restore_missing`/conflict resolutions excluded), `removedFiles` = `result.summary.deletedFiles`.
 
@@ -2133,7 +2132,7 @@ What a hook script or a shard's own scripts may import. After 1.0 every export i
 - **`ShardMindError`:** what they throw; `err.code` is an `ErrorCode` (`docs/ERRORS.md`).
 - **Constants:** `SHARDMIND_DIR` (`.shardmind`), `STATE_FILE` (`.shardmind/state.json`, joined with the platform's separator) and `VALUES_FILE` (`shard-values.yaml`), relative to the vault root.
 - **Types**, type-only:
-  - the hook contexts: `BootstrapContext`, `PersonalizeContext`, `PostUpdateContext`, `HookContextBase`, `HookSlot` and `SlottedHookContext`, plus the deprecated flat `HookContext`, which goes when `post-install` does;
+  - the hook contexts: `BootstrapContext`, `PersonalizeContext`, `PostUpdateContext`, `HookContextBase`, `HookSlot` and `SlottedHookContext` (the flat `HookContext` went with `post-install` in 1.0, #357);
   - `ErrorCode`;
   - the shapes the functions return: `ShardState`, `FileState`, `ModuleSelections`, `ShardSchema`, `ValueDefinition`, `GroupDefinition`, `ModuleDefinition`, `SignalDefinition`, `FrontmatterRule`, `Migration`, `MigrationChange`, `ValidationResult`, `FrontmatterValidationResult`, `ShardManifest`.
 

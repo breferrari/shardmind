@@ -639,9 +639,7 @@ type SlottedHookContext = BootstrapContext | PersonalizeContext | PostUpdateCont
 // New hooks type against their slot's context:
 export default async function(ctx: BootstrapContext): Promise<void>;
 // (PersonalizeContext / PostUpdateContext for the other slots.)
-// The legacy flat `HookContext` (vaultRoot/values/modules/shard +
-// valuesAreDefaults/newFiles/removedFiles) is retained for deprecated
-// `post-install` hooks until ≥0.3.0.
+// The flat `HookContext` went with `post-install` in 1.0 (#357).
 ```
 
 | Slot | Runs on | May write | Order |
@@ -664,7 +662,7 @@ export default async function(ctx: BootstrapContext): Promise<void>;
 
 **If a hook throws**: ShardMind shows a warning ("<slot> exited with code N. Non-fatal; your vault is ready." with "The operation succeeded; the hook's work may be incomplete." on its own dim line), does NOT rollback. Non-fatal. Same pattern as Helm hooks. The post-hook re-hash still runs, and subsequent independent slots still attempt. So a crashed hook's stack trace can't visually dominate the Summary, the captured stdout/stderr render dimmed + indented and **truncated to the first `HOOK_OUTPUT_VISIBLE_LINES` lines**; when a hook crashes or its output is long enough to truncate, the orchestrator persists the complete output to `.shardmind/logs/<slot>.log` and the on-screen block points there. The log write is itself non-fatal (a write failure just omits the pointer). See `source/components/HookSummarySection.tsx` and `attachHookLog` in `hook-orchestrator.ts` (#105).
 
-**Legacy `post-install`**: a shard declaring the deprecated `hooks.post-install` (and neither new slot) runs it once on install/adopt with the legacy flat `HookContext` (including `valuesAreDefaults`, `newFiles: []`, `removedFiles: []` for source compatibility) and no boundary enforcement, plus a `HOOK_POST_INSTALL_DEPRECATED` warning. Declaring it alongside `bootstrap`/`personalize` is a parse-time `HOOK_SLOT_CONFLICT`. Honored ≥1 minor (deprecate 0.2.0, remove ≥0.3.0).
+**`post-install`** was removed in 1.0 (#357): a manifest that declares it fails with `HOOK_SLOT_REMOVED`, naming `bootstrap` and `personalize`.
 
 **Execution runtime**: hooks run in a subprocess spawned by `source/core/hook.ts:executeHook`. The engine ships the `tsx` TypeScript loader (~6 MB) bundled as a runtime dependency so authors can write plain `.ts` without a compile step on their side. An internal wrapper at `source/internal/hook-runner.ts` (emitted to `dist/internal/hook-runner.js`) imports the hook and invokes its default export with the typed `HookContext`.
 
