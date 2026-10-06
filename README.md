@@ -160,7 +160,7 @@ shardmind validate [dir|shard]
 `--yes` answers the prompts each command can settle safely on its own, and the answer differs by command, by design:
 
 - `install`: each value takes its schema default. A value with no default needs `--values`, else `VALUES_MISSING`. Reinstalling over an existing install still asks, or needs `--force`.
-- `update`: your version wins wherever your edits conflict with the shard's. A new release that adds a required value needs `--values`, else `VALUES_MISSING`.
+- `update`: your version wins wherever your edits conflict with the shard's. A new release that adds a required value needs it in `shard-values.yaml` first, else `VALUES_MISSING`.
 - `adopt`: your version of every file that differs is kept (`keep-all-mine`, unless `--mode` says otherwise).
 
 Files you never changed still take the new release (`update`, and `adopt --from-version`).
