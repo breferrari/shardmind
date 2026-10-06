@@ -38,7 +38,7 @@ const ShardStateSchema = z.looseObject({
 
 /** What to do about a `STATE_CORRUPT` state.json, wherever it is found. */
 export const STATE_CORRUPT_HINT =
-  'Restore .shardmind/state.json from version control, or delete .shardmind/ and reinstall (shard-values.yaml is kept).';
+  'Restore .shardmind/state.json from version control, or reinstall over it with `shardmind install <shard> . --force`, which answers the values again.';
 
 /**
  * `value` as a `ShardState`, or `STATE_CORRUPT` naming the first field that

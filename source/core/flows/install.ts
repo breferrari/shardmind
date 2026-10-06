@@ -137,7 +137,7 @@ export async function runInstallFlow(input: InstallFlowInput, io: InstallFlowIO)
     throw new ShardMindError(
       brokenState.message,
       'STATE_CORRUPT',
-      'Add --force to reinstall over it (your shard-values.yaml is kept), or restore .shardmind/state.json from version control.',
+      'Restore .shardmind/state.json from version control, or add --force to reinstall over it: the values are answered again, and files you changed are overwritten without a backup.',
     );
   }
   // Reinstalled over, its files and modules are not trusted: every file on
