@@ -664,7 +664,7 @@ export default async function(ctx: BootstrapContext): Promise<void>;
 
 **`post-install`** was removed in 1.0 (#357): a manifest that declares it fails with `HOOK_SLOT_REMOVED`, naming `bootstrap` and `personalize`.
 
-**Execution runtime**: hooks run in a subprocess spawned by `source/core/hook.ts:executeHook`. The engine ships the `tsx` TypeScript loader (~6 MB) bundled as a runtime dependency so authors can write plain `.ts` without a compile step on their side. An internal wrapper at `source/internal/hook-runner.ts` (emitted to `dist/internal/hook-runner.js`) imports the hook and invokes its default export with the typed `HookContext`.
+**Execution runtime**: hooks run in a subprocess spawned by `source/core/hook.ts:executeHook`. The engine ships the `tsx` TypeScript loader (~6 MB) bundled as a runtime dependency so authors can write plain `.ts` without a compile step on their side. An internal wrapper at `source/internal/hook-runner.ts` (emitted to `dist/internal/hook-runner.js`) imports the hook and invokes its default export with its slot's typed context (`BootstrapContext`, `PersonalizeContext` or `PostUpdateContext`).
 
 **Execution environment**: child `cwd` is `ctx.vaultRoot`; env inherits from the parent plus `SHARDMIND_HOOK=1` and `SHARDMIND_HOOK_PHASE=bootstrap|personalize|post-update` (or `post-install` for a legacy hook), derived from `ctx.slot`, for the hook to branch on.
 

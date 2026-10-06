@@ -324,7 +324,7 @@ Paths reference current code. Detail to land in `ARCHITECTURE.md §3` + `IMPLEME
 
 ### Hooks + state
 
-10. `source/runtime/types.ts` — extend `HookContext` with `valuesAreDefaults: boolean`, `newFiles: string[]`, `removedFiles: string[]`.
+10. `source/runtime/types.ts` — extend `HookContext` (the flat context, since split into the slot contexts and removed in 1.0) with `valuesAreDefaults: boolean`, `newFiles: string[]`, `removedFiles: string[]`.
 11. **Engine plumbing for the new ctx fields + post-hook re-hash** — split across:
     - `source/core/values-defaults.ts` (new) — pure `valuesAreDefaults(values, schema)` for Invariant 2; deep-equal user values against the would-be-default map (literal defaults + computed defaults resolved against the literal-default map).
     - `source/core/update-executor.ts` — surface `addedFiles: string[]` (paths from `UpdateAction.kind === 'add'`) and the existing `deletedFiles: string[]` on `UpdateSummary` so the update machine can wire `newFiles` / `removedFiles` without re-deriving from the plan.
