@@ -59,12 +59,16 @@ done
 "$SHARDMIND_CLI" adopt github:breferrari/obsidian-mind
 ```
 
-Walk through the wizard. Then, in the diff-review phase, observe:
+Walk through the wizard. The bulk-resolution picker comes next ("N files differ from the shard."). **Pick Decide per file**, the fourth option (↓ three times, then Enter). The default, Keep all mine, resolves every file at once and skips the per-file review this recipe exercises (#379).
+
+- `--mode decide-per-file` skips the picker; use it only when the picker is not under test.
+
+Then, in the diff-review phase, observe:
 
 - **Counter advances**: header reads `(1 of N)`, `(2 of N)`, … `(5 of N)` where N >= 5. The counter incrementing on Enter is the #109 regression check.
-- **Each prompt accepts a choice**: pick `keep_mine` on the first 4 differs and `use_shard` on the 5th. Both branches must fire — pinning that the per-iteration `useOncePerKey` guard re-arms across files.
-- **Summary frame renders** the three count lines: "N matched the shard exactly (managed silently)" for the unmodified files, "4 kept your version (recorded as managed)" for the `keep_mine` decisions, "1 switched to the shard's version" for the `use_shard` decision. The hook section surfaces for each hook the shard declares (bootstrap, and personalize unless the values are the defaults): completed or non-fatal warning, both shapes are acceptable.
-- **Vault state is consistent**: `.shardmind/state.json` exists, `shard-values.yaml` exists, the four `keep_mine` files still contain the `release-smoke marker`, the one `use_shard` file no longer does.
+- **Each prompt accepts a choice**: pick **Keep mine** on the first 4 differs and **Use shard** on the 5th. Both branches must fire — pinning that the per-iteration `useOncePerKey` guard re-arms across files.
+- **Summary frame renders** the three count lines: "N matched the shard exactly (managed silently)" for the unmodified files, "4 kept your version (recorded as managed)" for the Keep mine decisions, "1 switched to the shard's version" for the Use shard decision. The hook section surfaces for each hook the shard declares (bootstrap, and personalize unless the values are the defaults): completed or non-fatal warning, both shapes are acceptable.
+- **Vault state is consistent**: `.shardmind/state.json` exists, `shard-values.yaml` exists, the four Keep mine files still contain the `release-smoke marker`, the one Use shard file no longer does.
 
 ## Flagship install smoke (fresh dir)
 

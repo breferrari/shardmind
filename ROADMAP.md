@@ -173,7 +173,7 @@ Defects found after the 1.0 contract was settled, fixed in 1.0.x patches without
 | | Task | Issue |
 |---|---|---|
 | ✅ | Report a failed shardmind/runtime mapping accurately, not as a context failure | [#377](https://github.com/breferrari/shardmind/issues/377) |
-| ⬜ | Update RELEASE-SMOKE's adopt recipe for the bulk-resolution picker | [#379](https://github.com/breferrari/shardmind/issues/379) |
+| ✅ | Update RELEASE-SMOKE's adopt recipe for the bulk-resolution picker | [#379](https://github.com/breferrari/shardmind/issues/379) |
 | ⬜ | Retry the registry index fetch and keep the network cause in the error | [#380](https://github.com/breferrari/shardmind/issues/380) |
 | ⬜ | Hide the keybind hint when stdout is not a terminal | [#381](https://github.com/breferrari/shardmind/issues/381) |
 
@@ -297,6 +297,7 @@ Engine capability from the original plan. These were declined on 2026-10-04/05 o
 | ⬜ | Debug logging (SHARDMIND_DEBUG) | [#36](https://github.com/breferrari/shardmind/issues/36) |
 | ⬜ | Add --skip-hooks to install, update and adopt | [#199](https://github.com/breferrari/shardmind/issues/199) |
 | ⬜ | Command namespace prefix in the engine | [#25](https://github.com/breferrari/shardmind/issues/25) |
+| ⬜ | Fail a hook that loads a vendored runtime after the engine's mapping failed | [#384](https://github.com/breferrari/shardmind/issues/384) |
 
 ## Shelf (retired 2026-10-04)
 
