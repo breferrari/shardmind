@@ -19,6 +19,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import {
   runPostUpdateHook,
@@ -982,11 +983,42 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
    * #377: the mapping is best effort, per loader. When one loader cannot be
    * mapped, the context was still read, so the run must not report `context`,
    * and the other loader stays mapped. A preload (over NODE_OPTIONS, which the
-   * runner inherits) breaks one loader for the runner alone, so tsx's own
+   * runner inherits) breaks a loader for the runner alone, so tsx's own
    * loaders still register.
    */
   describe('when the mapping fails (#377)', () => {
     let previous: string | undefined;
+
+    /** module.register refuses `data:` URLs, the runner's resolve hook; tsx registers a file URL. */
+    const refuseRegister = (message: string): string => `
+      import module, { syncBuiltinESMExports } from 'node:module';
+      const originalRegister = module.register;
+      module.register = function (specifier, ...rest) {
+        if (String(specifier).startsWith('data:')) throw new Error(${JSON.stringify(message)});
+        return originalRegister.call(this, specifier, ...rest);
+      };
+      syncBuiltinESMExports();
+    `;
+
+    /**
+     * Module._resolveFilename refuses (or silently drops) a replacement that
+     * comes from the runner, told apart by the runner's file in the stack, so
+     * tsx can still install its own CommonJS resolution.
+     */
+    const refuseResolveFilename = (mode: 'throw' | 'drop'): string => `
+      import { default as CjsModule } from 'node:module';
+      let current = CjsModule._resolveFilename;
+      Object.defineProperty(CjsModule, '_resolveFilename', {
+        configurable: true,
+        get() { return current; },
+        set(fn) {
+          if (/[\\\\/]hook-runner\\.[cm]?[jt]s/.test(String(new Error().stack))) {
+            ${mode === 'throw' ? "throw new Error('_resolveFilename refused by the test');" : 'return;'}
+          }
+          current = fn;
+        },
+      });
+    `;
 
     async function preload(source: string): Promise<void> {
       // In the shard's temp dir, which the outer afterEach removes.
@@ -994,6 +1026,28 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
       await fsp.writeFile(file, source, 'utf-8');
       process.env['NODE_OPTIONS'] = `${previous ?? ''} --import=${pathToFileURL(file).href}`.trim();
     }
+
+    const WRITES_RAN = `
+      import { writeFile } from 'node:fs/promises';
+      import { join } from 'node:path';
+      export default async function (ctx: { vaultRoot: string }): Promise<void> {
+        await writeFile(join(ctx.vaultRoot, 'ran.txt'), 'yes');
+      }
+    `;
+
+    type Result = Awaited<ReturnType<typeof executeHook>>;
+
+    /** Run a hook that imports nothing from shardmind, and assert it ran. */
+    async function runWritesRan(file: string): Promise<Result> {
+      const hookPath = path.join(shardDir, file);
+      await fsp.writeFile(hookPath, WRITES_RAN, 'utf-8');
+      const result = await executeHook(hookPath, ctx());
+      expect(result).toMatchObject({ kind: 'ran', exitCode: 0 });
+      expect(await fsp.readFile(path.join(vaultDir, 'ran.txt'), 'utf-8')).toBe('yes');
+      return result;
+    }
+
+    const stderrOf = (result: Result): string | false => result.kind === 'ran' && result.stderr;
 
     beforeEach(() => {
       previous = process.env['NODE_OPTIONS'];
@@ -1006,35 +1060,13 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
 
     describe('the ESM loader (module.register refuses data: URLs)', () => {
       beforeEach(async () => {
-        await preload(`
-          import module, { syncBuiltinESMExports } from 'node:module';
-          const original = module.register;
-          module.register = function (specifier, ...rest) {
-            if (String(specifier).startsWith('data:')) throw new Error('register refused by the test');
-            return original.call(this, specifier, ...rest);
-          };
-          syncBuiltinESMExports();
-        `);
+        await preload(refuseRegister('register refused by the test'));
       });
 
       it('runs a hook that does not import the runtime, and says in one line which loader failed', async () => {
-        const hookPath = path.join(shardDir, 'hook.mts');
-        await fsp.writeFile(
-          hookPath,
-          `
-            import { writeFile } from 'node:fs/promises';
-            import { join } from 'node:path';
-            export default async function (ctx: { vaultRoot: string }): Promise<void> {
-              await writeFile(join(ctx.vaultRoot, 'ran.txt'), 'yes');
-            }
-          `,
-          'utf-8',
-        );
-        const result = await executeHook(hookPath, ctx());
-        expect(result).toMatchObject({ kind: 'ran', exitCode: 0 });
-        expect(await fsp.readFile(path.join(vaultDir, 'ran.txt'), 'utf-8')).toBe('yes');
+        const result = await runWritesRan('hook.mts');
         // One line: the message, no stack frames after it.
-        expect(result.kind === 'ran' && result.stderr).toBe(
+        expect(stderrOf(result)).toBe(
           'shardmind hook-runner: could not map shardmind/runtime to the engine (ESM): Error: register refused by the test\n',
         );
       }, 30_000);
@@ -1050,42 +1082,54 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
         const read = await run('hook.ts');
         expect(read).toEqual({ version: '4.5.6', user: 'Ada', valid: true, badValid: false, vendored: false });
       }, 30_000);
-    });
 
-    describe('the CommonJS loader (Module._resolveFilename cannot be replaced by the runner)', () => {
-      beforeEach(async () => {
-        // The setter refuses only a call that comes from the runner, so tsx
-        // can still install its own CommonJS resolution.
-        await preload(`
-          import Module from 'node:module';
-          let current = Module._resolveFilename;
-          Object.defineProperty(Module, '_resolveFilename', {
-            configurable: true,
-            get() { return current; },
-            set(fn) {
-              if (String(new Error().stack).includes('hook-runner')) throw new Error('_resolveFilename refused by the test');
-              current = fn;
-            },
-          });
-        `);
-      });
-
-      it('says in one line that the CommonJS loader failed, and runs the hook', async () => {
-        const hookPath = path.join(shardDir, 'hook.ts');
+      // Unmapped, the specifier resolves as Node resolves it, so a copy the
+      // shard vendors is what the hook gets: documented, and the line says why.
+      it('lets a copy the shard vendors answer the unmapped import, and still warns', async () => {
+        const vendored = path.join(shardDir, 'node_modules', 'shardmind');
+        await fsp.mkdir(vendored, { recursive: true });
+        await fsp.writeFile(
+          path.join(vendored, 'package.json'),
+          JSON.stringify({ name: 'shardmind', type: 'module', exports: { './runtime': './runtime.js' } }),
+          'utf-8',
+        );
+        await fsp.writeFile(path.join(vendored, 'runtime.js'), 'export const VENDORED = true;\n', 'utf-8');
+        const hookPath = path.join(shardDir, 'hook.mts');
         await fsp.writeFile(
           hookPath,
           `
             import { writeFile } from 'node:fs/promises';
             import { join } from 'node:path';
+            import * as rt from 'shardmind/runtime';
             export default async function (ctx: { vaultRoot: string }): Promise<void> {
-              await writeFile(join(ctx.vaultRoot, 'ran.txt'), 'yes');
+              await writeFile(join(ctx.vaultRoot, 'vendored.txt'), String('VENDORED' in rt));
             }
           `,
           'utf-8',
         );
         const result = await executeHook(hookPath, ctx());
         expect(result).toMatchObject({ kind: 'ran', exitCode: 0 });
-        expect(result.kind === 'ran' && result.stderr).toBe(
+        expect(await fsp.readFile(path.join(vaultDir, 'vendored.txt'), 'utf-8')).toBe('true');
+        expect(stderrOf(result)).toContain('could not map shardmind/runtime to the engine (ESM)');
+      }, 30_000);
+    });
+
+    it('keeps a multi-line failure on one line, without losing the later lines', async () => {
+      await preload(refuseRegister('loader failed\n  because of the test'));
+      const result = await runWritesRan('hook.mts');
+      expect(stderrOf(result)).toBe(
+        'shardmind hook-runner: could not map shardmind/runtime to the engine (ESM): Error: loader failed because of the test\n',
+      );
+    }, 30_000);
+
+    describe('the CommonJS loader (Module._resolveFilename cannot be replaced by the runner)', () => {
+      beforeEach(async () => {
+        await preload(refuseResolveFilename('throw'));
+      });
+
+      it('says in one line that the CommonJS loader failed, and runs the hook', async () => {
+        const result = await runWritesRan('hook.ts');
+        expect(stderrOf(result)).toBe(
           'shardmind hook-runner: could not map shardmind/runtime to the engine (CommonJS): Error: _resolveFilename refused by the test\n',
         );
       }, 30_000);
@@ -1102,5 +1146,44 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
         expect(read).toEqual({ version: '4.5.6', user: 'Ada', valid: true, badValid: false, vendored: false });
       }, 30_000);
     });
+
+    it('warns when Module._resolveFilename accepts the mapping but does not keep it', async () => {
+      await preload(refuseResolveFilename('drop'));
+      const result = await runWritesRan('hook.ts');
+      expect(stderrOf(result)).toBe(
+        'shardmind hook-runner: could not map shardmind/runtime to the engine (CommonJS): Error: Module._resolveFilename did not keep the mapping\n',
+      );
+    }, 30_000);
+
+    it('writes one line per loader when both fail, and still runs the hook', async () => {
+      await preload(`${refuseRegister('register refused by the test')}\n${refuseResolveFilename('throw')}`);
+      const result = await runWritesRan('hook.mts');
+      expect(stderrOf(result)).toBe(
+        'shardmind hook-runner: could not map shardmind/runtime to the engine (ESM): Error: register refused by the test\n' +
+          'shardmind hook-runner: could not map shardmind/runtime to the engine (CommonJS): Error: _resolveFilename refused by the test\n',
+      );
+    }, 30_000);
+
+    // A runner with no runtime beside it (a damaged install) maps neither
+    // loader. The built runner imports only node: built-ins, so a copy of it
+    // in an empty folder is that install.
+    it('says so in one line when the engine runtime is not beside the runner', async () => {
+      const lonely = path.join(shardDir, 'lonely', 'internal', 'hook-runner.js');
+      await fsp.mkdir(path.dirname(lonely), { recursive: true });
+      await fsp.copyFile(path.resolve('dist/internal/hook-runner.js'), lonely);
+      const hookPath = path.join(shardDir, 'hook.mts');
+      await fsp.writeFile(hookPath, WRITES_RAN, 'utf-8');
+      const ctxPath = path.join(shardDir, 'ctx.json');
+      await fsp.writeFile(ctxPath, JSON.stringify(ctx()), 'utf-8');
+      const tsx = pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href;
+      const child = spawnSync(process.execPath, ['--import', tsx, lonely, hookPath, ctxPath], {
+        cwd: vaultDir,
+        encoding: 'utf-8',
+      });
+      expect(child.status).toBe(0);
+      expect(child.stderr).toBe(
+        "shardmind hook-runner: could not map shardmind/runtime to the engine (ESM and CommonJS): the engine's runtime is not beside the runner\n",
+      );
+    }, 30_000);
   });
 });

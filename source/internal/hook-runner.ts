@@ -129,7 +129,10 @@ function engineRuntimePath(): string | null {
  */
 function resolveRuntimeToEngine(): void {
   const runtimePath = engineRuntimePath();
-  if (runtimePath === null) return;
+  if (runtimePath === null) {
+    warnUnmapped('ESM and CommonJS', "the engine's runtime is not beside the runner");
+    return;
+  }
 
   const resolveHook = [
     'let target;',
@@ -148,11 +151,15 @@ function resolveRuntimeToEngine(): void {
   mapLoaderOrWarn('CommonJS', () => {
     const original: unknown = Reflect.get(Module, '_resolveFilename');
     if (typeof original !== 'function') throw new Error('Module._resolveFilename is not a function');
-    const mapped = Reflect.set(Module, '_resolveFilename', function (this: unknown, request: unknown, ...rest: unknown[]): unknown {
+    const mapping = function (this: unknown, request: unknown, ...rest: unknown[]): unknown {
       if (request === RUNTIME_SPECIFIER) return runtimePath;
       return original.call(this, request, ...rest);
-    });
-    if (!mapped) throw new Error('Module._resolveFilename is read-only');
+    };
+    if (!Reflect.set(Module, '_resolveFilename', mapping)) throw new Error('Module._resolveFilename is read-only');
+    // A setter can accept the value and keep another; read it back.
+    if (Reflect.get(Module, '_resolveFilename') !== mapping) {
+      throw new Error('Module._resolveFilename did not keep the mapping');
+    }
   });
 }
 
@@ -161,10 +168,24 @@ function mapLoaderOrWarn(loader: 'ESM' | 'CommonJS', mapLoader: () => void): voi
   try {
     mapLoader();
   } catch (err) {
-    process.stderr.write(
-      `shardmind hook-runner: could not map ${RUNTIME_SPECIFIER} to the engine (${loader}): ${describe(err).split('\n', 1)[0]}\n`,
-    );
+    warnUnmapped(loader, oneLine(err));
   }
+}
+
+/** The one stderr line for loaders left unmapped (#377). */
+function warnUnmapped(loaders: string, why: string): void {
+  process.stderr.write(`shardmind hook-runner: could not map ${RUNTIME_SPECIFIER} to the engine (${loaders}): ${why}\n`);
+}
+
+/** A thrown value on one line: name and message, line breaks folded to spaces, never throwing. */
+function oneLine(err: unknown): string {
+  let text: string;
+  try {
+    text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  } catch {
+    text = describe(err);
+  }
+  return text.replace(/\s*[\r\n]+\s*/g, ' ').trim();
 }
 
 async function main(): Promise<void> {
