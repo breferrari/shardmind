@@ -59,7 +59,11 @@ done
 "$SHARDMIND_CLI" adopt github:breferrari/obsidian-mind
 ```
 
-Walk through the wizard. The bulk-resolution picker comes next: it reads "N files differ from the shard." (N >= 5) and offers Keep all mine / Use all theirs / Auto-merge / Decide per file. **Pick Decide per file** (↓ three times, then Enter). The default, Keep all mine, resolves every file at once and skips the per-file review this recipe exercises (#379). Running `adopt` with `--mode decide-per-file` skips the picker and goes straight to the per-file review; use it only when the picker itself is not under test. Then, in the diff-review phase, observe:
+Walk through the wizard. The bulk-resolution picker comes next ("N files differ from the shard."). **Pick Decide per file**, the fourth option (↓ three times, then Enter). The default, Keep all mine, resolves every file at once and skips the per-file review this recipe exercises (#379).
+
+- `--mode decide-per-file` skips the picker; use it only when the picker is not under test.
+
+Then, in the diff-review phase, observe:
 
 - **Counter advances**: header reads `(1 of N)`, `(2 of N)`, … `(5 of N)` where N >= 5. The counter incrementing on Enter is the #109 regression check.
 - **Each prompt accepts a choice**: pick **Keep mine** on the first 4 differs and **Use shard** on the 5th. Both branches must fire — pinning that the per-iteration `useOncePerKey` guard re-arms across files.
