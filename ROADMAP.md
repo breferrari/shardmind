@@ -168,7 +168,7 @@ Each authoring and CLI proposal is built, or closed because something better rep
 
 Milestone: [Phase 7.5](https://github.com/breferrari/shardmind/milestone/17)
 
-Defects found after the 1.0 contract was settled, fixed in 1.0.x patches without changing what 1.0 freezes. Numbered 7.5 on 2026-10-12 so it is taken before Phase 8 and Phase 15: 1.0.1 ships first.
+Defects found after the 1.0 contract was settled, fixed in 1.0.x patches without changing what 1.0 freezes. Numbered 7.5 on 2026-10-12 so it is taken before Phase 8 and Phase 15: 1.0.1 ships first. Released as 1.0.1 on 2026-10-13.
 
 | | Task | Issue |
 |---|---|---|
@@ -591,7 +591,7 @@ Deferred items surfaced during the v0.1 polish-pass architecture audit. None are
 
 ### v1.0.0 — Ecosystem (2026–2027)
 
-1.0 is the engine contract: Phase 14 settled everything it freezes, and **1.0.0 shipped on 2026-10-06** with it: install into a new folder, `--json` that runs `update` and `adopt`, a validated `state.json`, hooks importing the running engine's runtime, and the reservations that let Phase 15 land in 1.x without a breaking change. Of the ecosystem below, the guides shipped, the registry index is published (obsidian-mind and wiki-mind), and search and teams are planned in Phase 15. A hosted registry with accounts stays a VISION non-goal. Each area has a parent umbrella issue.
+1.0 is the engine contract: Phase 14 settled everything it freezes, and **1.0.0 shipped on 2026-10-06** with it: install into a new folder, `--json` that runs `update` and `adopt`, a validated `state.json`, hooks importing the running engine's runtime, and the reservations that let Phase 15 land in 1.x without a breaking change. **1.0.1 followed on 2026-10-13** with the 1.0.x fixes (Phase 7.5: #377, #379, #380, #381, #385), changing no part of the contract. Of the ecosystem below, the guides shipped, the registry index is published (obsidian-mind and wiki-mind), and search and teams are planned in Phase 15. A hosted registry with accounts stays a VISION non-goal. Each area has a parent umbrella issue.
 
 #### Registry (hosted) ([#89](https://github.com/breferrari/shardmind/issues/89))
 
