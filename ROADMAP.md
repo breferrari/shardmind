@@ -164,6 +164,19 @@ Each authoring and CLI proposal is built, or closed because something better rep
 | ✅ | Install into a new folder named after the shard, with an optional name, as git clone does | [#333](https://github.com/breferrari/shardmind/issues/333) |
 | ✅ | Refuse an install with no folder inside an existing vault | [#337](https://github.com/breferrari/shardmind/issues/337) |
 
+## Phase 7.5 — 1.0.x fixes
+
+Milestone: [Phase 7.5](https://github.com/breferrari/shardmind/milestone/17)
+
+Defects found after the 1.0 contract was settled, fixed in 1.0.x patches without changing what 1.0 freezes. Numbered 7.5 on 2026-10-12 so it is taken before Phase 8 and Phase 15: 1.0.1 ships first.
+
+| | Task | Issue |
+|---|---|---|
+| ✅ | Report a failed shardmind/runtime mapping accurately, not as a context failure | [#377](https://github.com/breferrari/shardmind/issues/377) |
+| ⬜ | Update RELEASE-SMOKE's adopt recipe for the bulk-resolution picker | [#379](https://github.com/breferrari/shardmind/issues/379) |
+| ⬜ | Retry the registry index fetch and keep the network cause in the error | [#380](https://github.com/breferrari/shardmind/issues/380) |
+| ⬜ | Hide the keybind hint when stdout is not a terminal | [#381](https://github.com/breferrari/shardmind/issues/381) |
+
 ## Phase 8 — release and test tooling
 
 Milestone: [Phase 8](https://github.com/breferrari/shardmind/milestone/9)
@@ -267,7 +280,7 @@ Everything 1.0 freezes is either decided or built: the contract review's behavio
 
 Milestone: [Phase 15](https://github.com/breferrari/shardmind/milestone/16)
 
-Engine capability from the original plan. These were declined on 2026-10-04/05 on demand evidence (no request, no current shard needing it, one author) and reopened on 2026-10-06. ShardMind is a template engine for any vault, so the absence of requests is not a reason to drop planned capability. Brenno schedules each item, either before the 1.0 tag or in a 1.x minor release. Not taken by the unattended loop until scheduled.
+Engine capability from the original plan. These were declined on 2026-10-04/05 on demand evidence (no request, no current shard needing it, one author) and reopened on 2026-10-06. ShardMind is a template engine for any vault, so the absence of requests is not a reason to drop planned capability. Each item ships in a 1.x minor release. Scheduled on 2026-10-12 after 1.0.1 (Phase 7.5) and Phase 8.
 
 | | Task | Issue |
 |---|---|---|
@@ -284,17 +297,6 @@ Engine capability from the original plan. These were declined on 2026-10-04/05 o
 | ⬜ | Debug logging (SHARDMIND_DEBUG) | [#36](https://github.com/breferrari/shardmind/issues/36) |
 | ⬜ | Add --skip-hooks to install, update and adopt | [#199](https://github.com/breferrari/shardmind/issues/199) |
 | ⬜ | Command namespace prefix in the engine | [#25](https://github.com/breferrari/shardmind/issues/25) |
-
-## Phase 16 — 1.0.x fixes
-
-Milestone: [Phase 16](https://github.com/breferrari/shardmind/milestone/17)
-
-Defects found after the 1.0 contract was settled, fixed in 1.0.x patches without changing what 1.0 freezes.
-
-| | Task | Issue |
-|---|---|---|
-| ⬜ | Report a failed shardmind/runtime mapping accurately, not as a context failure | [#377](https://github.com/breferrari/shardmind/issues/377) |
-| ⬜ | Update RELEASE-SMOKE's adopt recipe for the bulk-resolution picker | [#379](https://github.com/breferrari/shardmind/issues/379) |
 
 ## Shelf (retired 2026-10-04)
 
