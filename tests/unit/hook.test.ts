@@ -986,12 +986,11 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
    * registers.
    */
   describe('when the mapping fails (#377)', () => {
-    let preloadDir: string;
     let previous: string | undefined;
 
     beforeEach(async () => {
-      preloadDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'hook-rt-preload-'));
-      const preload = path.join(preloadDir, 'refuse-register.mjs');
+      // In the shard's temp dir, which the outer afterEach removes.
+      const preload = path.join(shardDir, 'refuse-register.mjs');
       await fsp.writeFile(
         preload,
         `
@@ -1009,10 +1008,9 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
       process.env['NODE_OPTIONS'] = `${previous ?? ''} --import=${pathToFileURL(preload).href}`.trim();
     });
 
-    afterEach(async () => {
+    afterEach(() => {
       if (previous === undefined) delete process.env['NODE_OPTIONS'];
       else process.env['NODE_OPTIONS'] = previous;
-      await fsp.rm(preloadDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     });
 
     it('runs a hook that does not import the runtime, and says why the mapping failed', async () => {
@@ -1031,8 +1029,9 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
       const result = await executeHook(hookPath, ctx());
       expect(result).toMatchObject({ kind: 'ran', exitCode: 0 });
       expect(await fsp.readFile(path.join(vaultDir, 'ran.txt'), 'utf-8')).toBe('yes');
-      expect(result.kind === 'ran' && result.stderr).toContain(
-        'could not map shardmind/runtime to the engine: Error: register refused by the test',
+      // One line: the message, no stack frames after it.
+      expect(result.kind === 'ran' && result.stderr).toBe(
+        'shardmind hook-runner: could not map shardmind/runtime to the engine: Error: register refused by the test\n',
       );
     }, 30_000);
 

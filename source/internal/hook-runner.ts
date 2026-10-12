@@ -13,9 +13,10 @@
  *   1. Read the two argv positions (hook path + ctx temp-file path).
  *   2. Parse the JSON-serialized slot context from the ctx file.
  *   3. Map `shardmind/runtime` to the running engine's runtime (#373, best
- *      effort per #377), then dynamically `import()` the hook module. `--import tsx/...loader.mjs`
- *      registers tsx's ESM loader on the parent node process, so a TS file
- *      resolves and compiles transparently from here.
+ *      effort per #377), then dynamically `import()` the hook module.
+ *      `--import tsx/...loader.mjs` registers tsx's ESM loader on the parent
+ *      node process, so a TS file resolves and compiles transparently from
+ *      here.
  *   4. Invoke the default export with the parsed ctx and await completion.
  *   5. Exit 0 on success, 1 on any throw. The thrown error's message + stack
  *      go to stderr so the parent can surface them in the install summary.
@@ -159,7 +160,7 @@ function bestEffort(mapLoader: () => void): void {
   try {
     mapLoader();
   } catch (err) {
-    process.stderr.write(`shardmind hook-runner: could not map ${RUNTIME_SPECIFIER} to the engine: ${describe(err)}\n`);
+    process.stderr.write(`shardmind hook-runner: could not map ${RUNTIME_SPECIFIER} to the engine: ${describe(err).split('\n', 1)[0]}\n`);
   }
 }
 
@@ -182,11 +183,13 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // The context is read: from here a throw is never a `context` failure
+  // (#377). Mapping the runtime prepares the hook's import, so it is `import`.
+  stage = 'import';
   resolveRuntimeToEngine();
 
   // `pathToFileURL` wraps Windows absolute paths as `file:///C:/...` so
   // dynamic import resolves them. POSIX paths pass through unchanged.
-  stage = 'import';
   const mod = await import(pathToFileURL(hookPath).href);
   const fn = (mod as { default?: unknown }).default;
   if (typeof fn !== 'function') {
