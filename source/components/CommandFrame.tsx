@@ -23,6 +23,11 @@ interface CommandFrameProps {
   selfUpdateBanner?: ReactNode;
 }
 
+/** Whether a stream is a terminal. Ink types its streams without `isTTY`, hence the read by name. */
+function isTty(stream: object): boolean {
+  return Reflect.get(stream, 'isTTY') === true;
+}
+
 export default function CommandFrame({
   children,
   dryRun,
@@ -31,7 +36,7 @@ export default function CommandFrame({
 }: CommandFrameProps) {
   const { stdout } = useStdout();
   const { stdin } = useStdin();
-  const onTerminal = Reflect.get(stdout, 'isTTY') === true && Reflect.get(stdin, 'isTTY') === true;
+  const onTerminal = isTty(stdout) && isTty(stdin);
   return (
     <Box flexDirection="column" gap={1}>
       {selfUpdateBanner}
