@@ -1318,6 +1318,9 @@ describe('shardmind update', () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/up to date/i);
+    // Piped stdout: the last frame is all a non-TTY run prints, and the
+    // up-to-date frame kept the keybind hint, with nothing to navigate (#381).
+    expect(result.stdout).not.toContain('navigate');
   });
 
   it('applies a real version bump and carries the new file into the vault', async () => {

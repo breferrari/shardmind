@@ -175,7 +175,7 @@ Defects found after the 1.0 contract was settled, fixed in 1.0.x patches without
 | ✅ | Report a failed shardmind/runtime mapping accurately, not as a context failure | [#377](https://github.com/breferrari/shardmind/issues/377) |
 | ✅ | Update RELEASE-SMOKE's adopt recipe for the bulk-resolution picker | [#379](https://github.com/breferrari/shardmind/issues/379) |
 | ⬜ | Retry the registry index fetch and keep the network cause in the error | [#380](https://github.com/breferrari/shardmind/issues/380) |
-| ⬜ | Hide the keybind hint when stdout is not a terminal | [#381](https://github.com/breferrari/shardmind/issues/381) |
+| ✅ | Hide the keybind hint when stdout is not a terminal | [#381](https://github.com/breferrari/shardmind/issues/381) |
 
 ## Phase 8 — release and test tooling
 
