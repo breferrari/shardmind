@@ -19,6 +19,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import {
   runPostUpdateHook,
   runHook,
@@ -976,4 +977,75 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
     expect(result.kind).toBe('ran');
     expect(await fsp.readFile(path.join(vaultDir, 'code.txt'), 'utf-8')).toBe('ERR_MODULE_NOT_FOUND');
   }, 30_000);
+
+  /**
+   * #377: the mapping is best effort. When `module.register` refuses the
+   * runner's resolve hook, the context was still read, so the run must not
+   * report `context`. A preload (over NODE_OPTIONS, which the runner inherits)
+   * makes `register` throw for `data:` URLs only, so tsx's own loader still
+   * registers.
+   */
+  describe('when the mapping fails (#377)', () => {
+    let preloadDir: string;
+    let previous: string | undefined;
+
+    beforeEach(async () => {
+      preloadDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'hook-rt-preload-'));
+      const preload = path.join(preloadDir, 'refuse-register.mjs');
+      await fsp.writeFile(
+        preload,
+        `
+          import module, { syncBuiltinESMExports } from 'node:module';
+          const original = module.register;
+          module.register = function (specifier, ...rest) {
+            if (String(specifier).startsWith('data:')) throw new Error('register refused by the test');
+            return original.call(this, specifier, ...rest);
+          };
+          syncBuiltinESMExports();
+        `,
+        'utf-8',
+      );
+      previous = process.env['NODE_OPTIONS'];
+      process.env['NODE_OPTIONS'] = `${previous ?? ''} --import=${pathToFileURL(preload).href}`.trim();
+    });
+
+    afterEach(async () => {
+      if (previous === undefined) delete process.env['NODE_OPTIONS'];
+      else process.env['NODE_OPTIONS'] = previous;
+      await fsp.rm(preloadDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    });
+
+    it('runs a hook that does not import the runtime, and says why the mapping failed', async () => {
+      const hookPath = path.join(shardDir, 'hook.mts');
+      await fsp.writeFile(
+        hookPath,
+        `
+          import { writeFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          export default async function (ctx: { vaultRoot: string }): Promise<void> {
+            await writeFile(join(ctx.vaultRoot, 'ran.txt'), 'yes');
+          }
+        `,
+        'utf-8',
+      );
+      const result = await executeHook(hookPath, ctx());
+      expect(result).toMatchObject({ kind: 'ran', exitCode: 0 });
+      expect(await fsp.readFile(path.join(vaultDir, 'ran.txt'), 'utf-8')).toBe('yes');
+      expect(result.kind === 'ran' && result.stderr).toContain(
+        'could not map shardmind/runtime to the engine: Error: register refused by the test',
+      );
+    }, 30_000);
+
+    it('reports a hook that imports the runtime on the ESM path as an import failure, not context', async () => {
+      const hookPath = path.join(shardDir, 'hook.mts');
+      await fsp.writeFile(hookPath, READ_THROUGH_RUNTIME, 'utf-8');
+      const result = await executeHook(hookPath, ctx());
+      expect(result).toMatchObject({ kind: 'ran', exitCode: 1, failure: 'import' });
+    }, 30_000);
+
+    it('still maps the runtime on the CommonJS path, which register does not serve', async () => {
+      const read = await run('hook.ts');
+      expect(read).toEqual({ version: '4.5.6', user: 'Ada', valid: true, badValid: false, vendored: false });
+    }, 30_000);
+  });
 });

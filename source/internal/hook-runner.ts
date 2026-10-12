@@ -12,8 +12,8 @@
  * Flow:
  *   1. Read the two argv positions (hook path + ctx temp-file path).
  *   2. Parse the JSON-serialized slot context from the ctx file.
- *   3. Map `shardmind/runtime` to the running engine's runtime (#373), then
- *      dynamically `import()` the hook module. `--import tsx/...loader.mjs`
+ *   3. Map `shardmind/runtime` to the running engine's runtime (#373, best
+ *      effort per #377), then dynamically `import()` the hook module. `--import tsx/...loader.mjs`
  *      registers tsx's ESM loader on the parent node process, so a TS file
  *      resolves and compiles transparently from here.
  *   4. Invoke the default export with the parsed ctx and await completion.
@@ -119,6 +119,12 @@ function engineRuntimePath(): string | null {
  *     `"type": "module"`, and its imports become `require()` calls, which
  *     resolve hooks never see. `Module._resolveFilename` is wrapped instead,
  *     the same seam tsx uses, calling through for every other request.
+ *
+ * Best effort, per loader (#377): the context is already read, so a mapping
+ * that throws must not end the run as a `context` failure. Each loader is
+ * mapped on its own; a failure writes one stderr line and the hook is still
+ * imported. A hook that needs the runtime through the unmapped loader then
+ * fails as `import`.
  */
 function resolveRuntimeToEngine(): void {
   const runtimePath = engineRuntimePath();
@@ -132,16 +138,29 @@ function resolveRuntimeToEngine(): void {
     '  return nextResolve(specifier, context);',
     '}',
   ].join('\n');
-  register(`data:text/javascript,${encodeURIComponent(resolveHook)}`, {
-    data: { url: pathToFileURL(runtimePath).href },
+  bestEffort(() => {
+    register(`data:text/javascript,${encodeURIComponent(resolveHook)}`, {
+      data: { url: pathToFileURL(runtimePath).href },
+    });
   });
 
-  const original: unknown = Reflect.get(Module, '_resolveFilename');
-  if (typeof original !== 'function') return;
-  Reflect.set(Module, '_resolveFilename', function (this: unknown, request: unknown, ...rest: unknown[]): unknown {
-    if (request === RUNTIME_SPECIFIER) return runtimePath;
-    return original.call(this, request, ...rest);
+  bestEffort(() => {
+    const original: unknown = Reflect.get(Module, '_resolveFilename');
+    if (typeof original !== 'function') return;
+    Reflect.set(Module, '_resolveFilename', function (this: unknown, request: unknown, ...rest: unknown[]): unknown {
+      if (request === RUNTIME_SPECIFIER) return runtimePath;
+      return original.call(this, request, ...rest);
+    });
   });
+}
+
+/** Map one loader; a throw becomes one stderr line, and the run goes on (#377). */
+function bestEffort(mapLoader: () => void): void {
+  try {
+    mapLoader();
+  } catch (err) {
+    process.stderr.write(`shardmind hook-runner: could not map ${RUNTIME_SPECIFIER} to the engine: ${describe(err)}\n`);
+  }
 }
 
 async function main(): Promise<void> {
