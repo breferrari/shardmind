@@ -12,6 +12,8 @@ This gate validates the **shardmind engine** via a manual run against the produc
 
 ## Setup
 
+Needs `git`, and `gh` signed in (`gh auth status`): the adopt smoke asks it for the flagship's latest release.
+
 ```bash
 # From the shardmind repo root, on the release branch with the version bump
 # committed but BEFORE running npm run release:*.
@@ -119,7 +121,7 @@ Save the filled-in section locally. After `release.yml` publishes the v\<version
 
 Cut from `git rev-parse HEAD = <sha>` at `<ISO-8601 timestamp>`.
 shardmind built locally against Node `<node --version>`.
-obsidian-mind clone: tag `<FLAGSHIP_TAG>` at `<sha>` from `https://github.com/breferrari/obsidian-mind`.
+obsidian-mind clone: tag `<tag>` at `<sha>` from `https://github.com/breferrari/obsidian-mind`.
 ```
 
 ## When the gate may relax
