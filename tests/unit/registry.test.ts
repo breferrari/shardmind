@@ -30,6 +30,11 @@ function jsonResponse(body: object, status = 200, headers: Record<string, string
   return new Response(JSON.stringify(body), { status, headers });
 }
 
+/** Node's fetch failure: a TypeError whose cause is the socket error (#380). */
+function networkError(code = 'ECONNRESET'): TypeError {
+  return new TypeError('fetch failed', { cause: Object.assign(new Error(`read ${code}`), { code }) });
+}
+
 function headOk(): Response {
   return new Response(null, { status: 200 });
 }
@@ -244,6 +249,17 @@ describe('registry.resolve', () => {
       await expect(resolve('github:acme/widget#main')).rejects.toMatchObject({
         code: 'REGISTRY_NETWORK',
       });
+    });
+
+    it('names the cause of a /commits network failure in the message (#380)', async () => {
+      globalThis.fetch = vi.fn(async () => {
+        throw networkError('ETIMEDOUT');
+      }) as typeof fetch;
+
+      const err = await rejected(resolve('github:acme/widget#main'));
+      expect(err.message).toBe('Could not reach api.github.com: fetch failed (ETIMEDOUT)');
+      // A call with no hint of its own gets the remedy, not the cause a second time (#380).
+      expect(err.hint).toBe('Check your connection and try again.');
     });
 
     it('rejects a /commits response missing the sha field', async () => {
@@ -532,6 +548,139 @@ describe('registry.resolve', () => {
       }) as typeof fetch;
       expect((await resolve('breferrari/obsidian-mind')).version).toBe('3.5.0');
       expect((await resolve('breferrari/obsidian-mind', { includePrerelease: true })).version).toBe('4.0.0-beta.1');
+    });
+
+    /**
+     * #380: the index fetch is tried twice, a network failure or a 5xx
+     * retried once after a short backoff, and a failure names its cause.
+     * Only setTimeout is faked, so the backoff passes at once and response
+     * bodies still read.
+     */
+    describe('index fetch retry (#380)', () => {
+      const ENTRY = { shards: { 'breferrari/obsidian-mind': { repo: 'breferrari/obsidian-mind' } } };
+
+      /** A 200 whose body fails while it is read, as a socket closed mid-transfer does. */
+      function droppedBody(): Response {
+        const error = new TypeError('terminated', { cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }) });
+        return new Response(new ReadableStream({ start: (controller) => controller.error(error) }), { status: 200 });
+      }
+
+      /**
+       * fetch answering the index with `answers` in turn: a Response, a function
+       * making one (for a body that can be read only once), or a value to throw.
+       * The rest answers as a pinned install needs.
+       */
+      function stubIndex(answers: Array<Response | (() => Response) | unknown>): { indexCalls: () => number } {
+        let calls = 0;
+        globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+          const u = typeof url === 'string' ? url : url.toString();
+          if (u === REGISTRY_URL) {
+            const answer = answers[Math.min(calls, answers.length - 1)];
+            calls += 1;
+            if (answer instanceof Response) return answer.clone();
+            if (typeof answer === 'function') return (answer as () => Response)();
+            throw answer;
+          }
+          if (u.endsWith('/tarball/v1.2.3') && init?.method === 'HEAD') return headOk();
+          throw new Error(`Unexpected fetch: ${u}`);
+        }) as typeof fetch;
+        return { indexCalls: () => calls };
+      }
+
+      /** Resolve with the backoff run out: the error it rejects with, or undefined when it resolves. */
+      async function settle(ref: string): Promise<ShardMindError | undefined> {
+        const pending = resolve(ref).then(
+          () => undefined,
+          (err: unknown) => {
+            if (err instanceof ShardMindError) return err;
+            throw err;
+          },
+        );
+        await vi.runAllTimersAsync();
+        return pending;
+      }
+
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['setTimeout'] });
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it.each([
+        ['a network failure', networkError()],
+        ['a 5xx', new Response('unavailable', { status: 503 })],
+        ['a body dropped while it is read', droppedBody],
+      ])('retries %s once, and resolves when the second try answers', async (_case, first) => {
+        const stub = stubIndex([first, indexResponse(ENTRY)]);
+        expect(await settle('breferrari/obsidian-mind@1.2.3')).toBeUndefined();
+        expect(stub.indexCalls()).toBe(2);
+      });
+
+      it('names the cause of a persistent network failure, keeps the direct hint, and tries twice in all', async () => {
+        const stub = stubIndex([networkError('ECONNRESET')]);
+        const err = await settle('breferrari/obsidian-mind@1.2.3');
+        expect(err?.code).toBe('REGISTRY_NETWORK');
+        expect(err?.message).toBe('Could not reach raw.githubusercontent.com: fetch failed (ECONNRESET)');
+        expect(err?.hint).toContain('github:breferrari/obsidian-mind');
+        expect(stub.indexCalls()).toBe(2);
+      });
+
+      it('names the cause of a body dropped on both tries', async () => {
+        const stub = stubIndex([droppedBody]);
+        const err = await settle('breferrari/obsidian-mind@1.2.3');
+        expect(err?.message).toBe('Could not read the shard registry index: terminated (UND_ERR_SOCKET)');
+        expect(stub.indexCalls()).toBe(2);
+      });
+
+      it('reports the second try when a 5xx is followed by a network failure', async () => {
+        const stub = stubIndex([new Response('unavailable', { status: 503 }), networkError('ECONNRESET')]);
+        const err = await settle('breferrari/obsidian-mind@1.2.3');
+        expect(err?.message).toBe('Could not reach raw.githubusercontent.com: fetch failed (ECONNRESET)');
+        expect(stub.indexCalls()).toBe(2);
+      });
+
+      it('fails an index URL that cannot be parsed at once, as REGISTRY_NETWORK, not as a crash', async () => {
+        const previous = process.env['SHARDMIND_REGISTRY_INDEX_URL'];
+        process.env['SHARDMIND_REGISTRY_INDEX_URL'] = 'not a url';
+        try {
+          const fetchSpy = vi.fn(async () => {
+            throw new TypeError('Failed to parse URL from not a url');
+          });
+          globalThis.fetch = fetchSpy as typeof fetch;
+          const err = await settle('breferrari/obsidian-mind@1.2.3');
+          expect(err?.code).toBe('REGISTRY_NETWORK');
+          // A setting, not the network: no retry, and the message says which.
+          expect(err?.message).toBe("The shard registry index URL is not a valid URL: 'not a url'");
+          expect(fetchSpy).not.toHaveBeenCalled();
+        } finally {
+          if (previous === undefined) delete process.env['SHARDMIND_REGISTRY_INDEX_URL'];
+          else process.env['SHARDMIND_REGISTRY_INDEX_URL'] = previous;
+        }
+      });
+
+      it.each([
+        ['a 4xx', new Response('missing', { status: 404 })],
+        ['a corrupt index', new Response('{not json', { status: 200 })],
+      ])('does not retry %s', async (_case, only) => {
+        const stub = stubIndex([only]);
+        expect((await settle('breferrari/obsidian-mind@1.2.3'))?.code).toBe('REGISTRY_NETWORK');
+        expect(stub.indexCalls()).toBe(1);
+      });
+
+      it.each([
+        ['a cause with no code, by its message', new TypeError('fetch failed', { cause: new Error('socket hang up') }), 'fetch failed (socket hang up)'],
+        ['a cause that is not an object', new TypeError('fetch failed', { cause: 'EAI_AGAIN' }), 'fetch failed (EAI_AGAIN)'],
+        ['no cause, by the message', new TypeError('network offline'), 'network offline'],
+        ['a thrown non-Error', 'offline', 'offline'],
+        ['an empty message, by the cause alone', new TypeError('', { cause: { code: 'ECONNRESET' } }), 'ECONNRESET'],
+      ])('names %s', async (_case, thrown, cause) => {
+        stubIndex([thrown]);
+        expect((await settle('breferrari/obsidian-mind@1.2.3'))?.message).toBe(
+          `Could not reach raw.githubusercontent.com: ${cause}`,
+        );
+      });
     });
   });
 
@@ -1085,22 +1234,23 @@ describe('registry.resolve', () => {
     const RUN = 'Run shardmind install github:breferrari/obsidian-mind to take it straight from GitHub.';
 
     it.each([
-      ['answers 404', () => new Response('Not Found', { status: 404 })],
-      ['answers 500', () => new Response('boom', { status: 500 })],
-      ['is not JSON', () => new Response('<html>', { status: 200 })],
-      ['has no shards map', () => indexResponse({ shards: null })],
-      ['has shards as an array', () => indexResponse({ shards: [] })],
+      ['answers 404', () => new Response('Not Found', { status: 404 }), 1],
+      ['answers 500', () => new Response('boom', { status: 500 }), 2],
+      ['is not JSON', () => new Response('<html>', { status: 200 }), 1],
+      ['has no shards map', () => indexResponse({ shards: null }), 1],
+      ['has shards as an array', () => indexResponse({ shards: [] }), 1],
       [
         'cannot be reached',
         () => {
           throw new TypeError('fetch failed');
         },
+        2,
       ],
-    ])('names the github: install command when the index %s', async (_label, answer) => {
+    ] as const)('names the github: install command when the index %s', async (_label, answer, tries) => {
       const seen = indexOnly(answer);
       await expect(resolve('breferrari/obsidian-mind')).rejects.toMatchObject({ code: 'REGISTRY_NETWORK', hint: RUN });
-      // No fallback: nothing but the index was asked.
-      expect(seen).toEqual([REGISTRY_URL]);
+      // No fallback: nothing but the index was asked, twice for a transient failure (#380).
+      expect(seen).toEqual(Array(tries).fill(REGISTRY_URL));
     });
 
     it('names it when the index does not list the shard, keeping SHARD_NOT_FOUND', async () => {

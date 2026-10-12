@@ -8,6 +8,7 @@ import * as tar from 'tar';
 import type { TempShard } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { removePath } from './fs-utils.js';
+import { describeCause } from './bug-report.js';
 import {
   SHARD_MANIFEST_FILE,
   SHARD_SCHEMA_FILE,
@@ -130,9 +131,8 @@ async function fetchAndExtract(
   } catch (err) {
     if (signal.aborted) throw new DownloadCancelledError();
     await safeCleanup(tempDir);
-    const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(
-      `Failed to download: ${message}`,
+      `Failed to download: ${describeCause(err)}`,
       'DOWNLOAD_HTTP_ERROR',
       'Check the tarball URL and your internet connection.',
     );

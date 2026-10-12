@@ -16,6 +16,11 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 - **A hook run no longer reports `context` when the engine cannot map `shardmind/runtime`.** The context had been read, so the report was wrong. The runner now maps each loader (ESM, CommonJS) on its own, writes one stderr line naming a loader it could not map, and still runs the hook. A hook that does not import the runtime runs as usual. One that imports it through the unmapped loader gets a copy the shard vendors if there is one, and otherwise fails as `import`.
 
+### Fixed (the registry index is retried, and a network failure says why — #380)
+
+- **A bare `namespace/name` ref survives one dropped connection.** The registry index fetch is retried once, 500 ms later, on a network failure, a 5xx answer, or a connection dropped while the index is read. Other answers are final.
+- **A network failure names its cause:** `Could not reach raw.githubusercontent.com: fetch failed (ECONNRESET)`, where it used to say only `Could not reach raw.githubusercontent.com`. This holds for every GitHub request and the tarball download, so a failed install, update or adopt can be diagnosed from its message or its `--json` document. A call with no hint of its own gets `Check your connection and try again.` (A connection that drops partway through a response other than the index is #385.)
+
 ## [1.0.0] - 2026-10-06
 
 Major release: the 1.0 contract. From here, the CLI, its exit codes, the `--json` documents, `state.json`, the shard layout and `shardmind/runtime` follow semver ([`docs/OPERATIONS.md`](docs/OPERATIONS.md), [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md)).

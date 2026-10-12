@@ -152,6 +152,16 @@ describe('downloadShard', () => {
     expect(err.message).toContain('fetch failed');
   });
 
+  it('names the cause of a network failure (#380)', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(new TypeError('fetch failed', { cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }) }));
+
+    const err = await downloadShard('https://example.com/tarball').catch(e => e);
+    expect(err.code).toBe('DOWNLOAD_HTTP_ERROR');
+    expect(err.message).toBe('Failed to download: fetch failed (ECONNRESET)');
+  });
+
   it('throws DOWNLOAD_MISSING_MANIFEST when shard.yaml is missing', async () => {
     // Create a tarball without shard.yaml
     const os = await import('node:os');
