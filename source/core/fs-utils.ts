@@ -137,4 +137,3 @@ export function isBinaryForMerge(buf: Buffer): boolean {
 export function foldOutputPath(outputPath: string): string {
   return outputPath.normalize('NFC').toLowerCase();
 }
-
