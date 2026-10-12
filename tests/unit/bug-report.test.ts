@@ -7,9 +7,11 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { z } from 'zod';
+import { fetchTypeError } from '../helpers/index.js';
 import {
   bugReportUrl,
   describeError,
+  isConnectionDrop,
   formatErrorPlain,
   installCrashHandlers,
   wrapWriteError,
@@ -232,5 +234,42 @@ describe('installCrashHandlers (#225)', () => {
     proc.emit('unhandledRejection', new RangeError('nobody awaited'));
     expect(written.join('')).toMatch(/nobody awaited[\s\S]*issues\/new/);
     expect(exits).toEqual([1]);
+  });
+});
+
+/** #385: a connection dropped mid-transfer, told apart from a corrupt payload. */
+describe('isConnectionDrop (#385)', () => {
+  const withCode = (err: Error, code: string): Error => Object.assign(err, { code });
+  it.each([
+    ["undici's terminated body", fetchTypeError('terminated', 'UND_ERR_SOCKET'), true],
+    ["undici's failed request", fetchTypeError('fetch failed', 'ECONNRESET'), true],
+    ['terminated with no cause', new TypeError('terminated'), true],
+    ['a socket code on the cause', new Error('read failed', { cause: withCode(new Error('x'), 'ECONNRESET') }), true],
+    ['a socket code on the error', withCode(new Error('socket hang up'), 'ECONNRESET'), true],
+    ['a timeout', withCode(new Error('timed out'), 'ETIMEDOUT'), true],
+    ['a stream cut off mid-pipeline', withCode(new Error('Premature close'), 'ERR_STREAM_PREMATURE_CLOSE'), true],
+    ['a body timeout', fetchTypeError('terminated', 'UND_ERR_BODY_TIMEOUT'), true],
+    // undici also says terminated when a Content-Encoding fails to decode: the cause decides.
+    ['terminated by a corrupt encoding', fetchTypeError('terminated', 'Z_DATA_ERROR'), false],
+    // Any socket or TLS cause of a terminated body is a drop; only a decode error is not.
+    ['terminated by a TLS failure', fetchTypeError('terminated', 'EPROTO'), true],
+    ['terminated by an HTTP/2 stream error', fetchTypeError('terminated', 'ERR_HTTP2_STREAM_ERROR'), true],
+    ['terminated by a Brotli decode error', fetchTypeError('terminated', 'ERR__ERROR_FORMAT_PADDING_1'), false],
+    [
+      'a connection code on the error, whatever its cause',
+      withCode(new Error('reset', { cause: withCode(new Error('x'), 'EPROTO') }), 'ECONNRESET'),
+      true,
+    ],
+    ['a connect timeout, which a body read cannot raise', withCode(new Error('t'), 'UND_ERR_CONNECT_TIMEOUT'), false],
+    ['an undici argument error', withCode(new Error('bad arg'), 'UND_ERR_INVALID_ARG'), false],
+    ['an undici size limit', withCode(new Error('too big'), 'UND_ERR_RES_EXCEEDED_MAX_SIZE'), false],
+    ['a DNS failure, which a body read cannot raise', withCode(new Error('lookup'), 'EAI_AGAIN'), false],
+    ['malformed JSON', new SyntaxError('Unexpected token < in JSON'), false],
+    ['a corrupt tar', withCode(new Error('invalid entry'), 'TAR_BAD_ARCHIVE'), false],
+    ['a corrupt gzip', withCode(new Error('incorrect header check'), 'Z_DATA_ERROR'), false],
+    ['a file-system error', withCode(new Error('no space'), 'ENOSPC'), false],
+    ['a non-Error', 'terminated', false],
+  ])('%s → %s', (_case, err, expected) => {
+    expect(isConnectionDrop(err)).toBe(expected);
   });
 });

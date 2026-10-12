@@ -8,7 +8,7 @@ import * as tar from 'tar';
 import type { TempShard } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { removePath } from './fs-utils.js';
-import { describeCause } from './bug-report.js';
+import { describeCause, isConnectionDrop, NETWORK_REMEDY } from './bug-report.js';
 import {
   SHARD_MANIFEST_FILE,
   SHARD_SCHEMA_FILE,
@@ -217,6 +217,15 @@ async function fetchAndExtract(
     await safeCleanup(tempDir);
     // The extraction's own refusals (a limit, a malformed entry) keep their code.
     if (err instanceof ShardMindError) throw err;
+    // A connection dropped mid-stream keeps this code (codes are stable); the
+    // message says what happened, with its cause (#385).
+    if (isConnectionDrop(err)) {
+      throw new ShardMindError(
+        `The connection dropped while the archive downloaded: ${describeCause(err)}`,
+        'DOWNLOAD_INVALID_TARBALL',
+        NETWORK_REMEDY,
+      );
+    }
     const message = err instanceof Error ? err.message : String(err);
     throw new ShardMindError(
       `Downloaded archive is not a valid tarball: ${message}`,

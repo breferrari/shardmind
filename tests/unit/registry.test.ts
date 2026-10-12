@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fc from 'fast-check';
-import { resolve } from '../../source/core/registry.js';
+import { fetchLatestVersion, resolve } from '../../source/core/registry.js';
 import { ShardMindError } from '../../source/runtime/types.js';
+import { NETWORK_REMEDY } from '../../source/core/bug-report.js';
+import { droppedResponse, fetchTypeError } from '../helpers/index.js';
 
 /** The ShardMindError `promise` rejects with; fails the test if it resolves or rejects otherwise. */
 async function rejected(promise: Promise<unknown>): Promise<ShardMindError> {
@@ -31,9 +33,7 @@ function jsonResponse(body: object, status = 200, headers: Record<string, string
 }
 
 /** Node's fetch failure: a TypeError whose cause is the socket error (#380). */
-function networkError(code = 'ECONNRESET'): TypeError {
-  return new TypeError('fetch failed', { cause: Object.assign(new Error(`read ${code}`), { code }) });
-}
+const networkError = (code = 'ECONNRESET'): TypeError => fetchTypeError('fetch failed', code);
 
 function headOk(): Response {
   return new Response(null, { status: 200 });
@@ -251,6 +251,72 @@ describe('registry.resolve', () => {
       });
     });
 
+    it.each([
+      ['/commits', 'github:acme/widget#main', "Could not read the GitHub commits response for ref 'main': terminated (UND_ERR_SOCKET)"],
+      ['/releases', 'github:acme/widget', 'Could not read the GitHub releases response: terminated (UND_ERR_SOCKET)'],
+    ])('names the cause of a %s body dropped mid-read, keeping REGISTRY_NETWORK (#385)', async (_api, ref, message) => {
+      globalThis.fetch = vi.fn(async () => droppedResponse()) as typeof fetch;
+      const err = await rejected(resolve(ref));
+      expect(err.code).toBe('REGISTRY_NETWORK');
+      expect(err.message).toBe(message);
+      expect(err.hint).toBe(NETWORK_REMEDY);
+    });
+
+    it('fails a /commits body of JSON null as REGISTRY_NETWORK, not a crash (#385)', async () => {
+      globalThis.fetch = vi.fn(async () => new Response('null', { status: 200 })) as typeof fetch;
+      const err = await rejected(resolve('github:acme/widget#main'));
+      expect(err.code).toBe('REGISTRY_NETWORK');
+      expect(err.message).toBe("Commit response for ref 'main' did not include a valid SHA");
+    });
+
+    it('says a /releases read was cancelled, not that the body is malformed (#385)', async () => {
+      const abort = new DOMException('This operation was aborted', 'AbortError');
+      globalThis.fetch = vi.fn(
+        async () => new Response(new ReadableStream({ start: (controller) => controller.error(abort) }), { status: 200 }),
+      ) as typeof fetch;
+      const err = await rejected(resolve('github:acme/widget'));
+      expect(err.code).toBe('REGISTRY_NETWORK');
+      expect(err.message).toBe('Reading the GitHub releases response was cancelled: This operation was aborted');
+      // A cancel is not a connection problem: no network remedy.
+      expect(err.hint).toBeUndefined();
+    });
+
+    it('says a read was cancelled whatever the abort reason, from the caller signal (#385)', async () => {
+      const controller = new AbortController();
+      const budget = new DOMException('The operation timed out.', 'TimeoutError');
+      globalThis.fetch = vi.fn(async () => {
+        controller.abort(budget);
+        return new Response(new ReadableStream({ start: (c) => c.error(budget) }), { status: 200 });
+      }) as typeof fetch;
+      const err = await rejected(fetchLatestVersion('github:acme/widget', { signal: controller.signal }));
+      expect(err.code).toBe('REGISTRY_NETWORK');
+      expect(err.message).toBe('Reading the GitHub releases response was cancelled: The operation timed out.');
+    });
+
+    it('calls a corrupt Content-Encoding a malformed response, not a dropped connection (#385)', async () => {
+      globalThis.fetch = vi.fn(async () => {
+        const corrupt = fetchTypeError('terminated', 'Z_DATA_ERROR');
+        return new Response(new ReadableStream({ start: (controller) => controller.error(corrupt) }), { status: 200 });
+      }) as typeof fetch;
+      const err = await rejected(resolve('github:acme/widget'));
+      expect(err.code).toBe('REGISTRY_NETWORK');
+      expect(err.message).toBe('Malformed response from GitHub releases API');
+    });
+
+    it('still calls malformed /commits JSON a malformed response (#385)', async () => {
+      globalThis.fetch = vi.fn(async () => new Response('<html>', { status: 200 })) as typeof fetch;
+      const err = await rejected(resolve('github:acme/widget#main'));
+      expect(err.code).toBe('REGISTRY_NETWORK');
+      expect(err.message).toBe("Malformed response from GitHub commits API for ref 'main'");
+    });
+
+    it('still calls malformed /releases JSON a malformed response (#385)', async () => {
+      globalThis.fetch = vi.fn(async () => new Response('<html>', { status: 200 })) as typeof fetch;
+      const err = await rejected(resolve('github:acme/widget'));
+      expect(err.code).toBe('REGISTRY_NETWORK');
+      expect(err.message).toBe('Malformed response from GitHub releases API');
+    });
+
     it('names the cause of a /commits network failure in the message (#380)', async () => {
       globalThis.fetch = vi.fn(async () => {
         throw networkError('ETIMEDOUT');
@@ -259,7 +325,7 @@ describe('registry.resolve', () => {
       const err = await rejected(resolve('github:acme/widget#main'));
       expect(err.message).toBe('Could not reach api.github.com: fetch failed (ETIMEDOUT)');
       // A call with no hint of its own gets the remedy, not the cause a second time (#380).
-      expect(err.hint).toBe('Check your connection and try again.');
+      expect(err.hint).toBe(NETWORK_REMEDY);
     });
 
     it('rejects a /commits response missing the sha field', async () => {

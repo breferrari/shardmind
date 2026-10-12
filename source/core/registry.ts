@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { describeZodIssues } from './zod-issues.js';
-import { describeCause } from './bug-report.js';
+import { describeCause, isConnectionDrop, NETWORK_REMEDY } from './bug-report.js';
 import type { ResolvedShard } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 
@@ -478,16 +478,7 @@ async function fetchLatestRelease(
     );
   }
 
-  let data: unknown;
-  try {
-    data = await response.json();
-  } catch (err) {
-    throw new ShardMindError(
-      'Malformed response from GitHub releases API',
-      'REGISTRY_NETWORK',
-      err instanceof Error ? err.message : String(err),
-    );
-  }
+  const data = await readJsonBody(response, 'releases', '', opts.signal);
 
   if (!Array.isArray(data)) {
     throw new ShardMindError(
@@ -584,18 +575,10 @@ async function resolveCommit(
     );
   }
 
-  let data: { sha?: unknown };
-  try {
-    data = (await response.json()) as { sha?: unknown };
-  } catch (err) {
-    throw new ShardMindError(
-      `Malformed response from GitHub commits API for ref '${ref}'`,
-      'REGISTRY_NETWORK',
-      err instanceof Error ? err.message : String(err),
-    );
-  }
+  const data = await readJsonBody(response, 'commits', ` for ref '${ref}'`, signal);
 
-  const sha = data.sha;
+  // Any JSON, `null` included, that is not an object with a SHA fails below.
+  const sha: unknown = typeof data === 'object' && data !== null ? Reflect.get(data, 'sha') : undefined;
   if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/i.test(sha)) {
     throw new ShardMindError(
       `Commit response for ref '${ref}' did not include a valid SHA`,
@@ -680,8 +663,42 @@ function rateLimitError(): ShardMindError {
   );
 }
 
-/** The hint of a network failure whose caller has none of its own (ERRORS.md `REGISTRY_NETWORK`). */
-const NETWORK_REMEDY = 'Check your connection and try again.';
+/**
+ * A GitHub response's JSON body. Every failure is `REGISTRY_NETWORK` (#385):
+ * a cancel mid-read (the caller's `signal`, whatever its reason, or an
+ * `AbortError`) says so with no remedy; a connection dropped mid-read names
+ * its cause with the network remedy; anything else is `malformed`, with the
+ * parser's message as the hint.
+ */
+async function readJsonBody(
+  response: Response,
+  api: 'releases' | 'commits',
+  detail = '',
+  signal?: AbortSignal,
+): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (err) {
+    if (signal?.aborted === true || (err instanceof Error && err.name === 'AbortError')) {
+      throw new ShardMindError(
+        `Reading the GitHub ${api} response${detail} was cancelled: ${describeCause(err)}`,
+        'REGISTRY_NETWORK',
+      );
+    }
+    if (isConnectionDrop(err)) {
+      throw new ShardMindError(
+        `Could not read the GitHub ${api} response${detail}: ${describeCause(err)}`,
+        'REGISTRY_NETWORK',
+        NETWORK_REMEDY,
+      );
+    }
+    throw new ShardMindError(
+      `Malformed response from GitHub ${api} API${detail}`,
+      'REGISTRY_NETWORK',
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
 
 /** The host of `url` for a message, or `url` itself when it does not parse (#380). */
 function hostOf(url: string): string {
