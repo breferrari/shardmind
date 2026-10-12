@@ -1005,15 +1005,25 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
      * comes from the runner, told apart by the runner's file in the stack, so
      * tsx can still install its own CommonJS resolution.
      */
-    const refuseResolveFilename = (mode: 'throw' | 'drop'): string => `
+    const refuseResolveFilename = (mode: 'throw' | 'drop' | 'wrap'): string => `
       import { default as CjsModule } from 'node:module';
       let current = CjsModule._resolveFilename;
       Object.defineProperty(CjsModule, '_resolveFilename', {
         configurable: true,
         get() { return current; },
         set(fn) {
-          if (/[\\\\/]hook-runner\\.[cm]?[jt]s/.test(String(new Error().stack))) {
-            ${mode === 'throw' ? "throw new Error('_resolveFilename refused by the test');" : 'return;'}
+          // Synchronous frames only: an async frame of the runner's main can
+          // sit under a lazy assignment by tsx.
+          const sync = String(new Error().stack).split('\\n').filter((line) => !line.includes('at async ')).join('\\n');
+          if (/[\\\\/]hook-runner\\.[cm]?[jt]s/.test(sync)) {
+            ${
+              mode === 'throw'
+                ? "throw new Error('_resolveFilename refused by the test');"
+                : mode === 'drop'
+                  ? 'return;'
+                  : // An instrumenting setter: keeps a wrapper that calls through.
+                    'current = function (...args) { return fn.apply(this, args); }; return;'
+            }
           }
           current = fn;
         },
@@ -1113,6 +1123,30 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
         expect(stderrOf(result)).toContain('could not map shardmind/runtime to the engine (ESM)');
       }, 30_000);
     });
+
+    it('names an error with no message by its name alone', async () => {
+      await preload(refuseRegister(''));
+      const result = await runWritesRan('hook.mts');
+      expect(stderrOf(result)).toBe('shardmind hook-runner: could not map shardmind/runtime to the engine (ESM): Error\n');
+    }, 30_000);
+
+    // The fold must stay linear: a long run of spaces with no line break once
+    // made an overlapping pattern backtrack for minutes.
+    it('folds a long whitespace run without stalling', async () => {
+      await preload(refuseRegister(`a${' '.repeat(200_000)}b`));
+      const started = Date.now();
+      const result = await runWritesRan('hook.mts');
+      expect(Date.now() - started).toBeLessThan(15_000);
+      expect(stderrOf(result)).toContain('(ESM): Error: a ');
+    }, 30_000);
+
+    it('takes a setter that wraps the mapping as mapped: no warning, the engine runtime answers', async () => {
+      await preload(refuseResolveFilename('wrap'));
+      const read = await run('hook.ts');
+      expect(read).toEqual({ version: '4.5.6', user: 'Ada', valid: true, badValid: false, vendored: false });
+      const quiet = await runWritesRan('hook.ts');
+      expect(stderrOf(quiet)).toBe('');
+    }, 30_000);
 
     it('keeps a multi-line failure on one line, without losing the later lines', async () => {
       await preload(refuseRegister('loader failed\n  because of the test'));

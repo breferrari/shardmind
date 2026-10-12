@@ -124,8 +124,8 @@ function engineRuntimePath(): string | null {
  * Best effort, per loader (#377): the context is already read, so a mapping
  * that throws must not end the run as a `context` failure. Each loader is
  * mapped on its own; a failure writes one stderr line naming the loader, and
- * the hook is still imported. A hook that needs the runtime through the unmapped loader then
- * fails as `import`.
+ * the hook is still imported. Through an unmapped loader the import resolves
+ * as Node resolves it: a copy the shard vendors, else an `import` failure.
  */
 function resolveRuntimeToEngine(): void {
   const runtimePath = engineRuntimePath();
@@ -156,11 +156,21 @@ function resolveRuntimeToEngine(): void {
       return original.call(this, request, ...rest);
     };
     if (!Reflect.set(Module, '_resolveFilename', mapping)) throw new Error('Module._resolveFilename is read-only');
-    // A setter can accept the value and keep another; read it back.
-    if (Reflect.get(Module, '_resolveFilename') !== mapping) {
-      throw new Error('Module._resolveFilename did not keep the mapping');
-    }
+    // A setter can accept the value and keep another, or keep a wrapper that
+    // calls through. Ask the seam itself: mapped means it answers with the runtime.
+    if (resolvesToRuntime(Reflect.get(Module, '_resolveFilename'), runtimePath)) return;
+    throw new Error('Module._resolveFilename did not keep the mapping');
   });
+}
+
+/** Whether a `_resolveFilename` answers `shardmind/runtime` with the engine's runtime. */
+function resolvesToRuntime(resolveFilename: unknown, runtimePath: string): boolean {
+  if (typeof resolveFilename !== 'function') return false;
+  try {
+    return resolveFilename.call(Module, RUNTIME_SPECIFIER, undefined, false) === runtimePath;
+  } catch {
+    return false;
+  }
 }
 
 /** Map one loader; a throw becomes one stderr line naming it, and the run goes on (#377). */
@@ -177,15 +187,29 @@ function warnUnmapped(loaders: string, why: string): void {
   process.stderr.write(`shardmind hook-runner: could not map ${RUNTIME_SPECIFIER} to the engine (${loaders}): ${why}\n`);
 }
 
-/** A thrown value on one line: name and message, line breaks folded to spaces, never throwing. */
+/**
+ * A thrown value on one line: its name, then its message if it has one, with
+ * line breaks folded to single spaces. Never throws, and never carries a stack.
+ * The fold splits on line breaks, so it stays linear on any input.
+ */
 function oneLine(err: unknown): string {
   let text: string;
   try {
-    text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    if (err instanceof Error) {
+      const name = typeof err.name === 'string' && err.name !== '' ? err.name : 'Error';
+      const message = typeof err.message === 'string' ? err.message : '';
+      text = message === '' ? name : `${name}: ${message}`;
+    } else {
+      text = String(err);
+    }
   } catch {
-    text = describe(err);
+    return 'a thrown value that cannot be converted to a string';
   }
-  return text.replace(/\s*[\r\n]+\s*/g, ' ').trim();
+  return text
+    .split(/\r\n|\r|\n/)
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+    .join(' ');
 }
 
 async function main(): Promise<void> {
