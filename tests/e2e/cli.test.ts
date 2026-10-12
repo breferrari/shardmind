@@ -1328,6 +1328,8 @@ describe('shardmind update', () => {
       env: envWithStub(),
     });
     expect(result.exitCode).toBe(0);
+    // Piped stdout: nothing to navigate, so no keybind hint in the capture (#381).
+    expect(result.stdout).not.toContain('navigate');
     // v0.2.0 adds brain/Changelog.md
     expect(await vault.exists('brain/Changelog.md')).toBe(true);
     // state.json version advanced
