@@ -8,6 +8,15 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-13
+
+Patch release: the 1.0.x fixes. Nothing the 1.0 contract freezes changes: the CLI, exit codes, `--json` shapes, error codes, `state.json` and `shardmind/runtime` are as in 1.0.0. Only messages, hints and the failures below do.
+
+- **A hook runs when the engine cannot map `shardmind/runtime`**, with a one-line warning, instead of the run reporting a context failure that never happened.
+- **A bare `namespace/name` ref survives a dropped connection**, and a network failure now says why (`fetch failed (ECONNRESET)`).
+- **A connection that drops mid-download or mid-response says so**, under the error code it already had, instead of reading as a corrupt archive or a malformed response.
+- **A piped run prints no keybind hint.**
+
 ### Fixed (no keybind hint in captured output — #381)
 
 - **`update --yes > log` no longer writes "↑↓ navigate · Space select …" into the log.** The keyboard legend shows only when stdin and stdout are both a terminal; with either piped there is nothing to navigate.
