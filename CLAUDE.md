@@ -406,7 +406,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `hook.ts` | §4.16 | Slot-agnostic hook lookup + execute via bundled `tsx` subprocess (non-fatal) |
 | `hook-orchestrator.ts` | §4.16a | Hook lifecycle: slot selection/order, per-slot ctx, write-boundary checks, re-hash, fingerprint persist |
 | `hook-boundary.ts` | §4.16b | Pure detect-and-warn write-boundary detector (managed-write / unmanaged-create) |
-| `bug-report.ts` | §7.2a | `describeError` (known / environment / bug), the version-only report link, the plain-text top-level crash handler (#225) |
+| `bug-report.ts` | §7.2a | `describeError` (known / environment / bug), the version-only report link, the plain-text top-level crash handler (#225); `describeCause`, `isConnectionDrop` and `NETWORK_REMEDY` for network failures (#380, #385) |
 | `restore-tree.ts` | §4.12 step 7 | `restoreTree` (copy a snapshot over, skipping paths restored another way) and `restoreDirExactly` (a folder the run replaced whole, made equal to its snapshot) (#264) |
 | `rollback-report.ts` | §4.11b (Reporting the rollback) | `ROLLBACK_INCOMPLETE` for a rollback that left files behind, shared by install / update / adopt (#247) |
 | `editor.ts` | §4.24 | Open a conflict in `$VISUAL` / `$EDITOR`: temp copy, outcome (saved / cancelled), raw-mode handoff, marker check (#50) |

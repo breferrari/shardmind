@@ -19,7 +19,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 ### Fixed (the registry index is retried, and a network failure says why — #380)
 
 - **A bare `namespace/name` ref survives one dropped connection.** The registry index fetch is retried once, 500 ms later, on a network failure, a 5xx answer, or a connection dropped while the index is read. Other answers are final.
-- **A network failure names its cause:** `Could not reach raw.githubusercontent.com: fetch failed (ECONNRESET)`, where it used to say only `Could not reach raw.githubusercontent.com`. This holds for every GitHub request and the tarball download, so a failed install, update or adopt can be diagnosed from its message or its `--json` document. A call with no hint of its own gets `Check your connection and try again.` (A connection that drops partway through a response other than the index is #385.)
+- **A network failure names its cause:** `Could not reach raw.githubusercontent.com: fetch failed (ECONNRESET)`, where it used to say only `Could not reach raw.githubusercontent.com`. This holds for every GitHub request and the tarball download, so a failed install, update or adopt can be diagnosed from its message or its `--json` document. A call with no hint of its own gets `Check your connection and try again.`
+
+### Fixed (a connection dropped mid-transfer says so — #385)
+
+- **A download whose connection drops mid-stream says so:** `The connection dropped while the archive downloaded: terminated (UND_ERR_SOCKET)`, with a hint to retry. It used to read as a corrupt archive. The code stays `DOWNLOAD_INVALID_TARBALL`, because error codes are stable; moving it is #388.
+- **A GitHub `/releases` or `/commits` response dropped mid-read names its cause** instead of reporting a malformed response. The code stays `REGISTRY_NETWORK`.
+- **A cancelled read says it was cancelled**, and a `/commits` answer of JSON `null` is a `REGISTRY_NETWORK` error rather than a crash reported as a ShardMind bug.
 
 ## [1.0.0] - 2026-10-06
 
