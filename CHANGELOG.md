@@ -10,7 +10,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ### Fixed (a failed shardmind/runtime mapping is not a context failure — #377)
 
-- **A hook run no longer reports `context` when the engine cannot map `shardmind/runtime`.** The context had been read, so the report was wrong. The runner now maps each loader on its own, writes one stderr line for a loader it could not map, and still runs the hook. A hook that does not import the runtime runs as usual; one that imports it through the unmapped loader fails as `import`.
+- **A hook run no longer reports `context` when the engine cannot map `shardmind/runtime`.** The context had been read, so the report was wrong. The runner now maps each loader (ESM, CommonJS) on its own, writes one stderr line naming a loader it could not map, and still runs the hook. A hook that does not import the runtime runs as usual. One that imports it through the unmapped loader gets a copy the shard vendors if there is one, and otherwise fails as `import`.
 
 ## [1.0.0] - 2026-10-06
 
