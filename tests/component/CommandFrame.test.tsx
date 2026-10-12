@@ -37,24 +37,43 @@ describe('CommandFrame', () => {
     expect(lastFrame()).not.toContain('DRY RUN');
   });
 
-  it('renders the keyboard legend by default', () => {
-    const { lastFrame } = render(
-      <CommandFrame dryRun={false}>
+  /**
+   * The frame with each stream's isTTY set as given, then re-rendered, since
+   * ink-testing-library's stdout has no isTTY and its stdin has `true`.
+   */
+  function renderOn(terminal: { stdout: boolean; stdin: boolean }, showLegend?: boolean): string {
+    // A new element each time: React skips re-rendering an identical one.
+    const frame = () => (
+      <CommandFrame dryRun={false} showLegend={showLegend}>
         <Text>hi</Text>
-      </CommandFrame>,
+      </CommandFrame>
     );
-    const frame = lastFrame() ?? '';
+    const { stdout, stdin, rerender, lastFrame } = render(frame());
+    Object.assign(stdout, { isTTY: terminal.stdout });
+    Object.assign(stdin, { isTTY: terminal.stdin });
+    rerender(frame());
+    return lastFrame() ?? '';
+  }
+
+  it('renders the keyboard legend on a terminal', () => {
+    const frame = renderOn({ stdout: true, stdin: true });
     expect(frame).toContain('navigate');
     expect(frame).toContain('Enter');
     expect(frame).toContain('Ctrl+C');
   });
 
   it('hides the legend when showLegend=false (summary/error screens)', () => {
-    const { lastFrame } = render(
-      <CommandFrame dryRun={false} showLegend={false}>
-        <Text>hi</Text>
-      </CommandFrame>,
-    );
-    expect(lastFrame()).not.toContain('navigate');
+    expect(renderOn({ stdout: true, stdin: true }, false)).not.toContain('navigate');
+  });
+
+  // #381: with nothing to navigate, the legend only pollutes captured output.
+  it.each([
+    ['stdout is piped (update --yes > log)', { stdout: false, stdin: true }],
+    ['stdin is piped', { stdout: true, stdin: false }],
+    ['both are piped (CI)', { stdout: false, stdin: false }],
+  ])('hides the legend when %s (#381)', (_case, terminal) => {
+    const frame = renderOn(terminal);
+    expect(frame).not.toContain('navigate');
+    expect(frame).toContain('hi');
   });
 });
