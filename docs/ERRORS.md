@@ -55,7 +55,7 @@ Thrown by `source/core/registry.ts`.
 
 **Meaning:** A network error talking to the registry or GitHub API.
 
-**Typical cause:** Offline, DNS failure, GitHub status issue, or the registry index JSON is malformed.
+**Typical cause:** Offline, DNS failure, GitHub status issue, or the registry index JSON is malformed. A network failure names its cause in the message, for example `Could not reach raw.githubusercontent.com: fetch failed (ECONNRESET)`. The registry index is retried once on a network failure, a 5xx, or a connection dropped mid-read before this error is raised (#380).
 
 **Remedy:** Check your connection; retry. If the registry index is what failed, run the command the hint gives: the same shard straight from GitHub, `shardmind install github:owner/repo`.
 
