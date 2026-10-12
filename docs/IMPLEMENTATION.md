@@ -1377,6 +1377,7 @@ The engine sets `install`, `context`, `spawn`, `timeout` and `cancelled` where i
 - **Precedence: the engine wins**, also over a `node_modules/shardmind` the shard vendors. The engine running the hook wrote the `state.json` the hook reads, so only its runtime is guaranteed to read it (an older vendored runtime meeting newer state is #368's case), and its runtime is the pinned 1.0 surface (#358). A shard that vendored a newer runtime under an older engine gets the engine's; `requires.shardmind` is the gate for needing a newer one.
 - The runtime's own imports (`zod`, `yaml`) resolve from the runtime file's location, the engine's install, never the shard's.
 - Other `shardmind/*` specifiers and bare `shardmind` are not mapped.
+- **The mapping is best effort, per loader** (#377). The runner maps each loader on its own: the `module.register` resolve hook (ESM) and the CommonJS one. When one cannot be set up, the runner writes one stderr line (`shardmind hook-runner: could not map shardmind/runtime to the engine: …`), keeps the other loader, and still imports the hook. A hook that does not import the runtime runs as usual. One that imports it through the unmapped loader fails as `import`, never `context`, because the context was read.
 
 **Post-hook re-hash** (`source/core/state.ts::rehashManagedFiles`):
 
