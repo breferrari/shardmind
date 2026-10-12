@@ -12,10 +12,11 @@
  * Flow:
  *   1. Read the two argv positions (hook path + ctx temp-file path).
  *   2. Parse the JSON-serialized slot context from the ctx file.
- *   3. Map `shardmind/runtime` to the running engine's runtime (#373), then
- *      dynamically `import()` the hook module. `--import tsx/...loader.mjs`
- *      registers tsx's ESM loader on the parent node process, so a TS file
- *      resolves and compiles transparently from here.
+ *   3. Map `shardmind/runtime` to the running engine's runtime (#373, best
+ *      effort per #377), then dynamically `import()` the hook module.
+ *      `--import tsx/...loader.mjs` registers tsx's ESM loader on the parent
+ *      node process, so a TS file resolves and compiles transparently from
+ *      here.
  *   4. Invoke the default export with the parsed ctx and await completion.
  *   5. Exit 0 on success, 1 on any throw. The thrown error's message + stack
  *      go to stderr so the parent can surface them in the install summary.
@@ -119,10 +120,19 @@ function engineRuntimePath(): string | null {
  *     `"type": "module"`, and its imports become `require()` calls, which
  *     resolve hooks never see. `Module._resolveFilename` is wrapped instead,
  *     the same seam tsx uses, calling through for every other request.
+ *
+ * Best effort, per loader (#377): the context is already read, so a mapping
+ * that throws must not end the run as a `context` failure. Each loader is
+ * mapped on its own; a failure writes one stderr line naming the loader, and
+ * the hook is still imported. Through an unmapped loader the import resolves
+ * as Node resolves it: a copy the shard vendors, else an `import` failure.
  */
 function resolveRuntimeToEngine(): void {
   const runtimePath = engineRuntimePath();
-  if (runtimePath === null) return;
+  if (runtimePath === null) {
+    warnUnmapped('ESM and CommonJS', "the engine's runtime is not beside the runner");
+    return;
+  }
 
   const resolveHook = [
     'let target;',
@@ -132,16 +142,74 @@ function resolveRuntimeToEngine(): void {
     '  return nextResolve(specifier, context);',
     '}',
   ].join('\n');
-  register(`data:text/javascript,${encodeURIComponent(resolveHook)}`, {
-    data: { url: pathToFileURL(runtimePath).href },
+  mapLoaderOrWarn('ESM', () => {
+    register(`data:text/javascript,${encodeURIComponent(resolveHook)}`, {
+      data: { url: pathToFileURL(runtimePath).href },
+    });
   });
 
-  const original: unknown = Reflect.get(Module, '_resolveFilename');
-  if (typeof original !== 'function') return;
-  Reflect.set(Module, '_resolveFilename', function (this: unknown, request: unknown, ...rest: unknown[]): unknown {
-    if (request === RUNTIME_SPECIFIER) return runtimePath;
-    return original.call(this, request, ...rest);
+  mapLoaderOrWarn('CommonJS', () => {
+    const original: unknown = Reflect.get(Module, '_resolveFilename');
+    if (typeof original !== 'function') throw new Error('Module._resolveFilename is not a function');
+    const mapping = function (this: unknown, request: unknown, ...rest: unknown[]): unknown {
+      if (request === RUNTIME_SPECIFIER) return runtimePath;
+      return original.call(this, request, ...rest);
+    };
+    if (!Reflect.set(Module, '_resolveFilename', mapping)) throw new Error('Module._resolveFilename is read-only');
+    // A setter can accept the value and keep another, or keep a wrapper that
+    // calls through. Ask the seam itself: mapped means it answers with the runtime.
+    if (resolvesToRuntime(Reflect.get(Module, '_resolveFilename'), runtimePath)) return;
+    throw new Error('Module._resolveFilename did not keep the mapping');
   });
+}
+
+/** Whether a `_resolveFilename` answers `shardmind/runtime` with the engine's runtime. */
+function resolvesToRuntime(resolveFilename: unknown, runtimePath: string): boolean {
+  if (typeof resolveFilename !== 'function') return false;
+  try {
+    return resolveFilename.call(Module, RUNTIME_SPECIFIER, undefined, false) === runtimePath;
+  } catch {
+    return false;
+  }
+}
+
+/** Map one loader; a throw becomes one stderr line naming it, and the run goes on (#377). */
+function mapLoaderOrWarn(loader: 'ESM' | 'CommonJS', mapLoader: () => void): void {
+  try {
+    mapLoader();
+  } catch (err) {
+    warnUnmapped(loader, oneLine(err));
+  }
+}
+
+/** The one stderr line for loaders left unmapped (#377). */
+function warnUnmapped(loaders: string, why: string): void {
+  process.stderr.write(`shardmind hook-runner: could not map ${RUNTIME_SPECIFIER} to the engine (${loaders}): ${why}\n`);
+}
+
+/**
+ * A thrown value on one line: its name, then its message if it has one, with
+ * line breaks folded to single spaces. Never throws, and never carries a stack.
+ * The fold splits on line breaks, so it stays linear on any input.
+ */
+function oneLine(err: unknown): string {
+  let text: string;
+  try {
+    if (err instanceof Error) {
+      const name = typeof err.name === 'string' && err.name !== '' ? err.name : 'Error';
+      const message = typeof err.message === 'string' ? err.message : '';
+      text = message === '' ? name : `${name}: ${message}`;
+    } else {
+      text = String(err);
+    }
+  } catch {
+    return 'a thrown value that cannot be converted to a string';
+  }
+  return text
+    .split(/\r\n|\r|\n/)
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+    .join(' ');
 }
 
 async function main(): Promise<void> {
@@ -163,11 +231,13 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // The context is read: from here a throw is never a `context` failure
+  // (#377). Mapping the runtime prepares the hook's import, so it is `import`.
+  stage = 'import';
   resolveRuntimeToEngine();
 
   // `pathToFileURL` wraps Windows absolute paths as `file:///C:/...` so
   // dynamic import resolves them. POSIX paths pass through unchanged.
-  stage = 'import';
   const mod = await import(pathToFileURL(hookPath).href);
   const fn = (mod as { default?: unknown }).default;
   if (typeof fn !== 'function') {
