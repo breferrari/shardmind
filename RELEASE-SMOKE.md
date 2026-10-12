@@ -12,6 +12,8 @@ This gate validates the **shardmind engine** via a manual run against the produc
 
 ## Setup
 
+Needs `git`, and `gh` signed in (`gh auth status`): the adopt smoke asks it for the flagship's latest release.
+
 ```bash
 # From the shardmind repo root, on the release branch with the version bump
 # committed but BEFORE running npm run release:*.
@@ -36,18 +38,22 @@ Record the local test count (e.g. `932`) for the result table.
 
 ## Flagship adopt smoke (>= 5 differing files)
 
-A fresh clone of `obsidian-mind` against itself produces 0 `differs`. The recipe seeds five small modifications at known-managed paths so the diff review iterates >= 5 times. Paths chosen for content-stability across recent `obsidian-mind` versions; if any path has been removed upstream, swap to another file under `brain/` or repo root and note the swap in the result row.
+A fresh clone of the flagship's **latest release** produces 0 `differs`: `adopt github:breferrari/obsidian-mind` compares against that release, and so do the install and cancellation smokes below. A clone of `main` would also differ wherever `main` has moved past it (13 files, not 5, on 2026-10-13, #391). The recipe seeds five small modifications at known-managed paths so the diff review iterates >= 5 times. Paths chosen for content-stability across recent `obsidian-mind` versions; if any path has been removed upstream, swap to another file under `brain/` or repo root and note the swap in the result row.
 
 ```bash
 # Scratch dir outside the shardmind repo
 SCRATCH=$(mktemp -d)
 cd "$SCRATCH"
-git clone --depth 1 https://github.com/breferrari/obsidian-mind.git
+# The release adopt resolves. Fail closed: an empty tag would clone main.
+FLAGSHIP_TAG=$(gh release view --repo breferrari/obsidian-mind --json tagName -q .tagName)
+test -n "$FLAGSHIP_TAG" || { echo "Could not resolve obsidian-mind's latest release" >&2; exit 1; }
+git clone --depth 1 --branch "$FLAGSHIP_TAG" https://github.com/breferrari/obsidian-mind.git
 cd obsidian-mind
+git rev-parse HEAD   # the <sha> for the result table's flagship line
 
 # Seed 5 user-side modifications. Fail closed if a path was renamed
 # upstream — `>>` would silently create the file and skew the diff count.
-for f in Home.md "brain/North Star.md" "brain/Patterns.md" CLAUDE.md AGENTS.md; do
+for f in Home.md "brain/North Star.md" "brain/Patterns.md" "brain/Key Decisions.md" AGENTS.md; do
   test -f "$f" || {
     printf 'Expected existing file missing: %s\n' "$f" >&2
     printf 'Swap to another file under brain/ or repo root and note the swap in the result row.\n' >&2
@@ -115,7 +121,7 @@ Save the filled-in section locally. After `release.yml` publishes the v\<version
 
 Cut from `git rev-parse HEAD = <sha>` at `<ISO-8601 timestamp>`.
 shardmind built locally against Node `<node --version>`.
-obsidian-mind clone HEAD: `<sha>` from `https://github.com/breferrari/obsidian-mind`.
+obsidian-mind clone: tag `<tag>` at `<sha>` from `https://github.com/breferrari/obsidian-mind`.
 ```
 
 ## When the gate may relax
@@ -123,7 +129,7 @@ obsidian-mind clone HEAD: `<sha>` from `https://github.com/breferrari/obsidian-m
 Track via [#112](https://github.com/breferrari/shardmind/issues/112) and any follow-up issue. Relaxation criteria, in order from cheapest to most ambitious:
 
 1. **CI installs the npm tarball.** A workflow that runs `npm pack`, then `npm install -g ./shardmind-<v>.tgz`, then drives a non-interactive `install --yes` against a recorded `obsidian-mind` snapshot would close the published-artifact surface. The cancellation + iterated-diff surfaces stay manual until a real-flagship live-fetch job exists.
-2. **CI fetches the live flagship.** A nightly (not per-PR — the flake surface against the live network is wide) job that drives Layer 2 PTY scenarios against `github.com/breferrari/obsidian-mind` HEAD. Closes the live-shard + real-GitHub surfaces.
+2. **CI fetches the live flagship.** A nightly (not per-PR — the flake surface against the live network is wide) job that drives Layer 2 PTY scenarios against `github.com/breferrari/obsidian-mind`'s latest release, which is what the CLI resolves. Closes the live-shard + real-GitHub surfaces.
 3. **Cancellation Layer 2 nightly.** The Ctrl+C scenarios are already covered under PTY in #111 Phase 2 (scenario 18); the gap is that cancellation against the live flagship hasn't been exercised under a real PTY, only against fixture shards.
 
 Until at least (1) lands, this gate runs before every `npm run release:*`.
