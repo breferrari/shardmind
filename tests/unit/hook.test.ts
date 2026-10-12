@@ -979,33 +979,24 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
   }, 30_000);
 
   /**
-   * #377: the mapping is best effort. When `module.register` refuses the
-   * runner's resolve hook, the context was still read, so the run must not
-   * report `context`. A preload (over NODE_OPTIONS, which the runner inherits)
-   * makes `register` throw for `data:` URLs only, so tsx's own loader still
-   * registers.
+   * #377: the mapping is best effort, per loader. When one loader cannot be
+   * mapped, the context was still read, so the run must not report `context`,
+   * and the other loader stays mapped. A preload (over NODE_OPTIONS, which the
+   * runner inherits) breaks one loader for the runner alone, so tsx's own
+   * loaders still register.
    */
   describe('when the mapping fails (#377)', () => {
     let previous: string | undefined;
 
-    beforeEach(async () => {
+    async function preload(source: string): Promise<void> {
       // In the shard's temp dir, which the outer afterEach removes.
-      const preload = path.join(shardDir, 'refuse-register.mjs');
-      await fsp.writeFile(
-        preload,
-        `
-          import module, { syncBuiltinESMExports } from 'node:module';
-          const original = module.register;
-          module.register = function (specifier, ...rest) {
-            if (String(specifier).startsWith('data:')) throw new Error('register refused by the test');
-            return original.call(this, specifier, ...rest);
-          };
-          syncBuiltinESMExports();
-        `,
-        'utf-8',
-      );
+      const file = path.join(shardDir, 'break-mapping.mjs');
+      await fsp.writeFile(file, source, 'utf-8');
+      process.env['NODE_OPTIONS'] = `${previous ?? ''} --import=${pathToFileURL(file).href}`.trim();
+    }
+
+    beforeEach(() => {
       previous = process.env['NODE_OPTIONS'];
-      process.env['NODE_OPTIONS'] = `${previous ?? ''} --import=${pathToFileURL(preload).href}`.trim();
     });
 
     afterEach(() => {
@@ -1013,38 +1004,103 @@ describe('executeHook — shardmind/runtime resolves to the running engine (#373
       else process.env['NODE_OPTIONS'] = previous;
     });
 
-    it('runs a hook that does not import the runtime, and says why the mapping failed', async () => {
-      const hookPath = path.join(shardDir, 'hook.mts');
-      await fsp.writeFile(
-        hookPath,
-        `
-          import { writeFile } from 'node:fs/promises';
-          import { join } from 'node:path';
-          export default async function (ctx: { vaultRoot: string }): Promise<void> {
-            await writeFile(join(ctx.vaultRoot, 'ran.txt'), 'yes');
-          }
-        `,
-        'utf-8',
-      );
-      const result = await executeHook(hookPath, ctx());
-      expect(result).toMatchObject({ kind: 'ran', exitCode: 0 });
-      expect(await fsp.readFile(path.join(vaultDir, 'ran.txt'), 'utf-8')).toBe('yes');
-      // One line: the message, no stack frames after it.
-      expect(result.kind === 'ran' && result.stderr).toBe(
-        'shardmind hook-runner: could not map shardmind/runtime to the engine: Error: register refused by the test\n',
-      );
-    }, 30_000);
+    describe('the ESM loader (module.register refuses data: URLs)', () => {
+      beforeEach(async () => {
+        await preload(`
+          import module, { syncBuiltinESMExports } from 'node:module';
+          const original = module.register;
+          module.register = function (specifier, ...rest) {
+            if (String(specifier).startsWith('data:')) throw new Error('register refused by the test');
+            return original.call(this, specifier, ...rest);
+          };
+          syncBuiltinESMExports();
+        `);
+      });
 
-    it('reports a hook that imports the runtime on the ESM path as an import failure, not context', async () => {
-      const hookPath = path.join(shardDir, 'hook.mts');
-      await fsp.writeFile(hookPath, READ_THROUGH_RUNTIME, 'utf-8');
-      const result = await executeHook(hookPath, ctx());
-      expect(result).toMatchObject({ kind: 'ran', exitCode: 1, failure: 'import' });
-    }, 30_000);
+      it('runs a hook that does not import the runtime, and says in one line which loader failed', async () => {
+        const hookPath = path.join(shardDir, 'hook.mts');
+        await fsp.writeFile(
+          hookPath,
+          `
+            import { writeFile } from 'node:fs/promises';
+            import { join } from 'node:path';
+            export default async function (ctx: { vaultRoot: string }): Promise<void> {
+              await writeFile(join(ctx.vaultRoot, 'ran.txt'), 'yes');
+            }
+          `,
+          'utf-8',
+        );
+        const result = await executeHook(hookPath, ctx());
+        expect(result).toMatchObject({ kind: 'ran', exitCode: 0 });
+        expect(await fsp.readFile(path.join(vaultDir, 'ran.txt'), 'utf-8')).toBe('yes');
+        // One line: the message, no stack frames after it.
+        expect(result.kind === 'ran' && result.stderr).toBe(
+          'shardmind hook-runner: could not map shardmind/runtime to the engine (ESM): Error: register refused by the test\n',
+        );
+      }, 30_000);
 
-    it('still maps the runtime on the CommonJS path, which register does not serve', async () => {
-      const read = await run('hook.ts');
-      expect(read).toEqual({ version: '4.5.6', user: 'Ada', valid: true, badValid: false, vendored: false });
-    }, 30_000);
+      it('reports a hook that imports the runtime on the ESM path as an import failure, not context', async () => {
+        const hookPath = path.join(shardDir, 'hook.mts');
+        await fsp.writeFile(hookPath, READ_THROUGH_RUNTIME, 'utf-8');
+        const result = await executeHook(hookPath, ctx());
+        expect(result).toMatchObject({ kind: 'ran', exitCode: 1, failure: 'import' });
+      }, 30_000);
+
+      it('still maps the runtime on the CommonJS path, which register does not serve', async () => {
+        const read = await run('hook.ts');
+        expect(read).toEqual({ version: '4.5.6', user: 'Ada', valid: true, badValid: false, vendored: false });
+      }, 30_000);
+    });
+
+    describe('the CommonJS loader (Module._resolveFilename cannot be replaced by the runner)', () => {
+      beforeEach(async () => {
+        // The setter refuses only a call that comes from the runner, so tsx
+        // can still install its own CommonJS resolution.
+        await preload(`
+          import Module from 'node:module';
+          let current = Module._resolveFilename;
+          Object.defineProperty(Module, '_resolveFilename', {
+            configurable: true,
+            get() { return current; },
+            set(fn) {
+              if (String(new Error().stack).includes('hook-runner')) throw new Error('_resolveFilename refused by the test');
+              current = fn;
+            },
+          });
+        `);
+      });
+
+      it('says in one line that the CommonJS loader failed, and runs the hook', async () => {
+        const hookPath = path.join(shardDir, 'hook.ts');
+        await fsp.writeFile(
+          hookPath,
+          `
+            import { writeFile } from 'node:fs/promises';
+            import { join } from 'node:path';
+            export default async function (ctx: { vaultRoot: string }): Promise<void> {
+              await writeFile(join(ctx.vaultRoot, 'ran.txt'), 'yes');
+            }
+          `,
+          'utf-8',
+        );
+        const result = await executeHook(hookPath, ctx());
+        expect(result).toMatchObject({ kind: 'ran', exitCode: 0 });
+        expect(result.kind === 'ran' && result.stderr).toBe(
+          'shardmind hook-runner: could not map shardmind/runtime to the engine (CommonJS): Error: _resolveFilename refused by the test\n',
+        );
+      }, 30_000);
+
+      it('reports a CommonJS hook that imports the runtime as an import failure, not context', async () => {
+        const hookPath = path.join(shardDir, 'hook.ts');
+        await fsp.writeFile(hookPath, READ_THROUGH_RUNTIME, 'utf-8');
+        const result = await executeHook(hookPath, ctx());
+        expect(result).toMatchObject({ kind: 'ran', exitCode: 1, failure: 'import' });
+      }, 30_000);
+
+      it('still maps the runtime on the ESM path', async () => {
+        const read = await run('hook.mts');
+        expect(read).toEqual({ version: '4.5.6', user: 'Ada', valid: true, badValid: false, vendored: false });
+      }, 30_000);
+    });
   });
 });

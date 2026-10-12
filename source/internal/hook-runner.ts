@@ -123,8 +123,8 @@ function engineRuntimePath(): string | null {
  *
  * Best effort, per loader (#377): the context is already read, so a mapping
  * that throws must not end the run as a `context` failure. Each loader is
- * mapped on its own; a failure writes one stderr line and the hook is still
- * imported. A hook that needs the runtime through the unmapped loader then
+ * mapped on its own; a failure writes one stderr line naming the loader, and
+ * the hook is still imported. A hook that needs the runtime through the unmapped loader then
  * fails as `import`.
  */
 function resolveRuntimeToEngine(): void {
@@ -139,28 +139,31 @@ function resolveRuntimeToEngine(): void {
     '  return nextResolve(specifier, context);',
     '}',
   ].join('\n');
-  bestEffort(() => {
+  mapLoaderOrWarn('ESM', () => {
     register(`data:text/javascript,${encodeURIComponent(resolveHook)}`, {
       data: { url: pathToFileURL(runtimePath).href },
     });
   });
 
-  bestEffort(() => {
+  mapLoaderOrWarn('CommonJS', () => {
     const original: unknown = Reflect.get(Module, '_resolveFilename');
-    if (typeof original !== 'function') return;
-    Reflect.set(Module, '_resolveFilename', function (this: unknown, request: unknown, ...rest: unknown[]): unknown {
+    if (typeof original !== 'function') throw new Error('Module._resolveFilename is not a function');
+    const mapped = Reflect.set(Module, '_resolveFilename', function (this: unknown, request: unknown, ...rest: unknown[]): unknown {
       if (request === RUNTIME_SPECIFIER) return runtimePath;
       return original.call(this, request, ...rest);
     });
+    if (!mapped) throw new Error('Module._resolveFilename is read-only');
   });
 }
 
-/** Map one loader; a throw becomes one stderr line, and the run goes on (#377). */
-function bestEffort(mapLoader: () => void): void {
+/** Map one loader; a throw becomes one stderr line naming it, and the run goes on (#377). */
+function mapLoaderOrWarn(loader: 'ESM' | 'CommonJS', mapLoader: () => void): void {
   try {
     mapLoader();
   } catch (err) {
-    process.stderr.write(`shardmind hook-runner: could not map ${RUNTIME_SPECIFIER} to the engine: ${describe(err).split('\n', 1)[0]}\n`);
+    process.stderr.write(
+      `shardmind hook-runner: could not map ${RUNTIME_SPECIFIER} to the engine (${loader}): ${describe(err).split('\n', 1)[0]}\n`,
+    );
   }
 }
 
