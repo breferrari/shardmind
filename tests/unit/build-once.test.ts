@@ -352,6 +352,25 @@ describe('ensureBuilt outside vitest (#372)', () => {
     expect(child.stdout.trim()).toBe('resolved');
   }, 30_000);
 
+  // Everything scripts/smoke-hooks.mjs imports must load outside vitest: a
+  // top-level vitest import added to one of these helpers would break the
+  // script again (#372).
+  it('loads the helpers the smoke script imports, outside vitest', () => {
+    const env = { ...process.env };
+    delete env['VITEST'];
+    delete env['VITEST_WORKER_ID'];
+    delete env['VITEST_POOL_ID'];
+    const imports = ['tests/e2e/helpers/spawn-cli.ts', 'tests/e2e/helpers/github-stub.ts']
+      .map((file) => `import ${JSON.stringify(pathToFileURL(path.join(REPO, file)).href)};`)
+      .join('\n');
+    const child = spawnSync(process.execPath, ['--import', tsx, '--input-type=module', '-e', `${imports}\nconsole.log('loaded');`], {
+      cwd: REPO,
+      env,
+      encoding: 'utf-8',
+    });
+    expect(child.stdout.trim()).toBe('loaded');
+  }, 30_000);
+
   it('rejects, naming the missing artifact and npm run build, when dist/ is absent', () => {
     const child = ensureBuiltOutsideVitest(root);
     expect(child.stdout).toMatch(/^rejected: .*dist[\\/]cli\.js is missing/);
