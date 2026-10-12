@@ -38,16 +38,19 @@ Record the local test count (e.g. `932`) for the result table.
 
 A fresh clone of `obsidian-mind` against itself produces 0 `differs`. The recipe seeds five small modifications at known-managed paths so the diff review iterates >= 5 times. Paths chosen for content-stability across recent `obsidian-mind` versions; if any path has been removed upstream, swap to another file under `brain/` or repo root and note the swap in the result row.
 
+Clone the **latest release**, not `main`: `adopt github:breferrari/obsidian-mind` compares the vault against the latest release, so a clone of `main` also differs wherever `main` has moved past it (13 files instead of 5 on 2026-10-13, #391). Record the tag and its commit in the result table.
+
 ```bash
 # Scratch dir outside the shardmind repo
 SCRATCH=$(mktemp -d)
 cd "$SCRATCH"
-git clone --depth 1 https://github.com/breferrari/obsidian-mind.git
+FLAGSHIP_TAG=$(gh release view --repo breferrari/obsidian-mind --json tagName -q .tagName)
+git clone --depth 1 --branch "$FLAGSHIP_TAG" https://github.com/breferrari/obsidian-mind.git
 cd obsidian-mind
 
 # Seed 5 user-side modifications. Fail closed if a path was renamed
 # upstream — `>>` would silently create the file and skew the diff count.
-for f in Home.md "brain/North Star.md" "brain/Patterns.md" CLAUDE.md AGENTS.md; do
+for f in Home.md "brain/North Star.md" "brain/Patterns.md" "brain/Key Decisions.md" AGENTS.md; do
   test -f "$f" || {
     printf 'Expected existing file missing: %s\n' "$f" >&2
     printf 'Swap to another file under brain/ or repo root and note the swap in the result row.\n' >&2
@@ -115,7 +118,7 @@ Save the filled-in section locally. After `release.yml` publishes the v\<version
 
 Cut from `git rev-parse HEAD = <sha>` at `<ISO-8601 timestamp>`.
 shardmind built locally against Node `<node --version>`.
-obsidian-mind clone HEAD: `<sha>` from `https://github.com/breferrari/obsidian-mind`.
+obsidian-mind clone: tag `<FLAGSHIP_TAG>` at `<sha>` from `https://github.com/breferrari/obsidian-mind`.
 ```
 
 ## When the gate may relax
