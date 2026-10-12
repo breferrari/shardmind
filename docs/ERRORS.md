@@ -55,7 +55,7 @@ Thrown by `source/core/registry.ts`.
 
 **Meaning:** A network error talking to the registry or GitHub API.
 
-**Typical cause:** Offline, DNS failure, GitHub status issue, or the registry index JSON is malformed. A network failure names its cause in the message, for example `Could not reach raw.githubusercontent.com: fetch failed (ECONNRESET)`. The registry index is retried once on a network failure, a 5xx, or a connection dropped mid-read before this error is raised (#380).
+**Typical cause:** Offline, DNS failure, GitHub status issue, or the registry index JSON is malformed. A network failure names its cause in the message, for example `Could not reach raw.githubusercontent.com: fetch failed (ECONNRESET)`. The registry index is retried once on a network failure, a 5xx, or a connection dropped mid-read before this error is raised (#380). A `/releases` or `/commits` body dropped mid-read is this code too, and its message names the cause (`Could not read the GitHub releases response: terminated (UND_ERR_SOCKET)`) rather than calling the response malformed (#385). A read the run itself cancelled says it was cancelled, with no remedy, and a body that fails to decode is still called malformed.
 
 **Remedy:** Check your connection; retry. If the registry index is what failed, run the command the hint gives: the same shard straight from GitHub, `shardmind install github:owner/repo`.
 
@@ -87,11 +87,11 @@ Thrown by `source/core/download.ts`.
 
 ### `DOWNLOAD_INVALID_TARBALL`
 
-**Meaning:** The downloaded bytes weren't a valid tar archive.
+**Meaning:** The downloaded bytes weren't a valid tar archive, or the connection dropped while they downloaded (#385). The message tells the two apart: a dropped connection reads `The connection dropped while the archive downloaded: terminated (UND_ERR_SOCKET)` and its hint says to retry.
 
 **Typical cause:** The URL didn't point at a tarball, GitHub served a redirect page, or the archive is corrupted. Also raised for an entry whose declared size is not a number (#32), which only a malformed or crafted archive has.
 
-**Remedy:** Open the tarball URL in a browser to see what's actually served. Verify the tag exists.
+**Remedy:** For a dropped connection, retry. Otherwise open the tarball URL in a browser to see what's actually served, and verify the tag exists.
 
 ### `SHARD_TOO_LARGE`
 
