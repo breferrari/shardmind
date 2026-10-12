@@ -8,6 +8,10 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Fixed (a failed shardmind/runtime mapping is not a context failure — #377)
+
+- **A hook run no longer reports `context` when the engine cannot map `shardmind/runtime`.** The context had been read, so the report was wrong. The runner now maps each loader on its own, writes one stderr line for a loader it could not map, and still runs the hook. A hook that does not import the runtime runs as usual; one that imports it through the unmapped loader fails as `import`.
+
 ## [1.0.0] - 2026-10-06
 
 Major release: the 1.0 contract. From here, the CLI, its exit codes, the `--json` documents, `state.json`, the shard layout and `shardmind/runtime` follow semver ([`docs/OPERATIONS.md`](docs/OPERATIONS.md), [`docs/SHARD-LAYOUT.md`](docs/SHARD-LAYOUT.md)).
