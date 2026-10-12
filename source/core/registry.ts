@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { describeZodIssues } from './zod-issues.js';
-import { describeCause } from './fs-utils.js';
+import { describeCause } from './bug-report.js';
 import type { ResolvedShard } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 
@@ -23,9 +23,8 @@ import { ShardMindError } from '../runtime/types.js';
  *
  * Surrounding whitespace is trimmed and trailing slashes are stripped —
  * env values copied from docs or a CI secret store frequently pick up
- * leading newlines or a stray trailing `/`, and `safeFetch`'s error path
- * calls `new URL(url).host`, which throws on garbage input and turns a
- * network error into a confusing second exception.
+ * leading newlines or a stray trailing `/`, which would otherwise reach
+ * every request URL built from it.
  */
 function getGitHubApiBase(): string {
   return (process.env['SHARDMIND_GITHUB_API_BASE'] ?? 'https://api.github.com')
@@ -331,7 +330,7 @@ function parseRef(shardRef: string): ParsedRef {
  * the message.
  */
 async function fetchRegistryIndex(directHint: string): Promise<RegistryIndex> {
-  const fail = (reason: string): ShardMindError => new ShardMindError(reason, 'REGISTRY_NETWORK', directHint);
+  const fail = (reason: string): ShardMindError => indexFailure(reason, directHint);
 
   const body = await fetchIndexBody(getRegistryIndexUrl(), directHint);
 
@@ -358,6 +357,11 @@ async function fetchRegistryIndex(directHint: string): Promise<RegistryIndex> {
   return index.data;
 }
 
+/** A registry index failure: `REGISTRY_NETWORK`, with the bare-ref hint. */
+function indexFailure(reason: string, directHint: string): ShardMindError {
+  return new ShardMindError(reason, 'REGISTRY_NETWORK', directHint);
+}
+
 /** The wait before the registry index's one retry (#380). */
 const REGISTRY_INDEX_RETRY_DELAY_MS = 500;
 
@@ -368,9 +372,11 @@ type IndexAttempt = { body: string } | { transient: ShardMindError };
  * The registry index's body, tried twice (#380): a network failure, a 5xx, or
  * a connection dropped while the body is read is retried once after
  * `REGISTRY_INDEX_RETRY_DELAY_MS`, since each is usually transient on
- * raw.githubusercontent.com. A 4xx is final; so is the second try.
+ * raw.githubusercontent.com. A 4xx is final; so is the second try. A URL
+ * that does not parse is a setting, not the network: final, before any fetch.
  */
 async function fetchIndexBody(url: string, directHint: string): Promise<string> {
+  if (!URL.canParse(url)) throw indexFailure(`The shard registry index URL is not a valid URL: '${url}'`, directHint);
   const first = await tryIndexOnce(url, directHint);
   if ('body' in first) return first.body;
   await new Promise((done) => setTimeout(done, REGISTRY_INDEX_RETRY_DELAY_MS));
@@ -380,7 +386,7 @@ async function fetchIndexBody(url: string, directHint: string): Promise<string> 
 }
 
 async function tryIndexOnce(url: string, directHint: string): Promise<IndexAttempt> {
-  const fail = (reason: string): ShardMindError => new ShardMindError(reason, 'REGISTRY_NETWORK', directHint);
+  const fail = (reason: string): ShardMindError => indexFailure(reason, directHint);
 
   let response: Response;
   try {
@@ -391,12 +397,12 @@ async function tryIndexOnce(url: string, directHint: string): Promise<IndexAttem
     throw err;
   }
   const status = `Could not fetch the shard registry index: HTTP ${response.status}`;
-  if (response.status >= 500) {
+  if (!response.ok) {
     // Release the unread body; nothing waits on it.
     void response.body?.cancel().catch(() => undefined);
-    return { transient: fail(status) };
+    if (response.status >= 500) return { transient: fail(status) };
+    throw fail(status);
   }
-  if (!response.ok) throw fail(status);
   try {
     return { body: await response.text() };
   } catch (err) {
@@ -674,6 +680,9 @@ function rateLimitError(): ShardMindError {
   );
 }
 
+/** The hint of a network failure whose caller has none of its own (ERRORS.md `REGISTRY_NETWORK`). */
+const NETWORK_REMEDY = 'Check your connection and try again.';
+
 /** The host of `url` for a message, or `url` itself when it does not parse (#380). */
 function hostOf(url: string): string {
   try {
@@ -685,16 +694,18 @@ function hostOf(url: string): string {
 
 /**
  * `fetch`, with a network failure as `REGISTRY_NETWORK`: the message names the
- * host and the cause (#380), and the hint is `hint`, or the cause. Throws
- * nothing else.
+ * host and the cause (#380), and the hint is `hint`, or the remedy
+ * ERRORS.md gives. Throws nothing else.
  */
 async function safeFetch(url: string, init?: RequestInit, hint?: string): Promise<Response> {
   try {
     return await fetch(url, init);
   } catch (err) {
-    // The cause goes in the message (#380); without a hint of its own the
-    // caller gets the cause there too, as it got the message before.
-    const cause = describeCause(err);
-    throw new ShardMindError(`Could not reach ${hostOf(url)}: ${cause}`, 'REGISTRY_NETWORK', hint ?? cause);
+    // The cause goes in the message (#380); the hint says what to do.
+    throw new ShardMindError(
+      `Could not reach ${hostOf(url)}: ${describeCause(err)}`,
+      'REGISTRY_NETWORK',
+      hint ?? NETWORK_REMEDY,
+    );
   }
 }

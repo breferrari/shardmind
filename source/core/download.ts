@@ -7,7 +7,8 @@ import { pipeline } from 'node:stream/promises';
 import * as tar from 'tar';
 import type { TempShard } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { describeCause, removePath } from './fs-utils.js';
+import { removePath } from './fs-utils.js';
+import { describeCause } from './bug-report.js';
 import {
   SHARD_MANIFEST_FILE,
   SHARD_SCHEMA_FILE,

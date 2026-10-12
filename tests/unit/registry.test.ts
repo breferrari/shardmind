@@ -258,8 +258,8 @@ describe('registry.resolve', () => {
 
       const err = await rejected(resolve('github:acme/widget#main'));
       expect(err.message).toBe('Could not reach api.github.com: fetch failed (ETIMEDOUT)');
-      // A call with no hint of its own keeps one: the cause, as before #380 it was the message.
-      expect(err.hint).toBe('fetch failed (ETIMEDOUT)');
+      // A call with no hint of its own gets the remedy, not the cause a second time (#380).
+      expect(err.hint).toBe('Check your connection and try again.');
     });
 
     it('rejects a /commits response missing the sha field', async () => {
@@ -641,16 +641,19 @@ describe('registry.resolve', () => {
         expect(stub.indexCalls()).toBe(2);
       });
 
-      it('fails an index URL that cannot be parsed as REGISTRY_NETWORK, not as a crash', async () => {
+      it('fails an index URL that cannot be parsed at once, as REGISTRY_NETWORK, not as a crash', async () => {
         const previous = process.env['SHARDMIND_REGISTRY_INDEX_URL'];
         process.env['SHARDMIND_REGISTRY_INDEX_URL'] = 'not a url';
         try {
-          globalThis.fetch = vi.fn(async () => {
+          const fetchSpy = vi.fn(async () => {
             throw new TypeError('Failed to parse URL from not a url');
-          }) as typeof fetch;
+          });
+          globalThis.fetch = fetchSpy as typeof fetch;
           const err = await settle('breferrari/obsidian-mind@1.2.3');
           expect(err?.code).toBe('REGISTRY_NETWORK');
-          expect(err?.message).toBe('Could not reach not a url: Failed to parse URL from not a url');
+          // A setting, not the network: no retry, and the message says which.
+          expect(err?.message).toBe("The shard registry index URL is not a valid URL: 'not a url'");
+          expect(fetchSpy).not.toHaveBeenCalled();
         } finally {
           if (previous === undefined) delete process.env['SHARDMIND_REGISTRY_INDEX_URL'];
           else process.env['SHARDMIND_REGISTRY_INDEX_URL'] = previous;

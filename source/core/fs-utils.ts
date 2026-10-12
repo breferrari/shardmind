@@ -138,24 +138,3 @@ export function foldOutputPath(outputPath: string): string {
   return outputPath.normalize('NFC').toLowerCase();
 }
 
-/**
- * Why a network call failed, for an error message (#380). Node's fetch throws
- * `TypeError('fetch failed')` with the socket error on `cause`, so the cause's
- * `code` (ECONNRESET, ETIMEDOUT, …), else its message, says what happened:
- * `fetch failed (ECONNRESET)`. Never throws: a cause's getters are not trusted.
- */
-export function describeCause(err: unknown): string {
-  try {
-    if (!(err instanceof Error)) return String(err);
-    const cause: unknown = err.cause;
-    let detail: unknown = cause;
-    if (typeof cause === 'object' && cause !== null) {
-      const code: unknown = Reflect.get(cause, 'code');
-      detail = typeof code === 'string' && code !== '' ? code : Reflect.get(cause, 'message');
-    }
-    if (typeof detail !== 'string' || detail === '') return err.message;
-    return err.message === '' ? detail : `${err.message} (${detail})`;
-  } catch {
-    return 'an error that cannot be described';
-  }
-}
