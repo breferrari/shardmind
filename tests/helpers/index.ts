@@ -7,3 +7,4 @@
 export { makeShardState, makeFileState } from './shard-state.js';
 export { makeShardSource } from './make-shard-source.js';
 export { asShown } from './error-view.js';
+export { fetchTypeError, droppedResponse } from './network-errors.js';

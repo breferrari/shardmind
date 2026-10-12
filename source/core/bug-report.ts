@@ -191,3 +191,53 @@ export function describeCause(err: unknown): string {
     return 'an error that cannot be described';
   }
 }
+
+/** The hint for a network failure that has no more specific remedy (ERRORS.md `REGISTRY_NETWORK`). */
+export const NETWORK_REMEDY = 'Check your connection and try again.';
+
+/** Socket-level codes: the connection failed, not the payload (#385). */
+const CONNECTION_CODES: ReadonlySet<string> = new Set([
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'ENETUNREACH',
+  'ENETDOWN',
+  'EHOSTUNREACH',
+  // A stream cut off before its end, as a pipeline reports it.
+  'ERR_STREAM_PREMATURE_CLOSE',
+  // undici's failures during a transfer. Its argument and limit errors are not
+  // drops, nor are its connect and headers timeouts, which come before a body.
+  'UND_ERR_SOCKET',
+  'UND_ERR_CLOSED',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_RES_CONTENT_LENGTH_MISMATCH',
+]);
+
+/** A body that failed to decode (zlib `Z_*`, Brotli `ERR__*`): a corrupt payload, not a drop. */
+const DECODE_ERROR = /^(?:Z_|ERR__)/;
+
+/**
+ * Whether `err` is a connection that dropped mid-transfer rather than a bad
+ * payload (#385). Node's fetch rejects a body read with `TypeError('terminated')`
+ * whatever cut it off (a socket, TLS or HTTP/2 error on `cause`), so that is a
+ * drop unless the cause is a decode error: undici also says `terminated` when
+ * a Content-Encoding fails to decode. Any other error is a drop when it or its
+ * cause carries a connection code. A corrupt archive (`TAR_*`, `Z_*`),
+ * malformed JSON (`SyntaxError`), a disk error, or a DNS failure or connect
+ * timeout (neither of which a body read can raise) is not one. Never throws.
+ */
+export function isConnectionDrop(err: unknown): boolean {
+  try {
+    if (!(err instanceof Error)) return false;
+    const code = errnoCode(err);
+    if (code !== undefined && CONNECTION_CODES.has(code)) return true;
+    const causeCode = errnoCode(err.cause);
+    if (err instanceof TypeError && err.message === 'terminated') {
+      return causeCode === undefined || !DECODE_ERROR.test(causeCode);
+    }
+    return causeCode !== undefined && CONNECTION_CODES.has(causeCode);
+  } catch {
+    return false;
+  }
+}

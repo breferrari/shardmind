@@ -4,6 +4,8 @@ import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { downloadShard } from '../../source/core/download.js';
+import { NETWORK_REMEDY } from '../../source/core/bug-report.js';
+import { droppedResponse, fetchTypeError } from '../helpers/index.js';
 import * as tar from 'tar';
 import zlib from 'node:zlib';
 
@@ -152,10 +154,34 @@ describe('downloadShard', () => {
     expect(err.message).toContain('fetch failed');
   });
 
+  /** A 200 that sends the start of a real archive, then drops. */
+  async function droppedArchive(): Promise<Response> {
+    const head = (await fs.readFile(path.resolve('tests/fixtures/shards/minimal-shard.tar.gz'))).subarray(0, 64);
+    return droppedResponse(new Uint8Array(head));
+  }
+
+  it('says a connection dropped mid-download, keeping DOWNLOAD_INVALID_TARBALL (#385)', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(droppedArchive);
+    const err = await downloadShard('https://example.com/tarball').catch(e => e);
+    expect(err.code).toBe('DOWNLOAD_INVALID_TARBALL');
+    expect(err.message).toBe('The connection dropped while the archive downloaded: terminated (UND_ERR_SOCKET)');
+    expect(err.hint).toBe(NETWORK_REMEDY);
+  });
+
+  it('still calls a corrupt archive not a valid tarball (#385)', async () => {
+    const junk = path.join(privateTmp, 'junk.tar.gz');
+    await fs.writeFile(junk, Buffer.from('this is not gzip at all, just bytes'));
+    globalThis.fetch = vi.fn().mockResolvedValue(createMockResponse(junk));
+    const err = await downloadShard('https://example.com/tarball').catch(e => e);
+    expect(err.code).toBe('DOWNLOAD_INVALID_TARBALL');
+    expect(err.message).toMatch(/^Downloaded archive is not a valid tarball: /);
+    expect(err.hint).toBe('The downloaded file is not a valid tar archive.');
+  });
+
   it('names the cause of a network failure (#380)', async () => {
     globalThis.fetch = vi
       .fn()
-      .mockRejectedValue(new TypeError('fetch failed', { cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }) }));
+      .mockRejectedValue(fetchTypeError('fetch failed', 'ECONNRESET'));
 
     const err = await downloadShard('https://example.com/tarball').catch(e => e);
     expect(err.code).toBe('DOWNLOAD_HTTP_ERROR');
