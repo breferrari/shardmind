@@ -176,7 +176,7 @@ Defects found after the 1.0 contract was settled, fixed in 1.0.x patches without
 | ✅ | Update RELEASE-SMOKE's adopt recipe for the bulk-resolution picker | [#379](https://github.com/breferrari/shardmind/issues/379) |
 | ✅ | Retry the registry index fetch and keep the network cause in the error | [#380](https://github.com/breferrari/shardmind/issues/380) |
 | ✅ | Hide the keybind hint when stdout is not a terminal | [#381](https://github.com/breferrari/shardmind/issues/381) |
-| ⬜ | Name the cause when a connection drops partway through a GitHub response or the tarball | [#385](https://github.com/breferrari/shardmind/issues/385) |
+| ✅ | Name the cause when a connection drops partway through a GitHub response or the tarball | [#385](https://github.com/breferrari/shardmind/issues/385) |
 
 ## Phase 8 — release and test tooling
 
@@ -299,6 +299,7 @@ Engine capability from the original plan. These were declined on 2026-10-04/05 o
 | ⬜ | Add --skip-hooks to install, update and adopt | [#199](https://github.com/breferrari/shardmind/issues/199) |
 | ⬜ | Command namespace prefix in the engine | [#25](https://github.com/breferrari/shardmind/issues/25) |
 | ⬜ | Fail a hook that loads a vendored runtime after the engine's mapping failed | [#384](https://github.com/breferrari/shardmind/issues/384) |
+| ⬜ | Report a download dropped mid-stream under a network error code | [#388](https://github.com/breferrari/shardmind/issues/388) |
 
 ## Shelf (retired 2026-10-04)
 
