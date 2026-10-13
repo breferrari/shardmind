@@ -57,9 +57,9 @@ async function newVault(prefix: string): Promise<{ vault: Vault; values: string 
 }
 
 /** stdout is one JSON document. */
-function documentOf(result: CliResult): { ok: boolean; result: { hooks: unknown[] } } {
+function documentOf(result: CliResult): { ok: boolean; result: { hooks: unknown[]; durationMs: number } } {
   expect(result.stdout.endsWith('}\n'), `exit=${result.exitCode}\n${result.stdout}\n${result.stderr}`).toBe(true);
-  return JSON.parse(result.stdout) as { ok: boolean; result: { hooks: unknown[] } };
+  return JSON.parse(result.stdout) as { ok: boolean; result: { hooks: unknown[]; durationMs: number } };
 }
 
 beforeAll(async () => {
@@ -133,6 +133,8 @@ describe('--skip-hooks (#199)', () => {
     const doc = documentOf(await run(vault, ['update', '--json']));
     expect(doc.ok).toBe(true);
     expect(doc.result.hooks).toEqual([{ slot: 'bootstrap', outcome: 'completed', exitCode: 0 }]);
+    // The hook ran, so the run took time (a run with nothing to do reports 0).
+    expect(doc.result.durationMs).toBeGreaterThan(0);
     expect(await vault.exists('bootstrapped.txt')).toBe(true);
     expect(await pending(vault)).toBeUndefined();
   }, 120_000);

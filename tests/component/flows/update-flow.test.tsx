@@ -267,7 +267,8 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         await fs.writeFile(
           path.join(dir, 'hooks', 'bootstrap.ts'),
           "import { writeFile } from 'node:fs/promises';\nimport { join } from 'node:path';\n" +
-            "export default async function (ctx) { await writeFile(join(ctx.vaultRoot, 'bootstrapped.txt'), 'ran'); }\n",
+            // Records the version it was told the vault updates from.
+            "export default async function (ctx) { await writeFile(join(ctx.vaultRoot, 'bootstrapped.txt'), `ran:${ctx.previousVersion ?? ''}`); }\n",
         );
       },
     });
@@ -299,7 +300,8 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         30_000,
       );
       expect(frame).toContain('Bootstrap hook completed.');
-      expect(await vault.readFile('bootstrapped.txt')).toBe('ran');
+      // No previousVersion: the run applies no release.
+      expect(await vault.readFile('bootstrapped.txt')).toBe('ran:');
       expect(await pendingOf(vault)).toBeUndefined();
     } finally {
       await vault.cleanup();
