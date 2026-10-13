@@ -265,6 +265,8 @@ Thrown by `source/core/state.ts` and `source/runtime/state.ts`.
 
 **Meaning:** `state.json` uses a schema version this engine doesn't know how to read, and no migration rule handles the jump. A version above this engine's means a newer ShardMind wrote it: the message says so with both numbers (#344). update, adopt and install refuse; `shardmind` (status) shows it as a notice and exits 0, and `shardmind --json` answers `ok: false` with `error.details` `{ stateSchemaVersion, supportedSchemaVersion }`, exit 1.
 
+Also raised by a command that handles one shard on a vault holding several (schema 3, composition, #395): the message says the vault holds several shards, and the hint asks for a ShardMind that updates each shard of a composed vault. Status and update read such a vault once they run across its shards. (Adopt refuses any vault that already has a `state.json`, with `ADOPT_EXISTING_INSTALL`.)
+
 **Typical cause:** A newer version of shardmind wrote the state, then you downgraded.
 
 **Remedy:** Upgrade shardmind (`npm install -g shardmind@latest`). An older state is always migrated forward; only a newer one is refused.

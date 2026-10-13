@@ -288,7 +288,7 @@ Engine capability from the original plan. These were declined on 2026-10-04/05 o
 | | Task | Issue |
 |---|---|---|
 | ⬜ | Shard composition (several shards per vault) | [#81](https://github.com/breferrari/shardmind/issues/81) |
-| ⬜ | Bring state.json to schema 3 with a shards list | [#395](https://github.com/breferrari/shardmind/issues/395) |
+| ✅ | Bring state.json to schema 3 with a shards list | [#395](https://github.com/breferrari/shardmind/issues/395) |
 | ⬜ | Add an overlay shard to a vault with shardmind add | [#396](https://github.com/breferrari/shardmind/issues/396) |
 | ⬜ | Run status, update and adopt across the shards of a vault | [#397](https://github.com/breferrari/shardmind/issues/397) |
 | ⬜ | List a vault's shards with shardmind list | [#398](https://github.com/breferrari/shardmind/issues/398) |

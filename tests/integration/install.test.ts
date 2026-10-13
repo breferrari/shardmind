@@ -78,6 +78,10 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     expect(state).not.toBeNull();
     expect(state.schema_version).toBe(2);
     expect(state.shard).toBe('shardmind/minimal');
+    // On disk too: a vault with one shard stays at schema 2, no shards list (#395).
+    const onDisk = JSON.parse(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')) as Record<string, unknown>;
+    expect(onDisk['schema_version']).toBe(2);
+    expect(onDisk).not.toHaveProperty('shards');
     expect(state.version).toBe('0.1.0');
     expect(state.tarball_sha256).toBe('deadbeef');
     expect(state.modules).toEqual(selections);

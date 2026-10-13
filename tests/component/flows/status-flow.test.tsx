@@ -167,10 +167,56 @@ describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)'
       const r = mountStatus({ vaultRoot: vault.root });
       // The notice wraps at the terminal's width: compare with whitespace folded.
       const frame = (await waitFor(r.lastFrame, (f) => f.includes('newer ShardMind'), 30_000)).replace(/\s+/g, ' ');
-      expect(frame).toContain('state schema 9; this ShardMind reads up to 2');
+      expect(frame).toContain('state schema 9; this ShardMind reads up to 3');
       expect(frame).toContain('npm install -g shardmind@latest');
       expect(frame).not.toContain('STATE_UNSUPPORTED_VERSION');
     } finally {
+      if (vault) await vault.cleanup();
+    }
+  }, 60_000);
+
+  // #395: until status runs across shards, a composed vault is refused with
+  // the reason, never read as its base shard alone.
+  async function composedVault(prefix: string): Promise<Vault> {
+    const vault = await newerStateVault(prefix);
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as Record<string, unknown>;
+    const { schema_version: _v, shape: _s, ...entry } = state;
+    await vault.writeFile(
+      '.shardmind/state.json',
+      JSON.stringify({ schema_version: 3, shards: [entry, { ...entry, shard: 'acme/overlay' }] }),
+    );
+    return vault;
+  }
+
+  it('a vault with several shards: status says so and how to manage it, without crashing (#395)', async () => {
+    let vault: Vault | null = null;
+    try {
+      vault = await composedVault('s395-composed-human');
+      const r = mountStatus({ vaultRoot: vault.root });
+      const frame = (await waitFor(r.lastFrame, (f) => f.includes('several shards'), 30_000)).replace(/\s+/g, ' ');
+      expect(frame).toContain('this command handles a vault with one');
+      expect(frame).toContain('updates each shard of a composed vault');
+    } finally {
+      if (vault) await vault.cleanup();
+    }
+  }, 60_000);
+
+  it('`shardmind --json` on a vault with several shards: ok false, STATE_UNSUPPORTED_VERSION, no schema numbers (#395)', async () => {
+    let vault: Vault | null = null;
+    const written: string[] = [];
+    const cwd = process.cwd();
+    try {
+      vault = await composedVault('s395-composed-json');
+      process.chdir(vault.root);
+      const code = await runStatusJson(['--json'], undefined, (chunk) => void written.push(chunk));
+      expect(code).toBe(1);
+      const doc = JSON.parse(written[0]!) as { ok: boolean; error: { code: string; message: string; details?: unknown } };
+      expect(doc.ok).toBe(false);
+      expect(doc.error.code).toBe('STATE_UNSUPPORTED_VERSION');
+      expect(doc.error.message).toContain('several shards');
+      expect(doc.error).not.toHaveProperty('details');
+    } finally {
+      process.chdir(cwd);
       if (vault) await vault.cleanup();
     }
   }, 60_000);
@@ -192,7 +238,7 @@ describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)'
       expect(doc.ok).toBe(false);
       expect(doc.result).toBeUndefined();
       expect(doc.error.code).toBe('STATE_UNSUPPORTED_VERSION');
-      expect(doc.error.details).toEqual({ stateSchemaVersion: 9, supportedSchemaVersion: 2 });
+      expect(doc.error.details).toEqual({ stateSchemaVersion: 9, supportedSchemaVersion: 3 });
       expect(doc.error.hint).toContain('npm install -g shardmind@latest');
     } finally {
       process.chdir(cwd);

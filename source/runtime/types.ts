@@ -205,6 +205,23 @@ export interface ShardState {
   bootstrap_pending?: true;
 }
 
+/**
+ * One shard of a vault that holds several (#395): a `ShardState` without
+ * `schema_version`, which the file carries once. Each shard keeps its own
+ * files, modules, values hash and bootstrap record.
+ */
+export type ShardEntry = Omit<ShardState, 'schema_version'>;
+
+/**
+ * `state.json` at schema 3 (#395, ARCHITECTURE §8.3): the vault's shards,
+ * the base first, then each overlay in install order. A vault with one shard
+ * is still written at schema 2, as a `ShardState`.
+ */
+export interface VaultState {
+  schema_version: number;
+  shards: ShardEntry[];
+}
+
 export interface FileState {
   template: string | null;
   rendered_hash: string;
