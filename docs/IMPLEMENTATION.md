@@ -758,6 +758,10 @@ Module gating is **not** applied to the cache; toggling a module on at update ti
 detectDrift(
   vaultRoot: string,
   state: ShardState,
+  opts?: {
+    cacheDir?: string;              // the shard's engine folder for the volatile check; '.shardmind' by default (#406)
+    foreign?: ReadonlySet<string>;  // posix paths other shards own (their files, every values file): never this shard's orphans (#406)
+  },
 ): Promise<DriftReport>
 
 interface DriftReport {
@@ -1213,7 +1217,7 @@ buildStatusReport(
 ): Promise<StatusReport | null>
 ```
 
-Returns `null` when the vault has no `.shardmind/state.json` — the "not in a shard-managed vault" signal. Never throws on section-level failures; each sub-loader (manifest, schema, drift, values) contributes a `StatusWarning` if it can't do its job, and the aggregator keeps building.
+Returns `null` when the vault has no `.shardmind/state.json` — the "not in a shard-managed vault" signal. A vault with several shards (#406) is read with `readVaultState` (leniently, as before) and each shard gets the steps below on its own entry, in parallel (each update check may be a network call), with its own paths (`shardLayout(shard, index)` in `state.ts`: the base's `.shardmind/` and `shard-values.yaml`; an overlay's `overlayDir(shard)` and `overlayValuesFile(shard)`), and drift's `foreign` from `foreignPathsOf(states, index)` (`drift.ts`): every other shard's files and every values file. The report's fields are the base shard's; `shards: ShardStatusReport[]` lists every shard's (the base's first, its fields the same objects), each with its own `warnings`. An overlay's warnings are also added to the report's, prefixed with its name. The environment probe runs once. Never throws on section-level failures; each sub-loader (manifest, schema, drift, values) contributes a `StatusWarning` if it can't do its job, and the aggregator keeps building.
 
 **Algorithm**:
 1. `readState(vaultRoot)`. If `null` → return `null` immediately.
@@ -1246,7 +1250,7 @@ Returns `null` when the vault has no `.shardmind/state.json` — the "not in a s
 
 ### 4.15 `update-check.ts`
 
-**Purpose**: 24-hour cached "latest GitHub release tag" lookup for a given `state.source`. Shared between the status command (read path) and the update command (priming path) so status invocations don't hammer the GitHub API.
+**Purpose**: 24-hour cached "latest GitHub release tag" lookup for a given `state.source`. Shared between the status command (read path) and the update command (priming path) so status invocations don't hammer the GitHub API. Each shard of a vault keeps its own cache file, in its own engine folder (`cacheDir`, the last argument of `getLatestVersion`, `primeLatestVersion`, `readCache` and `writeCache`; `.shardmind/` by default, an overlay's own for an overlay, #406), so two shards never evict each other's answer.
 
 **Inputs**:
 ```typescript

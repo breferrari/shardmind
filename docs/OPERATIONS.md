@@ -33,6 +33,7 @@ Every `--json` document carries `schemaVersion` (`1` today). What it promises:
 - Within a `schemaVersion`, things are only added. A new field, a new `classification`, `action` or `outcome` value, a new hook `outcome` or `failure` value, or a new `error.details` shape may appear in a minor release, so a consumer ignores what it does not know and checks the values it branches on.
 - Within a `schemaVersion`, a field is never removed, renamed or retyped. A change that would break a consumer bumps it.
 - Error `code`s come from the registry in [`ERRORS.md`](ERRORS.md) and are stable. A code is never reused for another meaning.
+- `shardmind --json` on a vault holding several shards (#406) adds `shards`, each shard's fields, the base first; the top-level fields stay the base's (ARCHITECTURE §10.3a). A consumer that reads only the top level reads the base shard as before.
 - `adopt --mode auto-merge` is experimental and outside this promise: its merge results may change in a minor release. The document's shape does not.
 
 ### Scripting idioms
