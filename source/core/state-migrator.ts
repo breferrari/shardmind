@@ -1,8 +1,9 @@
 /**
  * state.json schema migration framework.
  *
- * `readState` delegates to `migrateState` whenever the version in the
- * on-disk file differs from the engine's current `STATE_SCHEMA_VERSION`.
+ * `readVaultState` (`state.ts`) delegates to `migrateState` whenever the
+ * version in the on-disk file differs from the engine's current
+ * `STATE_SCHEMA_VERSION`, after `canMigrate` says a chain reaches it.
  * Migration rules are encoded as an ordered chain: each step takes the
  * previous shape and returns the next, stopping when the version matches.
  *
@@ -14,8 +15,9 @@
  * `writeState`'s exact-version guard accepts the result.
  *
  * The second (#395) turns schema 2's one shard into schema 3's `shards[0]`.
- * The caller checks the stored shape before migrating and the migrated one
- * after (`readVaultState`).
+ * The caller checks the stored shape before migrating; each rule turns a
+ * valid shape into a valid one, which its unit test pins, so the result is
+ * not checked again.
  */
 
 export interface StateMigration {
@@ -44,36 +46,30 @@ const migrations: StateMigration[] = [
   },
 ];
 
-/** Whether a chain of rules leads from `fromVersion` to `targetVersion`. */
-export function canMigrate(fromVersion: number, targetVersion: number): boolean {
+/** The rules that lead from `fromVersion` to `targetVersion`, in order, or null when none do. */
+function chainOf(fromVersion: number, targetVersion: number): StateMigration[] | null {
+  const chain: StateMigration[] = [];
   let version = fromVersion;
   while (version !== targetVersion) {
     const step = migrations.find((m) => m.fromVersion === version);
-    if (!step) return false;
+    if (!step) return null;
+    chain.push(step);
     version = step.toVersion;
   }
-  return true;
+  return chain;
+}
+
+/** Whether a chain of rules leads from `fromVersion` to `targetVersion`. */
+export function canMigrate(fromVersion: number, targetVersion: number): boolean {
+  return chainOf(fromVersion, targetVersion) !== null;
 }
 
 /**
  * Migrate an on-disk state object up to the target version.
  * Returns null if no migration chain exists from the current version
- * (caller should throw STATE_UNSUPPORTED_VERSION).
+ * (caller should throw STATE_UNSUPPORTED_VERSION; `canMigrate` asks first).
  */
-export function migrateState(
-  state: unknown,
-  fromVersion: number,
-  targetVersion: number,
-): unknown {
-  let current: unknown = state;
-  let version = fromVersion;
-
-  while (version !== targetVersion) {
-    const step = migrations.find((m) => m.fromVersion === version);
-    if (!step) return null;
-    current = step.apply(current);
-    version = step.toVersion;
-  }
-
-  return current;
+export function migrateState(state: unknown, fromVersion: number, targetVersion: number): unknown {
+  const chain = chainOf(fromVersion, targetVersion);
+  return chain ? chain.reduce<unknown>((current, step) => step.apply(current), state) : null;
 }

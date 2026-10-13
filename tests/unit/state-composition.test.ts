@@ -241,19 +241,35 @@ describe('the code review of #395', () => {
     expect((await readState(vault))!.schema_version).toBe(2);
   });
 
-  it('a broken composed file read leniently (status, install --force) degrades instead of being refused as several shards', async () => {
-    await writeRaw({ schema_version: 3, shards: [entry(), entry()] });
+  it('a broken file listing several shards is still refused on a lenient read: install --force must not drop the overlays', async () => {
+    await writeRaw({ schema_version: 3, shards: [entry(), { ...entry('acme/overlay'), modules: { x: 'maybe' } }] });
     const errors: string[] = [];
-    const state = await readState(vault, { onContractError: (err) => errors.push(err.message) });
+    await expect(readState(vault, { onContractError: (err) => errors.push(err.message) })).rejects.toMatchObject({
+      code: 'STATE_UNSUPPORTED_VERSION',
+      message: expect.stringContaining('several shards'),
+    });
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toContain('shards[1].shard');
+  });
+
+  it('a lenient read of a broken one-shard list degrades to that shard', async () => {
+    await writeRaw({ schema_version: 3, shards: [{ ...entry(), modules: { x: 'maybe' } }] });
+    const state = await readState(vault, { onContractError: () => {} });
     expect(state!.shard).toBe('acme/base');
   });
 
-  it('a lenient read of a non-object entry degrades to an empty shard', async () => {
-    await writeRaw({ schema_version: 3, shards: ['oops'] });
-    const state = await readState(vault, { onContractError: () => {} });
-    expect(state).toEqual({ schema_version: 2 });
+  it('a lenient read of an entry that is not an object, an array included, degrades to an empty shard', async () => {
+    for (const shards of [['oops'], [['a', 'b']], [], undefined]) {
+      await writeRaw({ schema_version: 3, shards });
+      expect(await readState(vault, { onContractError: () => {} })).toEqual({ schema_version: 2 });
+    }
+  });
+
+  it("a stray schema_version is dropped from every entry of a composed write", async () => {
+    const state = composed();
+    (state.shards[1] as unknown as Record<string, unknown>)['schema_version'] = 3;
+    await writeVaultState(vault, state);
+    const raw = JSON.parse(await fsp.readFile(statePath(), 'utf-8')) as { shards: Record<string, unknown>[] };
+    expect(raw.shards[1]).not.toHaveProperty('schema_version');
   });
 
   it('a schema below 1 is unsupported before its shape is judged, as the runtime answers', async () => {

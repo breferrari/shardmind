@@ -147,8 +147,13 @@ export function parseVaultState(value: unknown, filePath: string): VaultState {
  * dropped, never left to override it.
  */
 export function shardStateOf(entry: ShardEntry, schemaVersion: number): ShardState {
+  return { schema_version: schemaVersion, ...withoutSchemaVersion(entry) };
+}
+
+/** An entry without a stray `schema_version` of its own (#395): the file carries it once. */
+export function withoutSchemaVersion(entry: ShardEntry): ShardEntry {
   const { schema_version: _stray, ...rest } = entry as ShardEntry & { schema_version?: unknown };
-  return { schema_version: schemaVersion, ...rest };
+  return rest;
 }
 
 /**

@@ -1,6 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { migrateState } from '../../source/core/state-migrator.js';
+import { canMigrate, migrateState } from '../../source/core/state-migrator.js';
 import type { ShardState } from '../../source/runtime/types.js';
+
+describe('canMigrate (#395)', () => {
+  it('follows the chain from each supported version to the newest', () => {
+    expect(canMigrate(1, 3)).toBe(true);
+    expect(canMigrate(2, 3)).toBe(true);
+    expect(canMigrate(3, 3)).toBe(true);
+  });
+
+  it('is false where no rule starts, and never goes down', () => {
+    expect(canMigrate(0, 3)).toBe(false);
+    expect(canMigrate(3, 2)).toBe(false);
+    expect(canMigrate(4, 3)).toBe(false);
+  });
+
+  it('agrees with migrateState', () => {
+    for (const [from, to] of [[0, 3], [1, 3], [2, 3], [3, 2]] as const) {
+      expect(canMigrate(from, to)).toBe(migrateState({ schema_version: from }, from, to) !== null);
+    }
+  });
+});
 
 describe('migrateState', () => {
   it('returns null when no migration rule exists for the source version', () => {
