@@ -13,13 +13,14 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { ModuleSelections, VaultState } from '../../runtime/types.js';
 import { ShardMindError } from '../../runtime/types.js';
-import { SHARDMIND_DIR, STATE_FILE, VALUES_FILE, overlayValuesFile } from '../../runtime/vault-paths.js';
+import { SHARDMIND_DIR, STATE_FILE, VALUES_FILE, overlayDir, overlayValuesFile } from '../../runtime/vault-paths.js';
 import { errnoCode } from '../../runtime/errno.js';
 import { resolve as resolveRef } from '../registry.js';
 import { readVaultState, writeShardEntry } from '../state.js';
 import { assertShardInstallable } from '../lint-shard.js';
 import { checkExternalToolsForRun } from '../external-tools.js';
 import { assertSafeVaultPaths } from '../vault-path-guard.js';
+import { foldOutputPath, pathExists } from '../fs-utils.js';
 import { planOutputs, detectCollisions, defaultModuleSelections, type Collision } from '../install-planner.js';
 import { runAddTransaction, type BackupRecord, type ProgressEvent } from '../install-executor.js';
 import type { HookOutcome } from '../hook-orchestrator.js';
@@ -125,6 +126,20 @@ export async function runAddFlow(input: AddFlowInput, io: AddFlowIO): Promise<Ad
         'A vault holds each shard once. To move it to a newer version, run `shardmind update`.',
       );
     }
+    // The overlay's own engine paths, left by a hand edit or an earlier run
+    // the vault no longer records: refused before any prompt, rather than
+    // after the wizard by the transaction's exclusive writes.
+    const leftover = [];
+    for (const rel of [overlayValuesFile(name), overlayDir(name)]) {
+      if (await pathExists(path.join(vaultRoot, rel))) leftover.push(rel.replaceAll('\\', '/'));
+    }
+    if (leftover.length > 0) {
+      throw new ShardMindError(
+        `${name} would write ${leftover.join(' and ')}, which ${leftover.length === 1 ? 'is' : 'are'} already in the vault though state.json lists no ${name}`,
+        'ADD_PATH_OWNED',
+        `Left by an earlier run, or put there by hand. Remove ${leftover.length === 1 ? 'it' : 'them'}, then run \`shardmind add\` again.`,
+      );
+    }
     // A path the overlay writes whatever is answered, already owned: refused
     // before any prompt (R2). The full set is checked once answered.
     const owned = ownedPaths(vault, name);
@@ -184,14 +199,22 @@ async function valueAnswers(input: AddFlowInput, io: AddFlowIO, shard: AddShard)
 /**
  * Every path an overlay may not write (R2, #396), keyed by its case-folded
  * form, with its owner: each shard's files, every values file (the one
- * `adding` will write included), and (by prefix, in `ownerOf`) anything
- * under `.shardmind/`.
+ * `adding` will write included), and each folder holding a shard's files,
+ * keyed with a trailing `/` (a file there would move them aside). Anything
+ * under `.shardmind/` is the engine's, by prefix, in `ownerOf`.
  */
 export function ownedPaths(vault: VaultState, adding: string): Map<string, string> {
   const owned = new Map<string, string>();
   const own = (rel: string, owner: string) => owned.set(foldPath(rel), owner);
   vault.shards.forEach((shard, i) => {
-    for (const rel of Object.keys(shard.files)) own(rel, shard.shard);
+    for (const rel of Object.keys(shard.files)) {
+      own(rel, shard.shard);
+      const parts = foldPath(rel).split('/');
+      for (let depth = 1; depth < parts.length; depth++) {
+        const folder = `${parts.slice(0, depth).join('/')}/`;
+        if (!owned.has(folder)) owned.set(folder, `${shard.shard} (a folder of its files)`);
+      }
+    }
     own(i === 0 ? VALUES_FILE : overlayValuesFile(shard.shard), `${shard.shard} (its values file)`);
   });
   // The values file the add itself writes: a shard that ships it would fail
@@ -236,19 +259,30 @@ async function pathsWrittenRegardless(shard: PreparedShard): Promise<string[]> {
   return outputs.map((o) => o.outputPath);
 }
 
-/** Who owns `rel`, if anyone: a shard, the engine (`.shardmind/`), or nobody. */
-function ownerOf(rel: string, owned: Map<string, string>): string | null {
+/**
+ * Who owns `rel`, if anyone: the engine (`.shardmind/`); a shard, when it
+ * manages the path, keeps a folder of files there, or manages a file at a
+ * folder above it (the file is in the way); or nobody.
+ */
+export function ownerOf(rel: string, owned: Map<string, string>): string | null {
   const folded = foldPath(rel);
   if (folded === SHARDMIND_DIR || folded.startsWith(`${SHARDMIND_DIR}/`)) return 'ShardMind (the engine folder)';
-  return owned.get(folded) ?? null;
+  const exact = owned.get(folded) ?? owned.get(`${folded}/`);
+  if (exact !== undefined) return exact;
+  const parts = folded.split('/');
+  for (let depth = 1; depth < parts.length; depth++) {
+    const above = owned.get(parts.slice(0, depth).join('/'));
+    if (above !== undefined) return `${above} (a file above this path)`;
+  }
+  return null;
 }
 
 /**
- * One spelling per path, as a case-folding filesystem sees it: forward
- * slashes, NFC (macOS's NFD names are the same file), lower case.
+ * One spelling per path, as the vault-path guard folds it (`foldOutputPath`:
+ * NFC, lower case), with forward slashes.
  */
 function foldPath(rel: string): string {
-  return rel.replaceAll('\\', '/').normalize('NFC').toLowerCase();
+  return foldOutputPath(rel.replaceAll('\\', '/'));
 }
 
 async function planAndAdd(

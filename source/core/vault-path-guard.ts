@@ -49,6 +49,8 @@ const ENGINE_WRITE_PATHS: readonly string[] = [
   CACHED_SCHEMA,
   CACHED_TEMPLATES,
   path.join(SHARDMIND_DIR, 'backups'),
+  // Each overlay shard's cache folder lives under it (#396).
+  path.join(SHARDMIND_DIR, 'shards'),
   path.join(SHARDMIND_DIR, 'update-check.json'),
   HOOK_LOGS_DIR,
   // Every hook slot's full-output log, `.shardmind/logs/<slot>.log`.

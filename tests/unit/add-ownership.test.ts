@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ownedPaths } from '../../source/core/flows/add.js';
+import { ownedPaths, ownerOf } from '../../source/core/flows/add.js';
 import type { ShardEntry, VaultState } from '../../source/runtime/types.js';
 import { makeShardState, makeFileState } from '../helpers/index.js';
 
@@ -40,5 +40,34 @@ describe('ownedPaths (#396)', () => {
     const nfd = 'Café.md';
     const owned = ownedPaths({ schema_version: 3, shards: [entry('acme/base', [nfd])] }, 'acme/new');
     expect(owned.get('café.md')).toBe('acme/base');
+  });
+});
+
+describe('ownerOf (#396)', () => {
+  const owned = ownedPaths(vault, 'acme/new');
+
+  it('a path a shard manages is its', () => {
+    expect(ownerOf('Home.md', owned)).toBe('acme/base');
+    expect(ownerOf('HOME.md', owned)).toBe('acme/base');
+  });
+
+  it("a file where a shard keeps a folder of files is that shard's: writing it would move them aside", () => {
+    expect(ownerOf('brain', owned)).toContain('acme/base');
+    expect(ownerOf('research', owned)).toContain('acme/research');
+  });
+
+  it("a path under a shard's file is that shard's: the file is in the way", () => {
+    expect(ownerOf('Home.md/inside.md', owned)).toContain('acme/base');
+  });
+
+  it("anything under .shardmind/ is the engine's", () => {
+    expect(ownerOf('.shardmind/x.md', owned)).toContain('ShardMind');
+    expect(ownerOf('.ShardMind/x.md', owned)).toContain('ShardMind');
+  });
+
+  it("a path no shard owns, beside or below a shard's folder, is nobody's", () => {
+    expect(ownerOf('brain/Other.md', owned)).toBeNull();
+    expect(ownerOf('notes/x.md', owned)).toBeNull();
+    expect(ownerOf('Home.md.bak', owned)).toBeNull();
   });
 });

@@ -75,8 +75,12 @@ describe('the runtime reads an overlay with { shard } (#396)', () => {
     expect((await loadSchema({ shard: 'acme/base' })).values['who']!.message).toBe('base');
   });
 
-  it('a shard the vault does not hold has no values file to read', async () => {
-    await expect(loadValues({ shard: 'acme/missing' })).rejects.toMatchObject({ code: 'VALUES_NOT_FOUND' });
-    await expect(loadSchema({ shard: 'acme/missing' })).rejects.toMatchObject({ code: 'SCHEMA_NOT_FOUND' });
+  it('a shard the vault does not hold is refused, naming it, as loadState({ shard }) finds none', async () => {
+    for (const read of [loadValues, loadSchema]) {
+      await expect(read({ shard: 'acme/missing' })).rejects.toMatchObject({
+        code: 'ARGS_INVALID',
+        message: expect.stringContaining('acme/missing'),
+      });
+    }
   });
 });

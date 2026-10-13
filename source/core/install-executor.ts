@@ -29,7 +29,7 @@ import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { rolledBackError } from './rollback-report.js';
 import { wrapWriteError } from './bug-report.js';
 import { beginTransaction, type BackupRecord, type CreateRoot, type VaultTransaction } from './vault-transaction.js';
-import { overlayDir, overlayValuesFile, SHARDMIND_DIR, STATE_FILE, VALUES_FILE } from '../runtime/vault-paths.js';
+import { hookLogRelPath, overlayDir, overlayValuesFile, SHARDMIND_DIR, STATE_FILE, VALUES_FILE } from '../runtime/vault-paths.js';
 
 export type { BackupRecord } from './vault-transaction.js';
 
@@ -376,6 +376,9 @@ export async function runAddTransaction(opts: AddTransactionOptions): Promise<In
     // Appended to the vault's shards as they are on disk when it is written.
     persistState: (state) => writeShardEntry(opts.vaultRoot, state),
   };
+  // The overlay's own engine paths are written too: never through a link
+  // or a case-folded name (#163), dry run included.
+  await assertSafeVaultPaths(opts.vaultRoot, [target.cacheDir, target.valuesFile, path.dirname(hookLogRelPath('bootstrap', shard))]);
   if (opts.dryRun) {
     const result = await runInstall({ ...installOpts, target });
     return { ...result, backups: [], left: [] };

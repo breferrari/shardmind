@@ -365,6 +365,12 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
         oldStatePath,
         vaultRoot,
       );
+      // add's snapshot is only its rollback's: no summary points at it, so a
+      // committed add leaves none behind, nor an emptied `backups/` (#396).
+      if (opts.kind === 'add' && dir !== null) {
+        await removePath(dir).catch(() => {});
+        await fsp.rmdir(path.dirname(dir)).catch(() => {});
+      }
       return { kept, left };
     },
   };

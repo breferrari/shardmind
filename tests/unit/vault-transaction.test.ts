@@ -642,6 +642,17 @@ describe('the add transaction (#396)', () => {
     expect(await exists(path.join(vault, '.shardmind', 'shards', 'acme', 'research'))).toBe(true);
   });
 
+  it('removes its snapshot folder on commit: nothing reports it, so nothing is left behind', async () => {
+    await baseVault();
+    const tx = await beginAdd();
+    await tx.recordWrite('.shardmind/state.json');
+    await fsp.writeFile(path.join(vault, '.shardmind', 'state.json'), '{"schema_version":3}\n');
+    const dir = tx.dir!;
+    await tx.commit();
+    expect(await exists(dir)).toBe(false);
+    expect(await exists(path.join(vault, '.shardmind', 'backups'))).toBe(false);
+  });
+
   it('commits without touching the new tree', async () => {
     await baseVault();
     const tx = await beginAdd();

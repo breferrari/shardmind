@@ -182,10 +182,20 @@ export async function getIncludedModules(opts: { shard?: string } = {}): Promise
 /**
  * `shard` when it names one of the vault's overlays (#396), not its base:
  * the reader then looks at the overlay's own files (`overlayValuesFile`,
- * `overlayDir`). Null for no name or the base shard's: read the base's.
+ * `overlayDir`). Null for no name or the base shard's: read the base's. A
+ * name the vault does not hold is `ARGS_INVALID`, as `loadState({ shard })`
+ * finds no such shard.
  */
 export async function overlayName(shard: string | undefined): Promise<string | null> {
   if (shard === undefined) return null;
+  const named = await loadState({ shard });
+  if (named === null) {
+    throw new ShardMindError(
+      `This vault holds no shard named ${shard}`,
+      'ARGS_INVALID',
+      'Name one of the shards state.json lists, as <namespace>/<name>; leave the name out to read the base shard.',
+    );
+  }
   const base = await loadState();
   return base?.shard === shard ? null : shard;
 }
