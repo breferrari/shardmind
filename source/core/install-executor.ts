@@ -11,6 +11,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { stringify as stringifyYaml } from 'yaml';
 import type {
+  VaultState,
   ShardManifest,
   ShardSchema,
   ShardState,
@@ -22,14 +23,15 @@ import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
 import { resolveModules } from './modules.js';
 import { createRenderer, renderFile, buildRenderContext } from './renderer.js';
-import { initShardDir, cacheTemplates, cacheManifest, writeState, SINGLE_SHARD_SCHEMA_VERSION } from './state.js';
+import { initShardDir, cacheTemplates, cacheManifest, writeState, writeVaultState, SINGLE_SHARD_SCHEMA_VERSION, STATE_SCHEMA_VERSION } from './state.js';
+import { withoutSchemaVersion } from '../runtime/state-schema.js';
 import { sha256, toPosix } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { rolledBackError } from './rollback-report.js';
 import { wrapWriteError } from './bug-report.js';
 import { beginTransaction, type BackupRecord, type CreateRoot, type VaultTransaction } from './vault-transaction.js';
-import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
+import { overlayDir, overlayValuesFile, SHARDMIND_DIR, STATE_FILE, VALUES_FILE } from '../runtime/vault-paths.js';
 
 export type { BackupRecord } from './vault-transaction.js';
 
@@ -345,5 +347,63 @@ export async function runInstallTransaction(opts: InstallTransactionOptions): Pr
   // cancel is ignored. The old install's backups and the owner's own
   // entries move into the new `.shardmind/` before the rest is removed.
   const { kept, left } = await tx.commit({ oldStatePath });
+  return { ...result, backups: kept, left };
+}
+
+export interface AddTransactionOptions extends Omit<InstallRunnerOptions, 'tx' | 'target'> {
+  /** The vault's state before the add: its shards, the overlay appended after them. */
+  vault: VaultState;
+  signal?: AbortSignal;
+  /** The user's own files at the overlay's paths, moved out of the way first. */
+  moveAside: Collision[];
+  /** Absolute paths kept as backups (the Backup policy); every other move is set aside. */
+  keep: ReadonlySet<string>;
+}
+
+/**
+ * The state written with `overlay` appended to the vault's shards (#396):
+ * the base and the earlier overlays as they were read, then this one.
+ */
+export function withOverlay(vault: VaultState, overlay: ShardState): VaultState {
+  return { schema_version: STATE_SCHEMA_VERSION, shards: [...vault.shards, withoutSchemaVersion(overlay)] };
+}
+
+/**
+ * `shardmind add <shard>` (#396): the overlay's install on the vault's `add`
+ * transaction (§4.28 step 1b). `state.json` is recorded first, so a rollback
+ * puts it back byte for byte; the overlay's cache folder is a new tree the
+ * rollback removes whole; its files, values file and `state.json` are written
+ * by `runInstall` with the overlay's `InstallTarget`, `state.json` last
+ * through `writeVaultState`. Before that point a failure or a cancel rolls
+ * back every write once; after it nothing is rolled back.
+ */
+export async function runAddTransaction(opts: AddTransactionOptions): Promise<InstallTransactionResult> {
+  const { vault, moveAside, keep, signal, ...installOpts } = opts;
+  const shard = `${opts.manifest.namespace}/${opts.manifest.name}`;
+  const target = (persistState: InstallTarget['persistState']): InstallTarget => ({
+    cacheDir: overlayDir(shard),
+    valuesFile: overlayValuesFile(shard),
+    persistState,
+  });
+  if (opts.dryRun) {
+    const result = await runInstall({ ...installOpts, target: target(async () => {}) });
+    return { ...result, backups: [], left: [] };
+  }
+
+  const tx = await beginTransaction(opts.vaultRoot, { kind: 'add', noPriorInstall: false, signal });
+  let result: InstallResult;
+  try {
+    await tx.recordWrite(STATE_FILE.split(path.sep).join('/'));
+    await tx.recordNewTree(overlayDir(shard).split(path.sep).join('/'));
+    for (const collision of moveAside) await tx.recordSetAside(collision.absolutePath, keep.has(collision.absolutePath));
+    result = await runInstall({
+      ...installOpts,
+      tx,
+      target: target((state) => writeVaultState(opts.vaultRoot, withOverlay(vault, state))),
+    });
+  } catch (err) {
+    throw await rolledBackError(err, () => tx.rollback());
+  }
+  const { kept, left } = await tx.commit();
   return { ...result, backups: kept, left };
 }
