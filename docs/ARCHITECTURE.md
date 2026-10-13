@@ -590,7 +590,7 @@ Composition (#81) puts several shards in one vault: the base shard, then each ov
 
 Each entry is a schema-2 state without `schema_version` (`ShardEntry`), with every field it has there: each shard keeps its own `files`, `modules`, `values_hash`, `bootstrap_fingerprint` and `bootstrap_pending`, as it keeps its own values file, cache and merge base. `shards[0]` is the base shard; no two entries name the same shard. The v2 → v3 rule moves every field of a schema-2 state except `schema_version` into `shards[0]`, fields this engine does not know included, so the rule loses nothing.
 
-A vault with one shard stays at schema 2, byte for byte: the engine reads every vault as a list of shards and writes one shard at schema 2 and several at schema 3, so only the first overlay rewrites the file. An engine older than composition reads up to schema 2 and refuses a composed vault (§8.2), never misreading it. Until update and status run across shards (#397), a command that handles one shard refuses a vault with several with `STATE_UNSUPPORTED_VERSION`, rather than reading the base alone and dropping the overlays on its next write. The runtime's `loadState()` returns the base shard's state, and `loadState({ shard })` the named one.
+A vault with one shard stays at schema 2, byte for byte: the engine reads every vault as a list of shards and writes one shard at schema 2 and several at schema 3, so only the first overlay rewrites the file. An engine older than composition reads up to schema 2 and refuses a composed vault (§8.2), never misreading it. Until update and status run across shards (#397), a command that handles one shard refuses a vault with several with `STATE_UNSUPPORTED_VERSION`, rather than reading the base alone and dropping the overlays on its next write. The runtime's `loadState()` returns the base shard's state, and `loadState({ shard })` the named one, each as a one-shard state at schema 2; `getIncludedModules({ shard })` likewise.
 
 ---
 
@@ -1419,8 +1419,8 @@ export async function validateFrontmatter(filePath: string, content: string): Pr
 /** Load state file: the base shard, or the shard named (#395). Returns null if not installed, or no such shard. */
 export async function loadState(opts?: { shard?: string }): Promise<ShardState | null>;
 
-/** Get included modules from state. */
-export async function getIncludedModules(): Promise<string[]>;
+/** Get included modules from state: the base shard's, or the shard named (#395). */
+export async function getIncludedModules(opts?: { shard?: string }): Promise<string[]>;
 
 /** Resolve vault root by walking up from cwd looking for .shardmind/. */
 export function resolveVaultRoot(): string;
