@@ -302,7 +302,13 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
 
     onProgress?.({ kind: 'done', total: progressTotal });
 
+    // Start from the state as read, so a field this engine sets elsewhere
+    // (`bootstrap_pending`, which only the hook orchestrator clears) or one
+    // it does not know (an additive 1.x field, §4.7) survives the update.
+    // Every field below is this update's own and replaces the old value; an
+    // `undefined` one (a tag install's `ref`) is dropped on write.
     const nextState: ShardState = {
+      ...currentState,
       schema_version: STATE_SCHEMA_VERSION,
       shard: `${newManifest.namespace}/${newManifest.name}`,
       source: resolved.source,
