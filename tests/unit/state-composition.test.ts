@@ -23,7 +23,7 @@ import {
   STATE_SCHEMA_VERSION,
 } from '../../source/core/state.js';
 import { migrateState } from '../../source/core/state-migrator.js';
-import { loadState } from '../../source/runtime/state.js';
+import { getIncludedModules, loadState } from '../../source/runtime/state.js';
 import type { ShardEntry, VaultState } from '../../source/runtime/types.js';
 import { makeShardState } from '../helpers/index.js';
 
@@ -210,6 +210,8 @@ describe('readState / writeState handle a vault with one shard (#395)', () => {
     expect((err as Error).message).toContain('several shards');
     expect((err as { hint?: string }).hint).toContain('each shard');
     expect((err as { hint?: string }).hint).not.toMatch(/#\d+/);
+    // No released ShardMind manages it yet: the hint promises no upgrade that does.
+    expect((err as { hint?: string }).hint).not.toContain('npm install');
     // Not a newer ShardMind's file: no schema numbers to report.
     expect(newerStateOf(err)).toBeNull();
   });
@@ -230,14 +232,59 @@ describe('readState / writeState handle a vault with one shard (#395)', () => {
   });
 });
 
+describe('the code review of #395', () => {
+  it("an entry's stray schema_version never overrides the stamp", async () => {
+    const stray = { ...entry(), schema_version: 3 } as unknown as ShardEntry;
+    await writeVaultState(vault, { schema_version: 3, shards: [stray] });
+    const raw = JSON.parse(await fsp.readFile(statePath(), 'utf-8')) as Record<string, unknown>;
+    expect(raw['schema_version']).toBe(2);
+    expect((await readState(vault))!.schema_version).toBe(2);
+  });
+
+  it('a broken composed file read leniently (status, install --force) degrades instead of being refused as several shards', async () => {
+    await writeRaw({ schema_version: 3, shards: [entry(), entry()] });
+    const errors: string[] = [];
+    const state = await readState(vault, { onContractError: (err) => errors.push(err.message) });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('shards[1].shard');
+    expect(state!.shard).toBe('acme/base');
+  });
+
+  it('a lenient read of a non-object entry degrades to an empty shard', async () => {
+    await writeRaw({ schema_version: 3, shards: ['oops'] });
+    const state = await readState(vault, { onContractError: () => {} });
+    expect(state).toEqual({ schema_version: 2 });
+  });
+
+  it('a schema below 1 is unsupported before its shape is judged, as the runtime answers', async () => {
+    await writeRaw({ schema_version: 0 });
+    await expect(readState(vault)).rejects.toMatchObject({ code: 'STATE_UNSUPPORTED_VERSION' });
+    const errors: unknown[] = [];
+    await expect(readState(vault, { onContractError: (e) => errors.push(e) })).rejects.toMatchObject({
+      code: 'STATE_UNSUPPORTED_VERSION',
+    });
+    expect(errors).toEqual([]);
+  });
+});
+
 describe('the runtime loadState reads schema 3 (#395)', () => {
   beforeEach(() => {
     vi.spyOn(process, 'cwd').mockReturnValue(vault);
   });
 
-  it('returns the base shard, at the schema it was read at', async () => {
+  it('returns the base shard as a one-shard state, at schema 2, as the engine reads it', async () => {
     await writeVaultState(vault, composed());
-    expect(await loadState()).toEqual({ schema_version: 3, ...entry('acme/base') });
+    expect(await loadState()).toEqual({ schema_version: 2, ...entry('acme/base') });
+  });
+
+  it('getIncludedModules reads the named shard too', async () => {
+    const state = composed();
+    state.shards[0]!.modules = { brain: 'included', perf: 'excluded' };
+    state.shards[1]!.modules = { papers: 'included' };
+    await writeVaultState(vault, state);
+    expect(await getIncludedModules()).toEqual(['brain']);
+    expect(await getIncludedModules({ shard: 'acme/overlay' })).toEqual(['papers']);
+    expect(await getIncludedModules({ shard: 'acme/missing' })).toEqual([]);
   });
 
   it('returns a named shard', async () => {

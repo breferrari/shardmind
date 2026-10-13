@@ -11,7 +11,7 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { ShardState, ShardManifest, ShardSchema, FileState, VaultState } from '../runtime/types.js';
+import type { ShardEntry, ShardState, ShardManifest, ShardSchema, FileState, VaultState } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { stringify as stringifyYaml } from 'yaml';
 import {
@@ -25,7 +25,7 @@ import {
   SHARD_SCHEMA_FILE,
 } from '../runtime/vault-paths.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
-import { migrateState } from './state-migrator.js';
+import { canMigrate, migrateState } from './state-migrator.js';
 import {
   newerStateError,
   parseShardState,
@@ -120,23 +120,32 @@ export async function readVaultState(vaultRoot: string, opts: ReadStateOptions =
   // `shards[0].files["Home.md"]`); then the migration to schema 3 (#395).
   const version = (parsed as { schema_version: number }).schema_version;
   if (version > STATE_SCHEMA_VERSION) throw newerStateError(version);
-  const parse = version < STATE_SCHEMA_VERSION ? parseShardState : parseVaultState;
-  let checked: unknown;
-  try {
-    checked = parse(parsed, filePath);
-  } catch (err) {
-    if (!opts.onContractError || !(err instanceof ShardMindError)) throw err;
-    opts.onContractError(err);
-    checked = parsed;
+  // An older version no rule reaches is unsupported, whatever its shape.
+  if (!canMigrate(version, STATE_SCHEMA_VERSION)) {
+    throw new ShardMindError(
+      `Unsupported state schema_version: ${version}`,
+      'STATE_UNSUPPORTED_VERSION',
+      `This version of shardmind supports schema_version ${STATE_SCHEMA_VERSION}. No migration rule is registered for ${version} → ${STATE_SCHEMA_VERSION}.`,
+    );
   }
-  if (version === STATE_SCHEMA_VERSION) return checked as VaultState;
-  const migrated = migrateState(checked, version, STATE_SCHEMA_VERSION);
-  if (migrated) return migrated as VaultState;
-  throw new ShardMindError(
-    `Unsupported state schema_version: ${version}`,
-    'STATE_UNSUPPORTED_VERSION',
-    `This version of shardmind supports schema_version ${STATE_SCHEMA_VERSION}. No migration rule is registered for ${version} → ${STATE_SCHEMA_VERSION}.`,
-  );
+  let contractBroken = false;
+  const check = <T>(parse: (value: unknown, file: string) => T, value: unknown): T => {
+    if (contractBroken) return value as T;
+    try {
+      return parse(value, filePath);
+    } catch (err) {
+      if (!opts.onContractError || !(err instanceof ShardMindError)) throw err;
+      contractBroken = true;
+      opts.onContractError(err);
+      return value as T;
+    }
+  };
+  if (version === STATE_SCHEMA_VERSION) return check(parseVaultState, parsed);
+  // A file older than schema 3 is checked first as what it is, so a
+  // mismatch names a path it has; the migrated result is checked again, so a
+  // migration rule's bug fails here rather than in a caller.
+  const stored = check(parseShardState, parsed);
+  return check(parseVaultState, migrateState(stored, version, STATE_SCHEMA_VERSION));
 }
 
 /**
@@ -148,10 +157,9 @@ export async function readVaultState(vaultRoot: string, opts: ReadStateOptions =
 export async function writeVaultState(vaultRoot: string, state: VaultState): Promise<void> {
   const filePath = path.join(vaultRoot, STATE_FILE);
   const checked = parseVaultState(state, filePath);
-  const [only, ...overlays] = checked.shards;
   const onDisk: unknown =
-    overlays.length === 0
-      ? { schema_version: SINGLE_SHARD_SCHEMA_VERSION, ...only }
+    checked.shards.length === 1
+      ? shardStateOf(checked.shards[0]!, SINGLE_SHARD_SCHEMA_VERSION)
       : { ...checked, schema_version: STATE_SCHEMA_VERSION };
   await fsp.mkdir(path.join(vaultRoot, SHARDMIND_DIR), { recursive: true });
   await fsp.writeFile(filePath, JSON.stringify(onDisk, null, 2) + '\n', 'utf-8');
@@ -165,12 +173,29 @@ export async function writeVaultState(vaultRoot: string, state: VaultState): Pro
  * overlays.
  */
 export async function readState(vaultRoot: string, opts: ReadStateOptions = {}): Promise<ShardState | null> {
-  const state = await readVaultState(vaultRoot, opts);
+  let contractBroken = false;
+  const onContractError = opts.onContractError;
+  const state = await readVaultState(
+    vaultRoot,
+    onContractError
+      ? {
+          onContractError: (err) => {
+            contractBroken = true;
+            onContractError(err);
+          },
+        }
+      : {},
+  );
   if (!state) return null;
-  // Status reads a broken file as it is (`onContractError`): a schema-3 file
-  // without a shard in its list reads as an empty shard, each field degrading.
-  if (!Array.isArray(state.shards) || state.shards.length === 0) return { schema_version: SINGLE_SHARD_SCHEMA_VERSION } as ShardState;
-  return shardStateOf(soleShard(state), SINGLE_SHARD_SCHEMA_VERSION);
+  if (!contractBroken) return shardStateOf(soleShard(state), SINGLE_SHARD_SCHEMA_VERSION);
+  // A broken file read as it is (status; install, whose --force reinstalls
+  // over it): its first shard, each field degrading, never a refusal for a
+  // list the contract already rejected. Anything not an object reads empty.
+  const first: unknown = Array.isArray(state.shards) ? state.shards[0] : undefined;
+  return shardStateOf(
+    (first !== null && typeof first === 'object' ? first : {}) as ShardEntry,
+    SINGLE_SHARD_SCHEMA_VERSION,
+  );
 }
 
 /** Write the state of a vault with one shard, at `SINGLE_SHARD_SCHEMA_VERSION` (#395). */

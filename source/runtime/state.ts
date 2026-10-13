@@ -20,6 +20,7 @@ import {
   parseShardState,
   parseVaultState,
   shardStateOf,
+  SINGLE_SHARD_SCHEMA_VERSION,
   STATE_CORRUPT_HINT,
   STATE_SCHEMA_VERSION,
 } from './state-schema.js';
@@ -76,7 +77,8 @@ export function resolveVaultRoot(): string {
  * A vault can hold several shards (#395): the base first, then each
  * overlay. Without an argument this returns the base shard's state; with
  * `{ shard: '<namespace>/<name>' }`, that shard's, or `null` when the vault
- * holds no shard of that name. The returned `schema_version` is the file's.
+ * holds no shard of that name. A schema-1 or -2 file returns as it is; a
+ * shard of a schema-3 file returns as a one-shard state, at schema 2.
  *
  * @returns The parsed `ShardState`, or `null` if state.json is absent.
  * @throws ShardMindError `VAULT_NOT_FOUND` if no vault in the ancestor chain.
@@ -139,22 +141,25 @@ export async function loadState(opts: { shard?: string } = {}): Promise<ShardSta
   }
   // The same contract the engine reads with (#343). Schema 1 and 2 hold one
   // shard, the base; schema 3 lists them (#395).
-  if (version < 3) {
+  if (version < STATE_SCHEMA_VERSION) {
     const state = parseShardState(parsed, filePath);
     return opts.shard === undefined || state.shard === opts.shard ? state : null;
   }
+  // A shard of a schema-3 file comes back as a one-shard state, at schema 2,
+  // as the engine reads it: a flat `ShardState` never claims schema 3's shape.
   const { shards } = parseVaultState(parsed, filePath);
   const entry = opts.shard === undefined ? shards[0] : shards.find((s) => s.shard === opts.shard);
-  return entry ? shardStateOf(entry, version) : null;
+  return entry ? shardStateOf(entry, SINGLE_SHARD_SCHEMA_VERSION) : null;
 }
 
 /**
  * Return the IDs of modules that were `'included'` at install time.
  *
  * Convenience over {@link loadState} for the common "which features
- * are active" check inside a hook or utility script.
+ * are active" check inside a hook or utility script. Takes the same
+ * `{ shard }` (#395): the base shard's modules by default.
  *
- * @returns Array of included module IDs. Empty if the vault has no state.
+ * @returns Array of included module IDs. Empty if the vault has no state, or no such shard.
  *
  * @example
  * ```ts
@@ -165,8 +170,8 @@ export async function loadState(opts: { shard?: string } = {}): Promise<ShardSta
  * }
  * ```
  */
-export async function getIncludedModules(): Promise<string[]> {
-  const state = await loadState();
+export async function getIncludedModules(opts: { shard?: string } = {}): Promise<string[]> {
+  const state = await loadState(opts);
   if (!state) return [];
 
   return Object.entries(state.modules)

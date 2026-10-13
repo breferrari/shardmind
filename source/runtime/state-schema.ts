@@ -139,9 +139,16 @@ export function parseVaultState(value: unknown, filePath: string): VaultState {
   );
 }
 
-/** A shard's entry as a `ShardState` at `schemaVersion` (#395): what the one-shard readers return. */
+/**
+ * A shard's entry as a `ShardState` at `schemaVersion` (#395): what the
+ * one-shard readers return, and what a one-shard vault is written as.
+ * `schema_version` stays first, so the written bytes keep their order, and
+ * an entry's own stray `schema_version` (unknown fields are kept) is
+ * dropped, never left to override it.
+ */
 export function shardStateOf(entry: ShardEntry, schemaVersion: number): ShardState {
-  return { schema_version: schemaVersion, ...entry };
+  const { schema_version: _stray, ...rest } = entry as ShardEntry & { schema_version?: unknown };
+  return { schema_version: schemaVersion, ...rest };
 }
 
 /**
@@ -155,7 +162,7 @@ export function soleShard(state: VaultState): ShardEntry {
     throw new ShardMindError(
       `This vault holds several shards (${state.shards.length}); this command handles a vault with one`,
       'STATE_UNSUPPORTED_VERSION',
-      'A ShardMind that updates each shard of a composed vault manages it: npm install -g shardmind@latest',
+      'Manage it with a ShardMind that updates each shard of a composed vault; this one updates a vault with one shard.',
     );
   }
   return state.shards[0]!;

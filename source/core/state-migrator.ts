@@ -14,8 +14,8 @@
  * `writeState`'s exact-version guard accepts the result.
  *
  * The second (#395) turns schema 2's one shard into schema 3's `shards[0]`.
- * The result is unchecked: the caller validates it against the target
- * version's contract (`parseVaultState`).
+ * The caller checks the stored shape before migrating and the migrated one
+ * after (`readVaultState`).
  */
 
 export interface StateMigration {
@@ -43,6 +43,17 @@ const migrations: StateMigration[] = [
     },
   },
 ];
+
+/** Whether a chain of rules leads from `fromVersion` to `targetVersion`. */
+export function canMigrate(fromVersion: number, targetVersion: number): boolean {
+  let version = fromVersion;
+  while (version !== targetVersion) {
+    const step = migrations.find((m) => m.fromVersion === version);
+    if (!step) return false;
+    version = step.toVersion;
+  }
+  return true;
+}
 
 /**
  * Migrate an on-disk state object up to the target version.
