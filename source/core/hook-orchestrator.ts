@@ -129,25 +129,35 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
     // Every declared slot is reported, even one the rules would not have run:
     // the report says what the user turned off. Nothing runs, so the state
     // and its bootstrap fingerprint are kept as they came; the one change is
-    // `bootstrap_pending`, set when the skipped bootstrap would have run
-    // (#199). The defaults check gates only whether a slot runs, so it is not
+    // `bootstrap_pending`, set when the skipped bootstrap would have run and
+    // cleared when the shard has no bootstrap left to run (#199). The defaults check gates only whether a slot runs, so it is not
     // computed.
     const valuesAreDefaultsUnused = false;
     const outcomes: HookOutcome[] = [];
     let bootstrapOwed = false;
+    // No bootstrap to run, now or later: a debt from an earlier run is void.
+    let bootstrapGone = false;
     for (const job of buildJobs(plan, valuesAreDefaultsUnused)) {
-      if (job.relPath === undefined) continue;
+      if (job.relPath === undefined) {
+        if (job.slot === 'bootstrap') bootstrapGone = true;
+        continue;
+      }
       // The same lookup a run makes, without running: a declared script the
       // shard does not ship is absent (null), as it is in a normal run.
       const found = (await runHook(plan.tempDir, job.relPath)).kind !== 'absent';
       outcomes.push({ slot: job.slot, summary: found ? { skipped: 'skip-hooks' } : null });
+      if (job.slot === 'bootstrap' && !found) bootstrapGone = true;
       // A bootstrap that would have run is owed to the next update (ruling (c)).
       if (job.slot === 'bootstrap' && found && job.willRun) bootstrapOwed = true;
     }
-    if (!bootstrapOwed || plan.dryRun || plan.state.bootstrap_pending === true) {
+    const finalState: ShardState = bootstrapOwed
+      ? { ...plan.state, bootstrap_pending: true }
+      : bootstrapGone
+        ? clearPending(plan.state)
+        : plan.state;
+    if (plan.dryRun || finalState.bootstrap_pending === plan.state.bootstrap_pending) {
       return { outcomes, finalState: plan.state, stateChanged: false };
     }
-    const finalState: ShardState = { ...plan.state, bootstrap_pending: true };
     return { outcomes, finalState, stateChanged: await persistState(plan.vaultRoot, finalState) };
   }
 

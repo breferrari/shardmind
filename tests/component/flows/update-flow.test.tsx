@@ -342,6 +342,28 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     }
   }, 60_000);
 
+  it('an up-to-date --skip-hooks run checks neither values nor tools, reports the bootstrap skipped and keeps it owed (#199)', async () => {
+    const { vault, tmpDir } = await owingVault('owed-bootstrap-skip', {
+      external_tools: { node: { package: 'node', version: '>=999.0.0', command: 'node' } },
+    });
+    try {
+      await vault.writeFile('shard-values.yaml', 'user_name: Alice\nvault_purpose: not-an-option\n');
+      const r = mountUpdate({ vaultRoot: vault.root, options: { skipHooks: true } });
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Already up to date/.test(f) && f.includes('Bootstrap hook skipped (--skip-hooks).'),
+        30_000,
+      );
+      expect(frame).not.toContain('VALUES_INVALID');
+      expect(frame).not.toContain('EXTERNAL_TOOL_UNMET');
+      expect(await vault.exists('bootstrapped.txt')).toBe(false);
+      expect(await pendingOf(vault)).toBe(true);
+    } finally {
+      await vault.cleanup();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it('an up-to-date run checks external tools before the owed bootstrap runs (#199, #138)', async () => {
     const { vault, tmpDir } = await owingVault('owed-bootstrap-tools', {
       external_tools: { node: { package: 'node', version: '>=999.0.0', command: 'node' } },

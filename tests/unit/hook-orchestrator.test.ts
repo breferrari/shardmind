@@ -1055,6 +1055,27 @@ describe('a pending bootstrap (#199)', () => {
     expect(result.finalState.bootstrap_pending).toBeUndefined();
   });
 
+  it('a --skip-hooks run also drops a debt the shard can no longer pay', async () => {
+    const result = await runHooks(
+      updatePlan({ manifest: manifest({}), state: makeShardState({ bootstrap_pending: true }), skipHooks: true }),
+      NOOP_UI,
+    );
+    expect(result.finalState.bootstrap_pending).toBeUndefined();
+    expect(result.stateChanged).toBe(true);
+  });
+
+  it('a --skip-hooks run drops a debt whose declared script is not shipped', async () => {
+    const result = await runHooks(
+      updatePlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/missing.ts', fingerprint: 'v1' } }),
+        state: makeShardState({ bootstrap_pending: true }),
+        skipHooks: true,
+      }),
+      NOOP_UI,
+    );
+    expect(result.finalState.bootstrap_pending).toBeUndefined();
+  });
+
   it('keeps the flag on a dry run, which writes nothing', async () => {
     const result = await runHooks(
       updatePlan({ manifest: manifest({}), state: makeShardState({ bootstrap_pending: true }), dryRun: true }),

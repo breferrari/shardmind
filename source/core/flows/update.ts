@@ -209,8 +209,15 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
       if (state.bootstrap_pending !== true) {
         return { kind: 'up-to-date', manifest: shard.manifest, state, hooks: [], externalTools: [], durationMs: 0 };
       }
-      const values = validateValues(shard.schema, await loadCurrentValues(vaultRoot), 'vault');
-      const externalTools = await checkExternalToolsForRun({ manifest: shard.manifest, values, dryRun });
+      const current = await loadCurrentValues(vaultRoot);
+      // Under --skip-hooks no hook runs, so nothing is checked for one.
+      let values = current;
+      let externalTools: string[] = [];
+      if (!input.skipHooks) {
+        io.phase({ kind: 'loading', message: 'Checking values and tools for the pending bootstrap…' });
+        values = validateValues(shard.schema, current, 'vault');
+        externalTools = await checkExternalToolsForRun({ manifest: shard.manifest, values, dryRun });
+      }
       const hookPlan: HookRunPlan = {
         command: 'update',
         tempDir: shard.tempDir,
