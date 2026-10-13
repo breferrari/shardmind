@@ -131,7 +131,7 @@ export async function readCache(vaultRoot: string, cacheDir?: string): Promise<R
     // directory at our cache path is safe to delete on sight. Flag as
     // corruption-healed so the verbose status view can surface it.
     if (code === 'EISDIR') {
-      await deleteCache(vaultRoot);
+      await deleteCache(vaultRoot, cacheDir);
       return { cache: null, corruptHealed: true };
     }
     // Permission / other I/O error on a file that exists: treat as absent.
@@ -144,12 +144,12 @@ export async function readCache(vaultRoot: string, cacheDir?: string): Promise<R
   try {
     parsed = JSON.parse(raw);
   } catch {
-    await deleteCache(vaultRoot);
+    await deleteCache(vaultRoot, cacheDir);
     return { cache: null, corruptHealed: true };
   }
 
   if (!isValidCacheShape(parsed)) {
-    await deleteCache(vaultRoot);
+    await deleteCache(vaultRoot, cacheDir);
     return { cache: null, corruptHealed: true };
   }
 
@@ -208,9 +208,9 @@ export async function writeCache(vaultRoot: string, entry: UpdateCheck, cacheDir
  * directory case; `force` covers the already-gone case. Swallows errors so
  * cleanup failures can't fail a command.
  */
-async function deleteCache(vaultRoot: string): Promise<void> {
+async function deleteCache(vaultRoot: string, cacheDir?: string): Promise<void> {
   try {
-    await removePath(cachePath(vaultRoot));
+    await removePath(cachePath(vaultRoot, cacheDir));
   } catch {
     // swallow
   }

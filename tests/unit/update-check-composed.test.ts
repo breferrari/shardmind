@@ -40,4 +40,14 @@ describe('update-check cache per shard (#406)', () => {
     const baseFile = JSON.parse(await fsp.readFile(path.join(vault, '.shardmind', 'update-check.json'), 'utf-8')) as { source: string };
     expect(baseFile.source).toBe('github:acme/base');
   });
+
+  it("heals a corrupt overlay cache in the overlay's folder, never the base's", async () => {
+    const now = Date.parse('2026-10-13T12:00:00Z');
+    await primeLatestVersion(vault, 'github:acme/base', '1.0.0', now);
+    await fsp.writeFile(path.join(vault, OVERLAY, 'update-check.json'), '{ not json');
+    const overlay = await getLatestVersion(vault, 'github:acme/research', now, OVERLAY);
+    expect(overlay).toMatchObject({ cacheHealed: true });
+    await expect(fsp.access(path.join(vault, OVERLAY, 'update-check.json'))).rejects.toThrow();
+    expect(await getLatestVersion(vault, 'github:acme/base', now)).toMatchObject({ kind: 'fresh', latest_version: '1.0.0' });
+  });
 });
