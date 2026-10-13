@@ -454,6 +454,13 @@ Criterion: **obsidian-mind v6 does not need these to install, configure, or upgr
 - **`.shardmind/shards/`** is reserved for each overlay's cached `shard.yaml`, `shard-schema.yaml` and templates, at `.shardmind/shards/<namespace>/<name>/`. No engine writes there before composition, and a shard never ships it (`.shardmind/` is Tier 1).
 - **Overlay values live at the vault root as `shard-values.<namespace>.<name>.yaml`**, beside the base shard's `shard-values.yaml`, which keeps its name. The name pattern `shard-values.*.yaml` at the vault root is reserved for them: a shard should not ship a file matching it. The engine does not enforce this today (it is not Tier 1); refusing such a file would narrow what installs, and is the maintainer's call. Removing ShardMind from a composed vault also deletes these files.
 
+**Composition's rulings** (Brenno, 2026-10-13; built as #395–#398):
+
+- **An overlay goes in with `shardmind add <shard>`**, a new command that works only inside a ShardMind vault. `install` keeps refusing an existing vault (`EXISTING_INSTALL`, and #337's nested refusal): adding a shard and installing a vault stay different acts.
+- **One owner per file.** An overlay that ships a path another shard in the vault already manages is refused before any write, and the error names every such path (a new code, additive). The three-way merge and drift detection assume a single owner per path, and this keeps it.
+- **`update` covers every shard.** A bare `shardmind update` updates the base shard, then each overlay in install order; `shardmind update <shard>` updates one.
+- **Hooks run per shard, in that order.** The base shard's hooks first, then each overlay's in install order, each with its own context, values and slots.
+
 **Reserved for dependency fetching** (#82, reserved in 1.0 by #369): `shard.yaml`'s `dependencies` names other shards this shard needs installed alongside it. Each entry is `{ name, namespace, version }`: `name` and `namespace` follow the manifest's own rules (lowercase letters, digits, hyphens), and `version` is a semver range. The engine validates them and does not fetch them: the shard's user installs them. Fetching them on install is planned ([#82](https://github.com/breferrari/shardmind/issues/82)); defined and validated in 1.0 (#369) so that fetching gives them no new meaning.
 
 Also planned in Phase 15, outside the layout contract:
