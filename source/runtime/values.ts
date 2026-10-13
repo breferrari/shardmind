@@ -3,8 +3,8 @@ import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ShardSchema, ValidationResult } from './types.js';
 import { ShardMindError } from './types.js';
-import { resolveVaultRoot } from './state.js';
-import { VALUES_FILE } from './vault-paths.js';
+import { namesOverlay, resolveVaultRoot } from './state.js';
+import { overlayValuesFile, VALUES_FILE } from './vault-paths.js';
 import { errnoCode } from './errno.js';
 import { buildValuesValidator } from './values-validator.js';
 
@@ -13,7 +13,10 @@ import { buildValuesValidator } from './values-validator.js';
  *
  * Resolves the vault root by walking up from `process.cwd()` looking for
  * a `.shardmind/` directory (see {@link resolveVaultRoot}). Reads the
- * values file, parses as YAML, and returns the flat map.
+ * values file, parses as YAML, and returns the flat map. With
+ * `{ shard: '<namespace>/<name>' }`, an overlay shard's own values file
+ * (`shard-values.<namespace>.<name>.yaml`, #396); the base shard's name, or
+ * none, reads `shard-values.yaml`.
  *
  * @returns The user's answered values as a plain object.
  * @throws ShardMindError `VAULT_NOT_FOUND` if no vault is found in the ancestor chain.
@@ -29,9 +32,9 @@ import { buildValuesValidator } from './values-validator.js';
  * console.log(`Hello, ${values.user_name}`);
  * ```
  */
-export async function loadValues(): Promise<Record<string, unknown>> {
+export async function loadValues(opts: { shard?: string } = {}): Promise<Record<string, unknown>> {
   const vaultRoot = resolveVaultRoot();
-  const filePath = path.join(vaultRoot, VALUES_FILE);
+  const filePath = path.join(vaultRoot, (await namesOverlay(opts.shard)) ? overlayValuesFile(opts.shard!) : VALUES_FILE);
 
   let raw: string;
   try {

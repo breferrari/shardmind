@@ -33,8 +33,38 @@ export const HOOK_STAGES = ['bootstrap', 'personalize', 'post-update'] as const;
  * as a user-facing pointer in the Summary, and `path.join(vaultRoot, …)`
  * resolves a posix-style relative path correctly on every platform.
  */
-export function hookLogRelPath(slot: string): string {
-  return `${SHARDMIND_DIR}/logs/${slot}.log`;
+export function hookLogRelPath(slot: string, shard?: string): string {
+  if (shard === undefined) return `${SHARDMIND_DIR}/logs/${slot}.log`;
+  const [namespace, name] = shardNameParts(shard);
+  return `${SHARDMIND_DIR}/logs/${namespace}/${name}/${slot}.log`;
+}
+
+/**
+ * An overlay shard's own engine folder (#396): its cached `shard.yaml`,
+ * `shard-schema.yaml` and templates, `.shardmind/shards/<namespace>/<name>`.
+ * The base shard's stay at `.shardmind/`.
+ */
+export function overlayDir(shard: string): string {
+  const [namespace, name] = shardNameParts(shard);
+  return path.join(SHARDMIND_DIR, 'shards', namespace, name);
+}
+
+/** An overlay shard's values file at the vault root (#396): `shard-values.<namespace>.<name>.yaml`. */
+export function overlayValuesFile(shard: string): string {
+  const [namespace, name] = shardNameParts(shard);
+  return `shard-values.${namespace}.${name}.yaml`;
+}
+
+/**
+ * `<namespace>/<name>` split, or a throw: a shard name builds paths, so one
+ * with another shape (an empty part, a `..`, a further slash) never does.
+ */
+function shardNameParts(shard: string): [string, string] {
+  const parts = shard.split('/');
+  if (parts.length !== 2 || parts.some((part) => part === '' || part === '.' || part === '..' || part.includes('\\'))) {
+    throw new Error(`Not a <namespace>/<name> shard name: ${JSON.stringify(shard)}`);
+  }
+  return [parts[0]!, parts[1]!];
 }
 
 /** User-authored values file. Engine creates it on install, never overwrites. */

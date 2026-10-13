@@ -178,3 +178,14 @@ export async function getIncludedModules(opts: { shard?: string } = {}): Promise
     .filter(([, status]) => status === 'included')
     .map(([id]) => id);
 }
+
+/**
+ * Whether `shard` names one of the vault's overlays (#396), not its base:
+ * the reader then looks at the overlay's own files (`overlayValuesFile`,
+ * `overlayDir`). No name, or the base shard's, reads the base's.
+ */
+export async function namesOverlay(shard: string | undefined): Promise<boolean> {
+  if (shard === undefined) return false;
+  const base = await loadState();
+  return base?.shard !== shard;
+}
