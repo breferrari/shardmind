@@ -43,15 +43,21 @@ export async function runAndHooks<T extends { state: HookRunPlan['state'] }>(
   const running = run(abort.signal);
   io.onRun(abort, running);
   const result = await running;
-  // state.json is on disk: past the point of no return, so a Ctrl+C during
-  // the hooks can't walk the run back (ARCHITECTURE §9.3).
-  io.onCommitted();
+  return { result, hooks: await runHookPhase(io, hooks(result)) };
+}
 
+/**
+ * The hook phase, with nothing left to roll back: state.json is on disk, so
+ * a Ctrl+C during the hooks can't walk the run back (ARCHITECTURE §9.3); it
+ * aborts the hook in flight. Also the whole of an up-to-date update that
+ * owes a bootstrap (#199).
+ */
+export async function runHookPhase(io: FlowRunIO, plan: HookRunPlan): Promise<HookOutcome[]> {
+  io.onCommitted();
   const hookAbort = new AbortController();
   io.onHookAbort(hookAbort);
   try {
-    const hookRun = await runHooks(hooks(result), { ...io.hooks, signal: hookAbort.signal });
-    return { result, hooks: hookRun.outcomes };
+    return (await runHooks(plan, { ...io.hooks, signal: hookAbort.signal })).outcomes;
   } finally {
     io.onHookAbort(null);
   }

@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react';
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
-import { headLines, type HookStage, type HookSummary } from '../core/hook.js';
+import { headLines, type HookSkipReason, type HookStage, type HookSummary } from '../core/hook.js';
 import { hookOutputForDisplay, hookPathForDisplay } from './hook-output.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
 import { assertNever } from '../runtime/types.js';
@@ -13,8 +13,9 @@ import { assertNever } from '../runtime/types.js';
  *
  * Per-outcome branches, keyed off the `HookSummary`:
  *   - null            — slot absent / not run; nothing rendered.
- *   - skipped         — engine intentionally didn't run it (personalize under
- *                       Invariant 2); dim note.
+ *   - skipped         — engine intentionally didn't run it, for the reason it
+ *                       names (personalize under Invariant 2, or any declared
+ *                       hook under --skip-hooks, #199); dim note.
  *   - deferred        — dry run; dim "skipped (dry run)" note.
  *   - ran, exit 0     — green "completed" + captured stdout/stderr.
  *   - ran, exit !=0   — yellow warning (exit code) + both streams.
@@ -29,6 +30,12 @@ const HOOK_NAME: Record<HookStage, string> = {
   bootstrap: 'Bootstrap hook',
   personalize: 'Personalize hook',
   'post-update': 'Post-update hook',
+};
+
+/** Why a declared hook did not run, as the summary says it; a new reason must add a label. */
+const SKIP_REASON_LABEL: Record<HookSkipReason, string> = {
+  'values-are-defaults': 'values are defaults',
+  'skip-hooks': '--skip-hooks',
 };
 
 interface HookSummarySectionProps {
@@ -53,10 +60,12 @@ function renderOutcome(
   if (summary === null) return null;
   const name = HOOK_NAME[stage];
 
-  if (summary.skipped === 'values-are-defaults') {
+  if (summary.skipped !== undefined) {
     return (
       <Box key={key} flexDirection="column">
-        <Text dimColor>{name} skipped (values are defaults).</Text>
+        <Text dimColor>
+          {name} skipped ({SKIP_REASON_LABEL[summary.skipped]}).
+        </Text>
       </Box>
     );
   }

@@ -8,6 +8,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (`--skip-hooks` on install, update and adopt — #199)
+
+- **`--skip-hooks` runs no hook**, for a run that should only reconcile files (an agent adopting a vault, a CI update). Each hook the shard declares is reported as skipped: "Bootstrap hook skipped (--skip-hooks)." in the summary, and `{ "outcome": "skipped", "reason": "skip-hooks" }` under `--json`.
+- **A skipped bootstrap is pending, not lost.** It is recorded in `state.json` (`bootstrap_pending`), and the next `shardmind update` runs it, even when the vault is already up to date. A skipped `personalize` or `post-update` is skipped for good, since each only makes sense inside its own run.
+- Under `--json`, a skipped hook now carries `reason`: `skip-hooks`, or `values-are-defaults` for a `personalize` skipped under Invariant 2. The field is additive; nothing else in the document changes.
+- An up-to-date `update` that runs an owed bootstrap first makes the checks every run makes (the vault's values, the shard's external tools), and its `--json` document reports that hook, any unmet optional tool and the run's duration. A pending bootstrap the shard no longer declares or ships is dropped. A dry run previews it in the terminal only, since a `--dry-run --json` plan carries no hooks.
+
 ## [1.0.1] - 2026-10-13
 
 Patch release: the 1.0.x fixes. Nothing the 1.0 contract freezes changes: the CLI, exit codes, `--json` shapes, error codes, `state.json` and `shardmind/runtime` are as in 1.0.0. Only messages, hints and the failures below do.

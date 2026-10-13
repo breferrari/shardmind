@@ -32,7 +32,7 @@ import { emptyUpdatePlanCounts, type ConflictResolution, type UpdateAction, type
 import type { UpdateSummary } from './update-executor.js';
 import type { AdoptResolutions, AdoptSummary } from './adopt-executor.js';
 import type { HookOutcome } from './hook-orchestrator.js';
-import type { HookFailure } from './hook.js';
+import type { HookFailure, HookSkipReason } from './hook.js';
 
 /** Bumped only on a breaking reshape, never for additive fields. */
 export const JSON_SCHEMA_VERSION = 1;
@@ -320,6 +320,8 @@ export interface JsonRunHook {
   readonly failure?: HookFailure;
   /** `failed` only: the first line the engine reported, for a person. */
   readonly message?: string;
+  /** `skipped` only: why the engine did not run it, an open set (#199). */
+  readonly reason?: HookSkipReason;
   /** The full output, vault-relative, when the hook wrote a log. */
   readonly log?: string;
 }
@@ -442,8 +444,16 @@ export function updateRunResult(input: {
   };
 }
 
-/** An up-to-date vault's real run: nothing written, marked, with its version. */
-export function upToDateRunResult(version: string): UpdateRunResult {
+/**
+ * An up-to-date vault's real run: nothing written, marked, with its version.
+ * `run` is what the run did: the bootstrap it ran when one was owed (#199),
+ * its tool warnings and duration; usually no hook, no warning and 0.
+ */
+export function upToDateRunResult(
+  version: string,
+  run: { hooks: readonly HookOutcome[]; externalTools: readonly string[]; durationMs: number },
+): UpdateRunResult {
+  const { hooks } = run;
   return {
     dryRun: false,
     fromVersion: version,
@@ -452,9 +462,9 @@ export function upToDateRunResult(version: string): UpdateRunResult {
     counts: emptyUpdatePlanCounts(),
     files: [],
     backupDir: null,
-    hooks: [],
-    warnings: { migrations: [], externalTools: [], hookBoundary: [] },
-    durationMs: 0,
+    hooks: jsonRunHooks(hooks),
+    warnings: { migrations: [], externalTools: [...run.externalTools], hookBoundary: hookBoundaryWarnings(hooks) },
+    durationMs: run.durationMs,
   };
 }
 
@@ -563,7 +573,7 @@ function jsonRunHooks(outcomes: readonly HookOutcome[]): JsonRunHook[] {
   for (const { slot, summary } of outcomes) {
     if (!summary || summary.deferred) continue;
     if (summary.skipped) {
-      hooks.push({ slot, outcome: 'skipped' });
+      hooks.push({ slot, outcome: 'skipped', reason: summary.skipped });
       continue;
     }
     const exitCode = summary.exitCode ?? 0;

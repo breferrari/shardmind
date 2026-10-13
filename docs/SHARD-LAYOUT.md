@@ -129,7 +129,7 @@ The `post-update` hook receives `ctx.newFiles: string[]` — managed files added
 
 ### Invariant 4 — Bootstrap re-runs only on fingerprint change
 
-The `bootstrap` hook runs on every fresh install/adopt. On *update* it re-runs **iff** the manifest's `hooks.bootstrap.fingerprint` differs from the value recorded in `state.json` at the last successful bootstrap (`state.bootstrap_fingerprint`). A shard with no `fingerprint` never re-bootstraps on update; bumping the fingerprint (`"qmd-v1"` → `"qmd-v2"`) forces every installed vault to re-run `bootstrap` on its next update. This lets a shard rebuild unmanaged artifacts (search indexes, caches) when their schema changes, without overloading `post-update` (which is additive-only over managed files) and without a one-shot migration. The engine compares the raw fingerprint strings (`!==`); it does not hash them.
+The `bootstrap` hook runs on every fresh install/adopt. On *update* it re-runs **iff** the manifest's `hooks.bootstrap.fingerprint` differs from the value recorded in `state.json` at the last successful bootstrap (`state.bootstrap_fingerprint`). A shard with no `fingerprint` never re-bootstraps on update; bumping the fingerprint (`"qmd-v1"` → `"qmd-v2"`) forces every installed vault to re-run `bootstrap` on its next update. This lets a shard rebuild unmanaged artifacts (search indexes, caches) when their schema changes, without overloading `post-update` (which is additive-only over managed files) and without a one-shot migration. The engine compares the raw fingerprint strings (`!==`); it does not hash them. A run with `--skip-hooks` (#199) records no fingerprint: install leaves it unset and update keeps the one before. Instead it records the skipped bootstrap as pending, and the next `update`, up to date or not, runs it whatever the fingerprints say, so a shard with no fingerprint is covered too.
 
 ## Values, schema, and modules — spec rules
 
@@ -163,6 +163,8 @@ hooks:
 | `post-update` | updates | **managed** files in `ctx.newFiles` only | Invariant 3 |
 
 On a fresh install/adopt, slots fire in order: **`bootstrap` then `personalize`** (infrastructure before content). On update, **`bootstrap` (if its fingerprint changed) then `post-update`**.
+
+**`--skip-hooks`** (install, update and adopt, #199; ruled 2026-10-06) runs no hook. Every slot the shard declares for that command is reported as skipped, with the reason `skip-hooks`, even one the engine would not have run anyway (a bootstrap with an unchanged fingerprint, a `personalize` under Invariant 2): the report says what the user turned off. A skipped bootstrap that would have run (always on install and adopt; on update, a changed fingerprint or one already pending) is recorded as pending (`state.json` `bootstrap_pending`, ruled 2026-10-13), and the next `update` runs it, even when the vault is up to date, then clears it; a failed pending bootstrap stays pending, and one the shard no longer declares or ships is dropped, whether that update runs hooks or skips them. No fingerprint is recorded for a bootstrap that did not run. A skipped `personalize` or `post-update` is skipped for good: each only makes sense inside its own run (personalize on install and adopt, post-update with that release's changes), so neither is replayed.
 
 ### Write-boundary enforcement (detect-and-warn)
 
@@ -394,7 +396,7 @@ external_tools:
 | `optional` | Optional, default `false`. `true`: an unmet tool is a warning and the run continues. `false`: an unmet tool refuses the run. |
 | `when` | Optional. The key of a `boolean` value in `shard-schema.yaml`. When that value is `false`, the tool is not checked. A key the schema does not declare as a boolean is an error in `shardmind validate` and at install (`EXTERNAL_TOOL_WHEN_INVALID`); where it is not caught, the tool is checked, never skipped. |
 
-**When it is checked.** An install, an adopt, and an update that installs a new version check every declared tool after the values are final and before anything is written. An update that is already up to date checks nothing. A dry run never runs a tool: its summary says "external tools not checked (dry run)". `shardmind validate` never runs one either: it checks only the declaration. No shard-supplied command runs in a dry run or in `validate`.
+**When it is checked.** An install, an adopt, and an update that installs a new version check every declared tool after the values are final and before anything is written. An update that is already up to date checks nothing, unless it owes a bootstrap a `--skip-hooks` run skipped (#199): it checks the tools before it runs that bootstrap. A dry run never runs a tool: its summary says "external tools not checked (dry run)". `shardmind validate` never runs one either: it checks only the declaration. No shard-supplied command runs in a dry run or in `validate`.
 
 **How it is checked.** The engine finds `command` in the absolute directories on `PATH` (on Windows as a `.com`, `.exe`, `.bat` or `.cmd` file) and runs it with `args` and no shell, for at most 5 seconds. It then reads the version from standard output: the first full `x.y.z`, so a year or a banner before it does not count, or else the first number. A tool that prints its version only on standard error is read as printing none. The tool is:
 - met when that version satisfies `version` (a prerelease above the floor counts, as for `requires.shardmind`);
@@ -469,7 +471,6 @@ Also planned in Phase 15, outside the layout contract:
 - Team features: managed templates, org-level defaults, admin controls, team sync ([#91](https://github.com/breferrari/shardmind/issues/91)).
 - A `SHARDMIND_DEBUG` log of every phase, fetch and write ([#36](https://github.com/breferrari/shardmind/issues/36)).
 - A command namespace prefix in the engine ([#25](https://github.com/breferrari/shardmind/issues/25)).
-- `--skip-hooks` on install, update and adopt ([#199](https://github.com/breferrari/shardmind/issues/199), ruled 2026-10-06).
 
 **Superseded**:
 

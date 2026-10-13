@@ -63,6 +63,7 @@ describe('install flow, UI-free (#302)', () => {
     defaults: false,
     force: false,
     dryRun: false,
+    skipHooks: false,
     interactive: true,
     destination: { root: vault, folder: null, create: [] },
     engineVersion: undefined,

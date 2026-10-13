@@ -205,6 +205,7 @@ export interface InstallOptions {
   force?: boolean;
   verbose?: boolean;
   dryRun?: boolean;
+  skipHooks?: boolean;
   updateCheck?: boolean;
 }
 
@@ -225,6 +226,7 @@ export function mountInstall(opts: {
         force: false,
         verbose: false,
         dryRun: false,
+        skipHooks: false,
         updateCheck: true,
         ...opts.options,
       }}
@@ -239,6 +241,7 @@ export interface UpdateOptions {
   release?: string;
   includePrerelease?: boolean;
   adoptPreexisting?: boolean;
+  skipHooks?: boolean;
   updateCheck?: boolean;
   json?: boolean;
 }
@@ -254,6 +257,7 @@ export function mountUpdate(opts: {
         yes: false,
         verbose: false,
         dryRun: false,
+        skipHooks: false,
         includePrerelease: false,
         adoptPreexisting: false,
         updateCheck: true,
@@ -271,6 +275,7 @@ export interface AdoptOptions {
   fromVersion?: string;
   verbose?: boolean;
   dryRun?: boolean;
+  skipHooks?: boolean;
   updateCheck?: boolean;
 }
 
@@ -287,6 +292,7 @@ export function mountAdopt(opts: {
         yes: false,
         verbose: false,
         dryRun: false,
+        skipHooks: false,
         updateCheck: true,
         json: false,
         ...opts.options,

@@ -44,11 +44,11 @@ import { applyRenames, renamesBetween, type AppliedRenames } from '../rename-mig
 import { runUpdate, type UpdateProgressEvent, type UpdateSummary } from '../update-executor.js';
 import { checkExternalToolsForRun } from '../external-tools.js';
 import { buildRenderContext } from '../renderer.js';
-import type { HookOutcome } from '../hook-orchestrator.js';
+import { runHooks, type HookOutcome, type HookRunPlan } from '../hook-orchestrator.js';
 import { prepareShard } from './prepare-shard.js';
 import { validateValues } from './values.js';
 import { FlowCancelled } from './cancelled.js';
-import { runAndHooks, type FlowRunIO } from './run.js';
+import { runAndHooks, runHookPhase, type FlowRunIO } from './run.js';
 
 export interface UpdateFlowInput {
   vaultRoot: string;
@@ -62,6 +62,8 @@ export interface UpdateFlowInput {
   includePrerelease: boolean;
   /** `--adopt-preexisting` (#61): track a kept add-collision as the user's modified copy. */
   adoptPreexisting: boolean;
+  /** `--skip-hooks` (#199): run no hook; each declared one is reported skipped. */
+  skipHooks: boolean;
   engineVersion: string | undefined;
   /** Aborted when the caller no longer wants the run (a superseded Ink run). */
   stop?: AbortSignal;
@@ -124,7 +126,18 @@ export interface UpdateFlowIO extends FlowRunIO {
 }
 
 export type UpdateFlowResult =
-  | { kind: 'up-to-date'; manifest: ShardManifest; state: ShardState }
+  /**
+   * `hooks`: the bootstrap a `--skip-hooks` run owes, run (or previewed, or
+   * skipped again) by the up-to-date run (#199); usually none.
+   */
+  | {
+      kind: 'up-to-date';
+      manifest: ShardManifest;
+      state: ShardState;
+      hooks: HookOutcome[];
+      externalTools: string[];
+      durationMs: number;
+    }
   | { kind: 'plan'; plan: UpdatePlan }
   | {
       kind: 'done';
@@ -187,7 +200,45 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
     const upToDate = state.ref
       ? state.resolvedSha === shard.resolved.ref?.commit
       : shard.manifest.version === state.version && shard.tarballSha256 === state.tarball_sha256;
-    if (upToDate) return { kind: 'up-to-date', manifest: shard.manifest, state };
+    if (upToDate) {
+      const startedAt = Date.now();
+      // Nothing to update, but a bootstrap a --skip-hooks run skipped is
+      // owed (#199, ruling (c)): run it on the shard just fetched, after the
+      // same checks a run makes before its hooks. A dry run previews it;
+      // under --skip-hooks it is reported skipped and stays owed.
+      if (state.bootstrap_pending !== true) {
+        return { kind: 'up-to-date', manifest: shard.manifest, state, hooks: [], externalTools: [], durationMs: 0 };
+      }
+      const current = await loadCurrentValues(vaultRoot);
+      // Under --skip-hooks no hook runs, so nothing is checked for one.
+      let values = current;
+      let externalTools: string[] = [];
+      if (!input.skipHooks) {
+        io.phase({ kind: 'loading', message: 'Checking values and tools for the pending bootstrap…' });
+        values = validateValues(shard.schema, current, 'vault');
+        externalTools = await checkExternalToolsForRun({ manifest: shard.manifest, values, dryRun });
+      }
+      const hookPlan: HookRunPlan = {
+        command: 'update',
+        tempDir: shard.tempDir,
+        manifest: shard.manifest,
+        schema: shard.schema,
+        vaultRoot,
+        state,
+        values,
+        modules: state.modules,
+        // No release is applied: there is no version this run updates from.
+        previousVersion: undefined,
+        newFiles: [],
+        removedFiles: [],
+        dryRun,
+        skipHooks: input.skipHooks,
+        upToDate: true,
+      };
+      // A dry run writes nothing, so there is no committed run to guard.
+      const hooks = dryRun ? (await runHooks(hookPlan, io.hooks)).outcomes : await runHookPhase(io, hookPlan);
+      return { kind: 'up-to-date', manifest: shard.manifest, state, hooks, externalTools, durationMs: Date.now() - startedAt };
+    }
 
     io.phase({ kind: 'loading', message: 'Loading current values…' });
     const oldValues = await loadCurrentValues(vaultRoot);
@@ -396,6 +447,7 @@ async function execute(
       newFiles: done.summary.addedFiles,
       removedFiles: done.summary.deletedFiles,
       dryRun,
+      skipHooks: input.skipHooks,
     }),
   );
 

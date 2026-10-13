@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Spinner, Alert } from '../components/ui.js';
 import zod from 'zod';
 import { updateCheckOption } from './hooks/update-check-option.js';
+import { skipHooksOption } from './hooks/skip-hooks-option.js';
 
 import { assertNever } from '../runtime/types.js';
 import ErrorView from '../components/ErrorView.js';
@@ -36,6 +37,7 @@ export const options = zod.object({
   verbose: zod.boolean().default(false).describe('Show per-file rendering progress'),
   dryRun: zod.boolean().default(false).describe('Preview what would be installed without writing'),
   force: zod.boolean().default(false).describe('Reinstall over an existing install, and overwrite colliding files without a backup'),
+  skipHooks: skipHooksOption,
   updateCheck: updateCheckOption,
 });
 
@@ -107,6 +109,7 @@ function InstallRun({
     force,
     verbose,
     dryRun,
+    skipHooks: options.skipHooks,
     destination,
   });
 

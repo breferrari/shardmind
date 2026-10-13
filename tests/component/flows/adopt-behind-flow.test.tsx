@@ -77,6 +77,7 @@ describe('adopt --from-version: files still at the base release (#325)', () => {
     mode: undefined,
     fromVersion: '6.0.0',
     dryRun: false,
+    skipHooks: false,
     json: false,
     interactive: true,
     vaultRoot: vault,

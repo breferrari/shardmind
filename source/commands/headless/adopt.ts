@@ -31,6 +31,7 @@ export async function runAdoptJson(
         mode: options.mode,
         fromVersion: options.fromVersion,
         dryRun: options.dryRun,
+        skipHooks: options.skipHooks,
         json: true,
         interactive: false,
         vaultRoot: process.cwd(),

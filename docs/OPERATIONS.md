@@ -165,7 +165,7 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 **`result` of a real run** (`dryRun: false`):
 
 - **`files`**: every path, sorted, each with an `outcome`, plus `shardHash` / `userHash` / `renamedFrom` / `conflict` where they apply.
-- **Run details:** `backupDir` (update: the snapshot of what it replaced; adopt: `null`, since a successful adopt keeps no snapshot), `hooks` (`slot`, `outcome`: `completed` / `failed` / `skipped`; a failed hook carries `failure`, below, and its first `message` line; plus `exitCode` and `log`), `warnings` and `durationMs`.
+- **Run details:** `backupDir` (update: the snapshot of what it replaced; adopt: `null`, since a successful adopt keeps no snapshot), `hooks` (`slot`, `outcome`: `completed` / `failed` / `skipped`; a failed hook carries `failure`, below, and its first `message` line; a skipped hook carries `reason`: `values-are-defaults` (a `personalize` under Invariant 2) or `skip-hooks` (the run's `--skip-hooks`, #199), an open set like the others; plus `exitCode` and `log`), `warnings` and `durationMs`.
 - **update** also has `fromVersion`, `toVersion` and `counts`, and `upToDate: true` when there was nothing to do.
 - **adopt** also has `mode`, `version` and `counts`.
 
@@ -199,7 +199,7 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 | `timeout` | It ran past `timeout_ms` |
 | `cancelled` | Ctrl+C stopped it |
 
-Each failed hook has exactly one of these. The file `outcome`, hook `outcome` and hook `failure` lists are open: a later minor release may add a value (for example, #199's `--skip-hooks`). Consumers must tolerate unknown outcome values, and treat an unknown `failure` as a failure.
+Each failed hook has exactly one of these. The file `outcome`, hook `outcome`, hook `failure` and skipped-hook `reason` lists are open: a later minor release may add a value (as #199's `--skip-hooks` added the `skip-hooks` reason). Consumers must tolerate unknown outcome and reason values, and treat an unknown `failure` as a failure. A `--dry-run --json` plan carries no hooks at all, since no hook runs in a dry run, so it reads the same with or without `--skip-hooks`. That holds for an up-to-date `update --dry-run --json` on a vault that owes a bootstrap: the terminal previews the bootstrap, the document does not.
 
 | adopt `outcome` | Meaning |
 |---|---|

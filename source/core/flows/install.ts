@@ -45,6 +45,8 @@ export interface InstallFlowInput {
   /** Reinstall over an existing install with no gate, and overwrite the user's collisions with no backup (#55). */
   force: boolean;
   dryRun: boolean;
+  /** `--skip-hooks` (#199): run no hook; each declared one is reported skipped. */
+  skipHooks: boolean;
   /** A terminal to prompt on: without one, the flow never asks (#139). */
   interactive: boolean;
   destination: InstallDestination;
@@ -341,6 +343,7 @@ async function execute(
       // A reinstall removes the files the shard no longer has (#228).
       removedFiles: dryRun ? [] : removedGiven(done.left),
       dryRun,
+      skipHooks: input.skipHooks,
     }),
   );
 

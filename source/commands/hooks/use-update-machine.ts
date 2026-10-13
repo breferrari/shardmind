@@ -49,6 +49,8 @@ export interface UseUpdateMachineInput {
   yes: boolean;
   verbose: boolean;
   dryRun: boolean;
+  /** `--skip-hooks` (#199): run no hook; each is reported skipped. */
+  skipHooks?: boolean;
   /**
    * `--release <v>`: pin to an exact tag (stable or prerelease). Named
    * `--release` rather than `--version` because Pastel reserves the
@@ -68,7 +70,8 @@ export interface UseUpdateMachineInput {
 export type Phase =
   | { kind: 'booting' }
   | { kind: 'loading'; message: string }
-  | { kind: 'up-to-date'; manifest: ShardManifest; state: ShardState }
+  /** `hooks`: an owed bootstrap the up-to-date run ran or previewed (#199); usually none. */
+  | { kind: 'up-to-date'; manifest: ShardManifest; state: ShardState; hooks: HookOutcome[]; externalTools: string[] }
   | { kind: 'prompt-new-values'; ctx: UpdateContext }
   | { kind: 'prompt-new-modules'; ctx: UpdateContext; values: Record<string, unknown> }
   | {
@@ -128,7 +131,7 @@ export interface UseUpdateMachineOutput {
 }
 
 export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachineOutput {
-  const { vaultRoot, yes, verbose, dryRun, release, includePrerelease, adoptPreexisting = false } = input;
+  const { vaultRoot, yes, verbose, dryRun, skipHooks = false, release, includePrerelease, adoptPreexisting = false } = input;
 
   const { phase, setPhase, phaseRef, launch, settle } = useFlowRun<Phase>({
     vaultRoot,
@@ -208,12 +211,21 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
             release,
             includePrerelease,
             adoptPreexisting,
+            skipHooks,
             engineVersion: resolveEngineVersion(),
             stop,
           },
           io,
         );
-        if (result.kind === 'up-to-date') return { kind: 'up-to-date', manifest: result.manifest, state: result.state };
+        if (result.kind === 'up-to-date') {
+          return {
+            kind: 'up-to-date',
+            manifest: result.manifest,
+            state: result.state,
+            hooks: result.hooks,
+            externalTools: result.externalTools,
+          };
+        }
         // A plan comes back only under --json, which runs headless: a bug here.
         if (result.kind === 'plan') return { kind: 'error', error: new Error('update flow returned a --json plan to the terminal run') };
         return {

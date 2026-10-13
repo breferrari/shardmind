@@ -13,6 +13,8 @@ import RemovedFilesReview from '../components/RemovedFilesReview.js';
 import CommandProgress from '../components/CommandProgress.js';
 import HookProgress from '../components/HookProgress.js';
 import UpdateSummary from '../components/UpdateSummary.js';
+import HookSummarySection from '../components/HookSummarySection.js';
+import ExternalToolsSection from '../components/ExternalToolsSection.js';
 import CommandFrame from '../components/CommandFrame.js';
 import Header from '../components/Header.js';
 
@@ -47,6 +49,7 @@ export default function Update({ options }: Props) {
     release,
     includePrerelease,
     adoptPreexisting,
+    skipHooks: options.skipHooks,
   });
 
   const { banner } = useSelfUpdateBanner({ updateCheck });
@@ -72,6 +75,9 @@ export default function Update({ options }: Props) {
             <StatusMessage variant="success">
               Already up to date at v{phase.state.version}.
             </StatusMessage>
+            {/* An owed bootstrap (#199) the run ran, previewed (dry run) or skipped (--skip-hooks), shown as any summary shows hooks. */}
+            {phase.hooks.length > 0 && <HookSummarySection outcomes={phase.hooks} />}
+            <ExternalToolsSection lines={phase.externalTools} />
           </Box>
         </CommandFrame>
       );

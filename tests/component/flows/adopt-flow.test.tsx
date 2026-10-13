@@ -186,6 +186,36 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
 
   // ───── Scenario 19: empty vault → all shard-only → Summary ─────
 
+  it('--skip-hooks adopts and the summary reports the declared bootstrap skipped (#199)', async () => {
+    const { stub } = getCtx();
+    const vault = await makeVaultDir('skip-hooks-adopt');
+    const work = await makeVaultDir('skip-hooks-adopt-tarball');
+    // A copy of minimal-shard that ships the bootstrap it declares (#199).
+    const tarPath = await buildCustomTarball({
+      version: '0.1.0',
+      prefix: 'skip-hooks-adopt-0.1.0',
+      outDir: work,
+      mutate: async (dir) => {
+        await fs.mkdir(path.join(dir, 'hooks'), { recursive: true });
+        await fs.writeFile(path.join(dir, 'hooks', 'bootstrap.ts'), 'export default async function () {}\n');
+      },
+    });
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, tarPath);
+    try {
+      const r = mountAdopt({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault, options: { skipHooks: true } });
+      await driveAdoptConfirm(r);
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Adopted shardmind\/minimal/.test(f) && f.includes('Bootstrap hook skipped (--skip-hooks).'),
+        30_000,
+      );
+      expect(frame).toContain('Bootstrap hook skipped (--skip-hooks).');
+    } finally {
+      await cleanupVault(vault);
+      await cleanupVault(work);
+    }
+  }, 60_000);
+
   it('19. empty vault → adopt → all shard-only → Summary', async () => {
     const { stub, fixtures } = getCtx();
     stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);

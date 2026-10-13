@@ -94,7 +94,15 @@ describe('updateRunResult (#348)', () => {
   });
 
   it('marks an up-to-date vault, with nothing written', () => {
-    expect(upToDateRunResult('3.1.0')).toMatchObject({ dryRun: false, upToDate: true, fromVersion: '3.1.0', toVersion: '3.1.0', files: [], backupDir: null });
+    expect(upToDateRunResult('3.1.0', { hooks: [], externalTools: [], durationMs: 0 })).toMatchObject({ dryRun: false, upToDate: true, fromVersion: '3.1.0', toVersion: '3.1.0', files: [], backupDir: null });
+  });
+
+  it('an up-to-date run that paid an owed bootstrap reports its hook, tool warnings and duration (#199)', () => {
+    const hooks = [{ slot: 'bootstrap', summary: { exitCode: 0, stdout: '', stderr: '' } }] as unknown as HookOutcome[];
+    const doc = upToDateRunResult('3.1.0', { hooks, externalTools: ['jq: not found. Install: brew install jq'], durationMs: 412 });
+    expect(doc.hooks).toEqual([{ slot: 'bootstrap', outcome: 'completed', exitCode: 0 }]);
+    expect(doc.warnings.externalTools).toEqual(['jq: not found. Install: brew install jq']);
+    expect(doc.durationMs).toBe(412);
   });
 
   it('reports each hook as completed, failed (with its first line) or skipped, and leaves absent and deferred ones out', () => {
@@ -108,8 +116,20 @@ describe('updateRunResult (#348)', () => {
     const doc = updateRunResult({ plan: plan([]), resolutions: {}, summary: summary(), hooks, backupDir: null, migrationWarnings: [], externalTools: [], durationMs: 0 });
     expect(doc.hooks).toEqual([
       { slot: 'bootstrap', outcome: 'completed', exitCode: 0, log: '.shardmind/logs/bootstrap.log' },
-      { slot: 'personalize', outcome: 'skipped' },
+      { slot: 'personalize', outcome: 'skipped', reason: 'values-are-defaults' },
       { slot: 'post-update', outcome: 'failed', exitCode: 1, failure: 'timeout', message: 'hook timed out after 60s' },
+    ]);
+  });
+
+  it("says why a hook was skipped, as an additive reason: the run's --skip-hooks (#199)", () => {
+    const hooks = [
+      { slot: 'bootstrap', summary: { skipped: 'skip-hooks' } },
+      { slot: 'post-update', summary: { skipped: 'skip-hooks' } },
+    ] as unknown as HookOutcome[];
+    const doc = updateRunResult({ plan: plan([]), resolutions: {}, summary: summary(), hooks, backupDir: null, migrationWarnings: [], externalTools: [], durationMs: 0 });
+    expect(doc.hooks).toEqual([
+      { slot: 'bootstrap', outcome: 'skipped', reason: 'skip-hooks' },
+      { slot: 'post-update', outcome: 'skipped', reason: 'skip-hooks' },
     ]);
   });
 

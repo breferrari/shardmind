@@ -367,6 +367,44 @@ describe('update pipeline (against examples/minimal-shard)', () => {
     expect(result.summary.conflictsResolved).toBe(0);
   });
 
+  it('carries an owed bootstrap and a field this engine does not know across an update (#199, §4.7)', async () => {
+    const { state, oldValues, newManifest, newSchema } = await setUpUpdate({ bumpTo: '0.2.0' });
+    const migration = applyMigrations(oldValues, state.version, newManifest.version, newSchema.migrations);
+    const selections = mergeModuleSelections(state.modules, newSchema, {});
+    const drift = await detectDrift(vault, state);
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift },
+      values: { old: oldValues, new: migration.values },
+      newShard: {
+        schema: newSchema,
+        selections,
+        tempDir: newShard,
+        renderContext: buildRenderContext(newManifest, migration.values, selections),
+      },
+      removedFileDecisions: {},
+    });
+    // An additive field from a newer 1.x minor, and the owed bootstrap of #199.
+    const owing = { ...state, bootstrap_pending: true, from_a_newer_minor: 'kept' } as ShardState;
+    const result = await runUpdate({
+      vaultRoot: vault,
+      plan,
+      conflictResolutions: {},
+      currentState: owing,
+      newManifest,
+      newSchema,
+      newValues: migration.values,
+      newSelections: selections,
+      resolved: { ...RESOLVED, version: newManifest.version },
+      tarballSha256: 'sha-0.2.0',
+      newTempDir: newShard,
+    });
+    expect(result.state.bootstrap_pending).toBe(true);
+    expect((result.state as unknown as Record<string, unknown>)['from_a_newer_minor']).toBe('kept');
+    const onDisk = JSON.parse(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')) as Record<string, unknown>;
+    expect(onDisk['bootstrap_pending']).toBe(true);
+    expect(onDisk['from_a_newer_minor']).toBe('kept');
+  });
+
   it('three-way merges a user-edited file with a non-overlapping template change', async () => {
     // User appends a line of their own to Home.md; shard changes the
     // welcome line. Expect auto_merge keeping both changes.

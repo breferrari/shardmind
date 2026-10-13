@@ -196,6 +196,13 @@ export interface ShardState {
    * supplies it on the v1 → v2 migration.
    */
   bootstrap_fingerprint?: string;
+  /**
+   * `true` while a bootstrap that a `--skip-hooks` run skipped is owed
+   * (#199): the next update runs it, even when up to date, and clears it.
+   * Absent otherwise. Added in 1.x under the additive rule (IMPLEMENTATION
+   * §4.7): an older 1.x engine keeps it untouched.
+   */
+  bootstrap_pending?: true;
 }
 
 export interface FileState {
