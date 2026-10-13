@@ -129,7 +129,7 @@ The `post-update` hook receives `ctx.newFiles: string[]` — managed files added
 
 ### Invariant 4 — Bootstrap re-runs only on fingerprint change
 
-The `bootstrap` hook runs on every fresh install/adopt. On *update* it re-runs **iff** the manifest's `hooks.bootstrap.fingerprint` differs from the value recorded in `state.json` at the last successful bootstrap (`state.bootstrap_fingerprint`). A shard with no `fingerprint` never re-bootstraps on update; bumping the fingerprint (`"qmd-v1"` → `"qmd-v2"`) forces every installed vault to re-run `bootstrap` on its next update. This lets a shard rebuild unmanaged artifacts (search indexes, caches) when their schema changes, without overloading `post-update` (which is additive-only over managed files) and without a one-shot migration. The engine compares the raw fingerprint strings (`!==`); it does not hash them.
+The `bootstrap` hook runs on every fresh install/adopt. On *update* it re-runs **iff** the manifest's `hooks.bootstrap.fingerprint` differs from the value recorded in `state.json` at the last successful bootstrap (`state.bootstrap_fingerprint`). A shard with no `fingerprint` never re-bootstraps on update; bumping the fingerprint (`"qmd-v1"` → `"qmd-v2"`) forces every installed vault to re-run `bootstrap` on its next update. This lets a shard rebuild unmanaged artifacts (search indexes, caches) when their schema changes, without overloading `post-update` (which is additive-only over managed files) and without a one-shot migration. The engine compares the raw fingerprint strings (`!==`); it does not hash them. A run with `--skip-hooks` (#199) records no fingerprint: install leaves it unset and update keeps the one before, so the next run with hooks bootstraps as if the skipped run had not happened.
 
 ## Values, schema, and modules — spec rules
 
@@ -163,6 +163,8 @@ hooks:
 | `post-update` | updates | **managed** files in `ctx.newFiles` only | Invariant 3 |
 
 On a fresh install/adopt, slots fire in order: **`bootstrap` then `personalize`** (infrastructure before content). On update, **`bootstrap` (if its fingerprint changed) then `post-update`**.
+
+**`--skip-hooks`** (install, update and adopt, #199; ruled 2026-10-06) runs no hook. Every slot the shard declares for that command is reported as skipped, with the reason `skip-hooks`, even one the engine would not have run anyway (a bootstrap with an unchanged fingerprint, a `personalize` under Invariant 2): the report says what the user turned off. No bootstrap means no fingerprint is recorded, so the next run with hooks performs bootstrap (Invariant 4). Hooks are deferred, never silently lost.
 
 ### Write-boundary enforcement (detect-and-warn)
 
@@ -469,7 +471,6 @@ Also planned in Phase 15, outside the layout contract:
 - Team features: managed templates, org-level defaults, admin controls, team sync ([#91](https://github.com/breferrari/shardmind/issues/91)).
 - A `SHARDMIND_DEBUG` log of every phase, fetch and write ([#36](https://github.com/breferrari/shardmind/issues/36)).
 - A command namespace prefix in the engine ([#25](https://github.com/breferrari/shardmind/issues/25)).
-- `--skip-hooks` on install, update and adopt ([#199](https://github.com/breferrari/shardmind/issues/199), ruled 2026-10-06).
 
 **Superseded**:
 

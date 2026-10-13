@@ -165,7 +165,7 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 **`result` of a real run** (`dryRun: false`):
 
 - **`files`**: every path, sorted, each with an `outcome`, plus `shardHash` / `userHash` / `renamedFrom` / `conflict` where they apply.
-- **Run details:** `backupDir` (update: the snapshot of what it replaced; adopt: `null`, since a successful adopt keeps no snapshot), `hooks` (`slot`, `outcome`: `completed` / `failed` / `skipped`; a failed hook carries `failure`, below, and its first `message` line; plus `exitCode` and `log`), `warnings` and `durationMs`.
+- **Run details:** `backupDir` (update: the snapshot of what it replaced; adopt: `null`, since a successful adopt keeps no snapshot), `hooks` (`slot`, `outcome`: `completed` / `failed` / `skipped`; a failed hook carries `failure`, below, and its first `message` line; a skipped hook carries `reason`: `values-are-defaults` (a `personalize` under Invariant 2) or `skip-hooks` (the run's `--skip-hooks`, #199), an open set like the others; plus `exitCode` and `log`), `warnings` and `durationMs`.
 - **update** also has `fromVersion`, `toVersion` and `counts`, and `upToDate: true` when there was nothing to do.
 - **adopt** also has `mode`, `version` and `counts`.
 
