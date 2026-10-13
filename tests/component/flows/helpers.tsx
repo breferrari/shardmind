@@ -241,6 +241,7 @@ export interface UpdateOptions {
   release?: string;
   includePrerelease?: boolean;
   adoptPreexisting?: boolean;
+  skipHooks?: boolean;
   updateCheck?: boolean;
   json?: boolean;
 }
@@ -274,6 +275,7 @@ export interface AdoptOptions {
   fromVersion?: string;
   verbose?: boolean;
   dryRun?: boolean;
+  skipHooks?: boolean;
   updateCheck?: boolean;
 }
 

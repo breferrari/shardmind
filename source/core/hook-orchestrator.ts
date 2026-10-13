@@ -119,7 +119,8 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
     // the report says what the user turned off. Nothing runs, so the state
     // (and its bootstrap fingerprint) is returned as it came (#199). The
     // defaults check gates only whether a slot runs, so it is not computed.
-    const outcomes: HookOutcome[] = buildJobs(plan, false)
+    const valuesAreDefaultsUnused = false;
+    const outcomes: HookOutcome[] = buildJobs(plan, valuesAreDefaultsUnused)
       .filter((job) => job.relPath !== undefined)
       .map((job) => ({ slot: job.slot, summary: { skipped: 'skip-hooks' } }));
     return { outcomes, finalState: plan.state, stateChanged: false };

@@ -186,6 +186,24 @@ describe('adopt command — Layer 1 flow tests (#111 Phase 1, scenarios 19-26)',
 
   // ───── Scenario 19: empty vault → all shard-only → Summary ─────
 
+  it('--skip-hooks adopts and the summary reports the declared bootstrap skipped (#199)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('skip-hooks-adopt');
+    try {
+      const r = mountAdopt({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault, options: { skipHooks: true } });
+      await driveAdoptConfirm(r);
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Adopted shardmind\/minimal/.test(f) && f.includes('Bootstrap hook skipped (--skip-hooks).'),
+        30_000,
+      );
+      expect(frame).toContain('Bootstrap hook skipped (--skip-hooks).');
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
   it('19. empty vault → adopt → all shard-only → Summary', async () => {
     const { stub, fixtures } = getCtx();
     stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);

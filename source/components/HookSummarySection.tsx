@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react';
 import { Box, Text } from 'ink';
 import { StatusMessage } from './ui.js';
-import { headLines, type HookStage, type HookSummary } from '../core/hook.js';
+import { headLines, type HookSkipReason, type HookStage, type HookSummary } from '../core/hook.js';
 import { hookOutputForDisplay, hookPathForDisplay } from './hook-output.js';
 import type { HookOutcome } from '../core/hook-orchestrator.js';
 import { assertNever } from '../runtime/types.js';
@@ -31,6 +31,12 @@ const HOOK_NAME: Record<HookStage, string> = {
   'post-update': 'Post-update hook',
 };
 
+/** Why a declared hook did not run, as the summary says it; a new reason must add a label. */
+const SKIP_REASON_LABEL: Record<HookSkipReason, string> = {
+  'values-are-defaults': 'values are defaults',
+  'skip-hooks': '--skip-hooks',
+};
+
 interface HookSummarySectionProps {
   outcomes: HookOutcome[];
 }
@@ -54,11 +60,10 @@ function renderOutcome(
   const name = HOOK_NAME[stage];
 
   if (summary.skipped !== undefined) {
-    const why = summary.skipped === 'skip-hooks' ? '--skip-hooks' : 'values are defaults';
     return (
       <Box key={key} flexDirection="column">
         <Text dimColor>
-          {name} skipped ({why}).
+          {name} skipped ({SKIP_REASON_LABEL[summary.skipped]}).
         </Text>
       </Box>
     );

@@ -238,6 +238,26 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     }
   }
 
+  it('--skip-hooks updates and the summary reports the declared bootstrap skipped (#199)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'skip-hooks-update' });
+    stub.setVersion(SHARD_SLUG, '0.3.0', fixtures.byVersion['0.3.0']!);
+    stub.setLatest(SHARD_SLUG, '0.3.0');
+    try {
+      const r = mountUpdate({ vaultRoot: vault.root, options: { yes: true, skipHooks: true } });
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Updated 0\.1\.0 → 0\.3\.0/.test(f) && f.includes('Bootstrap hook skipped (--skip-hooks).'),
+        30_000,
+      );
+      expect(frame).toContain('Bootstrap hook skipped (--skip-hooks).');
+    } finally {
+      await vault.cleanup();
+    }
+  }, 60_000);
+
   async function conflictInHome(prefix: string) {
     const { stub, fixtures } = getCtx();
     stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
