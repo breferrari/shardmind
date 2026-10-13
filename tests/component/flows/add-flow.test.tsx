@@ -23,7 +23,7 @@ import {
 } from './helpers.js';
 import { createInstalledVault, type Vault } from '../../e2e/helpers/vault.js';
 import { resetSigintRollbackForTests } from '../../../source/commands/hooks/shared.js';
-import { waitFor, ENTER, typeText } from '../helpers.js';
+import { waitFor, ENTER } from '../helpers.js';
 
 const OVERLAY_SLUG = 'acme/research';
 const OVERLAY_REF = `github:${OVERLAY_SLUG}`;
@@ -105,8 +105,8 @@ describe('add command — Layer 1 flow tests (#396)', () => {
     const r = mountAdd({ shardRef: OVERLAY_REF, cwd: vault.root });
     await waitFor(r.lastFrame, (f) => f.includes('1 question to answer'), 30_000);
     r.stdin.write(ENTER);
+    // The field is prefilled with the default: accept it.
     await waitFor(r.lastFrame, (f) => f.includes('Research topic'));
-    await typeText(r.stdin, 'optics');
     r.stdin.write(ENTER);
     await waitFor(r.lastFrame, (f) => f.includes('Choose modules to install'));
     r.stdin.write(ENTER);
@@ -121,10 +121,10 @@ describe('add command — Layer 1 flow tests (#396)', () => {
     const { schema_version: _v, ...baseEntry } = baseState;
     expect(state.shards[0]).toEqual(baseEntry);
     // The overlay's own bootstrap ran with its own values, and recorded its fingerprint in its entry.
-    expect(await vault.readFile('research-bootstrapped.txt')).toBe('optics');
+    expect(await vault.readFile('research-bootstrapped.txt')).toBe('physics');
     expect(state.shards[1]!['bootstrap_fingerprint']).toBe('r1');
-    expect(await vault.readFile('research/Index.md')).toBe('Research on optics\n');
-    expect(await vault.readFile('shard-values.acme.research.yaml')).toContain('optics');
+    expect(await vault.readFile('research/Index.md')).toBe('Research on physics\n');
+    expect(await vault.readFile('shard-values.acme.research.yaml')).toContain('physics');
     expect(await vault.exists('.shardmind/shards/acme/research/shard.yaml')).toBe(true);
   }, 90_000);
 
@@ -184,10 +184,8 @@ describe('add command — Layer 1 flow tests (#396)', () => {
     const vault = await baseVault('add-collision');
     await vault.writeFile('research/Index.md', 'my own index\n');
     const r = mountAdd({ shardRef: OVERLAY_REF, cwd: vault.root, options: { values: await valuesFile(vault) } });
-    // A --values file with a terminal still shows the wizard as a prefill: walk it.
-    await waitFor(r.lastFrame, (f) => f.includes('Ready to review modules') || f.includes('question'), 30_000);
-    r.stdin.write(ENTER);
-    await waitFor(r.lastFrame, (f) => f.includes('Choose modules to install'));
+    // Every value prefilled: the wizard opens on the module review.
+    await waitFor(r.lastFrame, (f) => f.includes('Choose modules to install'), 30_000);
     r.stdin.write(ENTER);
     await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
     r.stdin.write(ENTER);
