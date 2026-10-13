@@ -37,6 +37,7 @@ import { fileURLToPath } from 'node:url';
 import { DIST_CLI, ensureBuilt } from '../../helpers/build-once.js';
 import { tick } from '../../../component/helpers.js';
 import { createVirtualScreen, type VirtualScreen } from './virtual-screen.js';
+import { SPLIT_WRITES_IMPORT } from './split-writes.js';
 import { compactSubprocessCoverage } from '../../../coverage-run/compact-coverage.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -170,6 +171,15 @@ export interface SpawnCliPtyOptions {
    * command module a crash scenario replaces (tests/e2e/helpers/broken-dist.ts).
    */
   cli?: string;
+  /**
+   * Deliver each multi-line write the child makes in two pieces, split at
+   * its first newline with a pause between (`split-writes.ts`, #394). A
+   * Linux PTY can do this to any frame; this does it to every frame, on
+   * every OS, so a test reading a line its `waitForScreen` predicate did
+   * not check fails at once. `SHARDMIND_TEST_SPLIT_WRITES=1` turns it on
+   * for every spawn, to audit the whole Layer 2 suite.
+   */
+  splitWrites?: boolean;
 }
 
 /**
@@ -307,7 +317,9 @@ export async function spawnCliPty(
 
   const screen = createVirtualScreen({ cols, rows });
 
-  const argv = opts.nodeArgs ?? [opts.cli ?? DIST_CLI, ...args];
+  const splitWrites = opts.splitWrites ?? process.env['SHARDMIND_TEST_SPLIT_WRITES'] === '1';
+  const preload = splitWrites ? ['--import', SPLIT_WRITES_IMPORT] : [];
+  const argv = [...preload, ...(opts.nodeArgs ?? [opts.cli ?? DIST_CLI, ...args])];
   const pty: IPty = nodePty.spawn(process.execPath, argv, {
     name: 'xterm-256color',
     cols,
