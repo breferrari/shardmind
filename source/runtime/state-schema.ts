@@ -10,7 +10,7 @@
  */
 
 import { z } from 'zod';
-import type { ShardState, VaultState } from './types.js';
+import type { ShardEntry, ShardState, VaultState } from './types.js';
 import { ShardMindError } from './types.js';
 
 const FileStateSchema = z.looseObject({
@@ -137,6 +137,28 @@ export function parseVaultState(value: unknown, filePath: string): VaultState {
     'STATE_CORRUPT',
     STATE_CORRUPT_HINT,
   );
+}
+
+/** A shard's entry as a `ShardState` at `schemaVersion` (#395): what the one-shard readers return. */
+export function shardStateOf(entry: ShardEntry, schemaVersion: number): ShardState {
+  return { schema_version: schemaVersion, ...entry };
+}
+
+/**
+ * The only shard of a vault, for a command that handles one (#395). A vault
+ * with several is `STATE_UNSUPPORTED_VERSION`: never read as its base alone,
+ * whose next write would drop the overlays. Not a `newerStateError`: no newer
+ * ShardMind wrote it, so it carries no schema numbers.
+ */
+export function soleShard(state: VaultState): ShardEntry {
+  if (state.shards.length > 1) {
+    throw new ShardMindError(
+      `This vault holds several shards (${state.shards.length}); this command handles a vault with one`,
+      'STATE_UNSUPPORTED_VERSION',
+      'A ShardMind that updates each shard of a composed vault manages it: npm install -g shardmind@latest',
+    );
+  }
+  return state.shards[0]!;
 }
 
 /**

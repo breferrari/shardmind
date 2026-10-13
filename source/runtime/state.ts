@@ -19,6 +19,7 @@ import {
   newerStateError,
   parseShardState,
   parseVaultState,
+  shardStateOf,
   STATE_CORRUPT_HINT,
   STATE_SCHEMA_VERSION,
 } from './state-schema.js';
@@ -137,12 +138,13 @@ export async function loadState(opts: { shard?: string } = {}): Promise<ShardSta
   }
   // The same contract the engine reads with (#343). Schema 1 and 2 hold one
   // shard, the base; schema 3 lists them (#395).
-  const shards =
-    (version as number) < 3
-      ? [parseShardState(parsed, filePath)]
-      : parseVaultState(parsed, filePath).shards.map((entry) => ({ schema_version: version as number, ...entry }));
-  if (opts.shard === undefined) return shards[0]!;
-  return shards.find((state) => state.shard === opts.shard) ?? null;
+  if ((version as number) < 3) {
+    const state = parseShardState(parsed, filePath);
+    return opts.shard === undefined || state.shard === opts.shard ? state : null;
+  }
+  const { shards } = parseVaultState(parsed, filePath);
+  const entry = opts.shard === undefined ? shards[0] : shards.find((s) => s.shard === opts.shard);
+  return entry ? shardStateOf(entry, version as number) : null;
 }
 
 /**

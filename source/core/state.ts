@@ -28,9 +28,10 @@ import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { migrateState } from './state-migrator.js';
 import {
   newerStateError,
-  parseShardState,
   parseVaultState,
+  shardStateOf,
   SINGLE_SHARD_SCHEMA_VERSION,
+  soleShard,
   STATE_CORRUPT_HINT,
   STATE_SCHEMA_VERSION,
 } from '../runtime/state-schema.js';
@@ -64,12 +65,6 @@ const CACHE_COPY_CONCURRENCY = 16;
  */
 const REHASH_CONCURRENCY = 16;
 
-/**
- * `onContractError` (status only): a state.json that breaks the contract
- * (#343) is handed to it and read as it is, unchecked, so the ambient status
- * report keeps degrading field by field over a hand-broken file instead of
- * failing. Every other reader leaves it out and gets `STATE_CORRUPT`.
- */
 interface ReadStateOptions {
   onContractError?: (err: ShardMindError) => void;
 }
@@ -78,6 +73,11 @@ interface ReadStateOptions {
  * The vault's state as a list of shards (#395), whatever schema it is
  * stored at: a schema-1 or -2 file is one shard, migrated forward in memory.
  * `null` when the vault has no state.json.
+ *
+ * `onContractError` (status only): a state.json that breaks the contract
+ * (#343) is handed to it and read as it is, unchecked, so the ambient status
+ * report keeps degrading field by field over a hand-broken file instead of
+ * failing. Every other reader leaves it out and gets `STATE_CORRUPT`.
  */
 export async function readVaultState(vaultRoot: string, opts: ReadStateOptions = {}): Promise<VaultState | null> {
   const filePath = path.join(vaultRoot, STATE_FILE);
@@ -125,11 +125,10 @@ export async function readVaultState(vaultRoot: string, opts: ReadStateOptions =
       `This version of shardmind supports schema_version ${STATE_SCHEMA_VERSION}. No migration rule is registered for ${version} → ${STATE_SCHEMA_VERSION}.`,
     );
   }
-  if (!opts.onContractError) return parseVaultState(migrated, filePath);
   try {
     return parseVaultState(migrated, filePath);
   } catch (err) {
-    if (!(err instanceof ShardMindError)) throw err;
+    if (!opts.onContractError || !(err instanceof ShardMindError)) throw err;
     opts.onContractError(err);
     return migrated as VaultState;
   }
@@ -163,16 +162,10 @@ export async function writeVaultState(vaultRoot: string, state: VaultState): Pro
 export async function readState(vaultRoot: string, opts: ReadStateOptions = {}): Promise<ShardState | null> {
   const state = await readVaultState(vaultRoot, opts);
   if (!state) return null;
-  // Status reads a broken file as it is: its shards may be anything.
-  const shards: unknown[] = Array.isArray(state.shards) ? state.shards : [];
-  if (shards.length > 1) {
-    throw new ShardMindError(
-      `This vault holds several shards (${shards.length}); this command handles a vault with one`,
-      'STATE_UNSUPPORTED_VERSION',
-      'A ShardMind that updates each shard of a composed vault manages it: npm install -g shardmind@latest',
-    );
-  }
-  return { schema_version: SINGLE_SHARD_SCHEMA_VERSION, ...(shards[0] as object) } as ShardState;
+  // Status reads a broken file as it is (`onContractError`): a schema-3 file
+  // without a shards list reads as an empty shard, each field degrading.
+  if (!Array.isArray(state.shards)) return { schema_version: SINGLE_SHARD_SCHEMA_VERSION } as ShardState;
+  return shardStateOf(soleShard(state), SINGLE_SHARD_SCHEMA_VERSION);
 }
 
 /** Write the state of a vault with one shard, at `SINGLE_SHARD_SCHEMA_VERSION` (#395). */
@@ -184,9 +177,6 @@ export async function writeState(vaultRoot: string, state: ShardState): Promise<
       `This version of shardmind writes a one-shard vault at schema_version ${SINGLE_SHARD_SCHEMA_VERSION}.`,
     );
   }
-  // The contract checked as a schema-2 state first, so a mismatch is named
-  // as it always was (`files["Home.md"].ownership`), not inside `shards`.
-  parseShardState(state, path.join(vaultRoot, STATE_FILE));
   const { schema_version: _version, ...entry } = state;
   await writeVaultState(vaultRoot, { schema_version: STATE_SCHEMA_VERSION, shards: [entry] });
 }
