@@ -856,7 +856,7 @@ After 4 value prompts, a module review step:
 
 Defaults: all included. User deselects what doesn't fit. Most press Enter.
 
-After confirm: render → write → state.json → hooks (orchestrator: bootstrap → personalize) → summary. With `--skip-hooks` (#199) no hook runs: each declared hook is reported as skipped, and the next run with hooks performs bootstrap (SHARD-LAYOUT §Three named slots).
+After confirm: render → write → state.json → hooks (orchestrator: bootstrap → personalize) → summary. With `--skip-hooks` (#199) no hook runs: each declared hook is reported as skipped; the bootstrap is recorded as pending and the next `update` runs it, while personalize is skipped for good (SHARD-LAYOUT §Three named slots).
 
 Two prompts can destroy content before any of that: the **existing-install gate** (the directory is already shardmind-managed: keep it, reinstall from scratch, or cancel) and **collision review** (files of yours sit at paths the shard writes: back them up, overwrite, or cancel). `--yes` and `--defaults` answer neither: a collision is backed up to `<path>.shardmind-backup-<timestamp>`, and an existing install is refused without a terminal (`INSTALL_GATE_NON_INTERACTIVE`) or under `--defaults` (`INSTALL_DEFAULTS_OVER_EXISTING`).
 
@@ -936,7 +936,7 @@ Flags:
 - `--yes` — skip every prompt; opt into every new optional module and auto-keep every conflict (useful for unattended CI upgrades).
 - `--verbose` — show per-file action history during the write phase.
 - `--dry-run` — run the full pipeline (fetch, migrate, plan, merge) without touching the vault; the summary reports what *would* happen.
-- `--skip-hooks` (#199) — run no hook; each declared hook is reported as skipped (`reason: skip-hooks` under `--json`). The bootstrap fingerprint stays as it was, so a pending re-bootstrap happens on the next run with hooks.
+- `--skip-hooks` (#199) — run no hook; each declared hook is reported as skipped (`reason: skip-hooks` under `--json`). A bootstrap that would have run stays pending for the next `update`; the post-update is skipped for good. An up-to-date `update` runs a pending bootstrap.
 - `--adopt-preexisting` — when the new version adds a path where you already have an untracked file of your own and you keep yours (by hand, or by `--yes`), start tracking it as your modified copy of that file, so later updates merge into it, instead of leaving it untracked to come back as the same question every update (#61). Off by default: the engine never starts managing a file you did not opt in to.
 
 Implementation modules: `source/core/migrator.ts` (IMPLEMENTATION §4.10), `source/core/update-planner.ts` (§4.11), `source/core/update-executor.ts` (§4.12). Orchestration lives in `source/commands/hooks/use-update-machine.ts`. The full phase diagram is in IMPLEMENTATION §3.
@@ -991,7 +991,7 @@ Flags:
 - `--values <file>` — prefill value answers (same shape as `install --values`); shown on the gate's confirm page as `(from --values)`.
 - `--verbose` — show per-file action history during the apply phase.
 - `--dry-run` — run the full pipeline (fetch, values gate, classify) without touching the vault. Summary reports what *would* happen.
-- `--skip-hooks` (#199) — run no hook; each declared hook is reported as skipped (`reason: skip-hooks` under `--json`). No bootstrap fingerprint is recorded, so the next run with hooks performs bootstrap.
+- `--skip-hooks` (#199) — run no hook; each declared hook is reported as skipped (`reason: skip-hooks` under `--json`). The bootstrap is recorded as pending and the next `update` runs it; the personalize is skipped for good.
 - `--from-version <v>` (#179) — the release the vault was cloned from. Applies the shard's rename migrations from `<v>` to its version before classifying, so a file at an old path is adopted at its new one (moved, or replaced, per the resolution). Not semver → `ADOPT_FROM_VERSION_INVALID`; no applicable migration → no-op. See SHARD-LAYOUT.md §Rename migrations. It also fetches release `<v>` and renders it with the run's values: a file still at it (byte-equal) was never changed by the user, so it takes the shard's bytes, managed, in every mode, never prompted (#325). A `<v>` that cannot be fetched leaves the run as before, with a warning. See SHARD-LAYOUT.md §Adopt semantics.
 
 Volatile templates (`{# shardmind: volatile #}`) skip the differs prompt entirely — their rendered output is expected to vary across renders, so a content prompt would be meaningless. User's bytes are accepted as-is; missing-on-disk falls through to shard-only.

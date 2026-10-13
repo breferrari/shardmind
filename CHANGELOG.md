@@ -11,7 +11,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 ### Added (`--skip-hooks` on install, update and adopt — #199)
 
 - **`--skip-hooks` runs no hook**, for a run that should only reconcile files (an agent adopting a vault, a CI update). Each hook the shard declares is reported as skipped: "Bootstrap hook skipped (--skip-hooks)." in the summary, and `{ "outcome": "skipped", "reason": "skip-hooks" }` under `--json`.
-- **Hooks are deferred, never lost.** No bootstrap fingerprint is recorded, so the next run with hooks performs bootstrap.
+- **A skipped bootstrap is pending, not lost.** It is recorded in `state.json` (`bootstrap_pending`), and the next `shardmind update` runs it, even when the vault is already up to date. A skipped `personalize` or `post-update` is skipped for good, since each only makes sense inside its own run.
 - Under `--json`, a skipped hook now carries `reason`: `skip-hooks`, or `values-are-defaults` for a `personalize` skipped under Invariant 2. The field is additive; nothing else in the document changes.
 
 ## [1.0.1] - 2026-10-13
