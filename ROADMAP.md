@@ -66,6 +66,7 @@ The suite fails only on real defects, on all three operating systems.
 | ✅ | Stop cli.test.ts update scenarios timing out on Windows CI | [#218](https://github.com/breferrari/shardmind/issues/218) |
 | ✅ | Stop the self-update flow test timing out on Windows CI | [#285](https://github.com/breferrari/shardmind/issues/285) |
 | ✅ | Stop the Invariant 2 mixed-defaults contract test timing out on Windows CI | [#288](https://github.com/breferrari/shardmind/issues/288) |
+| ⬜ | Make the update editor PTY test wait for the summary's editor count | [#394](https://github.com/breferrari/shardmind/issues/394) |
 
 ## Phase 4 — close what already shipped
 
@@ -287,6 +288,10 @@ Engine capability from the original plan. These were declined on 2026-10-04/05 o
 | | Task | Issue |
 |---|---|---|
 | ⬜ | Shard composition (several shards per vault) | [#81](https://github.com/breferrari/shardmind/issues/81) |
+| ⬜ | Bring state.json to schema 3 with a shards list | [#395](https://github.com/breferrari/shardmind/issues/395) |
+| ⬜ | Add an overlay shard to a vault with shardmind add | [#396](https://github.com/breferrari/shardmind/issues/396) |
+| ⬜ | Run status, update and adopt across the shards of a vault | [#397](https://github.com/breferrari/shardmind/issues/397) |
+| ⬜ | List a vault's shards with shardmind list | [#398](https://github.com/breferrari/shardmind/issues/398) |
 | ⬜ | Dependency fetching (recursive + lock file) | [#82](https://github.com/breferrari/shardmind/issues/82) |
 | ⬜ | Structural variants (modules.structure + vault_purpose) | [#80](https://github.com/breferrari/shardmind/issues/80) |
 | ⬜ | Guided file creation (guided_files schema + third install phase) | [#79](https://github.com/breferrari/shardmind/issues/79) |
