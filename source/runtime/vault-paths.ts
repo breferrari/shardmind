@@ -12,7 +12,9 @@ export const SHARDMIND_DIR = '.shardmind';
 export const STATE_FILE = path.join(SHARDMIND_DIR, 'state.json');
 export const CACHED_MANIFEST = path.join(SHARDMIND_DIR, 'shard.yaml');
 export const CACHED_SCHEMA = path.join(SHARDMIND_DIR, 'shard-schema.yaml');
-export const CACHED_TEMPLATES = path.join(SHARDMIND_DIR, 'templates');
+/** The template cache's folder name inside an engine folder (`.shardmind/`, or an overlay's, #396). */
+export const TEMPLATES_DIR = 'templates';
+export const CACHED_TEMPLATES = path.join(SHARDMIND_DIR, TEMPLATES_DIR);
 
 /**
  * Where a crashed (or verbose) hook's full captured output is persisted so

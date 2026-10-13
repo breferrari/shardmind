@@ -52,6 +52,40 @@ describe('install pipeline (against examples/minimal-shard)', () => {
     await fsp.rm(vault, { recursive: true, force: true });
   });
 
+  it("writes an overlay's engine metadata where its InstallTarget says, and its state through the target (#396)", async () => {
+    const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
+    const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));
+    const values = buildValuesValidator(schema).parse(resolveComputedDefaults(schema, VALUES));
+    const persisted: ShardState[] = [];
+    await runInstall({
+      vaultRoot: vault,
+      manifest,
+      schema,
+      tempDir: MINIMAL_SHARD,
+      resolved: RESOLVED,
+      tarballSha256: 'deadbeef',
+      values,
+      selections: defaultModuleSelections(schema),
+      target: {
+        cacheDir: path.join('.shardmind', 'shards', 'acme', 'overlay'),
+        valuesFile: 'shard-values.acme.overlay.yaml',
+        persistState: async (state) => void persisted.push(state),
+      },
+    });
+    const at = (rel: string) => fsp.access(path.join(vault, rel)).then(() => true, () => false);
+    expect(await at('.shardmind/shards/acme/overlay/shard.yaml')).toBe(true);
+    expect(await at('.shardmind/shards/acme/overlay/shard-schema.yaml')).toBe(true);
+    expect(await at('.shardmind/shards/acme/overlay/templates')).toBe(true);
+    expect(await at('shard-values.acme.overlay.yaml')).toBe(true);
+    // Nothing of the base's: no state.json, no base cache, no base values file.
+    expect(await at('.shardmind/state.json')).toBe(false);
+    expect(await at('.shardmind/shard.yaml')).toBe(false);
+    expect(await at('.shardmind/templates')).toBe(false);
+    expect(await at('shard-values.yaml')).toBe(false);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]!.shard).toBe('shardmind/minimal');
+  });
+
   it('installs with all modules included and writes the full output tree', async () => {
     const manifest = await parseManifest(path.join(MINIMAL_SHARD, '.shardmind', 'shard.yaml'));
     const schema = await parseSchema(path.join(MINIMAL_SHARD, '.shardmind', 'shard-schema.yaml'));

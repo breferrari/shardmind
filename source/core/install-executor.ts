@@ -29,7 +29,7 @@ import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { rolledBackError } from './rollback-report.js';
 import { wrapWriteError } from './bug-report.js';
 import { beginTransaction, type BackupRecord, type CreateRoot, type VaultTransaction } from './vault-transaction.js';
-import { VALUES_FILE } from '../runtime/vault-paths.js';
+import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
 
 export type { BackupRecord } from './vault-transaction.js';
 
@@ -50,6 +50,23 @@ export interface InstallRunnerOptions {
    */
   tx?: VaultTransaction;
   dryRun?: boolean;
+  /** Where the engine metadata goes: install's (the default), or an overlay's for `add` (#396). */
+  target?: InstallTarget;
+}
+
+/**
+ * Where an install's engine metadata goes (#396): its cache folder (the
+ * cached manifest, schema and templates), its values file, and how its state
+ * is written. Install's is `.shardmind/`, `shard-values.yaml` and
+ * `writeState`; `add` passes an overlay's, whose state is appended to the
+ * vault's `shards[]`.
+ */
+export interface InstallTarget {
+  /** Vault-relative. */
+  cacheDir: string;
+  /** Vault-relative. */
+  valuesFile: string;
+  persistState(state: ShardState): Promise<void>;
 }
 
 export interface InstallResult {
@@ -71,6 +88,11 @@ export type ProgressEvent =
  */
 export async function runInstall(opts: InstallRunnerOptions): Promise<InstallResult> {
   const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, tx, dryRun } = opts;
+  const target: InstallTarget = opts.target ?? {
+    cacheDir: SHARDMIND_DIR,
+    valuesFile: VALUES_FILE,
+    persistState: (state) => writeState(vaultRoot, state),
+  };
 
   const resolution = await resolveModules(schema, selections, tempDir);
   // Refuse before the first write, dry run included, if any path would
@@ -187,16 +209,16 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     // (`boundary-ignore`, #190, #215). state.json last, so it is the point of
     // no return, as in update and adopt (#301).
     const beforeState = async (): Promise<void> => {
-      await initShardDir(vaultRoot);
-      await cacheTemplates(vaultRoot, tempDir);
-      await cacheManifest(vaultRoot, manifest, schema, tempDir);
-      await writeValuesFile(vaultRoot, values);
+      await initShardDir(vaultRoot, target.cacheDir);
+      await cacheTemplates(vaultRoot, tempDir, target.cacheDir);
+      await cacheManifest(vaultRoot, manifest, schema, tempDir, target.cacheDir);
+      await writeValuesFile(vaultRoot, values, target.valuesFile);
       // Introduced only once written: the exclusive write fails on the
       // user's own stray values file, which must survive the rollback.
-      tx?.introduced.push(VALUES_FILE);
-      writtenPaths.push(VALUES_FILE);
+      tx?.introduced.push(target.valuesFile);
+      writtenPaths.push(target.valuesFile);
     };
-    const writeStateFile = () => writeState(vaultRoot, state);
+    const writeStateFile = () => target.persistState(state);
     if (tx) await tx.commitEngineMetadata({ beforeState, state: writeStateFile });
     else {
       await beforeState();
@@ -232,20 +254,21 @@ async function writeVaultFile(vaultRoot: string, outputPath: string, content: st
 async function writeValuesFile(
   vaultRoot: string,
   values: Record<string, unknown>,
+  valuesFile: string,
 ): Promise<void> {
-  const abs = path.join(vaultRoot, VALUES_FILE);
+  const abs = path.join(vaultRoot, valuesFile);
   const serialized = stringifyYaml(values, { lineWidth: 0 }).trimEnd() + '\n';
   try {
     await fsp.writeFile(abs, serialized, { encoding: 'utf-8', flag: 'wx' });
   } catch (err) {
     if (errnoCode(err) === 'EEXIST') {
       throw new ShardMindError(
-        'shard-values.yaml already exists at the install target',
+        `${valuesFile} already exists at the install target`,
         'VALUES_FILE_COLLISION',
         'Move or remove shard-values.yaml before re-running install. If `.shardmind/state.json` also exists, run `shardmind update` instead to upgrade the current install in place; without state.json, update throws UPDATE_NO_INSTALL.',
       );
     }
-    throw wrapWriteError('INSTALL_WRITE_FAILED', `Could not write ${VALUES_FILE} during install`, err);
+    throw wrapWriteError('INSTALL_WRITE_FAILED', `Could not write ${valuesFile} during install`, err);
   }
 }
 
