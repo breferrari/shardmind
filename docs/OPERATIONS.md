@@ -199,7 +199,7 @@ ShardMind writes only within the vault directory. No global state, no `~/.shardm
 | `timeout` | It ran past `timeout_ms` |
 | `cancelled` | Ctrl+C stopped it |
 
-Each failed hook has exactly one of these. The file `outcome`, hook `outcome` and hook `failure` lists are open: a later minor release may add a value (for example, #199's `--skip-hooks`). Consumers must tolerate unknown outcome values, and treat an unknown `failure` as a failure.
+Each failed hook has exactly one of these. The file `outcome`, hook `outcome`, hook `failure` and skipped-hook `reason` lists are open: a later minor release may add a value (as #199's `--skip-hooks` added the `skip-hooks` reason). Consumers must tolerate unknown outcome and reason values, and treat an unknown `failure` as a failure. A `--dry-run --json` plan carries no hooks at all, since no hook runs in a dry run, so it reads the same with or without `--skip-hooks`.
 
 | adopt `outcome` | Meaning |
 |---|---|
