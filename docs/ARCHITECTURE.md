@@ -574,6 +574,24 @@ A future shape change slots in the same way:
 2. Add one `{ fromVersion, toVersion, apply }` entry that turns the previous shape into the new one, including the new `schema_version`. `writeState` accepts only the current version.
 3. Add a unit test of the rule (`tests/unit/state-migrator.test.ts`), and extend the E2E case that runs `status` and `update` on a vault whose `state.json` is at the previous version (`tests/e2e/cli.test.ts`, #40).
 
+### 8.3 Several shards: schema 3
+
+Composition (#81) puts several shards in one vault: the base shard, then each overlay in install order (#395). Their state is `schema_version` 3, a list of what schema 2 holds for one shard:
+
+```json
+{
+  "schema_version": 3,
+  "shards": [
+    { "shard": "breferrari/obsidian-mind", "source": "github:breferrari/obsidian-mind", "version": "3.5.0", "modules": { }, "files": { } },
+    { "shard": "acme/research", "source": "github:acme/research", "version": "1.2.0", "modules": { }, "files": { } }
+  ]
+}
+```
+
+Each entry is a schema-2 state without `schema_version` (`ShardEntry`), with every field it has there: each shard keeps its own `files`, `modules`, `values_hash`, `bootstrap_fingerprint` and `bootstrap_pending`, as it keeps its own values file, cache and merge base. `shards[0]` is the base shard; no two entries name the same shard. The v2 → v3 rule moves every field of a schema-2 state except `schema_version` into `shards[0]`, fields this engine does not know included, so the rule loses nothing.
+
+A vault with one shard stays at schema 2, byte for byte: the engine reads every vault as a list of shards and writes one shard at schema 2 and several at schema 3, so only the first overlay rewrites the file. An engine older than composition reads up to schema 2 and refuses a composed vault (§8.2), never misreading it. Until update and status run across shards (#397), a command that handles one shard refuses a vault with several with `STATE_UNSUPPORTED_VERSION`, rather than reading the base alone and dropping the overlays on its next write. The runtime's `loadState()` returns the base shard's state, and `loadState({ shard })` the named one.
+
 ---
 
 ## 9. Runtime Hooks (TypeScript)
@@ -1398,8 +1416,8 @@ export function validateValues(values: Record<string, unknown>, schema: ShardSch
 /** Validate a note's frontmatter against schema rules. */
 export async function validateFrontmatter(filePath: string, content: string): Promise<FrontmatterValidationResult>;
 
-/** Load state file. Returns null if not installed. */
-export async function loadState(): Promise<ShardState | null>;
+/** Load state file: the base shard, or the shard named (#395). Returns null if not installed, or no such shard. */
+export async function loadState(opts?: { shard?: string }): Promise<ShardState | null>;
 
 /** Get included modules from state. */
 export async function getIncludedModules(): Promise<string[]>;
@@ -1913,7 +1931,7 @@ staying hermetic. No test reaches the public internet.
 |------|-------------|-------------|
 | **Dependency fetching** | Shard authors vendor deps in v0.1. Recursive download loop adds complexity. | `registry.ts` gains a `fetchDependencies()` method. |
 | **Uninstall / eject** | Manual for v0.1: delete `.shardmind/` and `shard-values.yaml`. Vault keeps working. | `shardmind eject` command. ShardMind is additive, not load-bearing. |
-| **Shard composition** | One shard per vault in v0.1. `state.json` is at `schema_version: 2` (#102); composition bumps it to 3 with `shards[]`, through a `state-migrator.ts` rule (§8.2). | Affects state.json design, module conflict resolution, partial rendering. The command, path ownership, update order and hook order are ruled, not yet built: "Composition's rulings" in [`SHARD-LAYOUT.md` §Out of scope and planned](SHARD-LAYOUT.md#out-of-scope-and-planned) (#395–#398). |
+| **Shard composition** | One shard per vault in v0.1. `state.json` is at `schema_version: 2` (#102); composition bumps it to 3 with `shards[]`, through a `state-migrator.ts` rule (§8.2); the schema-3 shape and its reading are built (§8.3, #395), and a one-shard vault stays at 2. | Affects state.json design, module conflict resolution, partial rendering. The command, path ownership, update order and hook order are ruled, not yet built: "Composition's rulings" in [`SHARD-LAYOUT.md` §Out of scope and planned](SHARD-LAYOUT.md#out-of-scope-and-planned) (#395–#398). |
 | **Structural variants** | Different purposes need different folder structures. For v0.1: different purposes = different shards. | `modules.structure` with purpose-driven variants. Reshape doc is the design spec. |
 | **SOUL guided creation** | Ship as empty template in v0.1. | `guided_files` in schema, third install phase. |
 | **`shardmind init`** | For shard authors. You are the first shard author. Build by hand. | Scaffolds `.shardmind/shard.yaml`, `.shardmind/shard-schema.yaml` and `.shardmindignore` into an existing vault from prompts. |
