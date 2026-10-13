@@ -118,33 +118,34 @@ export async function loadState(opts: { shard?: string } = {}): Promise<ShardSta
   // vendored runtime older than the engine that wrote this file, and a newer
   // state is refused as such, not misread as corrupt. An older one (v1) has
   // the current shape, so the contract check reads it as it is.
-  const version = parsed && typeof parsed === 'object' ? (parsed as { schema_version?: unknown }).schema_version : undefined;
-  if (!Number.isInteger(version)) {
+  const rawVersion = parsed && typeof parsed === 'object' ? (parsed as { schema_version?: unknown }).schema_version : undefined;
+  if (typeof rawVersion !== 'number' || !Number.isInteger(rawVersion)) {
     throw new ShardMindError(
       `Corrupt state.json: ${filePath}: schema_version: missing, or not an integer`,
       'STATE_CORRUPT',
       STATE_CORRUPT_HINT,
     );
   }
-  if ((version as number) > STATE_SCHEMA_VERSION) throw newerStateError(version as number);
+  const version = rawVersion;
+  if (version > STATE_SCHEMA_VERSION) throw newerStateError(version);
   // Below the first schema there is nothing to read it as: unsupported, as
   // the engine's readState answers (no migration reaches it).
-  if ((version as number) < 1) {
+  if (version < 1) {
     throw new ShardMindError(
-      `Unsupported state schema_version: ${version as number}`,
+      `Unsupported state schema_version: ${version}`,
       'STATE_UNSUPPORTED_VERSION',
       `This version of shardmind reads schema_version 1 to ${STATE_SCHEMA_VERSION}.`,
     );
   }
   // The same contract the engine reads with (#343). Schema 1 and 2 hold one
   // shard, the base; schema 3 lists them (#395).
-  if ((version as number) < 3) {
+  if (version < 3) {
     const state = parseShardState(parsed, filePath);
     return opts.shard === undefined || state.shard === opts.shard ? state : null;
   }
   const { shards } = parseVaultState(parsed, filePath);
   const entry = opts.shard === undefined ? shards[0] : shards.find((s) => s.shard === opts.shard);
-  return entry ? shardStateOf(entry, version as number) : null;
+  return entry ? shardStateOf(entry, version) : null;
 }
 
 /**
