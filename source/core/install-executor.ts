@@ -265,7 +265,9 @@ async function writeValuesFile(
       throw new ShardMindError(
         `${valuesFile} already exists at the install target`,
         'VALUES_FILE_COLLISION',
-        'Move or remove shard-values.yaml before re-running install. If `.shardmind/state.json` also exists, run `shardmind update` instead to upgrade the current install in place; without state.json, update throws UPDATE_NO_INSTALL.',
+        valuesFile === VALUES_FILE
+          ? 'Move or remove shard-values.yaml before re-running install. If `.shardmind/state.json` also exists, run `shardmind update` instead to upgrade the current install in place; without state.json, update throws UPDATE_NO_INSTALL.'
+          : `Move or remove ${valuesFile} before re-running add: it is the file add writes the overlay's values to.`,
       );
     }
     throw wrapWriteError('INSTALL_WRITE_FAILED', `Could not write ${valuesFile} during install`, err);

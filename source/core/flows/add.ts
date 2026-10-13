@@ -127,7 +127,7 @@ export async function runAddFlow(input: AddFlowInput, io: AddFlowIO): Promise<Ad
     }
     // A path the overlay writes whatever is answered, already owned: refused
     // before any prompt (R2). The full set is checked once answered.
-    const owned = ownedPaths(vault);
+    const owned = ownedPaths(vault, name);
     assertNoOwnedPaths(owned, await pathsWrittenRegardless(prepared), prepared);
     const prefill = input.valuesFile ? await loadValuesFile(input.valuesFile, prepared.schema) : {};
     io.phase({ kind: 'loading', message: 'Checking the shard…' });
@@ -183,16 +183,20 @@ async function valueAnswers(input: AddFlowInput, io: AddFlowIO, shard: AddShard)
 
 /**
  * Every path an overlay may not write (R2, #396), keyed by its case-folded
- * form, with its owner: each shard's files, every values file, and (by
- * prefix, in `ownerOf`) anything under `.shardmind/`.
+ * form, with its owner: each shard's files, every values file (the one
+ * `adding` will write included), and (by prefix, in `ownerOf`) anything
+ * under `.shardmind/`.
  */
-export function ownedPaths(vault: VaultState): Map<string, string> {
+export function ownedPaths(vault: VaultState, adding: string): Map<string, string> {
   const owned = new Map<string, string>();
   const own = (rel: string, owner: string) => owned.set(foldPath(rel), owner);
   vault.shards.forEach((shard, i) => {
     for (const rel of Object.keys(shard.files)) own(rel, shard.shard);
     own(i === 0 ? VALUES_FILE : overlayValuesFile(shard.shard), `${shard.shard} (its values file)`);
   });
+  // The values file the add itself writes: a shard that ships it would fail
+  // the exclusive write after its files, so it is refused up front.
+  own(overlayValuesFile(adding), `${adding} (the values file add writes)`);
   return owned;
 }
 
@@ -265,10 +269,10 @@ async function planAndAdd(
 
   await assertSafeVaultPaths(vaultRoot, plannedPaths);
   // Owned by no shard, so the user's own: install's collision review.
-  const own = await detectCollisions(vaultRoot, plannedPaths);
+  const userFiles = await detectCollisions(vaultRoot, plannedPaths);
   let policy: 'backup' | 'overwrite' = 'backup';
-  if (own.length > 0 && input.interactive && !input.yes && !input.defaults) {
-    const action = await io.ask({ kind: 'collision', collisions: own, shard });
+  if (userFiles.length > 0 && input.interactive && !input.yes && !input.defaults) {
+    const action = await io.ask({ kind: 'collision', collisions: userFiles, shard });
     if (action === 'cancel') throw new FlowCancelled('User cancelled at collision review.');
     policy = action;
   }
@@ -290,11 +294,12 @@ async function planAndAdd(
         selections: answers.selections,
         dryRun: input.dryRun,
         signal,
-        moveAside: own,
-        keep: new Set(policy === 'backup' ? own.map((c) => c.absolutePath) : []),
+        moveAside: userFiles,
+        keep: new Set(policy === 'backup' ? userFiles.map((c) => c.absolutePath) : []),
         onProgress: io.progress,
       }),
     (done) => ({
+      // The overlay's own install: install's slots (bootstrap, personalize).
       command: 'install',
       tempDir: shard.tempDir,
       manifest: shard.manifest,
@@ -321,7 +326,7 @@ async function planAndAdd(
     fileCount: result.fileCount,
     durationMs: Date.now() - start,
     backups: [...result.backups, ...result.left],
-    replaced: policy === 'overwrite' ? own.map((c) => c.outputPath) : [],
+    replaced: policy === 'overwrite' ? userFiles.map((c) => c.outputPath) : [],
     hooks,
     dryRun: input.dryRun,
     externalTools,

@@ -7,6 +7,7 @@
  */
 
 import path from 'node:path';
+import { ShardMindError } from './types.js';
 
 export const SHARDMIND_DIR = '.shardmind';
 export const STATE_FILE = path.join(SHARDMIND_DIR, 'state.json');
@@ -64,7 +65,11 @@ export function overlayValuesFile(shard: string): string {
 function shardNameParts(shard: string): [string, string] {
   const parts = shard.split('/');
   if (parts.length !== 2 || parts.some((part) => part === '' || part === '.' || part === '..' || part.includes('\\'))) {
-    throw new Error(`Not a <namespace>/<name> shard name: ${JSON.stringify(shard)}`);
+    throw new ShardMindError(
+      `Not a <namespace>/<name> shard name: ${JSON.stringify(shard)}`,
+      'ARGS_INVALID',
+      'Name a shard as <namespace>/<name>, as state.json lists it (e.g. acme/research).',
+    );
   }
   return [parts[0]!, parts[1]!];
 }
