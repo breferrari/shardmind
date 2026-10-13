@@ -8,6 +8,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (composition, part 3: status across shards — #406)
+
+- **`shardmind` (status) reports each shard of a vault that holds several**: the base's block as before, then one per overlay, each with its version, update line, files and findings. `--verbose` adds each shard's sections, and shows the environment once.
+- **`shardmind --json` gains `shards`**, an additive list with each shard's fields, the base first. The top-level fields stay the base's, as on a one-shard vault. An overlay's findings also appear in the top-level `warnings`, prefixed with its name.
+- **Each shard's drift counts only its own files.** Another shard's file, or a values file, is never its orphan.
+- `adopt` refuses a vault holding several shards with `ADOPT_EXISTING_INSTALL`, as it refuses any managed vault.
+
 ### Added (composition, part 2: `shardmind add` — #396)
 
 - **`shardmind add <shard>` adds an overlay shard to a vault**, beside the shard installed there. It resolves, checks and asks the overlay's values as `install` does, and writes its files.
