@@ -12,7 +12,7 @@ import path from 'node:path';
 import ignore from 'ignore';
 import type { ModuleSelections, ShardManifest, ShardSchema } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE, SHARD_SOURCE_DIR, HOOK_STAGES, hookLogRelPath } from '../runtime/vault-paths.js';
+import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE, SHARD_SOURCE_DIR, SHARDMIND_DIR, HOOK_STAGES, hookLogRelPath } from '../runtime/vault-paths.js';
 import { assertEngineCompatible, parseManifest } from './manifest.js';
 import { buildValuesValidator, parseSchema } from './schema.js';
 import { resolveComputedDefaults } from './install-planner.js';
@@ -217,15 +217,22 @@ export async function lintShard(
       gitignore && resolution.copy.includes(gitignore) ? await fs.readFile(gitignore.sourcePath, 'utf-8') : renderedGitignore;
     const logFile = hookLogRelPath('bootstrap');
     const logs = path.posix.dirname(logFile);
-    const logsIgnored = gitignoreText === undefined || ignore().add(gitignoreText).ignores(logFile);
-    if (!gitignore || !logsIgnored) {
+    // A base's .gitignore covers its overlays' logs too (R5, #405): an
+    // overlay ships none, and its logs land under `.shardmind/logs/<ns>/<name>/`.
+    const overlayLogFile = hookLogRelPath('bootstrap', 'overlay/shard');
+    const rules = gitignoreText === undefined ? null : ignore().add(gitignoreText);
+    const logsIgnored = rules === null || rules.ignores(logFile);
+    const overlayLogsIgnored = rules === null || rules.ignores(overlayLogFile);
+    if (!gitignore || !logsIgnored || !overlayLogsIgnored) {
       findings.push({
         severity: 'warning',
         code: 'LINT_LOGS_NOT_GITIGNORED',
-        message: gitignore
-          ? `The shard's .gitignore does not ignore ${logs}/, where its hooks' logs land`
-          : `The shard declares a hook but installs no .gitignore, so its hooks' logs in ${logs}/ can be committed`,
-        hint: `List ${logs}/ in the .gitignore at the shard's root. See docs/AUTHORING.md.`,
+        message: !gitignore
+          ? `The shard declares a hook but installs no .gitignore, so its hooks' logs in ${logs}/ can be committed`
+          : !logsIgnored
+            ? `The shard's .gitignore does not ignore ${logs}/, where its hooks' logs land`
+            : `The shard's .gitignore ignores the logs directly in ${logs}/, not the overlay shards' logs in the folders below it`,
+        hint: `List ${logs}/ in the .gitignore at the shard's root. See docs/AUTHORING.md. An overlay shard, added beside a base with \`shardmind add\`, ships no root .gitignore: the base's covers ${SHARDMIND_DIR}/ for every shard (R5); this warning does not apply to it.`,
       });
     }
   }

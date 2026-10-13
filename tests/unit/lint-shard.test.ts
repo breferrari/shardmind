@@ -266,6 +266,18 @@ dependencies:
       expect(logWarning(await lintShard(shard, {}))?.message).toMatch(/installs no \.gitignore/);
     });
 
+    it("tells an overlay's author to ship no root .gitignore: the base's covers it (R5, #405)", async () => {
+      await fsp.rm(path.join(shard, '.gitignore'), { force: true });
+      const hint = logWarning(await lintShard(shard, {}))?.hint ?? '';
+      expect(hint).toMatch(/shardmind add/);
+      expect(hint).toMatch(/no root \.gitignore/);
+    });
+
+    it("warns when the .gitignore covers the base's logs but not an overlay's (R5, #405)", async () => {
+      await write('.gitignore', '.shardmind/logs/*.log\n');
+      expect(logWarning(await lintShard(shard, {}))?.message).toMatch(/overlay/);
+    });
+
     it('says nothing about logs for a shard that declares no hook', async () => {
       await fsp.rm(path.join(shard, '.gitignore'), { force: true });
       await edit('.shardmind/shard.yaml', (s) => s.replace(/hooks:[\s\S]*$/, ''));
