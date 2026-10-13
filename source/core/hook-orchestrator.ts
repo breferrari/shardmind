@@ -114,19 +114,20 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   const shardLabel = `${manifest.namespace}/${manifest.name}`;
   const timeoutMs = hooks.timeout_ms ?? DEFAULT_HOOK_TIMEOUT_MS;
 
-  const defaults = valuesAreDefaultsSafe(plan.values, plan.schema);
-
-  const jobs = buildJobs(plan, defaults);
-
   if (plan.skipHooks === true) {
     // Every declared slot is reported, even one the rules would not have run:
     // the report says what the user turned off. Nothing runs, so the state
-    // (and its bootstrap fingerprint) is returned as it came (#199).
-    const outcomes: HookOutcome[] = jobs
+    // (and its bootstrap fingerprint) is returned as it came (#199). The
+    // defaults check gates only whether a slot runs, so it is not computed.
+    const outcomes: HookOutcome[] = buildJobs(plan, false)
       .filter((job) => job.relPath !== undefined)
       .map((job) => ({ slot: job.slot, summary: { skipped: 'skip-hooks' } }));
     return { outcomes, finalState: plan.state, stateChanged: false };
   }
+
+  const defaults = valuesAreDefaultsSafe(plan.values, plan.schema);
+
+  const jobs = buildJobs(plan, defaults);
 
   // Slots that actually spawn a subprocess — drives the "(N of M)" markers.
   const runnableCount = jobs.filter((j) => j.willRun && j.relPath !== undefined).length;

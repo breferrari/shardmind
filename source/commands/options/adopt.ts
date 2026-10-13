@@ -5,6 +5,7 @@
 
 import zod from 'zod';
 import { updateCheckOption } from '../hooks/update-check-option.js';
+import { skipHooksOption } from '../hooks/skip-hooks-option.js';
 
 export const args = zod.tuple([
   zod
@@ -37,7 +38,7 @@ export const options = zod.object({
     .boolean()
     .default(false)
     .describe('Preview classification + plan without writing'),
-  skipHooks: zod.boolean().default(false).describe('Run no hook; each is reported skipped, and the next run with hooks bootstraps'),
+  skipHooks: skipHooksOption,
   updateCheck: updateCheckOption,
   json: zod
     .boolean()

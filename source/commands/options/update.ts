@@ -5,12 +5,13 @@
 
 import zod from 'zod';
 import { updateCheckOption } from '../hooks/update-check-option.js';
+import { skipHooksOption } from '../hooks/skip-hooks-option.js';
 
 export const options = zod.object({
   yes: zod.boolean().default(false).describe('Accept defaults for every prompt (auto-keeps conflicts)'),
   verbose: zod.boolean().default(false).describe('Show per-file action history during write'),
   dryRun: zod.boolean().default(false).describe('Plan the update without touching the vault'),
-  skipHooks: zod.boolean().default(false).describe('Run no hook; each is reported skipped, and a pending re-bootstrap waits for the next run'),
+  skipHooks: skipHooksOption,
   json: zod
     .boolean()
     .default(false)

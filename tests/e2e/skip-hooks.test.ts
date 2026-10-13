@@ -38,13 +38,6 @@ async function run(vault: Vault, args: string[]): Promise<CliResult> {
   return spawnCli(args, { cwd: vault.root, env: env(), timeoutMs: 90_000 });
 }
 
-async function exists(vault: Vault, rel: string): Promise<boolean> {
-  return fs.access(path.join(vault.root, rel)).then(
-    () => true,
-    () => false,
-  );
-}
-
 async function fingerprint(vault: Vault): Promise<unknown> {
   const state = JSON.parse(await fs.readFile(path.join(vault.root, '.shardmind', 'state.json'), 'utf-8')) as Record<string, unknown>;
   return state['bootstrap_fingerprint'];
@@ -110,8 +103,8 @@ describe('--skip-hooks (#199)', () => {
     const { vault, values } = await newVault('skip-install');
     const install = await run(vault, ['install', REF, '.', '--yes', '--values', values, '--skip-hooks']);
     expect(install.exitCode, install.stderr).toBe(0);
-    expect(await exists(vault, 'bootstrapped.txt')).toBe(false);
-    expect(await exists(vault, 'personalized.txt')).toBe(false);
+    expect(await vault.exists('bootstrapped.txt')).toBe(false);
+    expect(await vault.exists('personalized.txt')).toBe(false);
     expect(install.stdout).toContain('Bootstrap hook skipped (--skip-hooks).');
     expect(install.stdout).toContain('Personalize hook skipped (--skip-hooks).');
     expect(await fingerprint(vault)).toBeUndefined();
@@ -120,9 +113,9 @@ describe('--skip-hooks (#199)', () => {
     stub.setLatest(SLUG, '0.2.0');
     const update = await run(vault, ['update', '--yes']);
     expect(update.exitCode, update.stderr).toBe(0);
-    expect(await exists(vault, 'bootstrapped.txt')).toBe(true);
+    expect(await vault.exists('bootstrapped.txt')).toBe(true);
     expect(await fingerprint(vault)).toBe('v1');
-  }, 240_000);
+  }, 120_000);
 
   it('update --json --skip-hooks reports bootstrap and post-update skipped with the reason, and keeps the fingerprint', async () => {
     const { vault, values } = await newVault('skip-update');
@@ -138,10 +131,10 @@ describe('--skip-hooks (#199)', () => {
       { slot: 'bootstrap', outcome: 'skipped', reason: 'skip-hooks' },
       { slot: 'post-update', outcome: 'skipped', reason: 'skip-hooks' },
     ]);
-    expect(await exists(vault, 'updated.txt')).toBe(false);
-    expect(await exists(vault, 'bootstrapped.txt')).toBe(false);
+    expect(await vault.exists('updated.txt')).toBe(false);
+    expect(await vault.exists('bootstrapped.txt')).toBe(false);
     expect(await fingerprint(vault)).toBe('v1');
-  }, 240_000);
+  }, 120_000);
 
   it('adopt --json --skip-hooks reports each install-side hook skipped, and records no fingerprint', async () => {
     const { vault, values } = await newVault('skip-adopt');
@@ -151,7 +144,7 @@ describe('--skip-hooks (#199)', () => {
       { slot: 'bootstrap', outcome: 'skipped', reason: 'skip-hooks' },
       { slot: 'personalize', outcome: 'skipped', reason: 'skip-hooks' },
     ]);
-    expect(await exists(vault, 'bootstrapped.txt')).toBe(false);
+    expect(await vault.exists('bootstrapped.txt')).toBe(false);
     expect(await fingerprint(vault)).toBeUndefined();
-  }, 240_000);
+  }, 120_000);
 });
