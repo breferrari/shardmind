@@ -248,13 +248,19 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     }
   }
 
-  it('an up-to-date update runs a bootstrap a skipped run owes, shows it, and clears it (#199)', async () => {
+  /**
+   * A vault on the latest 0.1.0 owing its bootstrap: the state an
+   * `install --skip-hooks` leaves, the marker never written. `servedExtra`
+   * goes into the 0.1.0 the update then fetches (one install would refuse),
+   * recorded as the installed tarball so the vault stays up to date.
+   */
+  async function owingVault(prefix: string, servedExtra?: Record<string, unknown>): Promise<{ vault: Vault; tmpDir: string }> {
     const { stub } = getCtx();
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'owed-bootstrap-tar-'));
-    const tar = await buildCustomTarball({
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-tar-`));
+    const tarball = (tag: string, extra: Record<string, unknown>) => buildCustomTarball({
       version: '0.1.0',
-      prefix: 'owed-bootstrap-0.1.0',
-      manifestOverrides: { hooks: { bootstrap: 'hooks/bootstrap.ts' }, name: 'update-owed-bootstrap', namespace: 'flowtest' },
+      prefix: `${prefix}-${tag}`,
+      manifestOverrides: { hooks: { bootstrap: 'hooks/bootstrap.ts' }, name: 'update-owed-bootstrap', namespace: 'flowtest', ...extra },
       outDir: tmpDir,
       mutate: async (dir) => {
         await fs.mkdir(path.join(dir, 'hooks'), { recursive: true });
@@ -265,15 +271,27 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         );
       },
     });
-    stub.setVersion(OWED_BOOTSTRAP_SLUG, '0.1.0', tar);
+    stub.setVersion(OWED_BOOTSTRAP_SLUG, '0.1.0', await tarball('installed', {}));
     stub.setLatest(OWED_BOOTSTRAP_SLUG, '0.1.0');
-    const vault = await createInstalledVault({ stub, shardRef: `github:${OWED_BOOTSTRAP_SLUG}`, values: DEFAULT_VALUES, prefix: 'owed-bootstrap', fresh: true });
-    try {
-      // The state a `install --skip-hooks` leaves: the bootstrap owed, its marker never written.
-      await fs.rm(path.join(vault.root, 'bootstrapped.txt'), { force: true });
-      const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as Record<string, unknown>;
-      await vault.writeFile('.shardmind/state.json', JSON.stringify({ ...state, bootstrap_pending: true }, null, 2));
+    const vault = await createInstalledVault({ stub, shardRef: `github:${OWED_BOOTSTRAP_SLUG}`, values: DEFAULT_VALUES, prefix, fresh: true });
+    await fs.rm(path.join(vault.root, 'bootstrapped.txt'), { force: true });
+    const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as Record<string, unknown>;
+    const owing: Record<string, unknown> = { ...state, bootstrap_pending: true };
+    if (servedExtra) {
+      const served = await tarball('served', servedExtra);
+      stub.setVersion(OWED_BOOTSTRAP_SLUG, '0.1.0', served);
+      owing['tarball_sha256'] = sha256(await fs.readFile(served));
+    }
+    await vault.writeFile('.shardmind/state.json', JSON.stringify(owing, null, 2));
+    return { vault, tmpDir };
+  }
 
+  const pendingOf = async (vault: Vault) =>
+    (JSON.parse(await vault.readFile('.shardmind/state.json')) as Record<string, unknown>)['bootstrap_pending'];
+
+  it('an up-to-date update runs a bootstrap a skipped run owes, shows it, and clears it (#199)', async () => {
+    const { vault, tmpDir } = await owingVault('owed-bootstrap');
+    try {
       const r = mountUpdate({ vaultRoot: vault.root });
       const frame = await waitFor(
         r.lastFrame,
@@ -282,8 +300,56 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
       );
       expect(frame).toContain('Bootstrap hook completed.');
       expect(await vault.readFile('bootstrapped.txt')).toBe('ran');
-      const after = JSON.parse(await vault.readFile('.shardmind/state.json')) as Record<string, unknown>;
-      expect(after['bootstrap_pending']).toBeUndefined();
+      expect(await pendingOf(vault)).toBeUndefined();
+    } finally {
+      await vault.cleanup();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('an up-to-date --dry-run previews the owed bootstrap and runs nothing (#199)', async () => {
+    const { vault, tmpDir } = await owingVault('owed-bootstrap-dry');
+    try {
+      const r = mountUpdate({ vaultRoot: vault.root, options: { dryRun: true } });
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Already up to date/.test(f) && /Bootstrap hook skipped \(dry run\)/.test(f),
+        30_000,
+      );
+      expect(frame).toMatch(/Bootstrap hook skipped \(dry run\)/);
+      expect(await vault.exists('bootstrapped.txt')).toBe(false);
+      expect(await pendingOf(vault)).toBe(true);
+    } finally {
+      await vault.cleanup();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('an up-to-date run refuses invalid vault values before the owed bootstrap runs (#199)', async () => {
+    const { vault, tmpDir } = await owingVault('owed-bootstrap-values');
+    try {
+      await vault.writeFile('shard-values.yaml', 'user_name: Alice\nvault_purpose: not-an-option\n');
+      const r = mountUpdate({ vaultRoot: vault.root });
+      const frame = await waitFor(r.lastFrame, (f) => f.includes('VALUES_INVALID'), 30_000);
+      expect(frame).toContain('VALUES_INVALID');
+      expect(await vault.exists('bootstrapped.txt')).toBe(false);
+      expect(await pendingOf(vault)).toBe(true);
+    } finally {
+      await vault.cleanup();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('an up-to-date run checks external tools before the owed bootstrap runs (#199, #138)', async () => {
+    const { vault, tmpDir } = await owingVault('owed-bootstrap-tools', {
+      external_tools: { node: { package: 'node', version: '>=999.0.0', command: 'node' } },
+    });
+    try {
+      const r = mountUpdate({ vaultRoot: vault.root });
+      const frame = await waitFor(r.lastFrame, (f) => f.includes('EXTERNAL_TOOL_UNMET'), 30_000);
+      expect(frame).toContain('EXTERNAL_TOOL_UNMET');
+      expect(await vault.exists('bootstrapped.txt')).toBe(false);
+      expect(await pendingOf(vault)).toBe(true);
     } finally {
       await vault.cleanup();
       await fs.rm(tmpDir, { recursive: true, force: true });

@@ -448,7 +448,19 @@ export function updateRunResult(input: {
  * An up-to-date vault's real run: nothing written, marked, with its version.
  * `hooks` is the bootstrap it ran when one was owed (#199); usually none.
  */
-export function upToDateRunResult(version: string, hooks: readonly HookOutcome[] = []): UpdateRunResult {
+/**
+ * An up-to-date update's run document. `run` is what an up-to-date run that
+ * owed a bootstrap did (#199); without it, a run that did nothing.
+ */
+export function upToDateRunResult(
+  version: string,
+  run: { hooks: readonly HookOutcome[]; externalTools: readonly string[]; durationMs: number } = {
+    hooks: [],
+    externalTools: [],
+    durationMs: 0,
+  },
+): UpdateRunResult {
+  const { hooks } = run;
   return {
     dryRun: false,
     fromVersion: version,
@@ -458,8 +470,8 @@ export function upToDateRunResult(version: string, hooks: readonly HookOutcome[]
     files: [],
     backupDir: null,
     hooks: jsonRunHooks(hooks),
-    warnings: { migrations: [], externalTools: [], hookBoundary: hookBoundaryWarnings(hooks) },
-    durationMs: 0,
+    warnings: { migrations: [], externalTools: [...run.externalTools], hookBoundary: hookBoundaryWarnings(hooks) },
+    durationMs: run.durationMs,
   };
 }
 

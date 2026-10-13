@@ -97,6 +97,14 @@ describe('updateRunResult (#348)', () => {
     expect(upToDateRunResult('3.1.0')).toMatchObject({ dryRun: false, upToDate: true, fromVersion: '3.1.0', toVersion: '3.1.0', files: [], backupDir: null });
   });
 
+  it('an up-to-date run that paid an owed bootstrap reports its hook, tool warnings and duration (#199)', () => {
+    const hooks = [{ slot: 'bootstrap', summary: { exitCode: 0, stdout: '', stderr: '' } }] as unknown as HookOutcome[];
+    const doc = upToDateRunResult('3.1.0', { hooks, externalTools: ['jq: not found. Install: brew install jq'], durationMs: 412 });
+    expect(doc.hooks).toEqual([{ slot: 'bootstrap', outcome: 'completed', exitCode: 0 }]);
+    expect(doc.warnings.externalTools).toEqual(['jq: not found. Install: brew install jq']);
+    expect(doc.durationMs).toBe(412);
+  });
+
   it('reports each hook as completed, failed (with its first line) or skipped, and leaves absent and deferred ones out', () => {
     const hooks: HookOutcome[] = [
       { slot: 'bootstrap', summary: { exitCode: 0, stdout: 'ok', stderr: '', logPath: '.shardmind/logs/bootstrap.log' } },

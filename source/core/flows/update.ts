@@ -44,7 +44,7 @@ import { applyRenames, renamesBetween, type AppliedRenames } from '../rename-mig
 import { runUpdate, type UpdateProgressEvent, type UpdateSummary } from '../update-executor.js';
 import { checkExternalToolsForRun } from '../external-tools.js';
 import { buildRenderContext } from '../renderer.js';
-import type { HookOutcome } from '../hook-orchestrator.js';
+import { runHooks, type HookOutcome, type HookRunPlan } from '../hook-orchestrator.js';
 import { prepareShard } from './prepare-shard.js';
 import { validateValues } from './values.js';
 import { FlowCancelled } from './cancelled.js';
@@ -126,8 +126,18 @@ export interface UpdateFlowIO extends FlowRunIO {
 }
 
 export type UpdateFlowResult =
-  /** `hooks`: an owed bootstrap the up-to-date run ran (#199); usually none. */
-  | { kind: 'up-to-date'; manifest: ShardManifest; state: ShardState; hooks: HookOutcome[] }
+  /**
+   * `hooks`: the bootstrap a `--skip-hooks` run owes, run (or previewed, or
+   * skipped again) by the up-to-date run (#199); usually none.
+   */
+  | {
+      kind: 'up-to-date';
+      manifest: ShardManifest;
+      state: ShardState;
+      hooks: HookOutcome[];
+      externalTools: string[];
+      durationMs: number;
+    }
   | { kind: 'plan'; plan: UpdatePlan }
   | {
       kind: 'done';
@@ -191,29 +201,36 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
       ? state.resolvedSha === shard.resolved.ref?.commit
       : shard.manifest.version === state.version && shard.tarballSha256 === state.tarball_sha256;
     if (upToDate) {
+      const startedAt = Date.now();
       // Nothing to update, but a bootstrap a --skip-hooks run skipped is
-      // owed (#199, ruling (c)): run it on the shard just fetched. A dry run
-      // runs nothing; under --skip-hooks it is reported skipped and stays owed.
-      if (state.bootstrap_pending !== true || dryRun) {
-        return { kind: 'up-to-date', manifest: shard.manifest, state, hooks: [] };
+      // owed (#199, ruling (c)): run it on the shard just fetched, after the
+      // same checks a run makes before its hooks. A dry run previews it;
+      // under --skip-hooks it is reported skipped and stays owed.
+      if (state.bootstrap_pending !== true) {
+        return { kind: 'up-to-date', manifest: shard.manifest, state, hooks: [], externalTools: [], durationMs: 0 };
       }
-      const hooks = await runHookPhase(io, {
+      const values = validateValues(shard.schema, await loadCurrentValues(vaultRoot), 'vault');
+      const externalTools = await checkExternalToolsForRun({ manifest: shard.manifest, values, dryRun });
+      const hookPlan: HookRunPlan = {
         command: 'update',
         tempDir: shard.tempDir,
         manifest: shard.manifest,
         schema: shard.schema,
         vaultRoot,
         state,
-        values: await loadCurrentValues(vaultRoot),
+        values,
         modules: state.modules,
-        previousVersion: state.version,
+        // No release is applied: there is no version this run updates from.
+        previousVersion: undefined,
         newFiles: [],
         removedFiles: [],
-        dryRun: false,
+        dryRun,
         skipHooks: input.skipHooks,
         upToDate: true,
-      });
-      return { kind: 'up-to-date', manifest: shard.manifest, state, hooks };
+      };
+      // A dry run writes nothing, so there is no committed run to guard.
+      const hooks = dryRun ? (await runHooks(hookPlan, io.hooks)).outcomes : await runHookPhase(io, hookPlan);
+      return { kind: 'up-to-date', manifest: shard.manifest, state, hooks, externalTools, durationMs: Date.now() - startedAt };
     }
 
     io.phase({ kind: 'loading', message: 'Loading current values…' });

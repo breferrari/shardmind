@@ -70,8 +70,8 @@ export interface UseUpdateMachineInput {
 export type Phase =
   | { kind: 'booting' }
   | { kind: 'loading'; message: string }
-  /** `hooks`: an owed bootstrap the up-to-date run ran (#199); usually none. */
-  | { kind: 'up-to-date'; manifest: ShardManifest; state: ShardState; hooks: HookOutcome[] }
+  /** `hooks`: an owed bootstrap the up-to-date run ran or previewed (#199); usually none. */
+  | { kind: 'up-to-date'; manifest: ShardManifest; state: ShardState; hooks: HookOutcome[]; externalTools: string[] }
   | { kind: 'prompt-new-values'; ctx: UpdateContext }
   | { kind: 'prompt-new-modules'; ctx: UpdateContext; values: Record<string, unknown> }
   | {
@@ -218,7 +218,13 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           io,
         );
         if (result.kind === 'up-to-date') {
-          return { kind: 'up-to-date', manifest: result.manifest, state: result.state, hooks: result.hooks };
+          return {
+            kind: 'up-to-date',
+            manifest: result.manifest,
+            state: result.state,
+            hooks: result.hooks,
+            externalTools: result.externalTools,
+          };
         }
         // A plan comes back only under --json, which runs headless: a bug here.
         if (result.kind === 'plan') return { kind: 'error', error: new Error('update flow returned a --json plan to the terminal run') };
