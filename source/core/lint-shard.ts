@@ -219,19 +219,21 @@ export async function lintShard(
     const logs = path.posix.dirname(logFile);
     // A base's .gitignore covers its overlays' logs too (R5, #405): an
     // overlay ships none, and its logs land under `.shardmind/logs/<ns>/<name>/`.
-    const overlayLogFile = hookLogRelPath('bootstrap', 'overlay/shard');
     const rules = gitignoreText === undefined ? null : ignore().add(gitignoreText);
-    const logsIgnored = rules === null || rules.ignores(logFile);
-    const overlayLogsIgnored = rules === null || rules.ignores(overlayLogFile);
-    if (!gitignore || !logsIgnored || !overlayLogsIgnored) {
+    const ignored = (rel: string): boolean => rules === null || rules.ignores(rel);
+    let message: string | null = null;
+    if (!gitignore) {
+      message = `The shard declares a hook but installs no .gitignore, so its hooks' logs in ${logs}/ can be committed`;
+    } else if (!ignored(logFile)) {
+      message = `The shard's .gitignore does not ignore ${logs}/, where its hooks' logs land`;
+    } else if (!ignored(hookLogRelPath('bootstrap', ANY_OVERLAY))) {
+      message = `The shard's .gitignore ignores the logs directly in ${logs}/, not the overlay shards' logs in the folders below it`;
+    }
+    if (message !== null) {
       findings.push({
         severity: 'warning',
         code: 'LINT_LOGS_NOT_GITIGNORED',
-        message: !gitignore
-          ? `The shard declares a hook but installs no .gitignore, so its hooks' logs in ${logs}/ can be committed`
-          : !logsIgnored
-            ? `The shard's .gitignore does not ignore ${logs}/, where its hooks' logs land`
-            : `The shard's .gitignore ignores the logs directly in ${logs}/, not the overlay shards' logs in the folders below it`,
+        message,
         hint: `List ${logs}/ in the .gitignore at the shard's root. See docs/AUTHORING.md. An overlay shard, added beside a base with \`shardmind add\`, ships no root .gitignore: the base's covers ${SHARDMIND_DIR}/ for every shard (R5); this warning does not apply to it.`,
       });
     }
@@ -239,6 +241,9 @@ export async function lintShard(
 
   return done();
 }
+
+/** Any overlay's `<namespace>/<name>`: its hook logs land under `.shardmind/logs/<namespace>/<name>/` (R5, #405). */
+const ANY_OVERLAY = 'overlay/shard';
 
 function isComputed(value: unknown): boolean {
   return typeof value === 'string' && value.includes('{{');
