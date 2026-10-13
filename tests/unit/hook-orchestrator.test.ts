@@ -837,7 +837,7 @@ describe('runHooks with skipHooks (#199)', () => {
     await expect(fsp.access(path.join(vault, file))).rejects.toBeTruthy();
   }
 
-  it('runs no hook on install, reports each declared hook skipped, and records no fingerprint', async () => {
+  it('runs no hook on install, reports each declared hook skipped, and records the bootstrap as pending', async () => {
     await hook('bootstrap.ts', marker('bootstrapped.txt'));
     await hook('personalize.ts', marker('personalized.txt'));
     const plan = installPlan({
@@ -854,8 +854,9 @@ describe('runHooks with skipHooks (#199)', () => {
       { slot: 'bootstrap', summary: { skipped: 'skip-hooks' } },
       { slot: 'personalize', summary: { skipped: 'skip-hooks' } },
     ]);
-    expect(result.stateChanged).toBe(false);
-    expect(result.finalState).toBe(plan.state);
+    // Ruling (c): the bootstrap is pending for the next update; no fingerprint was earned.
+    expect(result.stateChanged).toBe(true);
+    expect(result.finalState.bootstrap_pending).toBe(true);
     expect(result.finalState.bootstrap_fingerprint).toBeUndefined();
   }, 30_000);
 
@@ -870,10 +871,11 @@ describe('runHooks with skipHooks (#199)', () => {
       NOOP_UI,
     );
     expect(result.outcomes).toEqual([{ slot: 'personalize', summary: { skipped: 'skip-hooks' } }]);
+    // No bootstrap declared: nothing is pending.
+    expect(result.finalState.bootstrap_pending).toBeUndefined();
   }, 30_000);
 
   it('reports a declared hook whose script is missing as absent, as a normal run does', async () => {
-    // Declared, but no script in the shard: a normal run's lookup finds it absent (null summary).
     const result = await runHooks(
       installPlan({ manifest: manifest({ personalize: '.shardmind/hooks/missing.ts' }), skipHooks: true }),
       NOOP_UI,
@@ -886,27 +888,33 @@ describe('runHooks with skipHooks (#199)', () => {
     expect(result.outcomes).toEqual([]);
   }, 30_000);
 
-  it('on update, reports a bootstrap with an unchanged fingerprint skipped too, and keeps the old fingerprint', async () => {
+  it('on update, reports an unchanged-fingerprint bootstrap skipped but leaves nothing pending', async () => {
     await hook('bootstrap.ts', marker('bootstrapped.txt'));
     await hook('post-update.ts', marker('updated.txt'));
-    const unchanged = updatePlan({
-      manifest: manifest({
-        bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v1' },
-        'post-update': '.shardmind/hooks/post-update.ts',
+    const result = await runHooks(
+      updatePlan({
+        manifest: manifest({
+          bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v1' },
+          'post-update': '.shardmind/hooks/post-update.ts',
+        }),
+        state: makeShardState({ bootstrap_fingerprint: 'v1' }),
+        skipHooks: true,
       }),
-      state: makeShardState({ bootstrap_fingerprint: 'v1' }),
-      skipHooks: true,
-    });
-    const result = await runHooks(unchanged, NOOP_UI);
+      NOOP_UI,
+    );
     await absent('bootstrapped.txt');
     await absent('updated.txt');
     expect(result.outcomes).toEqual([
       { slot: 'bootstrap', summary: { skipped: 'skip-hooks' } },
       { slot: 'post-update', summary: { skipped: 'skip-hooks' } },
     ]);
+    // The bootstrap would not have run: there is nothing to defer.
+    expect(result.finalState.bootstrap_pending).toBeUndefined();
     expect(result.finalState.bootstrap_fingerprint).toBe('v1');
+  }, 30_000);
 
-    // A changed fingerprint is not recorded either: the re-bootstrap stays pending.
+  it('on update, records a changed-fingerprint bootstrap as pending, and keeps one already pending', async () => {
+    await hook('bootstrap.ts', marker('bootstrapped.txt'));
     const changed = await runHooks(
       updatePlan({
         manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v2' } }),
@@ -915,11 +923,22 @@ describe('runHooks with skipHooks (#199)', () => {
       }),
       NOOP_UI,
     );
+    expect(changed.finalState.bootstrap_pending).toBe(true);
     expect(changed.finalState.bootstrap_fingerprint).toBe('v1');
-    expect(bootstrapShouldRerun(changed.finalState.bootstrap_fingerprint, 'v2')).toBe(true);
+
+    const stillPending = await runHooks(
+      updatePlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } }),
+        state: makeShardState({ bootstrap_pending: true }),
+        skipHooks: true,
+      }),
+      NOOP_UI,
+    );
+    await absent('bootstrapped.txt');
+    expect(stillPending.finalState.bootstrap_pending).toBe(true);
   }, 30_000);
 
-  it('dry run reports skipped (skip-hooks), not deferred', async () => {
+  it('dry run reports skipped (skip-hooks), not deferred, and records nothing', async () => {
     await hook('bootstrap.ts', marker('bootstrapped.txt'));
     const result = await runHooks(
       installPlan({
@@ -930,5 +949,85 @@ describe('runHooks with skipHooks (#199)', () => {
       NOOP_UI,
     );
     expect(result.outcomes).toEqual([{ slot: 'bootstrap', summary: { skipped: 'skip-hooks' } }]);
+    expect(result.stateChanged).toBe(false);
+    expect(result.finalState.bootstrap_pending).toBeUndefined();
+  }, 30_000);
+});
+
+/** Ruling (c) on #199: a pending bootstrap runs on the next update, whatever the fingerprints say. */
+describe('a pending bootstrap (#199)', () => {
+  const marker = (file: string) => `
+    import { writeFile } from 'node:fs/promises';
+    import { join } from 'node:path';
+    export default async function (ctx) {
+      await writeFile(join(ctx.vaultRoot, ${JSON.stringify(file)}), 'ran');
+    }
+  `;
+
+  function updatePlan(over: Partial<HookRunPlan> & { manifest: ShardManifest }): HookRunPlan {
+    return {
+      command: 'update',
+      tempDir: shardDir,
+      schema: SCHEMA,
+      vaultRoot: vault,
+      state: makeShardState(),
+      values: { user_name: 'default' },
+      modules: {},
+      previousVersion: '0.9.0',
+      newFiles: [],
+      removedFiles: [],
+      dryRun: false,
+      ...over,
+    };
+  }
+
+  it('runs a fingerprint-less bootstrap on update and clears the flag', async () => {
+    await hook('bootstrap.ts', marker('bootstrapped.txt'));
+    const result = await runHooks(
+      updatePlan({
+        // Parsed manifests hold the object form; no fingerprint, as the string form gives.
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } }),
+        state: makeShardState({ bootstrap_pending: true }),
+      }),
+      NOOP_UI,
+    );
+    expect(await fsp.readFile(path.join(vault, 'bootstrapped.txt'), 'utf-8')).toBe('ran');
+    expect(result.stateChanged).toBe(true);
+    expect(result.finalState.bootstrap_pending).toBeUndefined();
+  }, 30_000);
+
+  it('keeps the flag when the pending bootstrap fails, so the next update tries again', async () => {
+    await hook('bootstrap.ts', `export default async function () { throw new Error('boom'); }`);
+    const result = await runHooks(
+      updatePlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v1' } }),
+        state: makeShardState({ bootstrap_pending: true }),
+      }),
+      NOOP_UI,
+    );
+    expect(result.outcomes.find((o) => o.slot === 'bootstrap')?.summary?.exitCode).not.toBe(0);
+    expect(result.finalState.bootstrap_pending).toBe(true);
+    expect(result.finalState.bootstrap_fingerprint).toBeUndefined();
+  }, 30_000);
+
+  it('an up-to-date run runs only the pending bootstrap: no post-update, none reported', async () => {
+    await hook('bootstrap.ts', marker('bootstrapped.txt'));
+    await hook('post-update.ts', marker('updated.txt'));
+    const result = await runHooks(
+      updatePlan({
+        manifest: manifest({
+          bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v1' },
+          'post-update': '.shardmind/hooks/post-update.ts',
+        }),
+        state: makeShardState({ bootstrap_pending: true }),
+        upToDate: true,
+      }),
+      NOOP_UI,
+    );
+    expect(await fsp.readFile(path.join(vault, 'bootstrapped.txt'), 'utf-8')).toBe('ran');
+    await expect(fsp.access(path.join(vault, 'updated.txt'))).rejects.toBeTruthy();
+    expect(result.outcomes.map((o) => o.slot)).toEqual(['bootstrap']);
+    expect(result.finalState.bootstrap_pending).toBeUndefined();
+    expect(result.finalState.bootstrap_fingerprint).toBe('v1');
   }, 30_000);
 });

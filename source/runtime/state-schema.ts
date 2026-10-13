@@ -34,6 +34,7 @@ const ShardStateSchema = z.looseObject({
   ref: z.string().optional(),
   resolvedSha: z.string().optional(),
   bootstrap_fingerprint: z.string().optional(),
+  bootstrap_pending: z.literal(true).optional(),
 });
 
 /**
