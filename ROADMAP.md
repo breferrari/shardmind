@@ -199,7 +199,7 @@ The release pipeline, dependencies and test harness are settled: built, or decli
 | ✅ | Reach the unexercised rollback failure arms | [#292](https://github.com/breferrari/shardmind/issues/292) |
 | ✅ | Make the coverage run report reliably and include subprocess coverage | [#293](https://github.com/breferrari/shardmind/issues/293) |
 | ✅ | Typecheck the test files in CI | [#352](https://github.com/breferrari/shardmind/issues/352) |
-| ⬜ | Run the hook smoke script outside vitest | [#372](https://github.com/breferrari/shardmind/issues/372) |
+| ✅ | Run the hook smoke script outside vitest | [#372](https://github.com/breferrari/shardmind/issues/372) |
 | ✅ | Seed the adopt smoke with files obsidian-mind still has | [#391](https://github.com/breferrari/shardmind/issues/391) |
 
 ## Phase 9 — the second shard

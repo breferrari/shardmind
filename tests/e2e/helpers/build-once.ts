@@ -73,14 +73,22 @@ declare module 'vitest' {
  * rejects otherwise. Never builds — see the file header. `buildError` is the
  * global setup's failure; by default it is read from vitest's provided
  * context, which describes the repo's own `dist/` only.
+ *
+ * Outside vitest (a repo script such as `scripts/smoke-hooks.mjs`, #372) there
+ * is no global setup and no worker state to read, so only `dist/` is checked,
+ * and a missing artifact asks for `npm run build`.
  */
 export async function ensureBuilt(
   root: string = REPO_ROOT,
   buildError?: string | null,
 ): Promise<void> {
+  // inject() reads a worker's state, so only a vitest worker has one to read;
+  // VITEST alone is also inherited by processes a run starts.
+  const inVitestWorker = process.env['VITEST_WORKER_ID'] !== undefined;
   if (buildError === undefined) {
-    const { inject } = await import('vitest');
-    buildError = root === REPO_ROOT ? (inject(BUILD_ERROR_KEY) ?? null) : null;
+    // A custom root, or no worker, has no global-setup result to read.
+    buildError =
+      inVitestWorker && root === REPO_ROOT ? ((await import('vitest')).inject(BUILD_ERROR_KEY) ?? null) : null;
   }
   if (buildError !== null) {
     throw new Error(`The vitest global setup (tests/global-setup.ts) could not build dist/:
@@ -88,10 +96,11 @@ ${buildError}`);
   }
   const [missing] = await missingArtifacts(root);
   if (missing !== undefined) {
-    throw new Error(
-      `${missing} is missing. The vitest global setup (tests/global-setup.ts) builds dist/ ` +
-        'before any worker starts; run the tests through vitest with the repo config, or run `npm run build`.',
-    );
+    const viaVitest = inVitestWorker
+      ? ' The vitest global setup (tests/global-setup.ts) builds dist/ before any worker starts; ' +
+        'run the tests through vitest with the repo config, or run `npm run build`.'
+      : ' Run `npm run build` first.';
+    throw new Error(`${missing} is missing.${viaVitest}`);
   }
 }
 
