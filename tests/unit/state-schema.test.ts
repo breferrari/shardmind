@@ -88,6 +88,12 @@ describe('readState validates state.json (#343)', () => {
     expect(await corruptMessage(files({ template: 3 }))).toContain('files["Home.md"].template');
   });
 
+  it('a schema-2 file is named by its own paths, not by the schema-3 shape it migrates to (#395)', async () => {
+    const message = await corruptMessage({ ...valid(), files: { 'Home.md': { template: null, rendered_hash: 'a', ownership: 'user' } } });
+    expect(message).toContain(': files["Home.md"].ownership:');
+    expect(message).not.toContain('shards');
+  });
+
   it('a module selection other than included / excluded is STATE_CORRUPT', async () => {
     expect(await corruptMessage({ ...valid(), modules: { brain: 'maybe' } })).toContain('modules');
   });
