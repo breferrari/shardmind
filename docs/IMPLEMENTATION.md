@@ -716,7 +716,7 @@ interface RenderedFile {
 readState(vaultRoot: string): Promise<ShardState | null>
 writeState(vaultRoot: string, state: ShardState): Promise<void>
 initShardDir(vaultRoot: string): Promise<void>
-cacheTemplates(vaultRoot: string, tempDir: string): Promise<void>
+cacheTemplates(vaultRoot: string, tempDir: string, cacheDir?: string): Promise<void>   // cacheDir: vault-relative, default '.shardmind' (#396)
 cacheManifest(vaultRoot: string, manifest: ShardManifest, schema: ShardSchema): Promise<void>
 ```
 
@@ -1012,6 +1012,13 @@ interface InstallRunnerOptions {
   onProgress?: (event: ProgressEvent) => void;
   tx?: VaultTransaction;           // records every write and commits the engine metadata; none in a dry run or a test's bare install
   dryRun?: boolean;
+  target?: InstallTarget;          // where the engine metadata goes; install's default, an overlay's for add (#396)
+}
+
+interface InstallTarget {
+  cacheDir: string;                // vault-relative: '.shardmind' (install), overlayDir(ns, name) (add)
+  valuesFile: string;              // 'shard-values.yaml', overlayValuesFile(ns, name)
+  persistState(state: ShardState): Promise<void>;   // writeState; add appends the entry to shards[] via writeVaultState
 }
 
 interface InstallResult {
@@ -1432,6 +1439,8 @@ interface HookOutcome { slot: HookStage; summary: HookSummary | null; }
 **Fingerprint persistence**: when `bootstrap` runs **successfully** (`kind: 'ran'` with `exitCode === 0`), the orchestrator sets `finalState.bootstrap_fingerprint = manifest.hooks.bootstrap?.fingerprint` (raw string or `undefined`) so the next update compares against it. A failed bootstrap (non-zero exit or throw) leaves the prior fingerprint untouched so it re-runs next update.
 
 **Non-fatal throughout**: a slot that throws/times out records a `failed` outcome and does not abort later independent slots; the re-hash still runs.
+
+**An overlay's hooks** (`shardmind add`, #396): the plan is the overlay's own (its manifest, schema, values, modules and `state`, the entry `add` just wrote), with two more fields. `persist(state)` replaces the default `writeState(vaultRoot, state)` for every state write the phase makes (re-hash, fingerprint, `bootstrap_pending`): `add` writes the entry back into `shards[]` through `writeVaultState`, so the phase never writes a one-shard state over a composed vault. `logDir` (vault-relative) replaces `.shardmind/logs/`: `.shardmind/logs/<namespace>/<name>/`, so an overlay's `bootstrap.log` never overwrites the base's. The write-boundary checks judge the overlay's hooks against its own files, as each shard's hooks are judged against its own.
 
 ### 4.16b `hook-boundary.ts`
 
@@ -1970,7 +1979,7 @@ One vault transaction for the commands that write a vault (#301). A run snapshot
 
 ```typescript
 interface TransactionOptions {
-  kind: 'install' | 'update' | 'adopt';
+  kind: 'install' | 'update' | 'adopt' | 'add';
   now?: Date;
   signal?: AbortSignal;
   noPriorInstall: boolean;         // install and adopt: true
@@ -1984,6 +1993,7 @@ interface VaultTransaction {
   recordMove(from: string, to: string): Promise<void>;
   recordFolder(rel: string): Promise<void>;
   recordSetAside(abs: string, keep: boolean): Promise<BackupRecord>;
+  recordNewTree(rel: string): Promise<void>;   // add (#396): a folder the run makes whole; refused if anything is at it
   commitEngineMetadata(steps: { beforeState: () => Promise<void>; state: () => Promise<void> }): Promise<void>;
   rollback(): Promise<RollbackFailure[]>;
   commit(opts?: { oldStatePath?: string }): Promise<{ kept: BackupRecord[]; left: BackupRecord[] }>;
@@ -1992,6 +2002,7 @@ beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTran
 ```
 
 1. **Begin.** Install makes no snapshot folder: its record (introduced paths, created folders, set-asides) is kept in memory only, and a file it would overwrite has been moved aside before the run (§4.11b). No command reads a run's record after a crash, so a record on disk would have no reader; and on a reinstall the folder would sit inside the new `.shardmind/`, which restoring the old one replaces whole, so a snapshot kept there after a failed restore would be deleted. If a crash-recovery command is ever added, a durable record becomes worth it. For update and adopt, `createBackupDir(vaultRoot, now, kind)` (`state.ts`, §4.12 step 1) makes `.shardmind/backups/<kind>-<stamp>[-N]/`. Without `noPriorInstall`, the engine cache is snapshotted too: `state.json`, the cached `shard.yaml` and `shard-schema.yaml` and `shard-values.yaml` into `<dir>/cache/`, and `.shardmind/templates/` whole, followed by the marker `<dir>/templates-snapshot.json`, `{ existed }`, written only once the template copy is whole (#264). The copies run together and all settle before a failure is thrown (#274); a missing file is skipped.
+1b. **`add`** (#396) is the one kind that changes an existing vault's engine metadata without replacing it: it writes its overlay's files, a new cache folder, a new values file and `state.json`. Its snapshot folder (`backups/add-<stamp>`) holds only what it records, with no engine-cache snapshot (`noPriorInstall: true` keeps the rest of `.shardmind/` out of the rollback, which never runs `removeEngineWrites` for it). `state.json` and the overlay's values file are recorded with `recordWrite` like any file (the first snapshotted, the second introduced); the cache folder with `recordNewTree(rel)`, which refuses a path where anything exists and is removed recursively on rollback, before the created folders.
 1a. **Create the vault** (`createRoot`, install only, #333). The vault folder does not exist yet: `install-destination.ts` (§4.31) decided it and named the missing levels, outermost first. It is the last step of begin, after step 1, so nothing in begin fails after it with no rollback to undo it. Each level is made with a plain `mkdir`, so two runs racing for one name cannot both win: `EEXIST` on the vault folder itself, or something other than a folder at a parent level, is `INSTALL_DESTINATION_NOT_EMPTY` before any write, and what this begin made is removed. A parent level another run made a folder meanwhile (a link to a folder counts, as in the destination walk) is used, and not this run's to remove. Then the caller's `lock()` takes the vault lock (`acquireVaultLock`, §4.25): it lives inside the vault, so a vault that did not exist when the run planned is locked from the moment it exists. The lock is the caller's (install's `useVaultLock`): the transaction only calls it, so the write paths keep reaching the filesystem through `fsp` alone (#267). The levels it made are removed by rollback step 9, not with the vault's own created folders of step 5.6: they are outside the vault, and one left non-empty is reported.
 2. **`recordWrite(rel)`**, before every write, removal or move onto a vault path. A cancel check runs before it and after it: the record's own writes are writes, so a Ctrl+C during them stops the run before the caller's write (#249). Once per path:
    - The folders the write will create (`missingFolders`, with one `seen` map for the run) are added to the run's list, kept in memory and, with a snapshot folder, written to `<dir>/folders.json` (#258).
@@ -2086,6 +2097,9 @@ wasRolledBack(err: unknown): boolean
 rolledBackError(err: unknown, rollback: () => Promise<RollbackFailure[]>): Promise<unknown>  // what an executor throws after rolling back
 // core/flows/install.ts
 runInstallFlow(input: InstallFlowInput, io: InstallFlowIO): Promise<InstallFlowResult>
+// core/flows/add.ts (#396)
+runAddFlow(input: AddFlowInput, io: AddFlowIO): Promise<AddFlowResult>
+ownedPaths(vault: VaultState, vaultRoot: string): Map<string, string>   // path (case-folded key) → its owner: a shard, or the engine
 // core/flows/adopt.ts
 runAdoptFlow(input: AdoptFlowInput, io: AdoptFlowIO): Promise<AdoptFlowResult>
 // core/flows/update.ts
@@ -2127,7 +2141,14 @@ readUpdateTarget(vaultRoot: string, opts: { release?: string; includePrerelease?
    5. `checkExternalToolsForRun` (#138); the outputs planned with the values (`_each`, #214), the stale paths of a reinstall (#228), `assertSafeVaultPaths` (#163), the collisions, split into the user's own and a reinstall's untouched files, and the stale files split the same way.
    6. The user's own collisions: `--force` overwrites them; with a terminal and no `--yes` / `--defaults`, `io.ask({ kind: 'collision' })`, where `cancel` ends the run with `FlowCancelled`; otherwise they are backed up. (Before #302 a headless `--values` run reached the collision prompt with no terminal to show it on; it now backs up, as `--yes` does.)
    7. What moves aside, rechecked against edits made while the collision review was open (#55, #228; with no review, nothing changed since the files were classified), then `runInstallTransaction` through `runAndHooks`, with `createRoot` for a folder the install makes, whose lock is `io.lock` (§4.28 step 1a). Then the hooks (`command: 'install'`, the stale files removed as `removedFiles`) and `{ kind: 'done', … }` with the summary fields (vault, folder, file count, backups, replaced, removed, kept-stale, hooks, external tools). The temp dir is removed in a `finally`.
-10. **The adapters' shared part** (`commands/hooks/use-flow-run.ts`): every machine needs the same wiring around its flow, so one hook holds it:
+10. **The add flow** (#396, ARCHITECTURE §10.4a), in this order:
+   1. `--defaults` with `--values` is `ADD_FLAG_CONFLICT`. The vault is `resolveVaultRoot` from the working folder; none, or one with no `state.json`, is `ADD_NO_INSTALL`. Unless dry run, `io.lock()` (#253). `readVaultState`, strict (`STATE_CORRUPT` for a broken one: there is no `--force` to reinstall over it).
+   2. `prepareShard` (`resolve(ref, { command: 'add' })`). A shard the vault already lists under the same `<namespace>/<name>` is `ADD_SHARD_PRESENT`. Then the `--values` file, "Checking the shard…" (`assertShardInstallable`), and the wizard's module file counts.
+   3. The values, as install's step 4: `--yes` / `--defaults` → `answersWithoutPrompting`; no terminal: with `--values` the same, without it `ADD_NON_INTERACTIVE_WITHOUT_VALUES`; otherwise `io.ask({ kind: 'values' })`, validated.
+   4. `checkExternalToolsForRun`; the outputs planned with the values (`_each` included); `assertSafeVaultPaths`. Then ownership (R2): every planned path whose case-folded form is a key of `ownedPaths(vault)` (each shard's `files`, `shard-values.yaml`, every overlay's values file, and the `.shardmind/` prefix) is collected, and any is `ADD_PATH_OWNED`, naming each path with its owner, before any prompt or write, dry run included.
+   5. The remaining collisions are the user's own: with a terminal and no `--yes` / `--defaults`, `io.ask({ kind: 'collision' })` (`cancel` ends with `FlowCancelled`); otherwise backed up.
+   6. `runAddTransaction` through `runAndHooks`: the `add` transaction (§4.28) sets the collisions aside, `runInstall` writes the overlay's files with the overlay's `InstallTarget` (§4.11b): its cache at `overlayDir(ns, name)` (`.shardmind/shards/<ns>/<name>/`), its values at `overlayValuesFile(ns, name)` (`wx`), and its state appended to `shards[]` by `writeVaultState`, last. Then the overlay's hooks (`command: 'install'`, its own values and modules, `persist` writing its entry back into `shards[]`, logs under `.shardmind/logs/<ns>/<name>/`, §4.16a), and `{ kind: 'done', … }` with install's summary fields and the base shard's name. The temp dir is removed in a `finally`.
+11. **The adapters' shared part** (`commands/hooks/use-flow-run.ts`): every machine needs the same wiring around its flow, so one hook holds it:
    - the question the flow waits on, answered only from its own prompt (`settle(kind, outcome, index?)`, keyed by the question's kind and, for an iterated question, its index), and rejected with `FlowCancelled` when the run is superseded;
    - the run handle a Ctrl+C stops and waits for, and the hooks' abort, each set and cleared only by its own run, the handle dropped once committed; a superseded run's run abort and hooks' abort, aborted, and its lock calls inert (the lock is its successor's); the temp dir's cleanup, run on every Ctrl+C and on supersession (`useSigintRollback`);
    - the vault lock (`useVaultLock`), released when the run ends;
@@ -2191,7 +2212,7 @@ Walk up from `process.cwd()` looking for `.shardmind/state.json`. Max 20 levels.
 
 ### 5.2 `loadValues()`
 
-Read `{vaultRoot}/shard-values.yaml`. Parse with `yaml`. Return plain object. Throw if not found.
+Read `{vaultRoot}/shard-values.yaml`. Parse with `yaml`. Return plain object. Throw if not found. With `{ shard: '<namespace>/<name>' }` (#396), an overlay's: `{vaultRoot}/shard-values.<namespace>.<name>.yaml`, or the base's file when the name is the base shard's (read from `state.json`).
 
 ### 5.3 `loadState()`
 
@@ -2199,7 +2220,7 @@ Read `{vaultRoot}/.shardmind/state.json`. Parse with `JSON.parse`. Return `Shard
 
 ### 5.4 `loadSchema()`
 
-Read `{vaultRoot}/.shardmind/shard-schema.yaml`. Parse with `yaml`. Return `ShardSchema`.
+Read `{vaultRoot}/.shardmind/shard-schema.yaml`. Parse with `yaml`. Return `ShardSchema`. With `{ shard }` (#396), an overlay's cached schema, `{vaultRoot}/.shardmind/shards/<namespace>/<name>/shard-schema.yaml`, or the base's when the name is the base shard's.
 
 ### 5.5 `getIncludedModules()`
 

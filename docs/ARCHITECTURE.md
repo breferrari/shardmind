@@ -716,18 +716,19 @@ The shard's `.gitignore` (a plain file, so Invariant 1 holds) includes:
 
 ### 10.1 Command Surface
 
-Four commands for vault owners: three that write, one that reads. One more for shard authors (`validate`), which reads a shard, not a vault.
+Five commands for vault owners: four that write, one that reads. One more for shard authors (`validate`), which reads a shard, not a vault.
 
 | Command | What | Writes? |
 |---------|------|---------|
 | `shardmind` | Status + health | No |
 | `shardmind install <namespace/name> [folder]` | Install a shard into a new folder named after it, or `[folder]` (`.` for the current one, §10.6) | Yes |
+| `shardmind add <namespace/name>` | Add an overlay shard to the vault, beside the shard installed (§10.4a, composition #81) | Yes |
 | `shardmind update` | Upgrade to a newer version | Yes |
 | `shardmind adopt <namespace/name>` | Retrofit the engine onto a vault that was already cloned without shardmind | Yes |
 | `shardmind --verbose` | Detailed diagnostics | No |
 | `shardmind validate [dir \| shard]` | Check a shard before publishing it (author-facing, §10.5b) | No |
 
-No `list` (vault-local, one shard per vault, nothing to list). No `doctor` (baked into status). No `init` (v1 shards are authored by hand).
+No `list` yet: a vault held one shard, so there was nothing to list; with overlays (§10.4a) it comes with [#398](https://github.com/breferrari/shardmind/issues/398). No `doctor` (baked into status). No `init` (v1 shards are authored by hand).
 
 **Option scope.** An option written after a subcommand name belongs to that subcommand; root options (`--verbose`, `--no-update-check`) belong to the status command and are written with no subcommand. `shardmind adopt <shard> --verbose` is adopt's `--verbose`, and `shardmind --verbose` is the status command's. Commander binds program-level options anywhere on the line by default, so a root option silently shadowed every subcommand option of the same name, and the subcommand saw its default (#147). Pastel never called `enablePositionalOptions()` on the Commander program it builds, so the vendored copy (`source/cli-kit/`, #277) does, in its program builder. A flag a subcommand does not declare is then an `unknown option` error rather than being swallowed by the root, and a root option written before a subcommand (`shardmind --verbose adopt`), which would land on a root command that does not run, is passed on to the subcommand when it declares the same option and refused otherwise. Every subcommand declares both root options today, so nothing is refused.
 
@@ -883,6 +884,20 @@ Two prompts can destroy content before any of that: the **existing-install gate*
 A reinstall, from `--force` or the gate, keeps the old install until the new one has its answers: `.shardmind/` and `shard-values.yaml` are set aside only when the wizard is submitted (or the values are resolved without one), so cancelling the wizard or a bad `--values` file leaves the existing install as it was. The old install's files then collide like any other, and the user's edits to them are lost when they are replaced. Replacing is transactional: the old state, the values file and each replaced path are moved aside, restored if the install fails or is interrupted, and deleted once the new state is written, so no `.shardmind-backup-*` is left behind. Under `--dry-run` nothing moves, and a reinstall is previewed rather than refused.
 
 The summary lists the paths replaced without a backup that held content of the user's own: a file the old install wrote and the user never edited (its bytes still match the hash in the old `state.json`) is not listed.
+
+### 10.4a `shardmind add <shard>` — Add an Overlay
+
+Composition (#81) puts several shards in one vault: the base shard `install` put there, then each overlay `add` puts beside it, in install order (#396, ruled 2026-10-13). `add` works only inside a ShardMind vault (the current folder or one above it holds `.shardmind/state.json`); `install`'s refusals of an existing vault are unchanged, since adding a shard and installing a vault are different acts.
+
+It resolves and downloads the shard as `install` does, checks it the same way (`INSTALL_SHARD_INVALID` names any problem), asks its values with the wizard and module review, and writes its files. Its flags are `install`'s but `--force`: `--values`, `--defaults` (schema defaults, no wizard; refused with `--values`), `--yes`, `--dry-run`, `--skip-hooks`, `--verbose` and `--no-update-check`. There is no reinstall to force, and no `--json` yet ([#403](https://github.com/breferrari/shardmind/issues/403) adds it to `install` and `add` together).
+
+- **One owner per file.** If the overlay would write a path another shard in the vault manages, a values file, or anything under `.shardmind/`, the add is refused before any prompt or write, dry run included, with `ADD_PATH_OWNED` naming every such path and its owner. A path differing only in case counts as the same path. Merge and drift assume one owner per path.
+- **The user's own files** at the overlay's paths (owned by no shard) go through `install`'s collision review: back them up, overwrite, or cancel. `--yes`, `--defaults`, and a run with no terminal back them up.
+- **Where it goes.** The overlay's files land in the vault; its cache (`shard.yaml`, `shard-schema.yaml`, templates: its merge base) at `.shardmind/shards/<namespace>/<name>/`; its values at `shard-values.<namespace>.<name>.yaml`; its state as a new entry of `state.json`'s `shards[]`, which puts the vault at schema 3 (§8.3). The base shard's files, values, cache and entry are not touched.
+- **Hooks.** The overlay's own `bootstrap` and `personalize` run, with its own context (its values, modules and name); `--skip-hooks` records its bootstrap as pending in its own entry. The base's hooks do not run. An overlay's hook logs go to `.shardmind/logs/<namespace>/<name>/`.
+- **All or nothing.** It runs on the vault transaction: a failure or Ctrl+C before `state.json` is written puts `state.json` back as it was and removes everything the add wrote.
+
+Adding a shard the vault already holds, base or overlay, is `ADD_SHARD_PRESENT`; outside a ShardMind vault it is `ADD_NO_INSTALL`. Until status and update run across shards ([#397](https://github.com/breferrari/shardmind/issues/397)), they refuse a vault holding several (§8.3).
 
 ### 10.5 `shardmind update` — Upgrade Flow
 
@@ -1404,11 +1419,11 @@ Thin, separately exported entry point from the ShardMind npm package. Hook scrip
 ```typescript
 // source/runtime/index.ts
 
-/** Load and parse shard-values.yaml from vault root. */
-export async function loadValues(): Promise<Record<string, unknown>>;
+/** Load and parse shard-values.yaml from vault root; with { shard }, that shard's values file (#396). */
+export async function loadValues(opts?: { shard?: string }): Promise<Record<string, unknown>>;
 
-/** Load and parse shard-schema.yaml from .shardmind/ cache. */
-export async function loadSchema(): Promise<ShardSchema>;
+/** Load and parse shard-schema.yaml from .shardmind/ cache; with { shard }, that shard's cached schema (#396). */
+export async function loadSchema(opts?: { shard?: string }): Promise<ShardSchema>;
 
 /** Validate values against schema. Returns { valid, errors }. */
 export function validateValues(values: Record<string, unknown>, schema: ShardSchema): ValidationResult;

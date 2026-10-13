@@ -124,6 +124,10 @@ shardmind built locally against Node `<node --version>`.
 obsidian-mind clone: tag `<tag>` at `<sha>` from `https://github.com/breferrari/obsidian-mind`.
 ```
 
+## Changes that ship together
+
+- **`shardmind add` (#396) ships only with #397.** `add` makes a vault hold several shards, and until #397 `status` and `update` refuse such a vault (`STATE_UNSUPPORTED_VERSION`, "several shards"). A release whose CHANGELOG lists `shardmind add` must also list status and update across shards; otherwise hold it.
+
 ## When the gate may relax
 
 Track via [#112](https://github.com/breferrari/shardmind/issues/112) and any follow-up issue. Relaxation criteria, in order from cheapest to most ambitious:
