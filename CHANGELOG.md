@@ -8,6 +8,13 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (composition, part 1: `state.json` schema 3 — #395)
+
+- **ShardMind reads `state.json` schema 3**, the shape of a vault that holds several shards: `{ "schema_version": 3, "shards": [...] }`, the base first. Nothing writes it yet; adding a shard to a vault comes next (#396). A vault with one shard stays at schema 2, byte for byte.
+- A command that handles one shard refuses a vault holding several with `STATE_UNSUPPORTED_VERSION`, rather than reading only its base shard.
+- The runtime's `loadState()` returns the base shard's state, and `loadState({ shard: '<namespace>/<name>' })` returns a named one.
+- A `state.json` from a newer ShardMind now says "this ShardMind reads up to 3", and `error.details.supportedSchemaVersion` is 3.
+
 ### Added (`--skip-hooks` on install, update and adopt — #199)
 
 - **`--skip-hooks` runs no hook**, for a run that should only reconcile files (an agent adopting a vault, a CI update). Each hook the shard declares is reported as skipped: "Bootstrap hook skipped (--skip-hooks)." in the summary, and `{ "outcome": "skipped", "reason": "skip-hooks" }` under `--json`.
