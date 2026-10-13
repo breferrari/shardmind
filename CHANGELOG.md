@@ -18,7 +18,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **Hooks can read an overlay's files.** The runtime's `loadValues` and `loadSchema` take `{ shard }`, so an overlay's hook reads its own values and schema.
 - **A failed or cancelled add leaves the vault as it was**, `state.json` included.
 - New error codes: `ADD_NO_INSTALL`, `ADD_SHARD_PRESENT`, `ADD_PATH_OWNED`, `ADD_FLAG_CONFLICT` and `ADD_NON_INTERACTIVE_WITHOUT_VALUES`.
-- **Release:** ships only with #397 (status and update across shards). Until then `status` and `update` refuse a vault holding several shards (RELEASE-SMOKE).
+- **Release:** ships only with #406 and #407 (status and update across shards, #397). Until then `status` and `update` refuse a vault holding several shards (RELEASE-SMOKE).
 
 ### Added (composition, part 1: `state.json` schema 3 — #395)
 

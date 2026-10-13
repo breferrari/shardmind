@@ -290,7 +290,9 @@ Engine capability from the original plan. These were declined on 2026-10-04/05 o
 | ⬜ | Shard composition (several shards per vault) | [#81](https://github.com/breferrari/shardmind/issues/81) |
 | ✅ | Bring state.json to schema 3 with a shards list | [#395](https://github.com/breferrari/shardmind/issues/395) |
 | ⬜ | Add an overlay shard to a vault with shardmind add | [#396](https://github.com/breferrari/shardmind/issues/396) |
-| ⬜ | Run status, update and adopt across the shards of a vault | [#397](https://github.com/breferrari/shardmind/issues/397) |
+| ⬜ | Run status, update and adopt across the shards of a vault (split into #406, #407) | [#397](https://github.com/breferrari/shardmind/issues/397) |
+| ⬜ | Report each shard of a vault in status | [#406](https://github.com/breferrari/shardmind/issues/406) |
+| ⬜ | Update every shard of a vault, or one | [#407](https://github.com/breferrari/shardmind/issues/407) |
 | ⬜ | List a vault's shards with shardmind list | [#398](https://github.com/breferrari/shardmind/issues/398) |
 | ⬜ | Add --json to install and add | [#403](https://github.com/breferrari/shardmind/issues/403) |
 | ⬜ | Let an overlay shard ship a .gitignore beside the base's | [#405](https://github.com/breferrari/shardmind/issues/405) |
