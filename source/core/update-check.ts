@@ -96,8 +96,13 @@ export const TTL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 4000;
 const CACHE_SCHEMA_VERSION = 1 as const;
 
-function cachePath(vaultRoot: string): string {
-  return path.join(vaultRoot, SHARDMIND_DIR, CACHE_FILENAME);
+/**
+ * `cacheDir`: the shard's engine folder (vault-relative), `.shardmind/` for the
+ * base or an overlay's own (#406), so each shard of a vault keeps its own
+ * entry and two never evict each other's answer.
+ */
+function cachePath(vaultRoot: string, cacheDir: string = SHARDMIND_DIR): string {
+  return path.join(vaultRoot, cacheDir, CACHE_FILENAME);
 }
 
 /**
@@ -110,8 +115,8 @@ function cachePath(vaultRoot: string): string {
  * Never throws on cache pathology — pathology here is a status-UX degradation,
  * not a user-facing failure mode.
  */
-export async function readCache(vaultRoot: string): Promise<ReadCacheResult> {
-  const filePath = cachePath(vaultRoot);
+export async function readCache(vaultRoot: string, cacheDir?: string): Promise<ReadCacheResult> {
+  const filePath = cachePath(vaultRoot, cacheDir);
 
   let raw: string;
   try {
@@ -162,8 +167,8 @@ export async function readCache(vaultRoot: string): Promise<ReadCacheResult> {
  * the fetch itself succeeded, the user gets the live answer, and the next
  * invocation will just re-fetch.
  */
-export async function writeCache(vaultRoot: string, entry: UpdateCheck): Promise<void> {
-  const filePath = cachePath(vaultRoot);
+export async function writeCache(vaultRoot: string, entry: UpdateCheck, cacheDir?: string): Promise<void> {
+  const filePath = cachePath(vaultRoot, cacheDir);
   const dir = path.dirname(filePath);
   // Temp name includes pid to avoid collisions with a second writer in the
   // same millisecond. Rename is atomic: concurrent writers can't produce an
@@ -233,12 +238,13 @@ export async function getLatestVersion(
   vaultRoot: string,
   source: string,
   now: number = Date.now(),
+  cacheDir?: string,
 ): Promise<UpdateCheckResult> {
   if (!source.startsWith('github:')) {
     return { kind: 'unknown', reason: 'unsupported-source' };
   }
 
-  const { cache: cached, corruptHealed } = await readCache(vaultRoot);
+  const { cache: cached, corruptHealed } = await readCache(vaultRoot, cacheDir);
 
   // `attachHealed` stamps the corruption-healed flag onto any result we
   // return, so a one-time corrupt read surfaces in verbose status output
@@ -282,7 +288,7 @@ export async function getLatestVersion(
     checked_at,
     source,
     latest_version: latest,
-  });
+  }, cacheDir);
 
   return attachHealed({ kind: 'fresh', latest_version: latest, checked_at });
 }
@@ -298,6 +304,7 @@ export async function primeLatestVersion(
   source: string,
   latest_version: string,
   now: number = Date.now(),
+  cacheDir?: string,
 ): Promise<void> {
   if (!source.startsWith('github:')) return;
   if (!latest_version || typeof latest_version !== 'string') return;
@@ -307,7 +314,7 @@ export async function primeLatestVersion(
     checked_at: new Date(clamp(now)).toISOString(),
     source,
     latest_version,
-  });
+  }, cacheDir);
 }
 
 function isFresh(cache: UpdateCheck, now: number): boolean {
