@@ -1903,7 +1903,7 @@ staying hermetic. No test reaches the public internet.
 |------|-------------|-------------|
 | **Dependency fetching** | Shard authors vendor deps in v0.1. Recursive download loop adds complexity. | `registry.ts` gains a `fetchDependencies()` method. |
 | **Uninstall / eject** | Manual for v0.1: delete `.shardmind/` and `shard-values.yaml`. Vault keeps working. | `shardmind eject` command. ShardMind is additive, not load-bearing. |
-| **Shard composition** | One shard per vault in v0.1. `state.json` is at `schema_version: 2` (#102); composition bumps it to 3 with `shards[]`, through a `state-migrator.ts` rule (§8.2). | Affects state.json design, module conflict resolution, partial rendering. |
+| **Shard composition** | One shard per vault in v0.1. `state.json` is at `schema_version: 2` (#102); composition bumps it to 3 with `shards[]`, through a `state-migrator.ts` rule (§8.2). | Affects state.json design, module conflict resolution, partial rendering. The command, path ownership, update order and hook order are ruled in [`SHARD-LAYOUT.md` §Composition's rulings](SHARD-LAYOUT.md#out-of-scope-and-planned) (2026-10-13; #395–#398). |
 | **Structural variants** | Different purposes need different folder structures. For v0.1: different purposes = different shards. | `modules.structure` with purpose-driven variants. Reshape doc is the design spec. |
 | **SOUL guided creation** | Ship as empty template in v0.1. | `guided_files` in schema, third install phase. |
 | **`shardmind init`** | For shard authors. You are the first shard author. Build by hand. | Scaffolds `.shardmind/shard.yaml`, `.shardmind/shard-schema.yaml` and `.shardmindignore` into an existing vault from prompts. |
