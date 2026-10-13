@@ -59,7 +59,7 @@ export async function runUpdateJson(
     if (result.kind === 'up-to-date') {
       return options.dryRun
         ? upToDatePlanResult({ dryRun: true, version: result.state.version })
-        : upToDateRunResult(result.state.version);
+        : upToDateRunResult(result.state.version, result.hooks);
     }
     return updatePlanResult(result.plan, { dryRun: true });
   });

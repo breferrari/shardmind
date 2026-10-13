@@ -43,6 +43,11 @@ async function fingerprint(vault: Vault): Promise<unknown> {
   return state['bootstrap_fingerprint'];
 }
 
+async function pending(vault: Vault): Promise<unknown> {
+  const state = JSON.parse(await fs.readFile(path.join(vault.root, '.shardmind', 'state.json'), 'utf-8')) as Record<string, unknown>;
+  return state['bootstrap_pending'];
+}
+
 async function newVault(prefix: string): Promise<{ vault: Vault; values: string }> {
   const vault = await createEmptyVault(prefix);
   vaults.push(vault);
@@ -99,7 +104,7 @@ afterAll(async () => {
 });
 
 describe('--skip-hooks (#199)', () => {
-  it('install runs no hook, says each was skipped, records no fingerprint; the next update bootstraps', async () => {
+  it('install runs no hook and owes the bootstrap; a plain update, already up to date, runs it', async () => {
     const { vault, values } = await newVault('skip-install');
     const install = await run(vault, ['install', REF, '.', '--yes', '--values', values, '--skip-hooks']);
     expect(install.exitCode, install.stderr).toBe(0);
@@ -108,13 +113,28 @@ describe('--skip-hooks (#199)', () => {
     expect(install.stdout).toContain('Bootstrap hook skipped (--skip-hooks).');
     expect(install.stdout).toContain('Personalize hook skipped (--skip-hooks).');
     expect(await fingerprint(vault)).toBeUndefined();
+    expect(await pending(vault)).toBe(true);
 
-    // Invariant 4: no fingerprint was recorded, so the next run with hooks bootstraps.
-    stub.setLatest(SLUG, '0.2.0');
+    // Ruling (c): still on 0.1.0, nothing to update, yet the owed bootstrap runs.
     const update = await run(vault, ['update', '--yes']);
     expect(update.exitCode, update.stderr).toBe(0);
+    expect(update.stdout).toMatch(/up to date/i);
     expect(await vault.exists('bootstrapped.txt')).toBe(true);
+    expect(await pending(vault)).toBeUndefined();
     expect(await fingerprint(vault)).toBe('v1');
+    // A skipped personalize is skipped for good: update never runs it.
+    expect(await vault.exists('personalized.txt')).toBe(false);
+  }, 120_000);
+
+  it('an up-to-date update --json reports the owed bootstrap it ran', async () => {
+    const { vault, values } = await newVault('skip-uptodate-json');
+    const install = await run(vault, ['install', REF, '.', '--yes', '--values', values, '--skip-hooks']);
+    expect(install.exitCode, install.stderr).toBe(0);
+    const doc = documentOf(await run(vault, ['update', '--json']));
+    expect(doc.ok).toBe(true);
+    expect(doc.result.hooks).toEqual([{ slot: 'bootstrap', outcome: 'completed', exitCode: 0 }]);
+    expect(await vault.exists('bootstrapped.txt')).toBe(true);
+    expect(await pending(vault)).toBeUndefined();
   }, 120_000);
 
   it('update --json --skip-hooks reports bootstrap and post-update skipped with the reason, and keeps the fingerprint', async () => {
@@ -136,7 +156,7 @@ describe('--skip-hooks (#199)', () => {
     expect(await fingerprint(vault)).toBe('v1');
   }, 120_000);
 
-  it('adopt --json --skip-hooks reports each install-side hook skipped, and records no fingerprint', async () => {
+  it('adopt --json --skip-hooks reports each install-side hook skipped, and owes the bootstrap', async () => {
     const { vault, values } = await newVault('skip-adopt');
     const doc = documentOf(await run(vault, ['adopt', REF, '--json', '--yes', '--values', values, '--skip-hooks']));
     expect(doc.ok).toBe(true);
@@ -146,5 +166,6 @@ describe('--skip-hooks (#199)', () => {
     ]);
     expect(await vault.exists('bootstrapped.txt')).toBe(false);
     expect(await fingerprint(vault)).toBeUndefined();
+    expect(await pending(vault)).toBe(true);
   }, 120_000);
 });

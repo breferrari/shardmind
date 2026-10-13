@@ -444,8 +444,11 @@ export function updateRunResult(input: {
   };
 }
 
-/** An up-to-date vault's real run: nothing written, marked, with its version. */
-export function upToDateRunResult(version: string): UpdateRunResult {
+/**
+ * An up-to-date vault's real run: nothing written, marked, with its version.
+ * `hooks` is the bootstrap it ran when one was owed (#199); usually none.
+ */
+export function upToDateRunResult(version: string, hooks: readonly HookOutcome[] = []): UpdateRunResult {
   return {
     dryRun: false,
     fromVersion: version,
@@ -454,8 +457,8 @@ export function upToDateRunResult(version: string): UpdateRunResult {
     counts: emptyUpdatePlanCounts(),
     files: [],
     backupDir: null,
-    hooks: [],
-    warnings: { migrations: [], externalTools: [], hookBoundary: [] },
+    hooks: jsonRunHooks(hooks),
+    warnings: { migrations: [], externalTools: [], hookBoundary: hookBoundaryWarnings(hooks) },
     durationMs: 0,
   };
 }

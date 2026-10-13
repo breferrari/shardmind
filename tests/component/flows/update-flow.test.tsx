@@ -43,6 +43,7 @@ const RENAME_REF = `github:${RENAME_SLUG}`;
 const TOOLS_SLUG = 'acme/update-external-tools';
 const TOOLS_REF = `github:${TOOLS_SLUG}`;
 const SKIP_HOOKS_SLUG = 'flowtest/update-skip-hooks';
+const OWED_BOOTSTRAP_SLUG = 'flowtest/update-owed-bootstrap';
 
 describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)', () => {
   const getCtx = setupFlowSuite({
@@ -76,6 +77,10 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         latest: '0.1.0',
       },
       [SKIP_HOOKS_SLUG]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
+      [OWED_BOOTSTRAP_SLUG]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
@@ -242,6 +247,48 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
       await fs.rm(dir, { recursive: true, force: true });
     }
   }
+
+  it('an up-to-date update runs a bootstrap a skipped run owes, shows it, and clears it (#199)', async () => {
+    const { stub } = getCtx();
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'owed-bootstrap-tar-'));
+    const tar = await buildCustomTarball({
+      version: '0.1.0',
+      prefix: 'owed-bootstrap-0.1.0',
+      manifestOverrides: { hooks: { bootstrap: 'hooks/bootstrap.ts' }, name: 'update-owed-bootstrap', namespace: 'flowtest' },
+      outDir: tmpDir,
+      mutate: async (dir) => {
+        await fs.mkdir(path.join(dir, 'hooks'), { recursive: true });
+        await fs.writeFile(
+          path.join(dir, 'hooks', 'bootstrap.ts'),
+          "import { writeFile } from 'node:fs/promises';\nimport { join } from 'node:path';\n" +
+            "export default async function (ctx) { await writeFile(join(ctx.vaultRoot, 'bootstrapped.txt'), 'ran'); }\n",
+        );
+      },
+    });
+    stub.setVersion(OWED_BOOTSTRAP_SLUG, '0.1.0', tar);
+    stub.setLatest(OWED_BOOTSTRAP_SLUG, '0.1.0');
+    const vault = await createInstalledVault({ stub, shardRef: `github:${OWED_BOOTSTRAP_SLUG}`, values: DEFAULT_VALUES, prefix: 'owed-bootstrap', fresh: true });
+    try {
+      // The state a `install --skip-hooks` leaves: the bootstrap owed, its marker never written.
+      await fs.rm(path.join(vault.root, 'bootstrapped.txt'), { force: true });
+      const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as Record<string, unknown>;
+      await vault.writeFile('.shardmind/state.json', JSON.stringify({ ...state, bootstrap_pending: true }, null, 2));
+
+      const r = mountUpdate({ vaultRoot: vault.root });
+      const frame = await waitFor(
+        r.lastFrame,
+        (f) => /Already up to date/.test(f) && f.includes('Bootstrap hook completed.'),
+        30_000,
+      );
+      expect(frame).toContain('Bootstrap hook completed.');
+      expect(await vault.readFile('bootstrapped.txt')).toBe('ran');
+      const after = JSON.parse(await vault.readFile('.shardmind/state.json')) as Record<string, unknown>;
+      expect(after['bootstrap_pending']).toBeUndefined();
+    } finally {
+      await vault.cleanup();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it('--skip-hooks updates and the summary reports the declared post-update skipped (#199)', async () => {
     const { stub } = getCtx();

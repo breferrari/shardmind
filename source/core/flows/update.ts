@@ -48,7 +48,7 @@ import type { HookOutcome } from '../hook-orchestrator.js';
 import { prepareShard } from './prepare-shard.js';
 import { validateValues } from './values.js';
 import { FlowCancelled } from './cancelled.js';
-import { runAndHooks, type FlowRunIO } from './run.js';
+import { runAndHooks, runHookPhase, type FlowRunIO } from './run.js';
 
 export interface UpdateFlowInput {
   vaultRoot: string;
@@ -126,7 +126,8 @@ export interface UpdateFlowIO extends FlowRunIO {
 }
 
 export type UpdateFlowResult =
-  | { kind: 'up-to-date'; manifest: ShardManifest; state: ShardState }
+  /** `hooks`: an owed bootstrap the up-to-date run ran (#199); usually none. */
+  | { kind: 'up-to-date'; manifest: ShardManifest; state: ShardState; hooks: HookOutcome[] }
   | { kind: 'plan'; plan: UpdatePlan }
   | {
       kind: 'done';
@@ -189,7 +190,31 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
     const upToDate = state.ref
       ? state.resolvedSha === shard.resolved.ref?.commit
       : shard.manifest.version === state.version && shard.tarballSha256 === state.tarball_sha256;
-    if (upToDate) return { kind: 'up-to-date', manifest: shard.manifest, state };
+    if (upToDate) {
+      // Nothing to update, but a bootstrap a --skip-hooks run skipped is
+      // owed (#199, ruling (c)): run it on the shard just fetched. A dry run
+      // runs nothing; under --skip-hooks it is reported skipped and stays owed.
+      if (state.bootstrap_pending !== true || dryRun) {
+        return { kind: 'up-to-date', manifest: shard.manifest, state, hooks: [] };
+      }
+      const hooks = await runHookPhase(io, {
+        command: 'update',
+        tempDir: shard.tempDir,
+        manifest: shard.manifest,
+        schema: shard.schema,
+        vaultRoot,
+        state,
+        values: await loadCurrentValues(vaultRoot),
+        modules: state.modules,
+        previousVersion: state.version,
+        newFiles: [],
+        removedFiles: [],
+        dryRun: false,
+        skipHooks: input.skipHooks,
+        upToDate: true,
+      });
+      return { kind: 'up-to-date', manifest: shard.manifest, state, hooks };
+    }
 
     io.phase({ kind: 'loading', message: 'Loading current values…' });
     const oldValues = await loadCurrentValues(vaultRoot);
