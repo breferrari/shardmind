@@ -496,7 +496,7 @@ export async function removeEngineWrites(
  * leaves no folder it made on the way (`.shardmind/`, `backups/`): it runs
  * before the run's rollback exists, so it cleans up after itself (#269).
  */
-export async function createBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt'): Promise<string> {
+export async function createBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt' | 'add'): Promise<string> {
   const madeOnTheWay = await missingFolders(vaultRoot, [`${SHARDMIND_DIR}/backups/${kind}`]);
   try {
     return await allocateBackupDir(vaultRoot, now, kind);
@@ -507,10 +507,11 @@ export async function createBackupDir(vaultRoot: string, now: Date, kind: 'updat
   }
 }
 
-async function allocateBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt'): Promise<string> {
+async function allocateBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt' | 'add'): Promise<string> {
   const stamp = now.toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
   const base = path.join(vaultRoot, SHARDMIND_DIR, 'backups', `${kind}-${stamp}`);
-  const code = kind === 'update' ? 'UPDATE_WRITE_FAILED' : 'ADOPT_WRITE_FAILED';
+  // add writes an overlay the way install writes a shard (#396).
+  const code = kind === 'update' ? 'UPDATE_WRITE_FAILED' : kind === 'adopt' ? 'ADOPT_WRITE_FAILED' : 'INSTALL_WRITE_FAILED';
   let parentsCreated = false;
   for (let i = 0; i < 1000; i++) {
     const candidate = i === 0 ? base : `${base}-${i}`;
@@ -541,7 +542,7 @@ async function allocateBackupDir(vaultRoot: string, now: Date, kind: 'update' | 
   );
 }
 
-function backupDirError(kind: 'update' | 'adopt', code: 'UPDATE_WRITE_FAILED' | 'ADOPT_WRITE_FAILED', err: unknown): ShardMindError {
+function backupDirError(kind: 'update' | 'adopt' | 'add', code: 'UPDATE_WRITE_FAILED' | 'ADOPT_WRITE_FAILED' | 'INSTALL_WRITE_FAILED', err: unknown): ShardMindError {
   // A full disk or a locked folder keeps its own hint (#313).
   return wrapWriteError(
     code,

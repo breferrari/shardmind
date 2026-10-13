@@ -50,7 +50,14 @@ import {
 import { reasonOf, type RollbackFailure } from './rollback-report.js';
 
 export interface TransactionOptions {
-  kind: 'install' | 'update' | 'adopt';
+  /**
+   * `add` (#396) changes an existing vault's engine metadata without
+   * replacing it: no engine-cache snapshot, since it writes only the
+   * overlay's own cache (`recordNewTree`) and records `state.json` like any
+   * file. It runs with `noPriorInstall: false`, so nothing of `.shardmind/`
+   * it did not record is touched by its rollback.
+   */
+  kind: 'install' | 'update' | 'adopt' | 'add';
   now?: Date;
   signal?: AbortSignal;
   /**
@@ -105,6 +112,12 @@ export interface VaultTransaction {
    * restored by a rollback and discarded by `commit`.
    */
   recordSetAside(abs: string, keep: boolean): Promise<BackupRecord>;
+  /**
+   * Before making the folder `rel` (vault-relative) and everything in it, as
+   * `add` makes an overlay's cache (#396): refused when anything is at the
+   * path; removed whole by a rollback, then the folders above it it made.
+   */
+  recordNewTree(rel: string): Promise<void>;
   /** The engine's own writes; `state.json` last, after the last cancel check. */
   commitEngineMetadata(steps: { beforeState: () => Promise<void>; state: () => Promise<void> }): Promise<void>;
   /** Undo the run; never throws. */
@@ -128,7 +141,7 @@ const TEMPLATES_SNAPSHOT_MARKER = 'templates-snapshot.json';
 
 export function beginTransaction(
   vaultRoot: string,
-  opts: TransactionOptions & { kind: 'update' | 'adopt' },
+  opts: TransactionOptions & { kind: 'update' | 'adopt' | 'add' },
 ): Promise<SnapshotTransaction>;
 export function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction>;
 export async function beginTransaction(vaultRoot: string, opts: TransactionOptions): Promise<VaultTransaction> {
@@ -142,7 +155,9 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
   // on a reinstall the folder would sit in the `.shardmind/` that restoring
   // the old one replaces whole (§4.28 step 1).
   const dir = opts.kind === 'install' ? null : await createBackupDir(vaultRoot, now, opts.kind);
-  if (dir !== null && !opts.noPriorInstall) await snapshotEngineCache(vaultRoot, dir);
+  // add writes no part of the engine cache it would have to restore (#396).
+  const snapshotsCache = dir !== null && !opts.noPriorInstall && opts.kind !== 'add';
+  if (snapshotsCache) await snapshotEngineCache(vaultRoot, dir);
   const filesDir = dir === null ? null : path.join(dir, 'files');
   const stamp = now.toISOString().replace(/:/g, '-').replace(/\..+$/, '');
   const snapshotted = new Set<string>();
@@ -152,6 +167,8 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
   // One answer per folder for the whole run (#258).
   const seen = new Map<string, boolean>();
   const setAside: Array<BackupRecord & { keep: boolean }> = [];
+  // Folders this run makes whole (`recordNewTree`), removed recursively.
+  const newTrees: string[] = [];
   // Engine entries are the rollback's to remove only once their commit began.
   let engineStarted = false;
 
@@ -244,6 +261,14 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
       }),
     recordFolder: (rel) => guarded(() => recordFolders([], [rel])),
     recordSetAside: (abs, keep) => guarded(() => moveAside(abs, keep)),
+    recordNewTree: (rel) =>
+      guarded(async () => {
+        if (await pathExists(path.join(vaultRoot, rel))) {
+          throw new ShardMindError(`${rel} already exists`, 'INSTALL_WRITE_FAILED', 'Something is at the folder this run makes. Nothing was written there.');
+        }
+        await recordFolders([], [rel]);
+        newTrees.push(rel);
+      }),
 
     async commitEngineMetadata(steps) {
       throwIfCancelled(opts.signal);
@@ -279,7 +304,15 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
       }
       if (dir !== null && filesDir !== null) {
         await restoreTree(filesDir, vaultRoot, failures);
-        if (!opts.noPriorInstall) await restoreEngineCache(vaultRoot, dir, path.join(dir, 'cache'), failures);
+        if (snapshotsCache) await restoreEngineCache(vaultRoot, dir, path.join(dir, 'cache'), failures);
+      }
+      // Before the created folders, which hold them.
+      for (const rel of newTrees) {
+        try {
+          await fsp.rm(path.join(vaultRoot, rel), { recursive: true, force: true });
+        } catch (err) {
+          failures.push({ path: rel, reason: `remove failed: ${reasonOf(err)}` });
+        }
       }
       // The engine entries at their paths are the run's once their commit
       // began: the others were set aside, and come back below.
