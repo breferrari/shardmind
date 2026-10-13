@@ -414,6 +414,8 @@ A Ctrl+C rollback that could not restore everything prints the same list to stde
 
 **Remedy:** Fix the arguments; `shardmind <command> --help` lists them.
 
+Also raised by the runtime (#396): `loadValues` or `loadSchema` given `{ shard }` naming no shard of the vault (`loadState` and `getIncludedModules` answer `null` and `[]` instead), and the overlay path helpers given a name that is not `<namespace>/<name>`. Name one of the shards `state.json` lists, or leave the name out to read the base shard.
+
 ## Install command flags
 
 Thrown during install's pre-flight, before any network call: by the install flow (`source/core/flows/install.ts`), or, for where the vault goes (`INSTALL_DESTINATION_NOT_EMPTY`, `INSTALL_INSIDE_VAULT`), by `source/core/install-destination.ts` before the run starts.
@@ -455,6 +457,36 @@ The engine refuses rather than falling back to schema defaults, because a silent
 **Meaning:** `shardmind adopt` ran without an interactive terminal and without `--values`. Same rule as `INSTALL_NON_INTERACTIVE_WITHOUT_VALUES`: the engine refuses rather than recording schema defaults nobody chose over a vault that already has real content.
 
 **Remedy:** Pass `--values <file>` to supply answers, or `--yes` to accept schema defaults deliberately. `--values` alone is sufficient without a TTY.
+
+### `ADD_NO_INSTALL`
+
+**Meaning:** `shardmind add <shard>` adds an overlay to a ShardMind vault (#396), and no folder from the current one up holds `.shardmind/state.json`.
+
+**Remedy:** `cd` into the vault first. To start a vault, `shardmind install <shard>`; to bring the engine to a clone, `shardmind adopt <shard>`.
+
+### `ADD_SHARD_PRESENT`
+
+**Meaning:** The vault already holds the shard `add` was given, as its base shard or as an overlay (#396). A vault holds each shard once; its state is one entry per shard.
+
+**Remedy:** To move it to a newer version, use `shardmind update`.
+
+### `ADD_PATH_OWNED`
+
+**Meaning:** The overlay would write a path another shard in the vault already manages, or a path the engine owns (a values file, or anything under `.shardmind/`). Each file has one owner, since merge and drift assume it (#396, ruled 2026-10-13). A path that differs only in case counts as the same path. Refused before any prompt or write, dry run included; the message names every such path and its owner.
+
+**Remedy:** The two shards cannot share that file. The overlay's author can move it, or exclude it in the overlay's `.shardmindignore`; or leave the overlay out of this vault.
+
+### `ADD_FLAG_CONFLICT`
+
+**Meaning:** `shardmind add` was given `--defaults` with `--values <file>`. `--defaults` uses the overlay's schema defaults for every value, and `--values` would override them.
+
+**Remedy:** Drop one of the two flags.
+
+### `ADD_NON_INTERACTIVE_WITHOUT_VALUES`
+
+**Meaning:** `shardmind add` ran without an interactive terminal and without `--values`, `--yes` or `--defaults`. Same rule as `INSTALL_NON_INTERACTIVE_WITHOUT_VALUES`: the engine refuses rather than recording schema defaults nobody chose.
+
+**Remedy:** Pass `--values <file>` to supply answers, or `--yes` / `--defaults` to accept the schema defaults deliberately.
 
 ### `INSTALL_SHARD_INVALID`
 

@@ -39,6 +39,8 @@ interface SummaryProps {
   /** Unmet optional tools, or the dry-run note (#138); from `checkExternalToolsForRun`. */
   externalTools?: readonly string[];
   dryRun?: boolean;
+  /** `shardmind add` (#396): the vault's base shard, `<namespace>/<name>`, the overlay was added beside. */
+  addedTo?: string;
 }
 
 export default function Summary({
@@ -54,6 +56,7 @@ export default function Summary({
   hooks,
   externalTools = [],
   dryRun,
+  addedTo,
 }: SummaryProps) {
   const seconds = (durationMs / 1000).toFixed(1);
   const openCmd = openCommandForPlatform(vaultRoot);
@@ -61,9 +64,13 @@ export default function Summary({
   return (
     <Box flexDirection="column" gap={1}>
       <StatusMessage variant={dryRun ? 'info' : 'success'}>
-        {dryRun
-          ? `Dry run complete — ${fileCount} files would be written${folder === null ? '' : ` into ${folder}`}`
-          : `Installed ${manifest.namespace}/${manifest.name}@${manifest.version} — ${fileCount} files in ${seconds}s`}
+        {addedTo !== undefined
+          ? dryRun
+            ? `Dry run complete — ${fileCount} files would be added beside ${addedTo}`
+            : `Added ${manifest.namespace}/${manifest.name}@${manifest.version} beside ${addedTo} — ${fileCount} files in ${seconds}s`
+          : dryRun
+            ? `Dry run complete — ${fileCount} files would be written${folder === null ? '' : ` into ${folder}`}`
+            : `Installed ${manifest.namespace}/${manifest.name}@${manifest.version} — ${fileCount} files in ${seconds}s`}
       </StatusMessage>
 
       <PathList

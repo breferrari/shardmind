@@ -434,6 +434,15 @@ A renamed file is planned at its new path as the old one would have been at the 
 
 A ShardMind engine ignores a `shard.yaml` or `shard-schema.yaml` field it does not know: it installs the shard as if the field were absent, with no error. A shard that uses a field added after 1.0 must therefore declare `requires.shardmind` with the version that added it (for example `requires.shardmind: ">=1.2.0"`). An older engine then refuses the shard with `SHARDMIND_VERSION_MISMATCH` before any vault write, instead of installing a vault the author did not mean. Reserved in 1.0 by #370; the gate itself is #121's.
 
+## Overlay shards — `shardmind add <shard>`
+
+Composition (#81) puts several shards in one vault: the base shard `install` put there, then each overlay `add` puts beside it, in install order (#396, ruled 2026-10-13; ARCHITECTURE §10.4a).
+
+- **`add` works only inside a ShardMind vault.** `install`'s refusals of an existing vault are unchanged (`INSTALL_INSIDE_VAULT`, the existing-install gate and the rest): adding a shard and installing a vault are different acts.
+- **One owner per file.** An overlay that would write a path another shard already manages, a values file or anything under `.shardmind/` is refused before any write, dry run included, with `ADD_PATH_OWNED` naming every such path and its owner. A path that differs only in case is the same path. Merge and drift assume one owner per path. The user's own files at the overlay's paths go through `install`'s collision review.
+- **An overlay keeps its own everything:** its cache (merge base) at `.shardmind/shards/<namespace>/<name>/`, its values at `shard-values.<namespace>.<name>.yaml`, its entry in `state.json`'s `shards[]` (schema 3), its hook logs at `.shardmind/logs/<namespace>/<name>/`.
+- **Hooks:** `add` runs the overlay's own `bootstrap` and `personalize` with its own context (its values, modules and name); Invariants 2 and 4 hold per shard. The base's hooks do not run. A hook reads its shard's state, values and schema with `loadState`, `loadValues` and `loadSchema` given `{ shard: '<namespace>/<name>' }`.
+
 ## Out of scope and planned
 
 Criterion: **obsidian-mind v6 does not need these to install, configure, or upgrade cleanly.** Each is a clean additive extension: adding it later forces no retroactive design change.
@@ -456,10 +465,9 @@ Criterion: **obsidian-mind v6 does not need these to install, configure, or upgr
 - **`.shardmind/shards/`** is reserved for each overlay's cached `shard.yaml`, `shard-schema.yaml` and templates, at `.shardmind/shards/<namespace>/<name>/`. No engine writes there before composition, and a shard never ships it (`.shardmind/` is Tier 1).
 - **Overlay values live at the vault root as `shard-values.<namespace>.<name>.yaml`**, beside the base shard's `shard-values.yaml`, which keeps its name. The name pattern `shard-values.*.yaml` at the vault root is reserved for them: a shard should not ship a file matching it. The engine does not enforce this today (it is not Tier 1); refusing such a file would narrow what installs, and is the maintainer's call. Removing ShardMind from a composed vault also deletes these files.
 
-**Composition's rulings** (ruled 2026-10-13; built as #395–#398). Ruled, not yet built: each child moves its ruling into the section it governs (hooks, update semantics, file ownership) when it ships.
+**Composition's rulings** (ruled 2026-10-13; built as #395–#398). Each child moves its ruling into the section it governs (hooks, update semantics, file ownership) when it ships.
 
-- **An overlay goes in with `shardmind add <shard>`**, which works only inside a vault. `install`'s refusals of an existing vault are unchanged (`EXISTING_INSTALL`, #337's nested refusal and the rest): adding a shard and installing a vault are different acts.
-- **One owner per file.** An overlay that ships a path another shard already manages is refused before any write, naming every such path, under a new additive error code that #396 names. Merge and drift assume one owner per path.
+- **An overlay goes in with `shardmind add <shard>`**, and **each file has one owner**: built (#396), now in §Overlay shards below.
 - **Update and hooks follow install order:** the base shard first, then each overlay in install order. A bare `shardmind update` covers every shard; `shardmind update <shard>` updates one. Each shard's hooks run with its own context.
 
 **Reserved for dependency fetching** (#82, reserved in 1.0 by #369): `shard.yaml`'s `dependencies` names other shards this shard needs installed alongside it. Each entry is `{ name, namespace, version }`: `name` and `namespace` follow the manifest's own rules (lowercase letters, digits, hyphens), and `version` is a semver range. The engine validates them and does not fetch them: the shard's user installs them. Fetching them on install is planned ([#82](https://github.com/breferrari/shardmind/issues/82)); defined and validated in 1.0 (#369) so that fetching gives them no new meaning.

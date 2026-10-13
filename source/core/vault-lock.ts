@@ -46,7 +46,7 @@ let exitHandlerInstalled = false;
 
 export function acquireVaultLock(
   vaultRoot: string,
-  command: 'install' | 'update' | 'adopt',
+  command: 'install' | 'update' | 'adopt' | 'add',
   deps: {
     pid?: number;
     hostname?: string;

@@ -588,3 +588,81 @@ describe('a transaction cancelled before it began (#302)', () => {
     expect(await fsp.readdir(vault)).toEqual([]);
   });
 });
+
+describe('the add transaction (#396)', () => {
+  const beginAdd = () => beginTransaction(vault, { kind: 'add', noPriorInstall: false });
+
+  async function baseVault(): Promise<void> {
+    await fsp.mkdir(path.join(vault, '.shardmind', 'templates'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind', 'state.json'), '{"schema_version":2}\n');
+    await fsp.writeFile(path.join(vault, '.shardmind', 'shard.yaml'), 'base manifest\n');
+    await fsp.writeFile(path.join(vault, '.shardmind', 'templates', 'Home.md.njk'), 'base template\n');
+    await fsp.writeFile(path.join(vault, 'shard-values.yaml'), 'base: values\n');
+  }
+
+  it("rolls back an overlay: state.json back byte for byte, its cache, values and files gone, the base's cache untouched", async () => {
+    await baseVault();
+    const tx = await beginAdd();
+    await tx.recordWrite('research/Paper.md');
+    await fsp.mkdir(path.join(vault, 'research'));
+    await fsp.writeFile(path.join(vault, 'research', 'Paper.md'), 'overlay file\n');
+    await tx.recordNewTree('.shardmind/shards/acme/research');
+    await fsp.mkdir(path.join(vault, '.shardmind', 'shards', 'acme', 'research', 'templates'), { recursive: true });
+    await fsp.writeFile(path.join(vault, '.shardmind', 'shards', 'acme', 'research', 'templates', 'x.md'), 'x');
+    await tx.recordWrite('shard-values.acme.research.yaml');
+    await fsp.writeFile(path.join(vault, 'shard-values.acme.research.yaml'), 'overlay: values\n');
+    await tx.recordWrite('.shardmind/state.json');
+    await fsp.writeFile(path.join(vault, '.shardmind', 'state.json'), '{"schema_version":3}\n');
+
+    const dir = tx.dir!;
+    expect(await tx.rollback()).toEqual([]);
+    // A whole rollback leaves no snapshot behind either: nothing points at it.
+    expect(await exists(dir)).toBe(false);
+    expect(await exists(path.join(vault, '.shardmind', 'backups'))).toBe(false);
+    expect(await read('.shardmind/state.json')).toBe('{"schema_version":2}\n');
+    expect(await exists(path.join(vault, '.shardmind', 'shards'))).toBe(false);
+    expect(await exists(path.join(vault, 'shard-values.acme.research.yaml'))).toBe(false);
+    expect(await exists(path.join(vault, 'research'))).toBe(false);
+    expect(await read('.shardmind/shard.yaml')).toBe('base manifest\n');
+    expect(await read('.shardmind/templates/Home.md.njk')).toBe('base template\n');
+    expect(await read('shard-values.yaml')).toBe('base: values\n');
+  });
+
+  it("keeps no copy of the base's engine cache: it is not the add's to touch", async () => {
+    await baseVault();
+    const tx = await beginAdd();
+    expect(tx.dir).not.toBeNull();
+    expect(path.basename(tx.dir!)).toMatch(/^add-/);
+    expect(await exists(path.join(tx.dir!, 'cache'))).toBe(false);
+    expect(await tx.rollback()).toEqual([]);
+  });
+
+  it('refuses a new tree where something already is', async () => {
+    await baseVault();
+    await fsp.mkdir(path.join(vault, '.shardmind', 'shards', 'acme', 'research'), { recursive: true });
+    const tx = await beginAdd();
+    await expect(tx.recordNewTree('.shardmind/shards/acme/research')).rejects.toThrow(/exists/);
+    expect(await tx.rollback()).toEqual([]);
+    expect(await exists(path.join(vault, '.shardmind', 'shards', 'acme', 'research'))).toBe(true);
+  });
+
+  it('removes its snapshot folder on commit: nothing reports it, so nothing is left behind', async () => {
+    await baseVault();
+    const tx = await beginAdd();
+    await tx.recordWrite('.shardmind/state.json');
+    await fsp.writeFile(path.join(vault, '.shardmind', 'state.json'), '{"schema_version":3}\n');
+    const dir = tx.dir!;
+    await tx.commit();
+    expect(await exists(dir)).toBe(false);
+    expect(await exists(path.join(vault, '.shardmind', 'backups'))).toBe(false);
+  });
+
+  it('commits without touching the new tree', async () => {
+    await baseVault();
+    const tx = await beginAdd();
+    await tx.recordNewTree('.shardmind/shards/acme/research');
+    await fsp.mkdir(path.join(vault, '.shardmind', 'shards', 'acme', 'research'), { recursive: true });
+    await tx.commit();
+    expect(await exists(path.join(vault, '.shardmind', 'shards', 'acme', 'research'))).toBe(true);
+  });
+});

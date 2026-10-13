@@ -30,7 +30,7 @@ import type {
   ShardState,
   SlottedHookContext,
 } from '../runtime/types.js';
-import { HOOK_LOGS_DIR, hookLogRelPath } from '../runtime/vault-paths.js';
+import { hookLogRelPath } from '../runtime/vault-paths.js';
 import { DEFAULT_HOOK_TIMEOUT_MS } from './manifest.js';
 import {
   runHook,
@@ -86,6 +86,17 @@ export interface HookRunPlan {
    * that bootstrap runs; no post-update is run or reported.
    */
   upToDate?: boolean;
+  /**
+   * How the phase writes its state (re-hash, fingerprint, pending
+   * bootstrap); `writeState` by default. An overlay's (`add`, #396) writes
+   * its entry back into the vault's `shards[]`, never a one-shard state.
+   */
+  persist?: (state: ShardState) => Promise<void>;
+  /**
+   * An overlay shard's name (#396): its hook logs go under
+   * `.shardmind/logs/<namespace>/<name>/`, never over the base's.
+   */
+  logShard?: string;
 }
 
 export interface HookRunUi {
@@ -158,7 +169,7 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
     if (plan.dryRun || finalState.bootstrap_pending === plan.state.bootstrap_pending) {
       return { outcomes, finalState: plan.state, stateChanged: false };
     }
-    return { outcomes, finalState, stateChanged: await persistState(plan.vaultRoot, finalState) };
+    return { outcomes, finalState, stateChanged: await persistState(plan, finalState) };
   }
 
   const defaults = valuesAreDefaultsSafe(plan.values, plan.schema);
@@ -298,7 +309,7 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
     });
     // Persist the full output (and attach the pointer) when the hook crashed or
     // its output is long enough that the Summary will truncate it.
-    const withLog = summary ? await attachHookLog(plan.vaultRoot, job.slot, summary) : summary;
+    const withLog = summary ? await attachHookLog(plan.vaultRoot, job.slot, summary, plan.logShard) : summary;
     outcomes.push({ slot: job.slot, summary: withLog });
 
     // Persist the bootstrap fingerprint only after a SUCCESSFUL bootstrap
@@ -326,7 +337,7 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   }
 
   if (state.bootstrap_pending !== plan.state.bootstrap_pending) stateChanged = true;
-  if (stateChanged) stateChanged = await persistState(plan.vaultRoot, state);
+  if (stateChanged) stateChanged = await persistState(plan, state);
 
   return { outcomes, finalState: state, stateChanged };
 }
@@ -343,9 +354,9 @@ function clearPending(state: ShardState): ShardState {
  * state.json, and drift detection surfaces any discrepancy on the next
  * status run (see shared.ts). Returns whether it was written.
  */
-async function persistState(vaultRoot: string, state: ShardState): Promise<boolean> {
+async function persistState(plan: HookRunPlan, state: ShardState): Promise<boolean> {
   try {
-    await writeState(vaultRoot, state);
+    await (plan.persist ? plan.persist(state) : writeState(plan.vaultRoot, state));
     return true;
   } catch {
     return false;
@@ -468,6 +479,7 @@ export async function attachHookLog(
   vaultRoot: string,
   slot: HookStage,
   summary: HookSummary,
+  shard?: string,
 ): Promise<HookSummary> {
   const stdout = summary.stdout ?? '';
   const stderr = summary.stderr ?? '';
@@ -479,8 +491,8 @@ export async function attachHookLog(
   if (!crashed && !willTruncate) return summary;
 
   try {
-    await fsp.mkdir(path.join(vaultRoot, HOOK_LOGS_DIR), { recursive: true });
-    const relPath = hookLogRelPath(slot);
+    const relPath = hookLogRelPath(slot, shard);
+    await fsp.mkdir(path.dirname(path.join(vaultRoot, relPath)), { recursive: true });
     await fsp.writeFile(path.join(vaultRoot, relPath), formatHookLog(slot, summary), 'utf-8');
     return { ...summary, logPath: relPath };
   } catch {

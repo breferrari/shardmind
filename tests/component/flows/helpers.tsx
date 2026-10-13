@@ -35,6 +35,7 @@ import { tick, waitFor, ENTER, typeText } from '../helpers.js';
 import Install from '../../../source/commands/install.js';
 import Update from '../../../source/commands/update.js';
 import Adopt from '../../../source/commands/adopt.js';
+import Add from '../../../source/commands/add.js';
 import Index from '../../../source/commands/index.js';
 
 import {
@@ -295,6 +296,35 @@ export function mountAdopt(opts: {
         skipHooks: false,
         updateCheck: true,
         json: false,
+        ...opts.options,
+      }}
+    />,
+  );
+}
+
+export interface AddOptions {
+  values?: string;
+  yes?: boolean;
+  defaults?: boolean;
+  verbose?: boolean;
+  dryRun?: boolean;
+  skipHooks?: boolean;
+  updateCheck?: boolean;
+}
+
+/** `shardmind add <shard>` (#396), run from `cwd` (the vault, or a folder inside it). */
+export function mountAdd(opts: { shardRef: string; cwd: string; options?: AddOptions }): RenderResult {
+  mockCwd(opts.cwd);
+  return render(
+    <Add
+      args={[opts.shardRef]}
+      options={{
+        yes: false,
+        defaults: false,
+        verbose: false,
+        dryRun: false,
+        skipHooks: false,
+        updateCheck: true,
         ...opts.options,
       }}
     />,

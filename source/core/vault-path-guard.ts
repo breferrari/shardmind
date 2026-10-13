@@ -57,6 +57,9 @@ const ENGINE_WRITE_PATHS: readonly string[] = [
   ),
 ];
 
+/** Where every overlay shard's cache folder sits (#396): guarded, not one of the engine's own entries. */
+const OVERLAY_CACHE_ROOT = path.join(SHARDMIND_DIR, 'shards');
+
 /**
  * The top-level names under `.shardmind/` that the engine owns, from the
  * same list the guard checks. Anything else in the folder is the vault
@@ -224,7 +227,10 @@ export async function assertSafeVaultPaths(
   deletes: readonly string[] = [],
   caseRenames: ReadonlyArray<readonly [string, string]> = [],
 ): Promise<void> {
-  const unsafe = await findUnsafeVaultPaths(vaultRoot, [...writes, ...ENGINE_WRITE_PATHS], deletes, caseRenames);
+  // `.shardmind/shards`, where each overlay's cache lives (#396), is guarded
+  // like the engine's own paths, but kept out of ENGINE_SHARDMIND_ENTRIES:
+  // a reinstall carries the overlays' caches over as it always did.
+  const unsafe = await findUnsafeVaultPaths(vaultRoot, [...writes, ...ENGINE_WRITE_PATHS, OVERLAY_CACHE_ROOT], deletes, caseRenames);
   if (unsafe.length === 0) return;
   const listed = unsafe.slice(0, MAX_LISTED_PATHS).map((u) => `${u.path} (${u.reason})`).join(', ');
   const more = unsafe.length > MAX_LISTED_PATHS ? `, and ${unsafe.length - MAX_LISTED_PATHS} more` : '';

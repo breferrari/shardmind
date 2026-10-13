@@ -32,7 +32,7 @@ import { runInstallTransaction, type BackupRecord, type ProgressEvent } from '..
 import type { InstallDestination } from '../install-destination.js';
 import type { HookOutcome } from '../hook-orchestrator.js';
 import { prepareShard, type PreparedShard } from './prepare-shard.js';
-import { answersWithoutPrompting, loadValuesFile, validateValues, type ValueAnswers } from './values.js';
+import { answersFor, loadValuesFile, type ValueAnswers } from './values.js';
 import { FlowCancelled } from './cancelled.js';
 import { runAndHooks, type FlowRunIO } from './run.js';
 
@@ -214,20 +214,20 @@ async function reinstallOver(input: InstallFlowInput, io: InstallFlowIO, existin
  * the answers are in, so a cancelled wizard leaves it as it was.
  */
 async function valueAnswers(input: InstallFlowInput, io: InstallFlowIO, shard: InstallShard): Promise<ValueAnswers> {
-  if (input.yes || input.defaults) return answersWithoutPrompting(shard.schema, shard.prefillValues, input.yes);
-  if (!input.interactive) {
-    // `--values` is a prefill for the wizard; with every answer on disk and
-    // no terminal, there is nothing left to prompt for.
-    if (input.valuesFile !== undefined) return answersWithoutPrompting(shard.schema, shard.prefillValues, input.yes);
-    // Refusing beats installing schema defaults nobody chose (#139).
-    throw new ShardMindError(
-      'No interactive terminal, and no values were supplied',
-      'INSTALL_NON_INTERACTIVE_WITHOUT_VALUES',
-      'Pass --values <file> to supply answers, or --yes / --defaults to accept schema defaults deliberately.',
-    );
-  }
-  const given = await io.ask({ kind: 'values', shard });
-  return { values: validateValues(shard.schema, given.values, 'answers'), selections: given.selections };
+  // `--values` is a prefill for the wizard; with every answer on disk and no
+  // terminal, there is nothing left to prompt for. Refusing beats installing
+  // schema defaults nobody chose (#139).
+  return answersFor(
+    input,
+    shard,
+    () => io.ask({ kind: 'values', shard }),
+    () =>
+      new ShardMindError(
+        'No interactive terminal, and no values were supplied',
+        'INSTALL_NON_INTERACTIVE_WITHOUT_VALUES',
+        'Pass --values <file> to supply answers, or --yes / --defaults to accept schema defaults deliberately.',
+      ),
+  );
 }
 
 async function planAndInstall(input: InstallFlowInput, io: InstallFlowIO, shard: InstallShard, answers: ValueAnswers): Promise<InstallFlowResult> {

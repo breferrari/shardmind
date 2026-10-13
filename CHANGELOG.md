@@ -8,6 +8,18 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (composition, part 2: `shardmind add` — #396)
+
+- **`shardmind add <shard>` adds an overlay shard to a vault**, beside the shard installed there. It resolves, checks and asks the overlay's values as `install` does, and writes its files.
+  - Its cache goes to `.shardmind/shards/<namespace>/<name>/` and its values to `shard-values.<namespace>.<name>.yaml`. Its state becomes a new entry of `state.json`'s `shards[]`, which puts the vault at schema 3.
+  - Flags: `install`'s but `--force` (`--values`, `--defaults`, `--yes`, `--dry-run`, `--skip-hooks`, `--verbose`). `--json` comes with #403, for `install` and `add` together.
+- **Each file has one owner.** An overlay that would write a path another shard manages, a values file or anything under `.shardmind/` is refused before any write, with `ADD_PATH_OWNED` naming every such path and its owner. The user's own files at its paths go through `install`'s collision review.
+- **The overlay's own hooks run** (`bootstrap`, `personalize`) with its own values. Their logs go to `.shardmind/logs/<namespace>/<name>/`.
+- **Hooks can read an overlay's files.** The runtime's `loadValues` and `loadSchema` take `{ shard }`, so an overlay's hook reads its own values and schema.
+- **A failed or cancelled add leaves the vault as it was**, `state.json` included.
+- New error codes: `ADD_NO_INSTALL`, `ADD_SHARD_PRESENT`, `ADD_PATH_OWNED`, `ADD_FLAG_CONFLICT` and `ADD_NON_INTERACTIVE_WITHOUT_VALUES`.
+- **Release:** ships only with #406 and #407 (status and update across shards, #397). Until then `status` and `update` refuse a vault holding several shards (RELEASE-SMOKE).
+
 ### Added (composition, part 1: `state.json` schema 3 — #395)
 
 - **ShardMind reads `state.json` schema 3**, the shape of a vault that holds several shards: `{ "schema_version": 3, "shards": [...] }`, the base first. Nothing writes it yet; adding a shard to a vault comes next (#396). A vault with one shard stays at schema 2, byte for byte.

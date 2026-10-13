@@ -7,12 +7,15 @@
  */
 
 import path from 'node:path';
+import { ShardMindError } from './types.js';
 
 export const SHARDMIND_DIR = '.shardmind';
 export const STATE_FILE = path.join(SHARDMIND_DIR, 'state.json');
 export const CACHED_MANIFEST = path.join(SHARDMIND_DIR, 'shard.yaml');
 export const CACHED_SCHEMA = path.join(SHARDMIND_DIR, 'shard-schema.yaml');
-export const CACHED_TEMPLATES = path.join(SHARDMIND_DIR, 'templates');
+/** The template cache's folder name inside an engine folder (`.shardmind/`, or an overlay's, #396). */
+export const TEMPLATES_DIR = 'templates';
+export const CACHED_TEMPLATES = path.join(SHARDMIND_DIR, TEMPLATES_DIR);
 
 /**
  * Where a crashed (or verbose) hook's full captured output is persisted so
@@ -33,8 +36,42 @@ export const HOOK_STAGES = ['bootstrap', 'personalize', 'post-update'] as const;
  * as a user-facing pointer in the Summary, and `path.join(vaultRoot, …)`
  * resolves a posix-style relative path correctly on every platform.
  */
-export function hookLogRelPath(slot: string): string {
-  return `${SHARDMIND_DIR}/logs/${slot}.log`;
+export function hookLogRelPath(slot: string, shard?: string): string {
+  if (shard === undefined) return `${SHARDMIND_DIR}/logs/${slot}.log`;
+  const [namespace, name] = shardNameParts(shard);
+  return `${SHARDMIND_DIR}/logs/${namespace}/${name}/${slot}.log`;
+}
+
+/**
+ * An overlay shard's own engine folder (#396): its cached `shard.yaml`,
+ * `shard-schema.yaml` and templates, `.shardmind/shards/<namespace>/<name>`.
+ * The base shard's stay at `.shardmind/`.
+ */
+export function overlayDir(shard: string): string {
+  const [namespace, name] = shardNameParts(shard);
+  return path.join(SHARDMIND_DIR, 'shards', namespace, name);
+}
+
+/** An overlay shard's values file at the vault root (#396): `shard-values.<namespace>.<name>.yaml`. */
+export function overlayValuesFile(shard: string): string {
+  const [namespace, name] = shardNameParts(shard);
+  return `shard-values.${namespace}.${name}.yaml`;
+}
+
+/**
+ * `<namespace>/<name>` split, or a throw: a shard name builds paths, so one
+ * with another shape (an empty part, a `..`, a further slash) never does.
+ */
+function shardNameParts(shard: string): [string, string] {
+  const parts = shard.split('/');
+  if (parts.length !== 2 || parts.some((part) => part === '' || part === '.' || part === '..' || part.includes('\\'))) {
+    throw new ShardMindError(
+      `Not a <namespace>/<name> shard name: ${JSON.stringify(shard)}`,
+      'ARGS_INVALID',
+      'Name a shard as <namespace>/<name>, as state.json lists it (e.g. acme/research).',
+    );
+  }
+  return [parts[0]!, parts[1]!];
 }
 
 /** User-authored values file. Engine creates it on install, never overwrites. */

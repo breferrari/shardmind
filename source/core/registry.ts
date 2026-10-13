@@ -162,7 +162,7 @@ export async function fetchLatestVersion(
 }
 
 /** The commands that take a shard ref from the user, named in the bare-ref hint. */
-export type RefCommand = 'install' | 'adopt' | 'validate';
+export type RefCommand = 'install' | 'adopt' | 'add' | 'validate';
 
 /**
  * The hint for a bare `owner/repo` the registry cannot resolve (#200): the

@@ -16,7 +16,7 @@ import { LOCK_FILE } from '../../runtime/vault-paths.js';
 
 export function useVaultLock(
   vaultRoot: string,
-  command: 'install' | 'update' | 'adopt',
+  command: 'install' | 'update' | 'adopt' | 'add',
   /** False under --dry-run, which writes nothing. */
   enabled: boolean,
 ): { take: () => void; release: () => void } {

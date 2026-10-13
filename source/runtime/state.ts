@@ -95,6 +95,18 @@ export function resolveVaultRoot(): string {
  * ```
  */
 export async function loadState(opts: { shard?: string } = {}): Promise<ShardState | null> {
+  const shards = await loadShardStates();
+  if (shards === null) return null;
+  if (opts.shard === undefined) return shards[0]!;
+  return shards.find((state) => state.shard === opts.shard) ?? null;
+}
+
+/**
+ * Every shard of the vault, the base first, each as a `ShardState`: a
+ * schema-1 or -2 file as it is, a schema-3 file's entries at schema 2. Null
+ * when the vault has no state.json. One read and one parse for any lookup.
+ */
+async function loadShardStates(): Promise<ShardState[] | null> {
   const vaultRoot = resolveVaultRoot();
   const filePath = path.join(vaultRoot, STATE_FILE);
 
@@ -141,15 +153,10 @@ export async function loadState(opts: { shard?: string } = {}): Promise<ShardSta
   }
   // The same contract the engine reads with (#343). Schema 1 and 2 hold one
   // shard, the base; schema 3 lists them (#395).
-  if (version < STATE_SCHEMA_VERSION) {
-    const state = parseShardState(parsed, filePath);
-    return opts.shard === undefined || state.shard === opts.shard ? state : null;
-  }
+  if (version < STATE_SCHEMA_VERSION) return [parseShardState(parsed, filePath)];
   // A shard of a schema-3 file comes back as a one-shard state, at schema 2,
   // as the engine reads it: a flat `ShardState` never claims schema 3's shape.
-  const { shards } = parseVaultState(parsed, filePath);
-  const entry = opts.shard === undefined ? shards[0] : shards.find((s) => s.shard === opts.shard);
-  return entry ? shardStateOf(entry, SINGLE_SHARD_SCHEMA_VERSION) : null;
+  return parseVaultState(parsed, filePath).shards.map((entry) => shardStateOf(entry, SINGLE_SHARD_SCHEMA_VERSION));
 }
 
 /**
@@ -177,4 +184,27 @@ export async function getIncludedModules(opts: { shard?: string } = {}): Promise
   return Object.entries(state.modules)
     .filter(([, status]) => status === 'included')
     .map(([id]) => id);
+}
+
+/**
+ * `shard` when it names one of the vault's overlays (#396), not its base:
+ * the reader then looks at the overlay's own files (`overlayValuesFile`,
+ * `overlayDir`). Null for no name or the base shard's: read the base's. A
+ * name the vault does not hold is `ARGS_INVALID`, as `loadState({ shard })`
+ * finds no such shard; with no state.json at all, the base's files are read.
+ */
+export async function overlayName(shard: string | undefined): Promise<string | null> {
+  if (shard === undefined) return null;
+  const shards = await loadShardStates();
+  // No state at all: the base's files, whose absence the reader reports
+  // (VALUES_NOT_FOUND, SCHEMA_NOT_FOUND) as it always has.
+  if (shards === null) return null;
+  if (!shards.some((s) => s.shard === shard)) {
+    throw new ShardMindError(
+      `This vault holds no shard named ${shard}`,
+      'ARGS_INVALID',
+      'Name one of the shards state.json lists, as <namespace>/<name>; leave the name out to read the base shard.',
+    );
+  }
+  return shards[0]!.shard === shard ? null : shard;
 }

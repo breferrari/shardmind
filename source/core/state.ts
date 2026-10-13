@@ -20,6 +20,7 @@ import {
   CACHED_MANIFEST,
   CACHED_SCHEMA,
   CACHED_TEMPLATES,
+  TEMPLATES_DIR,
   SHARD_SOURCE_DIR,
   SHARD_MANIFEST_FILE,
   SHARD_SCHEMA_FILE,
@@ -183,6 +184,21 @@ export async function readState(vaultRoot: string, opts: ReadStateOptions = {}):
   return shardStateOf(entry, SINGLE_SHARD_SCHEMA_VERSION);
 }
 
+/**
+ * Write one shard's state into the vault's (#396): the state on disk is read
+ * again, the entry naming the same shard replaced, or the shard appended
+ * after the others when the vault has none of that name. Read at write time,
+ * so a write never puts back a stale copy of another shard's entry. A vault
+ * with no state yet gets this shard as its only one.
+ */
+export async function writeShardEntry(vaultRoot: string, state: ShardState): Promise<void> {
+  const entry = withoutSchemaVersion(state);
+  const shards = (await readVaultState(vaultRoot))?.shards ?? [];
+  const at = shards.findIndex((s) => s.shard === entry.shard);
+  const next = at === -1 ? [...shards, entry] : shards.map((s, i) => (i === at ? entry : s));
+  await writeVaultState(vaultRoot, { schema_version: STATE_SCHEMA_VERSION, shards: next });
+}
+
 /** Write the state of a vault with one shard, at `SINGLE_SHARD_SCHEMA_VERSION` (#395). */
 export async function writeState(vaultRoot: string, state: ShardState): Promise<void> {
   if (state.schema_version !== SINGLE_SHARD_SCHEMA_VERSION) {
@@ -196,8 +212,9 @@ export async function writeState(vaultRoot: string, state: ShardState): Promise<
   await writeVaultState(vaultRoot, { schema_version: STATE_SCHEMA_VERSION, shards: [entry] });
 }
 
-export async function initShardDir(vaultRoot: string): Promise<void> {
-  await fsp.mkdir(path.join(vaultRoot, CACHED_TEMPLATES), { recursive: true });
+/** `cacheDir`: the vault-relative engine folder, `.shardmind/` or an overlay's own (#396). */
+export async function initShardDir(vaultRoot: string, cacheDir: string = SHARDMIND_DIR): Promise<void> {
+  await fsp.mkdir(path.join(vaultRoot, cacheDir, TEMPLATES_DIR), { recursive: true });
 }
 
 /**
@@ -211,10 +228,11 @@ export async function initShardDir(vaultRoot: string): Promise<void> {
  * the cache without re-downloading.
  *
  * The required-file gate is `.shardmind/shard.yaml`'s presence, not a top-
- * level `templates/` dir (gone under v6).
+ * level `templates/` dir (gone under v6). `cacheDir` is the vault-relative
+ * engine folder: `.shardmind/`, or an overlay's own (#396).
  */
-export async function cacheTemplates(vaultRoot: string, tempDir: string): Promise<void> {
-  const dest = path.join(vaultRoot, CACHED_TEMPLATES);
+export async function cacheTemplates(vaultRoot: string, tempDir: string, cacheDir: string = SHARDMIND_DIR): Promise<void> {
+  const dest = path.join(vaultRoot, cacheDir, TEMPLATES_DIR);
   const manifestSrc = path.join(tempDir, SHARD_SOURCE_DIR, SHARD_MANIFEST_FILE);
   try {
     await fsp.access(manifestSrc);
@@ -259,25 +277,26 @@ export async function cacheTemplates(vaultRoot: string, tempDir: string): Promis
  * `sourceDir` is optional so existing callers keep working. When it is absent,
  * or the copy fails, fall back to serialising the parsed objects — lossy, but
  * always a valid and complete file. Cache fidelity must never fail an install.
+ * `cacheDir`: `.shardmind/`, or an overlay's own folder (#396).
  */
 export async function cacheManifest(
   vaultRoot: string,
   manifest: ShardManifest,
   schema: ShardSchema,
   sourceDir?: string,
+  cacheDir: string = SHARDMIND_DIR,
 ): Promise<void> {
-  await fsp.mkdir(path.join(vaultRoot, SHARDMIND_DIR), { recursive: true });
+  const manifestPath = path.join(vaultRoot, cacheDir, SHARD_MANIFEST_FILE);
+  const schemaPath = path.join(vaultRoot, cacheDir, SHARD_SCHEMA_FILE);
+  await fsp.mkdir(path.join(vaultRoot, cacheDir), { recursive: true });
 
   if (sourceDir !== undefined) {
     try {
       await fsp.copyFile(
         path.join(sourceDir, SHARD_SOURCE_DIR, SHARD_MANIFEST_FILE),
-        path.join(vaultRoot, CACHED_MANIFEST),
+        manifestPath,
       );
-      await fsp.copyFile(
-        path.join(sourceDir, SHARD_SOURCE_DIR, SHARD_SCHEMA_FILE),
-        path.join(vaultRoot, CACHED_SCHEMA),
-      );
+      await fsp.copyFile(path.join(sourceDir, SHARD_SOURCE_DIR, SHARD_SCHEMA_FILE), schemaPath);
       return;
     } catch {
       // Source unreadable — fall through rather than failing the install.
@@ -287,8 +306,8 @@ export async function cacheManifest(
   const serializedManifest = stringifyYaml(manifest, { lineWidth: 0 }).trimEnd() + '\n';
   const serializedSchema = stringifyYaml(schema, { lineWidth: 0 }).trimEnd() + '\n';
 
-  await fsp.writeFile(path.join(vaultRoot, CACHED_MANIFEST), serializedManifest, 'utf-8');
-  await fsp.writeFile(path.join(vaultRoot, CACHED_SCHEMA), serializedSchema, 'utf-8');
+  await fsp.writeFile(manifestPath, serializedManifest, 'utf-8');
+  await fsp.writeFile(schemaPath, serializedSchema, 'utf-8');
 }
 
 /** Paths a re-hash reads: every tracked entry. */
@@ -492,7 +511,7 @@ export async function removeEngineWrites(
  * leaves no folder it made on the way (`.shardmind/`, `backups/`): it runs
  * before the run's rollback exists, so it cleans up after itself (#269).
  */
-export async function createBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt'): Promise<string> {
+export async function createBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt' | 'add'): Promise<string> {
   const madeOnTheWay = await missingFolders(vaultRoot, [`${SHARDMIND_DIR}/backups/${kind}`]);
   try {
     return await allocateBackupDir(vaultRoot, now, kind);
@@ -503,10 +522,11 @@ export async function createBackupDir(vaultRoot: string, now: Date, kind: 'updat
   }
 }
 
-async function allocateBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt'): Promise<string> {
+async function allocateBackupDir(vaultRoot: string, now: Date, kind: 'update' | 'adopt' | 'add'): Promise<string> {
   const stamp = now.toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
   const base = path.join(vaultRoot, SHARDMIND_DIR, 'backups', `${kind}-${stamp}`);
-  const code = kind === 'update' ? 'UPDATE_WRITE_FAILED' : 'ADOPT_WRITE_FAILED';
+  // add writes an overlay the way install writes a shard (#396).
+  const code = kind === 'update' ? 'UPDATE_WRITE_FAILED' : kind === 'adopt' ? 'ADOPT_WRITE_FAILED' : 'INSTALL_WRITE_FAILED';
   let parentsCreated = false;
   for (let i = 0; i < 1000; i++) {
     const candidate = i === 0 ? base : `${base}-${i}`;
@@ -537,7 +557,7 @@ async function allocateBackupDir(vaultRoot: string, now: Date, kind: 'update' | 
   );
 }
 
-function backupDirError(kind: 'update' | 'adopt', code: 'UPDATE_WRITE_FAILED' | 'ADOPT_WRITE_FAILED', err: unknown): ShardMindError {
+function backupDirError(kind: 'update' | 'adopt' | 'add', code: 'UPDATE_WRITE_FAILED' | 'ADOPT_WRITE_FAILED' | 'INSTALL_WRITE_FAILED', err: unknown): ShardMindError {
   // A full disk or a locked folder keeps its own hint (#313).
   return wrapWriteError(
     code,

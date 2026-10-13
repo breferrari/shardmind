@@ -22,14 +22,14 @@ import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
 import { resolveModules } from './modules.js';
 import { createRenderer, renderFile, buildRenderContext } from './renderer.js';
-import { initShardDir, cacheTemplates, cacheManifest, writeState, SINGLE_SHARD_SCHEMA_VERSION } from './state.js';
+import { initShardDir, cacheTemplates, cacheManifest, writeState, writeShardEntry, SINGLE_SHARD_SCHEMA_VERSION } from './state.js';
 import { sha256, toPosix } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { rolledBackError } from './rollback-report.js';
 import { wrapWriteError } from './bug-report.js';
 import { beginTransaction, type BackupRecord, type CreateRoot, type VaultTransaction } from './vault-transaction.js';
-import { VALUES_FILE } from '../runtime/vault-paths.js';
+import { HOOK_STAGES, hookLogRelPath, overlayDir, overlayValuesFile, SHARDMIND_DIR, STATE_FILE, VALUES_FILE } from '../runtime/vault-paths.js';
 
 export type { BackupRecord } from './vault-transaction.js';
 
@@ -50,6 +50,23 @@ export interface InstallRunnerOptions {
    */
   tx?: VaultTransaction;
   dryRun?: boolean;
+  /** Where the engine metadata goes: install's (the default), or an overlay's for `add` (#396). */
+  target?: InstallTarget;
+}
+
+/**
+ * Where an install's engine metadata goes (#396): its cache folder (the
+ * cached manifest, schema and templates), its values file, and how its state
+ * is written. Install's is `.shardmind/`, `shard-values.yaml` and
+ * `writeState`; `add` passes an overlay's, whose state is appended to the
+ * vault's `shards[]`.
+ */
+export interface InstallTarget {
+  /** Vault-relative. */
+  cacheDir: string;
+  /** Vault-relative. */
+  valuesFile: string;
+  persistState(state: ShardState): Promise<void>;
 }
 
 export interface InstallResult {
@@ -71,6 +88,11 @@ export type ProgressEvent =
  */
 export async function runInstall(opts: InstallRunnerOptions): Promise<InstallResult> {
   const { vaultRoot, manifest, schema, tempDir, resolved, tarballSha256, values, selections, onProgress, tx, dryRun } = opts;
+  const target: InstallTarget = opts.target ?? {
+    cacheDir: SHARDMIND_DIR,
+    valuesFile: VALUES_FILE,
+    persistState: (state) => writeState(vaultRoot, state),
+  };
 
   const resolution = await resolveModules(schema, selections, tempDir);
   // Refuse before the first write, dry run included, if any path would
@@ -187,16 +209,16 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
     // (`boundary-ignore`, #190, #215). state.json last, so it is the point of
     // no return, as in update and adopt (#301).
     const beforeState = async (): Promise<void> => {
-      await initShardDir(vaultRoot);
-      await cacheTemplates(vaultRoot, tempDir);
-      await cacheManifest(vaultRoot, manifest, schema, tempDir);
-      await writeValuesFile(vaultRoot, values);
+      await initShardDir(vaultRoot, target.cacheDir);
+      await cacheTemplates(vaultRoot, tempDir, target.cacheDir);
+      await cacheManifest(vaultRoot, manifest, schema, tempDir, target.cacheDir);
+      await writeValuesFile(vaultRoot, values, target.valuesFile);
       // Introduced only once written: the exclusive write fails on the
       // user's own stray values file, which must survive the rollback.
-      tx?.introduced.push(VALUES_FILE);
-      writtenPaths.push(VALUES_FILE);
+      tx?.introduced.push(target.valuesFile);
+      writtenPaths.push(target.valuesFile);
     };
-    const writeStateFile = () => writeState(vaultRoot, state);
+    const writeStateFile = () => target.persistState(state);
     if (tx) await tx.commitEngineMetadata({ beforeState, state: writeStateFile });
     else {
       await beforeState();
@@ -232,20 +254,23 @@ async function writeVaultFile(vaultRoot: string, outputPath: string, content: st
 async function writeValuesFile(
   vaultRoot: string,
   values: Record<string, unknown>,
+  valuesFile: string,
 ): Promise<void> {
-  const abs = path.join(vaultRoot, VALUES_FILE);
+  const abs = path.join(vaultRoot, valuesFile);
   const serialized = stringifyYaml(values, { lineWidth: 0 }).trimEnd() + '\n';
   try {
     await fsp.writeFile(abs, serialized, { encoding: 'utf-8', flag: 'wx' });
   } catch (err) {
     if (errnoCode(err) === 'EEXIST') {
       throw new ShardMindError(
-        'shard-values.yaml already exists at the install target',
+        `${valuesFile} already exists at the install target`,
         'VALUES_FILE_COLLISION',
-        'Move or remove shard-values.yaml before re-running install. If `.shardmind/state.json` also exists, run `shardmind update` instead to upgrade the current install in place; without state.json, update throws UPDATE_NO_INSTALL.',
+        valuesFile === VALUES_FILE
+          ? 'Move or remove shard-values.yaml before re-running install. If `.shardmind/state.json` also exists, run `shardmind update` instead to upgrade the current install in place; without state.json, update throws UPDATE_NO_INSTALL.'
+          : `Move or remove ${valuesFile} before re-running add: it is the file add writes the overlay's values to.`,
       );
     }
-    throw wrapWriteError('INSTALL_WRITE_FAILED', `Could not write ${VALUES_FILE} during install`, err);
+    throw wrapWriteError('INSTALL_WRITE_FAILED', `Could not write ${valuesFile} during install`, err);
   }
 }
 
@@ -322,5 +347,62 @@ export async function runInstallTransaction(opts: InstallTransactionOptions): Pr
   // cancel is ignored. The old install's backups and the owner's own
   // entries move into the new `.shardmind/` before the rest is removed.
   const { kept, left } = await tx.commit({ oldStatePath });
+  return { ...result, backups: kept, left };
+}
+
+/**
+ * The engine paths an add writes for overlay `shard` (#396): its cache
+ * folder, its values file, and each of its hook logs. Guarded (#163) before
+ * any prompt by the flow, and again here before any write.
+ */
+export function overlayEnginePaths(shard: string): string[] {
+  return [overlayDir(shard), overlayValuesFile(shard), ...HOOK_STAGES.map((slot) => hookLogRelPath(slot, shard))];
+}
+
+export interface AddTransactionOptions extends Omit<InstallRunnerOptions, 'tx' | 'target'> {
+  signal?: AbortSignal;
+  /** The user's own files at the overlay's paths, moved out of the way first. */
+  moveAside: Collision[];
+  /** Absolute paths kept as backups (the Backup policy); every other move is set aside. */
+  keep: ReadonlySet<string>;
+}
+
+/**
+ * `shardmind add <shard>` (#396): the overlay's install on the vault's `add`
+ * transaction (§4.28 step 1b). `state.json` is recorded first, so a rollback
+ * puts it back byte for byte; the overlay's cache folder is a new tree the
+ * rollback removes whole; its files, values file and `state.json` are written
+ * by `runInstall` with the overlay's `InstallTarget`, `state.json` last
+ * through `writeVaultState`. Before that point a failure or a cancel rolls
+ * back every write once; after it nothing is rolled back.
+ */
+export async function runAddTransaction(opts: AddTransactionOptions): Promise<InstallTransactionResult> {
+  const { moveAside, keep, signal, ...installOpts } = opts;
+  const shard = `${opts.manifest.namespace}/${opts.manifest.name}`;
+  const target: InstallTarget = {
+    cacheDir: overlayDir(shard),
+    valuesFile: overlayValuesFile(shard),
+    // Appended to the vault's shards as they are on disk when it is written.
+    persistState: (state) => writeShardEntry(opts.vaultRoot, state),
+  };
+  // The overlay's own engine paths are written too: never through a link
+  // or a case-folded name (#163), dry run included.
+  await assertSafeVaultPaths(opts.vaultRoot, overlayEnginePaths(shard));
+  if (opts.dryRun) {
+    const result = await runInstall({ ...installOpts, target });
+    return { ...result, backups: [], left: [] };
+  }
+
+  const tx = await beginTransaction(opts.vaultRoot, { kind: 'add', noPriorInstall: false, signal });
+  let result: InstallResult;
+  try {
+    await tx.recordWrite(toPosix(opts.vaultRoot, path.join(opts.vaultRoot, STATE_FILE)));
+    await tx.recordNewTree(toPosix(opts.vaultRoot, path.join(opts.vaultRoot, overlayDir(shard))));
+    for (const collision of moveAside) await tx.recordSetAside(collision.absolutePath, keep.has(collision.absolutePath));
+    result = await runInstall({ ...installOpts, tx, target });
+  } catch (err) {
+    throw await rolledBackError(err, () => tx.rollback());
+  }
+  const { kept, left } = await tx.commit();
   return { ...result, backups: kept, left };
 }

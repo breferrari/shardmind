@@ -120,6 +120,13 @@ export type ErrorCode =
   | 'ADOPT_FROM_VERSION_INVALID'
   | 'ADOPT_NON_INTERACTIVE_WITHOUT_VALUES'
   | 'ADOPT_WRITE_FAILED'
+
+  // Add an overlay shard (#396)
+  | 'ADD_NO_INSTALL'
+  | 'ADD_SHARD_PRESENT'
+  | 'ADD_PATH_OWNED'
+  | 'ADD_FLAG_CONFLICT'
+  | 'ADD_NON_INTERACTIVE_WITHOUT_VALUES'
   | 'MIGRATION_INVALID_VERSION'
   // Reserved for a `type_changed` transform failure; not raised yet. Today
   // migrator.ts records a warning and keeps the old value when a transform

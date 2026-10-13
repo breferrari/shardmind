@@ -1121,3 +1121,60 @@ describe('a --skip-hooks run whose state.json cannot be written (#199)', () => {
     expect(result.stateChanged).toBe(false);
   });
 });
+
+describe("runHooks — an overlay shard's hook phase (#396)", () => {
+  it('writes its state through the plan\'s persist, never state.json, and its log under its own folder', async () => {
+    await hook(
+      'bootstrap.ts',
+      `export default async function () { process.stderr.write('overlay-boom\\n'); process.exit(3); }`,
+    );
+    await hook('personalize.ts', `export default async function () {}`);
+    const persisted: ShardState[] = [];
+    const result = await runHooks(
+      installPlan({
+        manifest: manifest({
+          bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v1' },
+          personalize: '.shardmind/hooks/personalize.ts',
+        }),
+        persist: async (state) => void persisted.push(state),
+        logShard: 'acme/research',
+        skipHooks: true,
+      }),
+      NOOP_UI,
+    );
+    // A skipped bootstrap is owed, written through persist.
+    expect(result.stateChanged).toBe(true);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]!.bootstrap_pending).toBe(true);
+    await expect(fsp.access(path.join(vault, '.shardmind', 'state.json'))).rejects.toBeTruthy();
+
+    const ran = await runHooks(
+      installPlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v1' } }),
+        persist: async (state) => void persisted.push(state),
+        logShard: 'acme/research',
+      }),
+      NOOP_UI,
+    );
+    const boot = ran.outcomes.find((o) => o.slot === 'bootstrap');
+    expect(boot?.summary?.logPath).toBe('.shardmind/logs/acme/research/bootstrap.log');
+    expect(await fsp.readFile(path.join(vault, '.shardmind', 'logs', 'acme', 'research', 'bootstrap.log'), 'utf-8')).toContain('overlay-boom');
+    await expect(fsp.access(path.join(vault, '.shardmind', 'logs', 'bootstrap.log'))).rejects.toBeTruthy();
+    await expect(fsp.access(path.join(vault, '.shardmind', 'state.json'))).rejects.toBeTruthy();
+  }, 30_000);
+
+  it('reports the state unchanged when persist fails, as when state.json cannot be written', async () => {
+    await hook('bootstrap.ts', `export default async function () {}`);
+    const result = await runHooks(
+      installPlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v1' } }),
+        persist: async () => {
+          throw new Error('disk full');
+        },
+        skipHooks: true,
+      }),
+      NOOP_UI,
+    );
+    expect(result.stateChanged).toBe(false);
+  });
+});

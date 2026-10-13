@@ -127,6 +127,15 @@ shardmind install <shard> [folder]
   --force                                  # Reinstall over an existing install; overwrite colliding files, no backup
   --skip-hooks                             # Run no hook; each is reported skipped
 
+# Add an overlay shard to this vault, beside the one installed (composition)
+shardmind add <shard>
+  --values <file>                          # Prefill the overlay's answers from YAML
+  --defaults                               # Use the overlay's schema defaults; skip wizard
+  --yes                                    # Skip every prompt and accept its default
+  --dry-run                                # Show plan, write nothing
+  --verbose                                # Per-file rendering progress
+  --skip-hooks                             # Run no hook; each is reported skipped
+
 # Upgrade the installed shard
 shardmind update
   --release <tag>                          # Pin to a specific release tag (stable or prerelease)

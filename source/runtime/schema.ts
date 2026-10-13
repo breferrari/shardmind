@@ -14,13 +14,15 @@ import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ShardSchema, FrontmatterRule } from './types.js';
 import { ShardMindError } from './types.js';
-import { resolveVaultRoot } from './state.js';
-import { CACHED_SCHEMA } from './vault-paths.js';
+import { overlayName, resolveVaultRoot } from './state.js';
+import { CACHED_SCHEMA, overlayDir, SHARD_SCHEMA_FILE } from './vault-paths.js';
 
 /**
  * Load the cached `shard-schema.yaml` from the current vault.
  *
- * Reads the copy that `shardmind install` wrote to `.shardmind/`.
+ * Reads the copy that `shardmind install` wrote to `.shardmind/`; with
+ * `{ shard: '<namespace>/<name>' }`, an overlay shard's own cached copy, in
+ * `.shardmind/shards/<namespace>/<name>/` (#396).
  * Normalizes frontmatter shorthand (`key: [a, b]` → `key: { required: [a, b] }`).
  * Runtime trusts the cached file because the engine validated it on
  * install; this function is lean intentionally.
@@ -28,6 +30,7 @@ import { CACHED_SCHEMA } from './vault-paths.js';
  * @returns The parsed and normalized `ShardSchema`.
  * @throws ShardMindError `VAULT_NOT_FOUND` if no vault in the ancestor chain.
  * @throws ShardMindError `SCHEMA_NOT_FOUND` if the cached file is missing.
+ * @throws ShardMindError `ARGS_INVALID` if `shard` names no shard of the vault (#396).
  *
  * @example
  * ```ts
@@ -37,9 +40,11 @@ import { CACHED_SCHEMA } from './vault-paths.js';
  * const result = validateValues(values, schema);
  * ```
  */
-export async function loadSchema(): Promise<ShardSchema> {
+export async function loadSchema(opts: { shard?: string } = {}): Promise<ShardSchema> {
   const vaultRoot = resolveVaultRoot();
-  const filePath = path.join(vaultRoot, CACHED_SCHEMA);
+  // An overlay's cached schema sits in its own folder (#396).
+  const overlay = await overlayName(opts.shard);
+  const filePath = path.join(vaultRoot, overlay === null ? CACHED_SCHEMA : path.join(overlayDir(overlay), SHARD_SCHEMA_FILE));
 
   let raw: string;
   try {
