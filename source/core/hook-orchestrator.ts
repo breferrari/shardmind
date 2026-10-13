@@ -130,8 +130,8 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
     // the report says what the user turned off. Nothing runs, so the state
     // and its bootstrap fingerprint are kept as they came; the one change is
     // `bootstrap_pending`, set when the skipped bootstrap would have run and
-    // cleared when the shard has no bootstrap left to run (#199). The defaults check gates only whether a slot runs, so it is not
-    // computed.
+    // cleared when the shard has no bootstrap left to run (#199). The
+    // defaults check gates only whether a slot runs, so it is not computed.
     const valuesAreDefaultsUnused = false;
     const outcomes: HookOutcome[] = [];
     let bootstrapOwed = false;
