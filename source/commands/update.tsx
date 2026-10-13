@@ -75,7 +75,7 @@ export default function Update({ options }: Props) {
             <StatusMessage variant="success">
               Already up to date at v{phase.state.version}.
             </StatusMessage>
-            {/* An owed bootstrap the run ran (#199), shown as any summary shows hooks. */}
+            {/* An owed bootstrap (#199) the run ran, previewed (dry run) or skipped (--skip-hooks), shown as any summary shows hooks. */}
             {phase.hooks.length > 0 && <HookSummarySection outcomes={phase.hooks} />}
             <ExternalToolsSection lines={phase.externalTools} />
           </Box>

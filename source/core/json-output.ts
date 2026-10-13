@@ -446,19 +446,12 @@ export function updateRunResult(input: {
 
 /**
  * An up-to-date vault's real run: nothing written, marked, with its version.
- * `hooks` is the bootstrap it ran when one was owed (#199); usually none.
- */
-/**
- * An up-to-date update's run document. `run` is what an up-to-date run that
- * owed a bootstrap did (#199); without it, a run that did nothing.
+ * `run` is what the run did: the bootstrap it ran when one was owed (#199),
+ * its tool warnings and duration; usually no hook, no warning and 0.
  */
 export function upToDateRunResult(
   version: string,
-  run: { hooks: readonly HookOutcome[]; externalTools: readonly string[]; durationMs: number } = {
-    hooks: [],
-    externalTools: [],
-    durationMs: 0,
-  },
+  run: { hooks: readonly HookOutcome[]; externalTools: readonly string[]; durationMs: number },
 ): UpdateRunResult {
   const { hooks } = run;
   return {

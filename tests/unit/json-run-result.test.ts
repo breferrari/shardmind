@@ -94,7 +94,7 @@ describe('updateRunResult (#348)', () => {
   });
 
   it('marks an up-to-date vault, with nothing written', () => {
-    expect(upToDateRunResult('3.1.0')).toMatchObject({ dryRun: false, upToDate: true, fromVersion: '3.1.0', toVersion: '3.1.0', files: [], backupDir: null });
+    expect(upToDateRunResult('3.1.0', { hooks: [], externalTools: [], durationMs: 0 })).toMatchObject({ dryRun: false, upToDate: true, fromVersion: '3.1.0', toVersion: '3.1.0', files: [], backupDir: null });
   });
 
   it('an up-to-date run that paid an owed bootstrap reports its hook, tool warnings and duration (#199)', () => {
