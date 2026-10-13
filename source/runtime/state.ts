@@ -15,7 +15,13 @@ import type { ShardState } from './types.js';
 import { ShardMindError } from './types.js';
 import { SHARDMIND_DIR, STATE_FILE } from './vault-paths.js';
 import { isEnoent } from './errno.js';
-import { newerStateError, parseShardState, STATE_CORRUPT_HINT, STATE_SCHEMA_VERSION } from './state-schema.js';
+import {
+  newerStateError,
+  parseShardState,
+  parseVaultState,
+  STATE_CORRUPT_HINT,
+  STATE_SCHEMA_VERSION,
+} from './state-schema.js';
 
 const MAX_DEPTH = 20;
 
@@ -66,6 +72,11 @@ export function resolveVaultRoot(): string {
  * Returns `null` if the vault exists but has never been installed
  * (no state file). Throws on I/O errors or corrupted JSON.
  *
+ * A vault can hold several shards (#395): the base first, then each
+ * overlay. Without an argument this returns the base shard's state; with
+ * `{ shard: '<namespace>/<name>' }`, that shard's, or `null` when the vault
+ * holds no shard of that name. The returned `schema_version` is the file's.
+ *
  * @returns The parsed `ShardState`, or `null` if state.json is absent.
  * @throws ShardMindError `VAULT_NOT_FOUND` if no vault in the ancestor chain.
  * @throws ShardMindError `STATE_READ_FAILED` on I/O errors.
@@ -80,7 +91,7 @@ export function resolveVaultRoot(): string {
  * if (state) console.log(`Installed: ${state.shard}@${state.version}`);
  * ```
  */
-export async function loadState(): Promise<ShardState | null> {
+export async function loadState(opts: { shard?: string } = {}): Promise<ShardState | null> {
   const vaultRoot = resolveVaultRoot();
   const filePath = path.join(vaultRoot, STATE_FILE);
 
@@ -124,8 +135,14 @@ export async function loadState(): Promise<ShardState | null> {
       `This version of shardmind reads schema_version 1 to ${STATE_SCHEMA_VERSION}.`,
     );
   }
-  // The same contract the engine reads with (#343).
-  return parseShardState(parsed, filePath);
+  // The same contract the engine reads with (#343). Schema 1 and 2 hold one
+  // shard, the base; schema 3 lists them (#395).
+  const shards =
+    (version as number) < 3
+      ? [parseShardState(parsed, filePath)]
+      : parseVaultState(parsed, filePath).shards.map((entry) => ({ schema_version: version as number, ...entry }));
+  if (opts.shard === undefined) return shards[0]!;
+  return shards.find((state) => state.shard === opts.shard) ?? null;
 }
 
 /**

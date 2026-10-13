@@ -120,9 +120,9 @@ describe('readState validates state.json (#343)', () => {
     await writeRaw({ schema_version: 99 });
     const err = await readState(vault).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ShardMindError);
-    expect((err as Error).message).toContain('newer ShardMind (state schema 99; this ShardMind reads up to 2)');
-    expect(newerStateOf(err)).toEqual({ stateSchemaVersion: 99, supportedSchemaVersion: 2 });
-    expect(jsonFailure('status', err).error!.details).toEqual({ stateSchemaVersion: 99, supportedSchemaVersion: 2 });
+    expect((err as Error).message).toContain('newer ShardMind (state schema 99; this ShardMind reads up to 3)');
+    expect(newerStateOf(err)).toEqual({ stateSchemaVersion: 99, supportedSchemaVersion: 3 });
+    expect(jsonFailure('status', err).error!.details).toEqual({ stateSchemaVersion: 99, supportedSchemaVersion: 3 });
   });
 
   it('an older schema_version with no migration keeps the unsupported wording, without the numbers (#344)', async () => {
@@ -175,11 +175,11 @@ describe('loadState (runtime) validates the same way (#343)', () => {
 
   it('a state.json from a newer ShardMind is STATE_UNSUPPORTED_VERSION with both numbers, not corrupt (#368)', async () => {
     vi.spyOn(process, 'cwd').mockReturnValue(vault);
-    // A newer engine's shape: no top-level shard, files elsewhere.
-    await writeRaw({ schema_version: 3, shards: [{ shard: 'acme/base' }] });
+    // A newer engine's shape: nothing this one knows where it looks.
+    await writeRaw({ schema_version: 4, vaults: [{ shard: 'acme/base' }] });
     const err = await loadState().catch((e: unknown) => e);
     expect(err).toMatchObject({ code: 'STATE_UNSUPPORTED_VERSION' });
-    expect(newerStateOf(err)).toEqual({ stateSchemaVersion: 3, supportedSchemaVersion: 2 });
+    expect(newerStateOf(err)).toEqual({ stateSchemaVersion: 4, supportedSchemaVersion: 3 });
   });
 
   it('a schema_version below 1 is STATE_UNSUPPORTED_VERSION, as the engine answers (#368)', async () => {

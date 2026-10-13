@@ -22,7 +22,7 @@ import { ShardMindError } from '../runtime/types.js';
 import { errnoCode } from '../runtime/errno.js';
 import { resolveModules } from './modules.js';
 import { createRenderer, renderFile, buildRenderContext } from './renderer.js';
-import { initShardDir, cacheTemplates, cacheManifest, writeState, STATE_SCHEMA_VERSION } from './state.js';
+import { initShardDir, cacheTemplates, cacheManifest, writeState, SINGLE_SHARD_SCHEMA_VERSION } from './state.js';
 import { sha256, toPosix } from './fs-utils.js';
 import { hashValues, type Collision } from './install-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
@@ -164,7 +164,7 @@ export async function runInstall(opts: InstallRunnerOptions): Promise<InstallRes
   onProgress?.({ kind: 'done', total: totalFiles });
 
   const state: ShardState = {
-    schema_version: STATE_SCHEMA_VERSION,
+    schema_version: SINGLE_SHARD_SCHEMA_VERSION,
     shard: `${manifest.namespace}/${manifest.name}`,
     source: resolved.source,
     version: manifest.version,

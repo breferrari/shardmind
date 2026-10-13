@@ -167,7 +167,7 @@ describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)'
       const r = mountStatus({ vaultRoot: vault.root });
       // The notice wraps at the terminal's width: compare with whitespace folded.
       const frame = (await waitFor(r.lastFrame, (f) => f.includes('newer ShardMind'), 30_000)).replace(/\s+/g, ' ');
-      expect(frame).toContain('state schema 9; this ShardMind reads up to 2');
+      expect(frame).toContain('state schema 9; this ShardMind reads up to 3');
       expect(frame).toContain('npm install -g shardmind@latest');
       expect(frame).not.toContain('STATE_UNSUPPORTED_VERSION');
     } finally {
@@ -192,7 +192,7 @@ describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)'
       expect(doc.ok).toBe(false);
       expect(doc.result).toBeUndefined();
       expect(doc.error.code).toBe('STATE_UNSUPPORTED_VERSION');
-      expect(doc.error.details).toEqual({ stateSchemaVersion: 9, supportedSchemaVersion: 2 });
+      expect(doc.error.details).toEqual({ stateSchemaVersion: 9, supportedSchemaVersion: 3 });
       expect(doc.error.hint).toContain('npm install -g shardmind@latest');
     } finally {
       process.chdir(cwd);

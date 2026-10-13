@@ -280,7 +280,7 @@ describe('shardmind (status)', () => {
     const doc = JSON.parse(json.stdout) as { ok: boolean; error: { code: string; details: unknown } };
     expect(doc.ok).toBe(false);
     expect(doc.error.code).toBe('STATE_UNSUPPORTED_VERSION');
-    expect(doc.error.details).toEqual({ stateSchemaVersion: 9, supportedSchemaVersion: 2 });
+    expect(doc.error.details).toEqual({ stateSchemaVersion: 9, supportedSchemaVersion: 3 });
   });
 
   describe('--json (#139, ARCHITECTURE §10.3a)', () => {

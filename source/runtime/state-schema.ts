@@ -10,7 +10,7 @@
  */
 
 import { z } from 'zod';
-import type { ShardState } from './types.js';
+import type { ShardState, VaultState } from './types.js';
 import { ShardMindError } from './types.js';
 
 const FileStateSchema = z.looseObject({
@@ -20,8 +20,7 @@ const FileStateSchema = z.looseObject({
   iterator_key: z.string().optional(),
 });
 
-const ShardStateSchema = z.looseObject({
-  schema_version: z.number().int(),
+const ShardEntryShape = {
   shard: z.string(),
   source: z.string(),
   version: z.string(),
@@ -35,16 +34,43 @@ const ShardStateSchema = z.looseObject({
   resolvedSha: z.string().optional(),
   bootstrap_fingerprint: z.string().optional(),
   bootstrap_pending: z.literal(true).optional(),
-});
+};
+
+const ShardStateSchema = z.looseObject({ schema_version: z.number().int(), ...ShardEntryShape });
 
 /**
- * Current on-disk `state.json` schema version. Bumped 1 → 2 with the hook
- * lifecycle split (#102): v2 adds the optional `bootstrap_fingerprint`
- * field. The bump is additive — `state-migrator.ts` forward-migrates v1
- * with a field-supplying rule. Exported so the install / update / adopt
- * executors stamp the same version they read.
+ * Schema 3 (#395): the vault's shards, the base first. No two name the same
+ * shard: each is addressed by its `shard`, by update and by `loadState`.
  */
-export const STATE_SCHEMA_VERSION = 2;
+const VaultStateSchema = z
+  .looseObject({
+    schema_version: z.number().int(),
+    shards: z.array(z.looseObject(ShardEntryShape)).min(1),
+  })
+  .superRefine((state, ctx) => {
+    const seen = new Set<string>();
+    state.shards.forEach((entry, i) => {
+      if (seen.has(entry.shard)) {
+        ctx.addIssue({ code: 'custom', path: ['shards', i, 'shard'], message: `${entry.shard} is listed twice` });
+      }
+      seen.add(entry.shard);
+    });
+  });
+
+/**
+ * The newest `state.json` schema this engine reads. Bumped 1 → 2 with the
+ * hook lifecycle split (#102): v2 adds the optional `bootstrap_fingerprint`
+ * field. Bumped 2 → 3 with composition (#395): v3 lists the vault's shards
+ * (`VaultState`). `state-migrator.ts` forward-migrates each older version.
+ */
+export const STATE_SCHEMA_VERSION = 3;
+
+/**
+ * The schema a vault with one shard is written at (#395): it stays at 2,
+ * byte for byte, and only the first overlay rewrites the file at 3. The
+ * install / update / adopt executors stamp it on the `ShardState` they write.
+ */
+export const SINGLE_SHARD_SCHEMA_VERSION = 2;
 
 /** A state.json from a newer ShardMind (#344): its schema version, and the newest this engine reads. */
 export interface NewerState {
@@ -97,14 +123,39 @@ export function parseShardState(value: unknown, filePath: string): ShardState {
   );
 }
 
-/** `files["Home.md"].ownership`: a vault path or module id in brackets, a field name after a dot. */
+/**
+ * `value` as a `VaultState` (#395), or `STATE_CORRUPT` naming the first
+ * field that does not match, by its path inside `shards`
+ * (`shards[1].files["Home.md"].ownership`).
+ */
+export function parseVaultState(value: unknown, filePath: string): VaultState {
+  const result = VaultStateSchema.safeParse(value);
+  if (result.success) return result.data;
+  const issue = result.error.issues[0]!;
+  throw new ShardMindError(
+    `Corrupt state.json: ${filePath}: ${fieldPath(issue.path)}: ${issue.message}`,
+    'STATE_CORRUPT',
+    STATE_CORRUPT_HINT,
+  );
+}
+
+/**
+ * `shards[1].files["Home.md"].ownership`: a list index in brackets, a vault
+ * path or module id (the key under a `files` or `modules` field) quoted in
+ * brackets, a field name after a dot.
+ */
 function fieldPath(segments: readonly PropertyKey[]): string {
   let out = '';
-  segments.forEach((segment, i) => {
-    const keyed = i === 1 && (segments[0] === 'files' || segments[0] === 'modules');
+  let keyedNext = false;
+  for (const segment of segments) {
+    const keyed = keyedNext;
+    keyedNext = false;
     if (typeof segment === 'number') out += `[${segment}]`;
     else if (keyed) out += `[${JSON.stringify(String(segment))}]`;
-    else out += out === '' ? String(segment) : `.${String(segment)}`;
-  });
+    else {
+      out += out === '' ? String(segment) : `.${String(segment)}`;
+      keyedNext = segment === 'files' || segment === 'modules';
+    }
+  }
   return out === '' ? '(root)' : out;
 }

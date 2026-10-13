@@ -38,7 +38,7 @@ import {
   cacheManifest,
   writeState,
   initShardDir,
-  STATE_SCHEMA_VERSION,
+  SINGLE_SHARD_SCHEMA_VERSION,
 } from './state.js';
 import { VALUES_FILE } from '../runtime/vault-paths.js';
 import type {
@@ -309,7 +309,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     // `undefined` one (a tag install's `ref`) is dropped on write.
     const nextState: ShardState = {
       ...currentState,
-      schema_version: STATE_SCHEMA_VERSION,
+      schema_version: SINGLE_SHARD_SCHEMA_VERSION,
       shard: `${newManifest.namespace}/${newManifest.name}`,
       source: resolved.source,
       version: newManifest.version,

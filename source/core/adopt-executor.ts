@@ -50,7 +50,7 @@ import {
   cacheTemplates,
   cacheManifest,
   writeState,
-  STATE_SCHEMA_VERSION,
+  SINGLE_SHARD_SCHEMA_VERSION,
 } from './state.js';
 import { movedFromOf, type AdoptClassification, type AdoptPlan } from './adopt-planner.js';
 import { rolledBackError } from './rollback-report.js';
@@ -380,7 +380,7 @@ export async function runAdopt(opts: AdoptRunnerOptions): Promise<AdoptResult> {
 
     const installedAt = now.toISOString();
     const state: ShardState = {
-      schema_version: STATE_SCHEMA_VERSION,
+      schema_version: SINGLE_SHARD_SCHEMA_VERSION,
       shard: `${manifest.namespace}/${manifest.name}`,
       source: resolved.source,
       version: manifest.version,
