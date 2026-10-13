@@ -29,7 +29,7 @@ import { assertSafeVaultPaths } from './vault-path-guard.js';
 import { rolledBackError } from './rollback-report.js';
 import { wrapWriteError } from './bug-report.js';
 import { beginTransaction, type BackupRecord, type CreateRoot, type VaultTransaction } from './vault-transaction.js';
-import { hookLogRelPath, overlayDir, overlayValuesFile, SHARDMIND_DIR, STATE_FILE, VALUES_FILE } from '../runtime/vault-paths.js';
+import { HOOK_STAGES, hookLogRelPath, overlayDir, overlayValuesFile, SHARDMIND_DIR, STATE_FILE, VALUES_FILE } from '../runtime/vault-paths.js';
 
 export type { BackupRecord } from './vault-transaction.js';
 
@@ -350,6 +350,15 @@ export async function runInstallTransaction(opts: InstallTransactionOptions): Pr
   return { ...result, backups: kept, left };
 }
 
+/**
+ * The engine paths an add writes for overlay `shard` (#396): its cache
+ * folder, its values file, and each of its hook logs. Guarded (#163) before
+ * any prompt by the flow, and again here before any write.
+ */
+export function overlayEnginePaths(shard: string): string[] {
+  return [overlayDir(shard), overlayValuesFile(shard), ...HOOK_STAGES.map((slot) => hookLogRelPath(slot, shard))];
+}
+
 export interface AddTransactionOptions extends Omit<InstallRunnerOptions, 'tx' | 'target'> {
   signal?: AbortSignal;
   /** The user's own files at the overlay's paths, moved out of the way first. */
@@ -378,7 +387,7 @@ export async function runAddTransaction(opts: AddTransactionOptions): Promise<In
   };
   // The overlay's own engine paths are written too: never through a link
   // or a case-folded name (#163), dry run included.
-  await assertSafeVaultPaths(opts.vaultRoot, [target.cacheDir, target.valuesFile, path.dirname(hookLogRelPath('bootstrap', shard))]);
+  await assertSafeVaultPaths(opts.vaultRoot, overlayEnginePaths(shard));
   if (opts.dryRun) {
     const result = await runInstall({ ...installOpts, target });
     return { ...result, backups: [], left: [] };

@@ -20,9 +20,9 @@ import { readVaultState, writeShardEntry } from '../state.js';
 import { assertShardInstallable } from '../lint-shard.js';
 import { checkExternalToolsForRun } from '../external-tools.js';
 import { assertSafeVaultPaths } from '../vault-path-guard.js';
-import { foldOutputPath, pathExists } from '../fs-utils.js';
+import { foldOutputPath } from '../fs-utils.js';
 import { planOutputs, detectCollisions, defaultModuleSelections, type Collision } from '../install-planner.js';
-import { runAddTransaction, type BackupRecord, type ProgressEvent } from '../install-executor.js';
+import { overlayEnginePaths, runAddTransaction, type BackupRecord, type ProgressEvent } from '../install-executor.js';
 import type { HookOutcome } from '../hook-orchestrator.js';
 import { prepareShard, type PreparedShard } from './prepare-shard.js';
 import { answersFor, loadValuesFile, type ValueAnswers } from './values.js';
@@ -131,7 +131,8 @@ export async function runAddFlow(input: AddFlowInput, io: AddFlowIO): Promise<Ad
     // after the wizard by the transaction's exclusive writes.
     const leftover = [];
     for (const rel of [overlayValuesFile(name), overlayDir(name)]) {
-      if (await pathExists(path.join(vaultRoot, rel))) leftover.push(rel.replaceAll('\\', '/'));
+      // lstat: a dangling link counts as something there.
+      if (await fsp.lstat(path.join(vaultRoot, rel)).then(() => true, () => false)) leftover.push(rel.replaceAll('\\', '/'));
     }
     if (leftover.length > 0) {
       throw new ShardMindError(
@@ -301,7 +302,8 @@ async function planAndAdd(
   // before any write, dry run included, naming every such path.
   assertNoOwnedPaths(owned, plannedPaths, shard);
 
-  await assertSafeVaultPaths(vaultRoot, plannedPaths);
+  // The overlay's own engine paths too, so an unsafe one is refused before the collision prompt.
+  await assertSafeVaultPaths(vaultRoot, [...plannedPaths, ...overlayEnginePaths(`${shard.manifest.namespace}/${shard.manifest.name}`)]);
   // Owned by no shard, so the user's own: install's collision review.
   const userFiles = await detectCollisions(vaultRoot, plannedPaths);
   let policy: 'backup' | 'overwrite' = 'backup';

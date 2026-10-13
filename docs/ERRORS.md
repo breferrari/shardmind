@@ -414,6 +414,8 @@ A Ctrl+C rollback that could not restore everything prints the same list to stde
 
 **Remedy:** Fix the arguments; `shardmind <command> --help` lists them.
 
+Also raised by the runtime (#396): `loadValues`, `loadSchema` or `getIncludedModules`'s neighbours given `{ shard }` naming no shard of the vault, and an overlay path helper given a name that is not `<namespace>/<name>`. Name one of the shards `state.json` lists, or leave the name out to read the base shard.
+
 ## Install command flags
 
 Thrown during install's pre-flight, before any network call: by the install flow (`source/core/flows/install.ts`), or, for where the vault goes (`INSTALL_DESTINATION_NOT_EMPTY`, `INSTALL_INSIDE_VAULT`), by `source/core/install-destination.ts` before the run starts.

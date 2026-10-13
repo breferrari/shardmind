@@ -614,7 +614,11 @@ describe('the add transaction (#396)', () => {
     await tx.recordWrite('.shardmind/state.json');
     await fsp.writeFile(path.join(vault, '.shardmind', 'state.json'), '{"schema_version":3}\n');
 
+    const dir = tx.dir!;
     expect(await tx.rollback()).toEqual([]);
+    // A whole rollback leaves no snapshot behind either: nothing points at it.
+    expect(await exists(dir)).toBe(false);
+    expect(await exists(path.join(vault, '.shardmind', 'backups'))).toBe(false);
     expect(await read('.shardmind/state.json')).toBe('{"schema_version":2}\n');
     expect(await exists(path.join(vault, '.shardmind', 'shards'))).toBe(false);
     expect(await exists(path.join(vault, 'shard-values.acme.research.yaml'))).toBe(false);

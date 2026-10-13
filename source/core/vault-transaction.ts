@@ -353,6 +353,9 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
           failures.push({ path: failure.path, reason: `cleanup failed: ${failure.reason}` });
         }
       }
+      // add's snapshot too, once the rollback is whole: it holds nothing left
+      // to restore (#396).
+      if (opts.kind === 'add' && dir !== null && failures.length === 0) await dropSnapshot(dir);
       // The vault this run made goes last, lock first: it lives inside it.
       if (createdRoot) failures.push(...(await removeVaultRoot(createdRoot)));
       return failures;
@@ -367,13 +370,22 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
       );
       // add's snapshot is only its rollback's: no summary points at it, so a
       // committed add leaves none behind, nor an emptied `backups/` (#396).
-      if (opts.kind === 'add' && dir !== null) {
-        await removePath(dir).catch(() => {});
-        await fsp.rmdir(path.dirname(dir)).catch(() => {});
-      }
+      // One it cannot remove is reported with the rest left behind.
+      if (opts.kind === 'add' && dir !== null && !(await dropSnapshot(dir))) left.push({ originalPath: dir, backupPath: dir });
       return { kept, left };
     },
   };
+}
+
+/** Remove a run's snapshot folder, then `backups/` if that emptied it. Whether the snapshot is gone; never throws. */
+async function dropSnapshot(dir: string): Promise<boolean> {
+  try {
+    await removePath(dir);
+  } catch {
+    return false;
+  }
+  await fsp.rmdir(path.dirname(dir)).catch(() => {});
+  return true;
 }
 
 export interface CreateRoot {

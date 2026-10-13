@@ -23,6 +23,7 @@ import { buildValuesValidator } from './values-validator.js';
  * @throws ShardMindError `VALUES_NOT_FOUND` if the vault has no values file (vault not installed).
  * @throws ShardMindError `VALUES_READ_FAILED` on I/O errors.
  * @throws ShardMindError `VALUES_INVALID` if the file isn't a YAML mapping.
+ * @throws ShardMindError `ARGS_INVALID` if `shard` names no shard of the vault (#396).
  *
  * @example
  * ```ts

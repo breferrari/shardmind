@@ -30,6 +30,7 @@ import { CACHED_SCHEMA, overlayDir, SHARD_SCHEMA_FILE } from './vault-paths.js';
  * @returns The parsed and normalized `ShardSchema`.
  * @throws ShardMindError `VAULT_NOT_FOUND` if no vault in the ancestor chain.
  * @throws ShardMindError `SCHEMA_NOT_FOUND` if the cached file is missing.
+ * @throws ShardMindError `ARGS_INVALID` if `shard` names no shard of the vault (#396).
  *
  * @example
  * ```ts

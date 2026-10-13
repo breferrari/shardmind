@@ -195,6 +195,11 @@ describe('add command — Layer 1 flow tests (#396)', () => {
     const backups = (await fs.readdir(path.join(vault.root, 'research'))).filter((n) => n.startsWith('Index.md.shardmind-backup-'));
     expect(backups).toHaveLength(1);
     expect(await vault.readFile(`research/${backups[0]}`)).toBe('my own index\n');
+    // An answer that is not the default reaches the overlay's files, its
+    // values file and its own bootstrap.
+    expect(await vault.readFile('research/Index.md')).toBe('Research on optics\n');
+    expect(await vault.readFile('shard-values.acme.research.yaml')).toContain('optics');
+    expect(await vault.readFile('research-bootstrapped.txt')).toBe('optics');
   }, 90_000);
 
   it('a dry run writes nothing', async () => {

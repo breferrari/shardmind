@@ -49,8 +49,6 @@ const ENGINE_WRITE_PATHS: readonly string[] = [
   CACHED_SCHEMA,
   CACHED_TEMPLATES,
   path.join(SHARDMIND_DIR, 'backups'),
-  // Each overlay shard's cache folder lives under it (#396).
-  path.join(SHARDMIND_DIR, 'shards'),
   path.join(SHARDMIND_DIR, 'update-check.json'),
   HOOK_LOGS_DIR,
   // Every hook slot's full-output log, `.shardmind/logs/<slot>.log`.
@@ -58,6 +56,9 @@ const ENGINE_WRITE_PATHS: readonly string[] = [
     path.join(HOOK_LOGS_DIR, `${slot}.log`),
   ),
 ];
+
+/** Where every overlay shard's cache folder sits (#396): guarded, not one of the engine's own entries. */
+const OVERLAY_CACHE_ROOT = path.join(SHARDMIND_DIR, 'shards');
 
 /**
  * The top-level names under `.shardmind/` that the engine owns, from the
@@ -226,7 +227,10 @@ export async function assertSafeVaultPaths(
   deletes: readonly string[] = [],
   caseRenames: ReadonlyArray<readonly [string, string]> = [],
 ): Promise<void> {
-  const unsafe = await findUnsafeVaultPaths(vaultRoot, [...writes, ...ENGINE_WRITE_PATHS], deletes, caseRenames);
+  // `.shardmind/shards`, where each overlay's cache lives (#396), is guarded
+  // like the engine's own paths, but kept out of ENGINE_SHARDMIND_ENTRIES:
+  // a reinstall carries the overlays' caches over as it always did.
+  const unsafe = await findUnsafeVaultPaths(vaultRoot, [...writes, ...ENGINE_WRITE_PATHS, OVERLAY_CACHE_ROOT], deletes, caseRenames);
   if (unsafe.length === 0) return;
   const listed = unsafe.slice(0, MAX_LISTED_PATHS).map((u) => `${u.path} (${u.reason})`).join(', ');
   const more = unsafe.length > MAX_LISTED_PATHS ? `, and ${unsafe.length - MAX_LISTED_PATHS} more` : '';
