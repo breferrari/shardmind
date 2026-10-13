@@ -139,6 +139,20 @@ describe('--skip-hooks (#199)', () => {
     expect(await pending(vault)).toBeUndefined();
   }, 120_000);
 
+  it('an up-to-date update --dry-run --json carries no hooks and keeps the bootstrap owed', async () => {
+    const { vault, values } = await newVault('skip-uptodate-dry-json');
+    const install = await run(vault, ['install', REF, '.', '--yes', '--values', values, '--skip-hooks']);
+    expect(install.exitCode, install.stderr).toBe(0);
+    const result = await run(vault, ['update', '--dry-run', '--json']);
+    const doc = JSON.parse(result.stdout) as { ok: boolean; result: Record<string, unknown> };
+    expect(doc.ok, result.stderr).toBe(true);
+    expect(doc.result['upToDate']).toBe(true);
+    // The terminal previews the owed bootstrap; a dry-run document carries no hooks (OPERATIONS §--json).
+    expect(doc.result).not.toHaveProperty('hooks');
+    expect(await vault.exists('bootstrapped.txt')).toBe(false);
+    expect(await pending(vault)).toBe(true);
+  }, 120_000);
+
   it('update --json --skip-hooks reports bootstrap and post-update skipped with the reason, and keeps the fingerprint', async () => {
     const { vault, values } = await newVault('skip-update');
     const install = await run(vault, ['install', REF, '.', '--yes', '--values', values]);
