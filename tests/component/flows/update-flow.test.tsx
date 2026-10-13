@@ -42,6 +42,7 @@ const RENAME_SLUG = 'acme/rename-migration';
 const RENAME_REF = `github:${RENAME_SLUG}`;
 const TOOLS_SLUG = 'acme/update-external-tools';
 const TOOLS_REF = `github:${TOOLS_SLUG}`;
+const SKIP_HOOKS_SLUG = 'flowtest/update-skip-hooks';
 
 describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)', () => {
   const getCtx = setupFlowSuite({
@@ -71,6 +72,10 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
         latest: '0.1.0',
       },
       [TOOLS_SLUG]: {
+        versions: {} as Record<string, string>,
+        latest: '0.1.0',
+      },
+      [SKIP_HOOKS_SLUG]: {
         versions: {} as Record<string, string>,
         latest: '0.1.0',
       },
@@ -238,23 +243,38 @@ describe('update command — Layer 1 flow tests (#111 Phase 1, scenarios 13-17)'
     }
   }
 
-  it('--skip-hooks updates and the summary reports the declared bootstrap skipped (#199)', async () => {
-    const { stub, fixtures } = getCtx();
-    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
-    stub.setLatest(SHARD_SLUG, '0.1.0');
-    const vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix: 'skip-hooks-update' });
-    stub.setVersion(SHARD_SLUG, '0.3.0', fixtures.byVersion['0.3.0']!);
-    stub.setLatest(SHARD_SLUG, '0.3.0');
+  it('--skip-hooks updates and the summary reports the declared post-update skipped (#199)', async () => {
+    const { stub } = getCtx();
+    const slug = SKIP_HOOKS_SLUG;
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skip-hooks-update-tar-'));
+    // Ships the post-update hook it declares (#199): an absent script is reported absent, not skipped.
+    const hooked = (version: string) =>
+      buildCustomTarball({
+        version,
+        prefix: `skip-hooks-update-${version}`,
+        manifestOverrides: { hooks: { 'post-update': 'hooks/post-update.ts' }, name: 'update-skip-hooks', namespace: 'flowtest' },
+        outDir: tmpDir,
+        mutate: async (dir) => {
+          await fs.mkdir(path.join(dir, 'hooks'), { recursive: true });
+          await fs.writeFile(path.join(dir, 'hooks', 'post-update.ts'), 'export default async function () {}\n');
+        },
+      });
+    stub.setVersion(slug, '0.1.0', await hooked('0.1.0'));
+    stub.setLatest(slug, '0.1.0');
+    const vault = await createInstalledVault({ stub, shardRef: `github:${slug}`, values: DEFAULT_VALUES, prefix: 'skip-hooks-update' });
+    stub.setVersion(slug, '0.2.0', await hooked('0.2.0'));
+    stub.setLatest(slug, '0.2.0');
     try {
       const r = mountUpdate({ vaultRoot: vault.root, options: { yes: true, skipHooks: true } });
       const frame = await waitFor(
         r.lastFrame,
-        (f) => /Updated 0\.1\.0 → 0\.3\.0/.test(f) && f.includes('Bootstrap hook skipped (--skip-hooks).'),
+        (f) => /Updated 0\.1\.0 → 0\.2\.0/.test(f) && f.includes('Post-update hook skipped (--skip-hooks).'),
         30_000,
       );
-      expect(frame).toContain('Bootstrap hook skipped (--skip-hooks).');
+      expect(frame).toContain('Post-update hook skipped (--skip-hooks).');
     } finally {
       await vault.cleanup();
+      await fs.rm(tmpDir, { recursive: true, force: true });
     }
   }, 60_000);
 

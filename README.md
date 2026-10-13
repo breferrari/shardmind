@@ -125,6 +125,7 @@ shardmind install <shard> [folder]
   --dry-run                                # Show plan, write nothing
   --verbose                                # Per-file rendering progress
   --force                                  # Reinstall over an existing install; overwrite colliding files, no backup
+  --skip-hooks                             # Run no hook; each is reported skipped
 
 # Upgrade the installed shard
 shardmind update
@@ -134,6 +135,7 @@ shardmind update
   --adopt-preexisting                      # Track a file you keep at a path the new version adds, as your modified copy
   --dry-run                                # Plan without writing
   --verbose                                # Per-file action history
+  --skip-hooks                             # Run no hook; each is reported skipped
   --json                                   # One JSON document: what the run did; with --dry-run, the per-file plan
 
 # Retrofit shardmind into an existing shard clone (pre-shardmind era)
@@ -145,6 +147,7 @@ shardmind adopt <shard>
   --from-version <v>                       # The release you cloned: follow its renames, and update files you never changed
   --dry-run                                # Preview classification + plan
   --verbose                                # Per-file action history
+  --skip-hooks                             # Run no hook; each is reported skipped
   --json                                   # One JSON document: what the run did; with --dry-run, the per-file plan
 
 # Check a shard before you publish it (author-facing, read-only)

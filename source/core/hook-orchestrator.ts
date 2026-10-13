@@ -120,9 +120,14 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
     // (and its bootstrap fingerprint) is returned as it came (#199). The
     // defaults check gates only whether a slot runs, so it is not computed.
     const valuesAreDefaultsUnused = false;
-    const outcomes: HookOutcome[] = buildJobs(plan, valuesAreDefaultsUnused)
-      .filter((job) => job.relPath !== undefined)
-      .map((job) => ({ slot: job.slot, summary: { skipped: 'skip-hooks' } }));
+    const outcomes: HookOutcome[] = [];
+    for (const job of buildJobs(plan, valuesAreDefaultsUnused)) {
+      if (job.relPath === undefined) continue;
+      // The same lookup a run makes, without running: a declared script the
+      // shard does not ship is absent (null), as it is in a normal run.
+      const found = (await runHook(plan.tempDir, job.relPath)).kind !== 'absent';
+      outcomes.push({ slot: job.slot, summary: found ? { skipped: 'skip-hooks' } : null });
+    }
     return { outcomes, finalState: plan.state, stateChanged: false };
   }
 

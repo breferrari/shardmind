@@ -13,8 +13,9 @@ import { assertNever } from '../runtime/types.js';
  *
  * Per-outcome branches, keyed off the `HookSummary`:
  *   - null            — slot absent / not run; nothing rendered.
- *   - skipped         — engine intentionally didn't run it (personalize under
- *                       Invariant 2); dim note.
+ *   - skipped         — engine intentionally didn't run it, for the reason it
+ *                       names (personalize under Invariant 2, or any declared
+ *                       hook under --skip-hooks, #199); dim note.
  *   - deferred        — dry run; dim "skipped (dry run)" note.
  *   - ran, exit 0     — green "completed" + captured stdout/stderr.
  *   - ran, exit !=0   — yellow warning (exit code) + both streams.

@@ -216,9 +216,21 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
   // ───── --skip-hooks (#199) ─────
 
   it('--skip-hooks installs and the summary reports the declared bootstrap skipped (#199)', async () => {
-    const { stub, fixtures } = getCtx();
-    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const { stub } = getCtx();
     const vault = await makeVaultDir('skip-hooks');
+    const work = await makeVaultDir('skip-hooks-tarball');
+    // minimal-shard declares a bootstrap it does not ship; this copy ships it,
+    // since a declared script that is absent is reported as absent, not skipped.
+    const tarPath = await buildCustomTarball({
+      version: '0.1.0',
+      prefix: 'skip-hooks-0.1.0',
+      outDir: work,
+      mutate: async (dir) => {
+        await fs.mkdir(path.join(dir, 'hooks'), { recursive: true });
+        await fs.writeFile(path.join(dir, 'hooks', 'bootstrap.ts'), 'export default async function () {}\n');
+      },
+    });
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, tarPath);
     try {
       const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault, options: { skipHooks: true } });
       await driveMinimalWizard(r);
@@ -231,6 +243,7 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
       expect(state['bootstrap_fingerprint']).toBeUndefined();
     } finally {
       await cleanupVault(vault);
+      await cleanupVault(work);
     }
   }, 60_000);
 

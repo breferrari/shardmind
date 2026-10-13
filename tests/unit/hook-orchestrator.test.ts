@@ -872,6 +872,15 @@ describe('runHooks with skipHooks (#199)', () => {
     expect(result.outcomes).toEqual([{ slot: 'personalize', summary: { skipped: 'skip-hooks' } }]);
   }, 30_000);
 
+  it('reports a declared hook whose script is missing as absent, as a normal run does', async () => {
+    // Declared, but no script in the shard: a normal run's lookup finds it absent (null summary).
+    const result = await runHooks(
+      installPlan({ manifest: manifest({ personalize: '.shardmind/hooks/missing.ts' }), skipHooks: true }),
+      NOOP_UI,
+    );
+    expect(result.outcomes).toEqual([{ slot: 'personalize', summary: null }]);
+  }, 30_000);
+
   it('reports nothing for a shard that declares no hooks', async () => {
     const result = await runHooks(installPlan({ manifest: manifest({}), skipHooks: true }), NOOP_UI);
     expect(result.outcomes).toEqual([]);

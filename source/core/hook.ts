@@ -172,6 +172,9 @@ export type HookResult =
   | { kind: 'ran'; stdout: string; stderr: string; exitCode: number; failure?: HookFailure }
   | { kind: 'failed'; message: string; stdout: string; stderr: string; failure: HookFailure };
 
+/** Why the engine did not run a declared hook (an open set, OPERATIONS §--json). */
+export type HookSkipReason = 'values-are-defaults' | 'skip-hooks';
+
 /**
  * UI-layer summary of a `HookResult`. Produced by `summarizeHook` in
  * `source/commands/hooks/shared.ts` and consumed by `Summary.tsx` /
@@ -189,9 +192,6 @@ export type HookResult =
  *     (execution failed: timeout / cancel / spawn error / thrown hook —
  *     indistinguishable from a non-zero exit at the UI layer by design).
  */
-/** Why the engine did not run a declared hook (an open set, OPERATIONS §--json). */
-export type HookSkipReason = 'values-are-defaults' | 'skip-hooks';
-
 export interface HookSummary {
   /** Why it failed, when it did (#348). */
   failure?: HookFailure;
