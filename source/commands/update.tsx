@@ -47,6 +47,7 @@ export default function Update({ options }: Props) {
     release,
     includePrerelease,
     adoptPreexisting,
+    skipHooks: options.skipHooks,
   });
 
   const { banner } = useSelfUpdateBanner({ updateCheck });

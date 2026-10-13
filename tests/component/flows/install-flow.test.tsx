@@ -183,6 +183,25 @@ describe('install command — Layer 1 flow tests (#111 Phase 1, scenarios 1–10
 
   // ───── Scenario 1: select default = first option, Enter advances (#103 regression) ─────
 
+  it('--skip-hooks installs and the summary reports the declared bootstrap skipped (#199)', async () => {
+    const { stub, fixtures } = getCtx();
+    stub.setRef(SHARD_SLUG, 'v0.1.0', STUB_SHA, fixtures.byVersion['0.1.0']!);
+    const vault = await makeVaultDir('skip-hooks');
+    try {
+      const r = mountInstall({ shardRef: `${SHARD_REF}#v0.1.0`, vaultRoot: vault, options: { skipHooks: true } });
+      await driveMinimalWizard(r);
+      r.stdin.write(ENTER); // module review default selections
+      await waitFor(r.lastFrame, (f) => f.includes('Ready to install'));
+      r.stdin.write(ENTER);
+      const done = await waitFor(r.lastFrame, (f) => /Installed shardmind\/minimal@0\.1\.0/.test(f), 15_000);
+      expect(done).toContain('Bootstrap hook skipped (--skip-hooks).');
+      const state = JSON.parse(await fs.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')) as Record<string, unknown>;
+      expect(state['bootstrap_fingerprint']).toBeUndefined();
+    } finally {
+      await cleanupVault(vault);
+    }
+  }, 60_000);
+
   it('1. select default = first option → Enter advances (#103 regression)', async () => {
     const { stub, fixtures } = getCtx();
     // minimal-shard's vault_purpose has options [engineering, research, general]

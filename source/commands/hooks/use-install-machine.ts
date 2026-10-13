@@ -76,6 +76,8 @@ export interface UseInstallMachineInput {
   force: boolean;
   verbose: boolean;
   dryRun: boolean;
+  /** `--skip-hooks` (#199): run no hook; each is reported skipped. */
+  skipHooks?: boolean;
   /** Where the vault goes (#333), decided before the run (`install-destination.ts`). */
   destination: InstallDestination;
 }
@@ -90,7 +92,7 @@ export interface UseInstallMachineOutput {
 }
 
 export function useInstallMachine(input: UseInstallMachineInput): UseInstallMachineOutput {
-  const { shardRef, valuesFile, yes, defaults, force, verbose, dryRun, destination } = input;
+  const { shardRef, valuesFile, yes, defaults, force, verbose, dryRun, skipHooks = false, destination } = input;
 
   // Whether a prompt can run at all, from Ink's own stdin (the injected stub
   // under ink-testing-library, the real handle in production). Without one
@@ -160,6 +162,7 @@ export function useInstallMachine(input: UseInstallMachineInput): UseInstallMach
             defaults,
             force,
             dryRun,
+            skipHooks,
             interactive: isRawModeSupported,
             destination,
             engineVersion: resolveEngineVersion(),

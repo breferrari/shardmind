@@ -45,6 +45,8 @@ export interface AdoptFlowInput {
   /** `--from-version`: the release the vault was cloned from (#179). */
   fromVersion: string | undefined;
   dryRun: boolean;
+  /** `--skip-hooks` (#199): run no hook; each declared one is reported skipped. */
+  skipHooks: boolean;
   /** `--json`: with `--dry-run`, the run returns its plan and stops. */
   json: boolean;
   /** A terminal that can prompt. Without one, the values come from flags or the run refuses. */
@@ -365,6 +367,7 @@ async function execute(
       newFiles: done.summary.installedFresh,
       removedFiles: [],
       dryRun: input.dryRun,
+      skipHooks: input.skipHooks,
     }),
   );
 

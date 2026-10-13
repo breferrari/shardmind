@@ -205,6 +205,7 @@ export interface InstallOptions {
   force?: boolean;
   verbose?: boolean;
   dryRun?: boolean;
+  skipHooks?: boolean;
   updateCheck?: boolean;
 }
 
@@ -225,6 +226,7 @@ export function mountInstall(opts: {
         force: false,
         verbose: false,
         dryRun: false,
+        skipHooks: false,
         updateCheck: true,
         ...opts.options,
       }}
@@ -254,6 +256,7 @@ export function mountUpdate(opts: {
         yes: false,
         verbose: false,
         dryRun: false,
+        skipHooks: false,
         includePrerelease: false,
         adoptPreexisting: false,
         updateCheck: true,
@@ -287,6 +290,7 @@ export function mountAdopt(opts: {
         yes: false,
         verbose: false,
         dryRun: false,
+        skipHooks: false,
         updateCheck: true,
         json: false,
         ...opts.options,

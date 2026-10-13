@@ -52,6 +52,8 @@ export interface UseAdoptMachineInput {
   fromVersion?: string;
   verbose: boolean;
   dryRun: boolean;
+  /** `--skip-hooks` (#199): run no hook; each is reported skipped. */
+  skipHooks?: boolean;
   vaultRoot: string;
 }
 
@@ -122,7 +124,7 @@ export interface UseAdoptMachineOutput {
 }
 
 export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOutput {
-  const { shardRef, valuesFile, yes, mode, fromVersion, verbose, dryRun, vaultRoot } = input;
+  const { shardRef, valuesFile, yes, mode, fromVersion, verbose, dryRun, skipHooks = false, vaultRoot } = input;
 
   // Without a terminal the flow never prompts: it takes `--values`, or
   // refuses (#139). Ink would otherwise throw "Raw mode is not supported"
@@ -204,6 +206,7 @@ export function useAdoptMachine(input: UseAdoptMachineInput): UseAdoptMachineOut
             mode,
             fromVersion,
             dryRun,
+            skipHooks,
             json: false,
             interactive: isRawModeSupported,
             vaultRoot,

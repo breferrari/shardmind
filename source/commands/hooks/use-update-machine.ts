@@ -49,6 +49,8 @@ export interface UseUpdateMachineInput {
   yes: boolean;
   verbose: boolean;
   dryRun: boolean;
+  /** `--skip-hooks` (#199): run no hook; each is reported skipped. */
+  skipHooks?: boolean;
   /**
    * `--release <v>`: pin to an exact tag (stable or prerelease). Named
    * `--release` rather than `--version` because Pastel reserves the
@@ -128,7 +130,7 @@ export interface UseUpdateMachineOutput {
 }
 
 export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachineOutput {
-  const { vaultRoot, yes, verbose, dryRun, release, includePrerelease, adoptPreexisting = false } = input;
+  const { vaultRoot, yes, verbose, dryRun, skipHooks = false, release, includePrerelease, adoptPreexisting = false } = input;
 
   const { phase, setPhase, phaseRef, launch, settle } = useFlowRun<Phase>({
     vaultRoot,
@@ -208,6 +210,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
             release,
             includePrerelease,
             adoptPreexisting,
+            skipHooks,
             engineVersion: resolveEngineVersion(),
             stop,
           },

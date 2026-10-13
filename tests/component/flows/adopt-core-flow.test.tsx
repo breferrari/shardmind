@@ -75,6 +75,7 @@ describe('adopt flow, UI-free (#302)', () => {
     mode: undefined,
     fromVersion: undefined,
     dryRun: false,
+    skipHooks: false,
     json: false,
     interactive: true,
     vaultRoot: vault,

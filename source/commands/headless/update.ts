@@ -34,6 +34,7 @@ export async function runUpdateJson(
         release: options.release,
         includePrerelease: options.includePrerelease,
         adoptPreexisting: options.adoptPreexisting,
+        skipHooks: options.skipHooks,
         engineVersion,
       },
       // Under --json the flow refuses a question it would ask, or answers it

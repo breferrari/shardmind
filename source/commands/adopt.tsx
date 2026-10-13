@@ -47,6 +47,7 @@ export default function Adopt({ args, options }: Props) {
     fromVersion,
     verbose,
     dryRun,
+    skipHooks: options.skipHooks,
     vaultRoot: process.cwd(),
   });
 

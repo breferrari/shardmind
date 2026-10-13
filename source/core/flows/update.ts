@@ -62,6 +62,8 @@ export interface UpdateFlowInput {
   includePrerelease: boolean;
   /** `--adopt-preexisting` (#61): track a kept add-collision as the user's modified copy. */
   adoptPreexisting: boolean;
+  /** `--skip-hooks` (#199): run no hook; each declared one is reported skipped. */
+  skipHooks: boolean;
   engineVersion: string | undefined;
   /** Aborted when the caller no longer wants the run (a superseded Ink run). */
   stop?: AbortSignal;
@@ -396,6 +398,7 @@ async function execute(
       newFiles: done.summary.addedFiles,
       removedFiles: done.summary.deletedFiles,
       dryRun,
+      skipHooks: input.skipHooks,
     }),
   );
 
