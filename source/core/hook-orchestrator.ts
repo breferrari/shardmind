@@ -12,7 +12,11 @@
  * Slot order:
  *   - install / adopt: bootstrap → personalize (personalize skipped entirely
  *     when valuesAreDefaults — engine-enforced Invariant 2).
- *   - update: bootstrap (only if its fingerprint changed) → post-update.
+ *   - update: bootstrap (only if its fingerprint changed, or a `--skip-hooks`
+ *     run left it pending) → post-update; an up-to-date update runs only the
+ *     pending bootstrap.
+ *   - `--skip-hooks`: nothing runs; each declared slot is reported skipped,
+ *     and a bootstrap that would have run is recorded as pending (#199).
  *
  * Spec: docs/SHARD-LAYOUT.md §Hook lifecycle; docs/IMPLEMENTATION.md §4.16a.
  */
@@ -100,6 +104,7 @@ export interface HookRunResult {
   outcomes: HookOutcome[];
   /** State after re-hash + fingerprint write; the machine persists nothing else. */
   finalState: ShardState;
+  /** Whether the hook phase wrote `finalState` to state.json; false when the (non-fatal) write failed. */
   stateChanged: boolean;
 }
 
@@ -123,8 +128,10 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   if (plan.skipHooks === true) {
     // Every declared slot is reported, even one the rules would not have run:
     // the report says what the user turned off. Nothing runs, so the state
-    // (and its bootstrap fingerprint) is returned as it came (#199). The
-    // defaults check gates only whether a slot runs, so it is not computed.
+    // and its bootstrap fingerprint are kept as they came; the one change is
+    // `bootstrap_pending`, set when the skipped bootstrap would have run
+    // (#199). The defaults check gates only whether a slot runs, so it is not
+    // computed.
     const valuesAreDefaultsUnused = false;
     const outcomes: HookOutcome[] = [];
     let bootstrapOwed = false;
@@ -141,12 +148,7 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
       return { outcomes, finalState: plan.state, stateChanged: false };
     }
     const finalState: ShardState = { ...plan.state, bootstrap_pending: true };
-    try {
-      await writeState(plan.vaultRoot, finalState);
-    } catch {
-      // Non-fatal, as the hook phase's own write is: the executor already wrote state.json.
-    }
-    return { outcomes, finalState, stateChanged: true };
+    return { outcomes, finalState, stateChanged: await persistState(plan.vaultRoot, finalState) };
   }
 
   const defaults = valuesAreDefaultsSafe(plan.values, plan.schema);
@@ -194,7 +196,12 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   let hookRanSinceBaseline = false;
 
   for (const job of jobs) {
-    if (job.relPath === undefined) continue;
+    if (job.relPath === undefined) {
+      // A bootstrap owed to a shard that no longer declares one: nothing is
+      // left to run, so the debt is void (#199).
+      if (job.slot === 'bootstrap') state = clearPending(state);
+      continue;
+    }
 
     // Cancellation: once the user has Ctrl+C'd (the machine aborts the shared
     // signal), stop launching further slots — spawning a child against an
@@ -246,6 +253,8 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
       onStderr: ui.onStderr,
       signal: ui.signal,
     });
+    // A declared bootstrap the shard does not ship cannot be run later either.
+    if (job.slot === 'bootstrap' && result.kind === 'absent') state = clearPending(state);
 
     let violation: HookViolation | null = null;
 
@@ -294,11 +303,7 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
       }
       // A bootstrap owed by a skipped run is now paid (#199). A failed one
       // stays owed, as its fingerprint stays unrecorded.
-      if (state.bootstrap_pending === true) {
-        const { bootstrap_pending: _paid, ...rest } = state;
-        state = rest;
-        stateChanged = true;
-      }
+      state = clearPending(state);
     }
   }
 
@@ -310,16 +315,31 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
     state = finalRehash.state;
   }
 
-  if (stateChanged) {
-    try {
-      await writeState(plan.vaultRoot, state);
-    } catch {
-      // Non-fatal: the executor already wrote state.json; drift detection
-      // surfaces any discrepancy on the next status run. See shared.ts.
-    }
-  }
+  if (state.bootstrap_pending !== plan.state.bootstrap_pending) stateChanged = true;
+  if (stateChanged) stateChanged = await persistState(plan.vaultRoot, state);
 
   return { outcomes, finalState: state, stateChanged };
+}
+
+/** The state without an owed bootstrap (#199); the same object when none is owed. */
+function clearPending(state: ShardState): ShardState {
+  if (state.bootstrap_pending !== true) return state;
+  const { bootstrap_pending: _paid, ...rest } = state;
+  return rest;
+}
+
+/**
+ * Write the hook phase's state. Non-fatal: the executor already wrote
+ * state.json, and drift detection surfaces any discrepancy on the next
+ * status run (see shared.ts). Returns whether it was written.
+ */
+async function persistState(vaultRoot: string, state: ShardState): Promise<boolean> {
+  try {
+    await writeState(vaultRoot, state);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Build the ordered slot jobs for this command. */

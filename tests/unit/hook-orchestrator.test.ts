@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { runHooks, bootstrapShouldRerun, type HookRunPlan, type HookRunResult, type HookRunUi } from '../../source/core/hook-orchestrator.js';
 import { sha256 } from '../../source/core/fs-utils.js';
 import { makeShardState, makeFileState } from '../helpers/shard-state.js';
-import type { HookSlot, ShardManifest, ShardSchema } from '../../source/runtime/types.js';
+import type { HookSlot, ShardManifest, ShardSchema, ShardState } from '../../source/runtime/types.js';
 
 // A schema with one value whose default is 'default'. valuesAreDefaults is true
 // iff plan.values === { user_name: 'default' }.
@@ -1030,4 +1030,73 @@ describe('a pending bootstrap (#199)', () => {
     expect(result.finalState.bootstrap_pending).toBeUndefined();
     expect(result.finalState.bootstrap_fingerprint).toBe('v1');
   }, 30_000);
+
+  it('clears the flag when the shard no longer declares a bootstrap: nothing is left to run', async () => {
+    const result = await runHooks(
+      updatePlan({ manifest: manifest({}), state: makeShardState({ bootstrap_pending: true }), upToDate: true }),
+      NOOP_UI,
+    );
+    expect(result.outcomes).toEqual([]);
+    expect(result.finalState.bootstrap_pending).toBeUndefined();
+    expect(result.stateChanged).toBe(true);
+    const onDisk = JSON.parse(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')) as ShardState;
+    expect(onDisk.bootstrap_pending).toBeUndefined();
+  });
+
+  it('clears the flag when the declared bootstrap script is not shipped', async () => {
+    const result = await runHooks(
+      updatePlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/missing.ts', fingerprint: 'v1' } }),
+        state: makeShardState({ bootstrap_pending: true }),
+      }),
+      NOOP_UI,
+    );
+    expect(result.outcomes.find((o) => o.slot === 'bootstrap')?.summary).toBeNull();
+    expect(result.finalState.bootstrap_pending).toBeUndefined();
+  });
+
+  it('keeps the flag on a dry run, which writes nothing', async () => {
+    const result = await runHooks(
+      updatePlan({ manifest: manifest({}), state: makeShardState({ bootstrap_pending: true }), dryRun: true }),
+      NOOP_UI,
+    );
+    expect(result.finalState.bootstrap_pending).toBe(true);
+    expect(result.stateChanged).toBe(false);
+  });
+
+  it('does not report the state changed when state.json cannot be written', async () => {
+    // A folder where state.json goes: the write fails, non-fatally.
+    await fsp.mkdir(path.join(vault, '.shardmind', 'state.json'), { recursive: true });
+    const result = await runHooks(
+      updatePlan({ manifest: manifest({}), state: makeShardState({ bootstrap_pending: true }), upToDate: true }),
+      NOOP_UI,
+    );
+    expect(result.stateChanged).toBe(false);
+  });
+});
+
+describe('a --skip-hooks run whose state.json cannot be written (#199)', () => {
+  it('does not report the state changed', async () => {
+    await hook('bootstrap.ts', 'export default async function () {}');
+    await fsp.mkdir(path.join(vault, '.shardmind', 'state.json'), { recursive: true });
+    const result = await runHooks(
+      {
+        command: 'install',
+        tempDir: shardDir,
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } }),
+        schema: SCHEMA,
+        vaultRoot: vault,
+        state: makeShardState(),
+        values: { user_name: 'default' },
+        modules: {},
+        newFiles: [],
+        removedFiles: [],
+        dryRun: false,
+        skipHooks: true,
+      },
+      NOOP_UI,
+    );
+    expect(result.outcomes).toEqual([{ slot: 'bootstrap', summary: { skipped: 'skip-hooks' } }]);
+    expect(result.stateChanged).toBe(false);
+  });
 });
