@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { migrateState } from '../../source/core/state-migrator.js';
+import type { ShardState } from '../../source/runtime/types.js';
 
 describe('migrateState', () => {
   it('returns null when no migration rule exists for the source version', () => {
@@ -27,7 +28,7 @@ describe('migrateState', () => {
         modules: { core: 'included' as const },
         files: { 'Home.md': { template: null, rendered_hash: 'c'.repeat(64), ownership: 'managed' as const } },
       };
-      const migrated = migrateState(v1, 1, 2);
+      const migrated = migrateState(v1, 1, 2) as ShardState | null;
       expect(migrated).not.toBeNull();
       expect(migrated!.schema_version).toBe(2);
       // Every prior field survives untouched.
@@ -38,7 +39,7 @@ describe('migrateState', () => {
     });
 
     it('leaves bootstrap_fingerprint absent (additive optional field)', () => {
-      const migrated = migrateState({ schema_version: 1, files: {} }, 1, 2);
+      const migrated = migrateState({ schema_version: 1, files: {} }, 1, 2) as ShardState | null;
       expect(migrated!.schema_version).toBe(2);
       expect(migrated!.bootstrap_fingerprint).toBeUndefined();
     });

@@ -13,14 +13,10 @@
  * new `schema_version` so `readState`'s version loop terminates and
  * `writeState`'s exact-version guard accepts the result.
  *
- * Usage pattern when adding a migration:
- *
- *   const migrations: StateMigration[] = [
- *     { fromVersion: 2, toVersion: 3, apply: (s) => ({ ...s, shards: [...] }) },
- *   ];
+ * The second (#395) turns schema 2's one shard into schema 3's `shards[0]`.
+ * The result is unchecked: the caller validates it against the target
+ * version's contract (`parseVaultState`).
  */
-
-import type { ShardState } from '../runtime/types.js';
 
 export interface StateMigration {
   fromVersion: number;
@@ -36,6 +32,16 @@ const migrations: StateMigration[] = [
     // migrate loop advances and the migrated object passes writeState's guard.
     apply: (state) => ({ ...(state as Record<string, unknown>), schema_version: 2 }),
   },
+  {
+    fromVersion: 2,
+    toVersion: 3,
+    // Composition (#395): the one shard becomes `shards[0]`, with every field
+    // it had but `schema_version`, fields this engine does not know included.
+    apply: (state) => {
+      const { schema_version: _version, ...entry } = state as Record<string, unknown>;
+      return { schema_version: 3, shards: [entry] };
+    },
+  },
 ];
 
 /**
@@ -47,7 +53,7 @@ export function migrateState(
   state: unknown,
   fromVersion: number,
   targetVersion: number,
-): ShardState | null {
+): unknown {
   let current: unknown = state;
   let version = fromVersion;
 
@@ -58,5 +64,5 @@ export function migrateState(
     version = step.toVersion;
   }
 
-  return current as ShardState;
+  return current;
 }
