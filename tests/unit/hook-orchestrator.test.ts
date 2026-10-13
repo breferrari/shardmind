@@ -800,3 +800,126 @@ describe('runHooks — the bootstrap context (#356)', () => {
     expect(ctx).toEqual({ removedFiles: ['old.md'], valuesAreDefaults: true });
   }, 30_000);
 });
+
+/**
+ * #199: --skip-hooks runs no hook. Every hook the shard declares for the
+ * command is reported skipped with reason 'skip-hooks', even one the engine
+ * would not have run anyway; no fingerprint is recorded, so the next run with
+ * hooks bootstraps (Invariant 4).
+ */
+describe('runHooks with skipHooks (#199)', () => {
+  const marker = (file: string) => `
+    import { writeFile } from 'node:fs/promises';
+    import { join } from 'node:path';
+    export default async function (ctx) {
+      await writeFile(join(ctx.vaultRoot, ${JSON.stringify(file)}), 'ran');
+    }
+  `;
+
+  function updatePlan(over: Partial<HookRunPlan> & { manifest: ShardManifest }): HookRunPlan {
+    return {
+      command: 'update',
+      tempDir: shardDir,
+      schema: SCHEMA,
+      vaultRoot: vault,
+      state: makeShardState(),
+      values: { user_name: 'default' },
+      modules: {},
+      previousVersion: '0.9.0',
+      newFiles: [],
+      removedFiles: [],
+      dryRun: false,
+      ...over,
+    };
+  }
+
+  async function absent(file: string): Promise<void> {
+    await expect(fsp.access(path.join(vault, file))).rejects.toBeTruthy();
+  }
+
+  it('runs no hook on install, reports each declared hook skipped, and records no fingerprint', async () => {
+    await hook('bootstrap.ts', marker('bootstrapped.txt'));
+    await hook('personalize.ts', marker('personalized.txt'));
+    const plan = installPlan({
+      manifest: manifest({
+        bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v1' },
+        personalize: '.shardmind/hooks/personalize.ts',
+      }),
+      skipHooks: true,
+    });
+    const result = await runHooks(plan, NOOP_UI);
+    await absent('bootstrapped.txt');
+    await absent('personalized.txt');
+    expect(result.outcomes).toEqual([
+      { slot: 'bootstrap', summary: { skipped: 'skip-hooks' } },
+      { slot: 'personalize', summary: { skipped: 'skip-hooks' } },
+    ]);
+    expect(result.stateChanged).toBe(false);
+    expect(result.finalState).toBe(plan.state);
+    expect(result.finalState.bootstrap_fingerprint).toBeUndefined();
+  }, 30_000);
+
+  it('gives a defaults personalize the skip-hooks reason, not values-are-defaults', async () => {
+    await hook('personalize.ts', marker('personalized.txt'));
+    const result = await runHooks(
+      installPlan({
+        manifest: manifest({ personalize: '.shardmind/hooks/personalize.ts' }),
+        values: { user_name: 'default' },
+        skipHooks: true,
+      }),
+      NOOP_UI,
+    );
+    expect(result.outcomes).toEqual([{ slot: 'personalize', summary: { skipped: 'skip-hooks' } }]);
+  }, 30_000);
+
+  it('reports nothing for a shard that declares no hooks', async () => {
+    const result = await runHooks(installPlan({ manifest: manifest({}), skipHooks: true }), NOOP_UI);
+    expect(result.outcomes).toEqual([]);
+  }, 30_000);
+
+  it('on update, reports a bootstrap with an unchanged fingerprint skipped too, and keeps the old fingerprint', async () => {
+    await hook('bootstrap.ts', marker('bootstrapped.txt'));
+    await hook('post-update.ts', marker('updated.txt'));
+    const unchanged = updatePlan({
+      manifest: manifest({
+        bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v1' },
+        'post-update': '.shardmind/hooks/post-update.ts',
+      }),
+      state: makeShardState({ bootstrap_fingerprint: 'v1' }),
+      skipHooks: true,
+    });
+    const result = await runHooks(unchanged, NOOP_UI);
+    await absent('bootstrapped.txt');
+    await absent('updated.txt');
+    expect(result.outcomes).toEqual([
+      { slot: 'bootstrap', summary: { skipped: 'skip-hooks' } },
+      { slot: 'post-update', summary: { skipped: 'skip-hooks' } },
+    ]);
+    expect(result.finalState.bootstrap_fingerprint).toBe('v1');
+
+    // A changed fingerprint is not recorded either: the re-bootstrap stays pending.
+    const changed = await runHooks(
+      updatePlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts', fingerprint: 'v2' } }),
+        state: makeShardState({ bootstrap_fingerprint: 'v1' }),
+        skipHooks: true,
+      }),
+      NOOP_UI,
+    );
+    expect(changed.finalState.bootstrap_fingerprint).toBe('v1');
+    expect(bootstrapShouldRerun(changed.finalState.bootstrap_fingerprint, 'v2')).toBe(true);
+  }, 30_000);
+
+  it('dry run reports skipped (skip-hooks), not deferred', async () => {
+    await hook('bootstrap.ts', marker('bootstrapped.txt'));
+    const result = await runHooks(
+      installPlan({
+        manifest: manifest({ bootstrap: { script: '.shardmind/hooks/bootstrap.ts' } }),
+        dryRun: true,
+        skipHooks: true,
+      }),
+      NOOP_UI,
+    );
+    expect(result.outcomes).toEqual([{ slot: 'bootstrap', summary: { skipped: 'skip-hooks' } }]);
+  }, 30_000);
+});

@@ -33,6 +33,7 @@ import {
   summarizeHook,
   headLines,
   type HookResult,
+  type HookSkipReason,
   type HookStage,
   type HookSummary,
   type RunningHookPhase,
@@ -69,6 +70,12 @@ export interface HookRunPlan {
   /** Managed paths removed: a reinstall's removals on install (#228), `[]` on adopt, summary.deletedFiles on update. bootstrap and post-update receive it (#356). */
   removedFiles: string[];
   dryRun: boolean;
+  /**
+   * `--skip-hooks` (#199): run no hook. Every declared slot is reported
+   * `skipped: 'skip-hooks'`; nothing is snapshotted, re-hashed or persisted,
+   * so the bootstrap fingerprint stays as it was (Invariant 4).
+   */
+  skipHooks?: boolean;
 }
 
 export interface HookRunUi {
@@ -98,7 +105,7 @@ interface SlotJob {
   boundary: 'managed-write' | 'unmanaged-create' | 'none';
   /** When false, the hook is declared but the engine chooses not to run it. */
   willRun: boolean;
-  skippedReason?: 'values-are-defaults';
+  skippedReason?: HookSkipReason;
 }
 
 export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRunResult> {
@@ -110,6 +117,16 @@ export async function runHooks(plan: HookRunPlan, ui: HookRunUi): Promise<HookRu
   const defaults = valuesAreDefaultsSafe(plan.values, plan.schema);
 
   const jobs = buildJobs(plan, defaults);
+
+  if (plan.skipHooks === true) {
+    // Every declared slot is reported, even one the rules would not have run:
+    // the report says what the user turned off. Nothing runs, so the state
+    // (and its bootstrap fingerprint) is returned as it came (#199).
+    const outcomes: HookOutcome[] = jobs
+      .filter((job) => job.relPath !== undefined)
+      .map((job) => ({ slot: job.slot, summary: { skipped: 'skip-hooks' } }));
+    return { outcomes, finalState: plan.state, stateChanged: false };
+  }
 
   // Slots that actually spawn a subprocess — drives the "(N of M)" markers.
   const runnableCount = jobs.filter((j) => j.willRun && j.relPath !== undefined).length;

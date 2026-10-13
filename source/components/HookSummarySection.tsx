@@ -53,10 +53,13 @@ function renderOutcome(
   if (summary === null) return null;
   const name = HOOK_NAME[stage];
 
-  if (summary.skipped === 'values-are-defaults') {
+  if (summary.skipped !== undefined) {
+    const why = summary.skipped === 'skip-hooks' ? '--skip-hooks' : 'values are defaults';
     return (
       <Box key={key} flexDirection="column">
-        <Text dimColor>{name} skipped (values are defaults).</Text>
+        <Text dimColor>
+          {name} skipped ({why}).
+        </Text>
       </Box>
     );
   }

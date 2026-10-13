@@ -189,17 +189,21 @@ export type HookResult =
  *     (execution failed: timeout / cancel / spawn error / thrown hook —
  *     indistinguishable from a non-zero exit at the UI layer by design).
  */
+/** Why the engine did not run a declared hook (an open set, OPERATIONS §--json). */
+export type HookSkipReason = 'values-are-defaults' | 'skip-hooks';
+
 export interface HookSummary {
   /** Why it failed, when it did (#348). */
   failure?: HookFailure;
   deferred?: boolean;
   /**
    * Set when the engine intentionally did NOT run a declared hook:
-   * `'values-are-defaults'` for a `personalize` skipped under Invariant 2.
+   * `'values-are-defaults'` for a `personalize` skipped under Invariant 2,
+   * `'skip-hooks'` for every declared hook of a `--skip-hooks` run (#199).
    * The UI renders a dim "skipped" note rather than nothing, so the user
    * knows the hook existed but the engine chose not to fire it.
    */
-  skipped?: 'values-are-defaults';
+  skipped?: HookSkipReason;
   /**
    * A detected write-boundary crossing (detect-and-warn). The bytes were
    * left in place; the UI renders a non-fatal warning naming the paths.

@@ -32,7 +32,7 @@ import { emptyUpdatePlanCounts, type ConflictResolution, type UpdateAction, type
 import type { UpdateSummary } from './update-executor.js';
 import type { AdoptResolutions, AdoptSummary } from './adopt-executor.js';
 import type { HookOutcome } from './hook-orchestrator.js';
-import type { HookFailure } from './hook.js';
+import type { HookFailure, HookSkipReason } from './hook.js';
 
 /** Bumped only on a breaking reshape, never for additive fields. */
 export const JSON_SCHEMA_VERSION = 1;
@@ -320,6 +320,8 @@ export interface JsonRunHook {
   readonly failure?: HookFailure;
   /** `failed` only: the first line the engine reported, for a person. */
   readonly message?: string;
+  /** `skipped` only: why the engine did not run it, an open set (#199). */
+  readonly reason?: HookSkipReason;
   /** The full output, vault-relative, when the hook wrote a log. */
   readonly log?: string;
 }
@@ -563,7 +565,7 @@ function jsonRunHooks(outcomes: readonly HookOutcome[]): JsonRunHook[] {
   for (const { slot, summary } of outcomes) {
     if (!summary || summary.deferred) continue;
     if (summary.skipped) {
-      hooks.push({ slot, outcome: 'skipped' });
+      hooks.push({ slot, outcome: 'skipped', reason: summary.skipped });
       continue;
     }
     const exitCode = summary.exitCode ?? 0;

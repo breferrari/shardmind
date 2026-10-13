@@ -35,6 +35,11 @@ describe('HookSummarySection', () => {
     expect(frame).toContain('Personalize hook skipped (values are defaults).');
   });
 
+  it('renders a skipped note naming --skip-hooks (#199)', () => {
+    const frame = out([{ slot: 'bootstrap', summary: { skipped: 'skip-hooks' } }]).lastFrame() ?? '';
+    expect(frame).toContain('Bootstrap hook skipped (--skip-hooks).');
+  });
+
   it('renders a dry-run skipped note for a deferred hook', () => {
     const frame = out([{ slot: 'bootstrap', summary: { deferred: true } }]).lastFrame() ?? '';
     expect(frame).toContain('Bootstrap hook skipped (dry run).');
