@@ -74,8 +74,13 @@ async function conflictingVault(tmpDir: string, prefix: string): Promise<Vault> 
 }
 
 /** `shardmind update` in `vault`, with the node script `editor` as $VISUAL. */
-function spawnUpdate(vault: Vault, editor: string, env: Record<string, string> = {}): ReturnType<typeof spawnCliPty> {
+function spawnUpdate(
+  vault: Vault,
+  editor: string,
+  { env = {}, splitWrites = false }: { env?: Record<string, string>; splitWrites?: boolean } = {},
+): ReturnType<typeof spawnCliPty> {
   return spawnCliPty(['update'], {
+    splitWrites,
     timeoutMs: EXIT_WAIT_MS,
     cwd: vault.root,
     env: { SHARDMIND_GITHUB_API_BASE: stub.url, VISUAL: `node "${editor}"`, EDITOR: '', ...env },
@@ -102,74 +107,80 @@ describe.skipIf(noPty())('update — Open in editor under a real terminal (#50)'
     await stub?.close();
   });
 
-  it('leaves raw mode for the editor and takes it back for the next prompt', async () => {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-editor-'));
-    let vault: Vault | null = null;
-    let edited: string | undefined;
-    try {
-      const sttyOut = path.join(tmpDir, 'stty.txt');
-      const editor = path.join(tmpDir, 'editor.cjs');
-      await fs.writeFile(
-        editor,
-        [
-          "const fs = require('node:fs');",
-          "const { execSync } = require('node:child_process');",
-          'const file = process.argv[process.argv.length - 1];',
-          "fs.writeFileSync(process.env.L2_STTY_OUT, execSync('stty -a', { stdio: ['inherit', 'pipe', 'ignore'] }).toString());",
-          "fs.writeFileSync(file, 'Hand-merged in a real terminal.\\n');",
-          '',
-        ].join('\n'),
-      );
-
-      vault = await conflictingVault(tmpDir, 'l2-editor');
-
-      const handle = await spawnUpdate(vault, editor, { L2_STTY_OUT: sttyOut });
+  // The second run delivers each frame in two pieces, as a Linux PTY can
+  // (#394): the summary's editor count is read only from a frame that
+  // waited for it.
+  for (const splitWrites of [false, true]) {
+    it(`leaves raw mode for the editor and takes it back for the next prompt${splitWrites ? ', with each frame delivered in pieces (#394)' : ''}`, async () => {
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-editor-'));
+      let vault: Vault | null = null;
+      let edited: string | undefined;
       try {
-        // 1 of 3: Open in editor is the fourth option. Which file comes first
-        // follows the filesystem's directory order, so read it off the screen.
-        const first = await handle.waitForScreen((s) => /\(1 of 3\)/.test(s) && /Open in editor/.test(s), {
-          timeoutMs: 30_000,
-          description: 'first conflict with Open in editor',
-        });
-        edited = /Conflict in (.+?) \(1 of 3\)/.exec(first)?.[1];
-        await chooseOpenInEditor(handle);
+        const sttyOut = path.join(tmpDir, 'stty.txt');
+        const editor = path.join(tmpDir, 'editor.cjs');
+        await fs.writeFile(
+          editor,
+          [
+            "const fs = require('node:fs');",
+            "const { execSync } = require('node:child_process');",
+            'const file = process.argv[process.argv.length - 1];',
+            "fs.writeFileSync(process.env.L2_STTY_OUT, execSync('stty -a', { stdio: ['inherit', 'pipe', 'ignore'] }).toString());",
+            "fs.writeFileSync(file, 'Hand-merged in a real terminal.\\n');",
+            '',
+          ].join('\n'),
+        );
 
-        // 2 of 3: a lone arrow moves the highlight, so raw mode is back.
-        await handle.waitForScreen((s) => /\(2 of 3\)/.test(s), { timeoutMs: 30_000, description: 'second conflict' });
-        await tick(200);
-        handle.write(ARROW_DOWN);
-        await handle.waitForScreen((s) => /❯\s*Keep mine/.test(s), {
-          timeoutMs: 10_000,
-          description: 'highlight on Keep mine before any ENTER',
-        });
-        handle.write(ENTER);
+        vault = await conflictingVault(tmpDir, 'l2-editor');
 
-        await handle.waitForScreen((s) => /\(3 of 3\)/.test(s), { timeoutMs: 30_000, description: 'third conflict' });
-        handle.write(ARROW_DOWN);
-        await tick(80);
-        handle.write(ENTER);
+        const handle = await spawnUpdate(vault, editor, { env: { L2_STTY_OUT: sttyOut }, splitWrites });
+        try {
+          // 1 of 3: Open in editor is the fourth option. Which file comes first
+          // follows the filesystem's directory order, so read it off the screen.
+          const first = await handle.waitForScreen((s) => /\(1 of 3\)/.test(s) && /Open in editor/.test(s), {
+            timeoutMs: 30_000,
+            description: 'first conflict with Open in editor',
+          });
+          edited = /Conflict in (.+?) \(1 of 3\)/.exec(first)?.[1];
+          await chooseOpenInEditor(handle);
 
-        const done = await handle.waitForScreen((s) => /Updated 0\.1\.0 → 0\.2\.0/.test(s), {
-          timeoutMs: 60_000,
-          description: 'final updated frame',
-        });
-        expect(done.replace(/\s+/g, ' ')).toContain('1 edited in your editor');
-        expect((await handle.waitForExit()).exitCode).toBe(0);
+          // 2 of 3: a lone arrow moves the highlight, so raw mode is back.
+          await handle.waitForScreen((s) => /\(2 of 3\)/.test(s), { timeoutMs: 30_000, description: 'second conflict' });
+          await tick(200);
+          handle.write(ARROW_DOWN);
+          await handle.waitForScreen((s) => /❯\s*Keep mine/.test(s), {
+            timeoutMs: 10_000,
+            description: 'highlight on Keep mine before any ENTER',
+          });
+          handle.write(ENTER);
+
+          await handle.waitForScreen((s) => /\(3 of 3\)/.test(s), { timeoutMs: 30_000, description: 'third conflict' });
+          handle.write(ARROW_DOWN);
+          await tick(80);
+          handle.write(ENTER);
+
+          // Wait for the count itself: the screen is only sure to hold what
+          // the predicate checked (#394).
+          await handle.waitForScreen(
+            (s) => /Updated 0\.1\.0 → 0\.2\.0/.test(s) && s.replace(/\s+/g, ' ').includes('1 edited in your editor'),
+            { timeoutMs: 60_000, description: 'final updated frame with the editor count' },
+          );
+          expect((await handle.waitForExit()).exitCode).toBe(0);
+        } finally {
+          await handle.dispose();
+        }
+
+        // The editor had a cooked terminal: canonical mode and echo on.
+        const stty = await fs.readFile(sttyOut, 'utf-8');
+        expect(stty).toMatch(/(^|\s)icanon(\s|$)/);
+        expect(stty).toMatch(/(^|\s)echo(\s|$)/);
+        expect(edited).toBeDefined();
+        expect(await vault.readFile(edited!)).toBe('Hand-merged in a real terminal.\n');
       } finally {
-        await handle.dispose();
+        if (vault) await vault.cleanup();
+        await fs.rm(tmpDir, { recursive: true, force: true });
       }
-
-      // The editor had a cooked terminal: canonical mode and echo on.
-      const stty = await fs.readFile(sttyOut, 'utf-8');
-      expect(stty).toMatch(/(^|\s)icanon(\s|$)/);
-      expect(stty).toMatch(/(^|\s)echo(\s|$)/);
-      expect(edited).toBeDefined();
-      expect(await vault.readFile(edited!)).toBe('Hand-merged in a real terminal.\n');
-    } finally {
-      if (vault) await vault.cleanup();
-      await fs.rm(tmpDir, { recursive: true, force: true });
-    }
-  }, 180_000);
+    }, 180_000);
+  }
 
   it('a Ctrl+C while the editor has the terminal cancels the edit, not the update', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'l2-editor-int-'));

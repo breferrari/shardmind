@@ -261,15 +261,16 @@ describe.skipIf(noPty())(
               (s) =>
                 /Installed l2hooks\/throw@0\.1\.0/.test(s) &&
                 /Bootstrap hook exited with code/.test(s) &&
-                /Non-fatal; your vault is ready/.test(s),
+                /Non-fatal; your vault is ready/.test(s) &&
+                // Short stack stays on screen (dimmed); the marker is present.
+                // In the predicate, since the screen is only sure to hold
+                // what the predicate checked (#394).
+                /L2_HOOK_THROW_BANG/.test(s),
               {
                 timeoutMs: 30_000,
-                description: 'install summary + non-fatal crash headline',
+                description: 'install summary + non-fatal crash headline + the stack marker',
               },
             );
-            const screen = handle.screen.serialize();
-            // Short stack stays on screen (dimmed); the marker is present.
-            expect(screen).toMatch(/L2_HOOK_THROW_BANG/);
 
             const exit = await handle.waitForExit();
             // Install itself succeeded — exit 0 even though hook

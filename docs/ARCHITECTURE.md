@@ -1750,6 +1750,14 @@ staying hermetic. No test reaches the public internet.
   the PTY via `handle.write(byte)`, assert via
   `handle.screen.serialize()` / `.contains(text)` / `.matches(regex)`
   or `handle.waitForScreen(predicate, { timeoutMs, description })`.
+  A frame can reach the PTY in pieces (a Linux PTY hands one write to
+  its reader a line block at a time), so `waitForScreen` returns the
+  screen as it was when the predicate held, and guarantees only what
+  the predicate checked: a test puts every line it asserts into the
+  predicate it waits on (#394). `spawnCliPty({ splitWrites: true })`
+  delivers each multi-line write in two pieces, to show the hazard on
+  any OS; `SHARDMIND_TEST_SPLIT_WRITES=1` does it for every spawn, to
+  audit the whole Layer 2 suite.
   For PTY scenarios that need a custom shard (per-test slug,
   hook script body, multi-file mutations), the `.ts`-importable
   `tests/e2e/tui/helpers/build-fixture-shard.ts` exposes

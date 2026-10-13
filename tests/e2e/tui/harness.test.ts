@@ -193,6 +193,33 @@ describe.skipIf(noPty())('Layer 2 harness — PTY spawn', () => {
     }
   }, 30_000);
 
+  it('splitWrites delivers a frame in two pieces: waitForScreen guarantees only what its predicate checked (#394)', async () => {
+    // One write, two lines, as Ink writes a frame. Under the split the
+    // title reaches the screen a pause before the count, which is how a
+    // Linux PTY can deliver it on a bad day.
+    const handle = await spawnCliPty([], {
+      cwd: os.tmpdir(),
+      splitWrites: true,
+      nodeArgs: ['-e', 'process.stdout.write("SPLIT-TITLE\\nSPLIT-COUNT\\n")'],
+    });
+    try {
+      const early = await handle.waitForScreen((s) => s.includes('SPLIT-TITLE'), {
+        pollMs: 5,
+        timeoutMs: 15_000,
+        description: 'title',
+      });
+      expect(early).not.toContain('SPLIT-COUNT');
+      const both = await handle.waitForScreen((s) => s.includes('SPLIT-TITLE') && s.includes('SPLIT-COUNT'), {
+        timeoutMs: 15_000,
+        description: 'title and count',
+      });
+      expect(both).toContain('SPLIT-COUNT');
+      expect((await handle.waitForExit()).exitCode).toBe(0);
+    } finally {
+      await handle.dispose();
+    }
+  }, 30_000);
+
   it('--help renders synchronously and the screen captures the usage line', async () => {
     // Pin two harness contracts in a non-interactive shape:
     //   1. `spawnCliPty` actually spawns the child and reaches its
