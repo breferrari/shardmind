@@ -75,3 +75,31 @@ export function validateValues(schema: ShardSchema, values: Record<string, unkno
   if (result.success) return result.data as Record<string, unknown>;
   throw new ShardMindError(`Invalid values: ${describeZodIssues(result.error)}`, 'VALUES_INVALID', VALUES_HINTS[source]);
 }
+
+/** How a run that writes a shard gets its values: its flags, and whether a terminal is there to prompt on. */
+export interface AnswerSource {
+  yes: boolean;
+  defaults: boolean;
+  interactive: boolean;
+  valuesFile: string | undefined;
+}
+
+/**
+ * The answers as install and add take them (#139, #396): without the wizard
+ * under `--yes` / `--defaults`, or from a `--values` file when there is no
+ * terminal to show it on. With no terminal and no values, `noValues()` (the
+ * command's own refusal): schema defaults nobody chose are never recorded.
+ * Otherwise `ask()` shows the wizard, and its answers are validated.
+ */
+export async function answersFor(
+  source: AnswerSource,
+  shard: { schema: ShardSchema; prefillValues: Record<string, unknown> },
+  ask: () => Promise<ValueAnswers>,
+  noValues: () => ShardMindError,
+): Promise<ValueAnswers> {
+  const quiet = source.yes || source.defaults || (!source.interactive && source.valuesFile !== undefined);
+  if (quiet) return answersWithoutPrompting(shard.schema, shard.prefillValues, source.yes);
+  if (!source.interactive) throw noValues();
+  const given = await ask();
+  return { values: validateValues(shard.schema, given.values, 'answers'), selections: given.selections };
+}

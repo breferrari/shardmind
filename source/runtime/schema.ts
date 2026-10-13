@@ -14,7 +14,7 @@ import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ShardSchema, FrontmatterRule } from './types.js';
 import { ShardMindError } from './types.js';
-import { namesOverlay, resolveVaultRoot } from './state.js';
+import { overlayName, resolveVaultRoot } from './state.js';
 import { CACHED_SCHEMA, overlayDir, SHARD_SCHEMA_FILE } from './vault-paths.js';
 
 /**
@@ -42,10 +42,8 @@ import { CACHED_SCHEMA, overlayDir, SHARD_SCHEMA_FILE } from './vault-paths.js';
 export async function loadSchema(opts: { shard?: string } = {}): Promise<ShardSchema> {
   const vaultRoot = resolveVaultRoot();
   // An overlay's cached schema sits in its own folder (#396).
-  const filePath = path.join(
-    vaultRoot,
-    (await namesOverlay(opts.shard)) ? path.join(overlayDir(opts.shard!), SHARD_SCHEMA_FILE) : CACHED_SCHEMA,
-  );
+  const overlay = await overlayName(opts.shard);
+  const filePath = path.join(vaultRoot, overlay === null ? CACHED_SCHEMA : path.join(overlayDir(overlay), SHARD_SCHEMA_FILE));
 
   let raw: string;
   try {

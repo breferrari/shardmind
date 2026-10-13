@@ -16,15 +16,15 @@ import { ShardMindError } from '../../runtime/types.js';
 import { SHARDMIND_DIR, STATE_FILE, VALUES_FILE, overlayValuesFile } from '../../runtime/vault-paths.js';
 import { errnoCode } from '../../runtime/errno.js';
 import { resolve as resolveRef } from '../registry.js';
-import { readVaultState, writeVaultState } from '../state.js';
+import { readVaultState, writeShardEntry } from '../state.js';
 import { assertShardInstallable } from '../lint-shard.js';
 import { checkExternalToolsForRun } from '../external-tools.js';
 import { assertSafeVaultPaths } from '../vault-path-guard.js';
 import { planOutputs, detectCollisions, defaultModuleSelections, type Collision } from '../install-planner.js';
-import { runAddTransaction, withOverlay, type BackupRecord, type ProgressEvent } from '../install-executor.js';
+import { runAddTransaction, type BackupRecord, type ProgressEvent } from '../install-executor.js';
 import type { HookOutcome } from '../hook-orchestrator.js';
 import { prepareShard, type PreparedShard } from './prepare-shard.js';
-import { answersWithoutPrompting, loadValuesFile, validateValues, type ValueAnswers } from './values.js';
+import { answersFor, loadValuesFile, type ValueAnswers } from './values.js';
 import { FlowCancelled } from './cancelled.js';
 import { runAndHooks, type FlowRunIO } from './run.js';
 
@@ -127,7 +127,8 @@ export async function runAddFlow(input: AddFlowInput, io: AddFlowIO): Promise<Ad
     }
     // A path the overlay writes whatever is answered, already owned: refused
     // before any prompt (R2). The full set is checked once answered.
-    assertNoOwnedPaths(vault, await pathsWrittenRegardless(prepared), prepared);
+    const owned = ownedPaths(vault);
+    assertNoOwnedPaths(owned, await pathsWrittenRegardless(prepared), prepared);
     const prefill = input.valuesFile ? await loadValuesFile(input.valuesFile, prepared.schema) : {};
     io.phase({ kind: 'loading', message: 'Checking the shard…' });
     await assertShardInstallable(prepared.tempDir, prefill, vaultRoot);
@@ -138,7 +139,7 @@ export async function runAddFlow(input: AddFlowInput, io: AddFlowIO): Promise<Ad
     );
     const shard: AddShard = { ...prepared, prefillValues: prefill, moduleFileCounts, alwaysIncludedFileCount, base };
     const answers = await valueAnswers(input, io, shard);
-    return await planAndAdd(input, io, vaultRoot, vault, shard, answers);
+    return await planAndAdd(input, io, vaultRoot, owned, shard, answers);
   } finally {
     await prepared?.cleanup().catch(() => {});
   }
@@ -165,19 +166,19 @@ function noInstall(cwd: string): ShardMindError {
   );
 }
 
-/** The answers, as install takes them: without the wizard under `--yes` / `--defaults`, or from `--values` with no terminal. */
+/** The answers, as install takes them (`answersFor`), refused without a terminal or values as `ADD_NON_INTERACTIVE_WITHOUT_VALUES`. */
 async function valueAnswers(input: AddFlowInput, io: AddFlowIO, shard: AddShard): Promise<ValueAnswers> {
-  if (input.yes || input.defaults) return answersWithoutPrompting(shard.schema, shard.prefillValues, input.yes);
-  if (!input.interactive) {
-    if (input.valuesFile !== undefined) return answersWithoutPrompting(shard.schema, shard.prefillValues, input.yes);
-    throw new ShardMindError(
-      'No interactive terminal, and no values were supplied',
-      'ADD_NON_INTERACTIVE_WITHOUT_VALUES',
-      'Pass --values <file> to supply answers, or --yes / --defaults to accept the schema defaults deliberately.',
-    );
-  }
-  const given = await io.ask({ kind: 'values', shard });
-  return { values: validateValues(shard.schema, given.values, 'answers'), selections: given.selections };
+  return answersFor(
+    input,
+    shard,
+    () => io.ask({ kind: 'values', shard }),
+    () =>
+      new ShardMindError(
+        'No interactive terminal, and no values were supplied',
+        'ADD_NON_INTERACTIVE_WITHOUT_VALUES',
+        'Pass --values <file> to supply answers, or --yes / --defaults to accept the schema defaults deliberately.',
+      ),
+  );
 }
 
 /**
@@ -185,9 +186,9 @@ async function valueAnswers(input: AddFlowInput, io: AddFlowIO, shard: AddShard)
  * form, with its owner: each shard's files, every values file, and (by
  * prefix, in `ownerOf`) anything under `.shardmind/`.
  */
-export function ownedPaths(vault: VaultState): Map<string, { path: string; owner: string }> {
-  const owned = new Map<string, { path: string; owner: string }>();
-  const own = (rel: string, owner: string) => owned.set(foldPath(rel), { path: rel, owner });
+export function ownedPaths(vault: VaultState): Map<string, string> {
+  const owned = new Map<string, string>();
+  const own = (rel: string, owner: string) => owned.set(foldPath(rel), owner);
   vault.shards.forEach((shard, i) => {
     for (const rel of Object.keys(shard.files)) own(rel, shard.shard);
     own(i === 0 ? VALUES_FILE : overlayValuesFile(shard.shard), `${shard.shard} (its values file)`);
@@ -199,18 +200,24 @@ export function ownedPaths(vault: VaultState): Map<string, { path: string; owner
  * `ADD_PATH_OWNED` when any of `paths` is owned (R2, #396), naming every
  * such path with its owner.
  */
-function assertNoOwnedPaths(vault: VaultState, paths: readonly string[], shard: PreparedShard): void {
-  const owned = ownedPaths(vault);
+function assertNoOwnedPaths(owned: Map<string, string>, paths: readonly string[], shard: PreparedShard): void {
   const taken = paths
     .map((rel) => ({ rel, owner: ownerOf(rel, owned) }))
     .filter((t): t is { rel: string; owner: string } => t.owner !== null);
   if (taken.length === 0) return;
   const name = `${shard.manifest.namespace}/${shard.manifest.name}`;
   throw new ShardMindError(
-    `${name} would write ${taken.length === 1 ? 'a path' : `${taken.length} paths`} another shard or ShardMind owns: ${taken.map((t) => `${t.rel} (${t.owner})`).join(', ')}`,
+    `${name} would write ${taken.length === 1 ? 'a path' : `${taken.length} paths`} another shard or ShardMind owns: ${listed(taken.map((t) => `${t.rel} (${t.owner})`))}`,
     'ADD_PATH_OWNED',
     "Each file has one owner. The overlay's author can move these files or exclude them in its .shardmindignore; or leave this shard out of the vault.",
   );
+}
+
+/** Up to `OWNED_LISTED` entries, then how many more. */
+const OWNED_LISTED = 20;
+function listed(items: readonly string[]): string {
+  const shown = items.slice(0, OWNED_LISTED).join(', ');
+  return items.length > OWNED_LISTED ? `${shown}, and ${items.length - OWNED_LISTED} more` : shown;
 }
 
 /**
@@ -226,22 +233,25 @@ async function pathsWrittenRegardless(shard: PreparedShard): Promise<string[]> {
 }
 
 /** Who owns `rel`, if anyone: a shard, the engine (`.shardmind/`), or nobody. */
-function ownerOf(rel: string, owned: Map<string, { path: string; owner: string }>): string | null {
+function ownerOf(rel: string, owned: Map<string, string>): string | null {
   const folded = foldPath(rel);
   if (folded === SHARDMIND_DIR || folded.startsWith(`${SHARDMIND_DIR}/`)) return 'ShardMind (the engine folder)';
-  return owned.get(folded)?.owner ?? null;
+  return owned.get(folded) ?? null;
 }
 
-/** One spelling per path: forward slashes, lower case, as a case-folding filesystem sees it. */
+/**
+ * One spelling per path, as a case-folding filesystem sees it: forward
+ * slashes, NFC (macOS's NFD names are the same file), lower case.
+ */
 function foldPath(rel: string): string {
-  return rel.split(path.sep).join('/').toLowerCase();
+  return rel.replaceAll('\\', '/').normalize('NFC').toLowerCase();
 }
 
 async function planAndAdd(
   input: AddFlowInput,
   io: AddFlowIO,
   vaultRoot: string,
-  vault: VaultState,
+  owned: Map<string, string>,
   shard: AddShard,
   answers: ValueAnswers,
 ): Promise<AddFlowResult> {
@@ -251,7 +261,7 @@ async function planAndAdd(
 
   // One owner per file (R2), now with the modules and values chosen: refused
   // before any write, dry run included, naming every such path.
-  assertNoOwnedPaths(vault, plannedPaths, shard);
+  assertNoOwnedPaths(owned, plannedPaths, shard);
 
   await assertSafeVaultPaths(vaultRoot, plannedPaths);
   // Owned by no shard, so the user's own: install's collision review.
@@ -271,7 +281,6 @@ async function planAndAdd(
     (signal) =>
       runAddTransaction({
         vaultRoot,
-        vault,
         manifest: shard.manifest,
         schema: shard.schema,
         tempDir: shard.tempDir,
@@ -299,7 +308,7 @@ async function planAndAdd(
       dryRun: input.dryRun,
       skipHooks: input.skipHooks,
       // The overlay's entry, written back into shards[] (#396).
-      persist: (state) => writeVaultState(vaultRoot, withOverlay(vault, state)),
+      persist: (state) => writeShardEntry(vaultRoot, state),
       logShard: name,
     }),
   );

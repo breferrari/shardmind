@@ -184,6 +184,21 @@ export async function readState(vaultRoot: string, opts: ReadStateOptions = {}):
   return shardStateOf(entry, SINGLE_SHARD_SCHEMA_VERSION);
 }
 
+/**
+ * Write one shard's state into the vault's (#396): the state on disk is read
+ * again, the entry naming the same shard replaced, or the shard appended
+ * after the others when the vault has none of that name. Read at write time,
+ * so a write never puts back a stale copy of another shard's entry. A vault
+ * with no state yet gets this shard as its only one.
+ */
+export async function writeShardEntry(vaultRoot: string, state: ShardState): Promise<void> {
+  const entry = withoutSchemaVersion(state);
+  const shards = (await readVaultState(vaultRoot))?.shards ?? [];
+  const at = shards.findIndex((s) => s.shard === entry.shard);
+  const next = at === -1 ? [...shards, entry] : shards.map((s, i) => (i === at ? entry : s));
+  await writeVaultState(vaultRoot, { schema_version: STATE_SCHEMA_VERSION, shards: next });
+}
+
 /** Write the state of a vault with one shard, at `SINGLE_SHARD_SCHEMA_VERSION` (#395). */
 export async function writeState(vaultRoot: string, state: ShardState): Promise<void> {
   if (state.schema_version !== SINGLE_SHARD_SCHEMA_VERSION) {

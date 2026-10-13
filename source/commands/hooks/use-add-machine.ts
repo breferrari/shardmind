@@ -97,17 +97,21 @@ export function useAddMachine(input: UseAddMachineInput): UseAddMachineOutput {
           },
           progress: (ev) => {
             if (ev.kind === 'start') {
-              show((prev) => (prev.kind === 'installing' ? { ...prev, total: ev.total, current: 0, label: 'Starting…' } : prev));
+              show((prev) =>
+                prev.kind === 'installing' && (prev.total !== ev.total || prev.current !== 0)
+                  ? { ...prev, total: ev.total, current: 0, label: 'Starting…' }
+                  : prev,
+              );
             } else if (ev.kind === 'file') {
               if (verbose) {
                 history.push(ev.outputPath);
                 if (history.length > 5) history.shift();
               }
-              show((prev) =>
-                prev.kind === 'installing'
-                  ? { ...prev, current: ev.index, total: ev.total, label: ev.label, history: verbose ? [...history] : prev.history }
-                  : prev,
-              );
+              show((prev) => {
+                if (prev.kind !== 'installing') return prev;
+                if (prev.current === ev.index && prev.label === ev.label) return prev;
+                return { ...prev, current: ev.index, total: ev.total, label: ev.label, history: verbose ? [...history] : prev.history };
+              });
             }
           },
         };

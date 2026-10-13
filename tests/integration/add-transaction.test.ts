@@ -13,7 +13,6 @@ import { fileURLToPath } from 'node:url';
 
 import { parseManifest } from '../../source/core/manifest.js';
 import { parseSchema, buildValuesValidator } from '../../source/core/schema.js';
-import { readVaultState } from '../../source/core/state.js';
 import { defaultModuleSelections, resolveComputedDefaults } from '../../source/core/install-planner.js';
 import { runInstall, runAddTransaction } from '../../source/core/install-executor.js';
 import type { ResolvedShard, VaultState } from '../../source/runtime/types.js';
@@ -84,10 +83,8 @@ afterEach(async () => {
 async function addOverlay(over: { signal?: AbortSignal; dryRun?: boolean } = {}) {
   const manifest = await parseManifest(path.join(overlaySrc, '.shardmind', 'shard.yaml'));
   const schema = await parseSchema(path.join(overlaySrc, '.shardmind', 'shard-schema.yaml'));
-  const vaultState = (await readVaultState(vault))!;
   return runAddTransaction({
     vaultRoot: vault,
-    vault: vaultState,
     manifest,
     schema,
     tempDir: overlaySrc,

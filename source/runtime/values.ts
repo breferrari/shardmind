@@ -3,7 +3,7 @@ import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ShardSchema, ValidationResult } from './types.js';
 import { ShardMindError } from './types.js';
-import { namesOverlay, resolveVaultRoot } from './state.js';
+import { overlayName, resolveVaultRoot } from './state.js';
 import { overlayValuesFile, VALUES_FILE } from './vault-paths.js';
 import { errnoCode } from './errno.js';
 import { buildValuesValidator } from './values-validator.js';
@@ -34,7 +34,8 @@ import { buildValuesValidator } from './values-validator.js';
  */
 export async function loadValues(opts: { shard?: string } = {}): Promise<Record<string, unknown>> {
   const vaultRoot = resolveVaultRoot();
-  const filePath = path.join(vaultRoot, (await namesOverlay(opts.shard)) ? overlayValuesFile(opts.shard!) : VALUES_FILE);
+  const overlay = await overlayName(opts.shard);
+  const filePath = path.join(vaultRoot, overlay === null ? VALUES_FILE : overlayValuesFile(overlay));
 
   let raw: string;
   try {

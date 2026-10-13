@@ -19,6 +19,7 @@ import {
   readVaultState,
   writeState,
   writeVaultState,
+  writeShardEntry,
   SINGLE_SHARD_SCHEMA_VERSION,
   STATE_SCHEMA_VERSION,
 } from '../../source/core/state.js';
@@ -336,5 +337,38 @@ describe('the runtime loadState reads schema 3 (#395)', () => {
       stateSchemaVersion: 4,
       supportedSchemaVersion: 3,
     });
+  });
+});
+
+describe('writeShardEntry (#396)', () => {
+  it("replaces the entry naming the same shard, as it is on disk, leaving the others", async () => {
+    await writeVaultState(vault, composed());
+    await writeShardEntry(vault, { schema_version: 2, ...entry('acme/overlay'), version: '9.9.9' });
+    const raw = JSON.parse(await fsp.readFile(statePath(), 'utf-8')) as VaultState;
+    expect(raw.shards.map((s) => [s.shard, s.version])).toEqual([
+      ['acme/base', entry().version],
+      ['acme/overlay', '9.9.9'],
+    ]);
+    expect(raw.shards[1]).not.toHaveProperty('schema_version');
+  });
+
+  it('appends a shard the vault does not hold, after the others', async () => {
+    await writeRaw(v2());
+    await writeShardEntry(vault, { schema_version: 2, ...entry('acme/overlay') });
+    const raw = JSON.parse(await fsp.readFile(statePath(), 'utf-8')) as VaultState;
+    expect(raw.schema_version).toBe(3);
+    expect(raw.shards.map((s) => s.shard)).toEqual(['acme/base', 'acme/overlay']);
+  });
+
+  it('keeps a one-shard vault at schema 2, byte for byte as writeState writes it', async () => {
+    const original = JSON.stringify(v2(), null, 2) + '\n';
+    await writeRaw(null, original);
+    await writeShardEntry(vault, (await readState(vault))!);
+    expect(await fsp.readFile(statePath(), 'utf-8')).toBe(original);
+  });
+
+  it('a vault with no state yet gets the shard as its only one', async () => {
+    await writeShardEntry(vault, { schema_version: 2, ...entry() });
+    expect(await readState(vault)).toEqual(v2());
   });
 });
