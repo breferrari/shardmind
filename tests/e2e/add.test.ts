@@ -1,8 +1,9 @@
 /**
  * `shardmind add` end to end (#396): `dist/cli.js` installs a base shard,
- * adds an overlay beside it, and the vault holds both at schema 3. Until
- * status and update run across shards (#397), both refuse the composed vault
- * with the several-shards message; this pins that interim.
+ * adds an overlay beside it, and the vault holds both at schema 3. Status
+ * reports both shards (#406); until update runs across shards (#407), it
+ * refuses the composed vault with the several-shards message, and this pins
+ * that interim.
  */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
@@ -74,7 +75,7 @@ afterAll(async () => {
 });
 
 describe('shardmind add (#396)', () => {
-  it('adds an overlay beside an installed shard; status and update refuse the composed vault until #397', async () => {
+  it('adds an overlay beside an installed shard; status reports both, update refuses until #407', async () => {
     const vault = await createEmptyVault('e2e-add');
     vaults.push(vault);
     const values = path.join(scratch, 'values.yaml');
@@ -92,10 +93,13 @@ describe('shardmind add (#396)', () => {
     expect(await vault.readFile('research/Index.md')).toBe('# Research\n');
     expect(await vault.exists('shard-values.compose.research.yaml')).toBe(true);
 
-    for (const args of [[], ['update', '--yes']]) {
-      const refused = await run(vault, args);
-      expect(`${refused.stdout}${refused.stderr}`.replace(/\s+/g, ' ')).toContain('several shards');
-    }
+    // Status reports both shards (#406); update refuses until #407.
+    const status = await run(vault, []);
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout).toContain('compose/base');
+    expect(status.stdout).toContain('compose/research');
+    const refused = await run(vault, ['update', '--yes']);
+    expect(`${refused.stdout}${refused.stderr}`.replace(/\s+/g, ' ')).toContain('several shards');
   }, 180_000);
 
   it('refuses outside a vault, with ADD_NO_INSTALL', async () => {

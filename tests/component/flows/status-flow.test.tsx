@@ -175,46 +175,49 @@ describe('status command — Layer 1 flow tests (#111 Phase 1, scenarios 24-25)'
     }
   }, 60_000);
 
-  // #395: until status runs across shards, a composed vault is refused with
-  // the reason, never read as its base shard alone.
+  // #406: status reports each shard of a composed vault (#395 refused it).
+  // The overlay here has no cache of its own, so its block degrades alone.
   async function composedVault(prefix: string): Promise<Vault> {
-    const vault = await newerStateVault(prefix);
+    const { stub, fixtures } = getCtx();
+    stub.setVersion(SHARD_SLUG, '0.1.0', fixtures.byVersion['0.1.0']!);
+    stub.setLatest(SHARD_SLUG, '0.1.0');
+    const vault = await createInstalledVault({ stub, shardRef: SHARD_REF, values: DEFAULT_VALUES, prefix });
     const state = JSON.parse(await vault.readFile('.shardmind/state.json')) as Record<string, unknown>;
-    const { schema_version: _v, shape: _s, ...entry } = state;
+    const { schema_version: _v, ...entry } = state;
     await vault.writeFile(
       '.shardmind/state.json',
-      JSON.stringify({ schema_version: 3, shards: [entry, { ...entry, shard: 'acme/overlay' }] }),
+      JSON.stringify({ schema_version: 3, shards: [entry, { ...entry, shard: 'acme/overlay', files: {} }] }),
     );
     return vault;
   }
 
-  it('a vault with several shards: status says so and how to manage it, without crashing (#395)', async () => {
+  it('a vault with several shards: the base block, then the overlay block, each with its own findings (#406)', async () => {
     let vault: Vault | null = null;
     try {
-      vault = await composedVault('s395-composed-human');
+      vault = await composedVault('s406-composed-human');
       const r = mountStatus({ vaultRoot: vault.root });
-      const frame = (await waitFor(r.lastFrame, (f) => f.includes('several shards'), 30_000)).replace(/\s+/g, ' ');
-      expect(frame).toContain('this command handles a vault with one');
-      expect(frame).toContain('updates each shard of a composed vault');
+      const frame = (await waitFor(r.lastFrame, (f) => f.includes('acme/overlay'), 30_000)).replace(/\s+/g, ' ');
+      expect(frame).toContain('shardmind/minimal');
+      expect(frame.indexOf('acme/overlay')).toBeGreaterThan(frame.indexOf('shardmind/minimal'));
+      expect(frame).not.toContain('several shards');
     } finally {
       if (vault) await vault.cleanup();
     }
   }, 60_000);
 
-  it('`shardmind --json` on a vault with several shards: ok false, STATE_UNSUPPORTED_VERSION, no schema numbers (#395)', async () => {
+  it('`shardmind --json` on a vault with several shards: ok true, the base at the top, both in shards (#406)', async () => {
     let vault: Vault | null = null;
     const written: string[] = [];
     const cwd = process.cwd();
     try {
-      vault = await composedVault('s395-composed-json');
+      vault = await composedVault('s406-composed-json');
       process.chdir(vault.root);
       const code = await runStatusJson(['--json'], undefined, (chunk) => void written.push(chunk));
-      expect(code).toBe(1);
-      const doc = JSON.parse(written[0]!) as { ok: boolean; error: { code: string; message: string; details?: unknown } };
-      expect(doc.ok).toBe(false);
-      expect(doc.error.code).toBe('STATE_UNSUPPORTED_VERSION');
-      expect(doc.error.message).toContain('several shards');
-      expect(doc.error).not.toHaveProperty('details');
+      expect(code).toBe(0);
+      const doc = JSON.parse(written[0]!) as { ok: boolean; result: { shard: string; shards: Array<{ shard: string }> } };
+      expect(doc.ok).toBe(true);
+      expect(doc.result.shard).toBe('shardmind/minimal');
+      expect(doc.result.shards.map((s) => s.shard)).toEqual(['shardmind/minimal', 'acme/overlay']);
     } finally {
       process.chdir(cwd);
       if (vault) await vault.cleanup();

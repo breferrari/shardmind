@@ -20,14 +20,38 @@
 import { Box, Text } from 'ink';
 import Header from './Header.js';
 import { StatusMessage } from './ui.js';
-import type { StatusReport, StatusWarning } from '../runtime/types.js';
+import type { ShardStatusReport, StatusReport, StatusWarning } from '../runtime/types.js';
 import { assertNever } from '../runtime/types.js';
 
 interface StatusViewProps {
   report: StatusReport;
 }
 
+/** One shard's part of the report (#406): what the view shows per shard. */
+interface ShardViewProps {
+  report: ShardStatusReport;
+}
+
+/**
+ * The base shard's block, then one per overlay in install order (#406),
+ * each with its own warnings. A vault with one shard shows one block, as
+ * it always did.
+ */
 export default function StatusView({ report }: StatusViewProps) {
+  const { shards } = report;
+  return (
+    <Box flexDirection="column">
+      {shards.map((shard, i) => (
+        <Box key={i} flexDirection="column" marginTop={i === 0 ? 0 : 1}>
+          <ShardBlock report={shard} />
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+/** One shard's block: its header, installed line, update line and findings. */
+export function ShardBlock({ report }: ShardViewProps) {
   return (
     <Box flexDirection="column">
       <Header manifest={report.manifest} />
@@ -46,7 +70,7 @@ export default function StatusView({ report }: StatusViewProps) {
   );
 }
 
-function InstalledLine({ report }: StatusViewProps) {
+function InstalledLine({ report }: ShardViewProps) {
   const { installedAgo, updatedAgo, drift } = report;
   // The shard manages every file recorded in state.files — that's the sum
   // of all four drift buckets: unchanged (`managed`), user-edited
@@ -75,7 +99,7 @@ function InstalledLine({ report }: StatusViewProps) {
  * examples verbatim — an explicit line rather than a silent success so the
  * user always knows the check ran.
  */
-export function UpdateLine({ report }: StatusViewProps) {
+export function UpdateLine({ report }: ShardViewProps) {
   const u = report.update;
 
   switch (u.kind) {

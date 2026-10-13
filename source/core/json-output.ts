@@ -24,6 +24,7 @@ import type {
   StatusFrontmatterSummary,
   StatusModuleSummary,
   StatusReport,
+  ShardStatusReport,
   StatusWarning,
   UpdateStatus,
 } from '../runtime/types.js';
@@ -621,55 +622,73 @@ export interface StatusModifiedFile {
   readonly diffSkipped?: 'no-template' | 'render-failed' | 'read-failed';
 }
 
+/** One shard's part of the status document (#406): the fields the top level has always had, the vault's environment aside. */
+export interface StatusShardResult {
+  readonly shard: string;
+  readonly source: string;
+  readonly version: string;
+  /** Only for a `github:owner/repo#<ref>` install. */
+  readonly ref?: string;
+  readonly resolvedSha?: string;
+  readonly installedAt: string;
+  readonly updatedAt: string;
+  readonly update: UpdateStatus;
+  /** Null when drift detection failed: nothing was checked (§10.3a). */
+  readonly files: {
+    readonly counts: {
+      readonly managed: number;
+      readonly modified: number;
+      readonly volatile: number;
+      readonly missing: number;
+      readonly orphaned: number;
+    };
+    readonly modified: readonly StatusModifiedFile[];
+    readonly missing: readonly string[];
+    readonly orphaned: readonly string[];
+  } | null;
+  readonly modules: StatusModuleSummary;
+  readonly values: {
+    /** Null when the cached schema is unavailable, so nothing was validated. */
+    readonly valid: boolean | null;
+    /** Null with `valid`: without the schema the declared count is unknown. */
+    readonly total: number | null;
+    readonly invalidKeys: readonly string[];
+    readonly fileMissing: boolean;
+  };
+  /** `--verbose` only; null otherwise. */
+  readonly frontmatter: {
+    readonly valid: number;
+    readonly total: number;
+    readonly issues: StatusFrontmatterSummary['issues'];
+  } | null;
+  readonly warnings: readonly StatusWarning[];
+}
+
 export type StatusResult =
   | { readonly installed: false }
-  | {
+  | (StatusShardResult & {
       readonly installed: true;
-      readonly shard: string;
-      readonly source: string;
-      readonly version: string;
-      /** Only for a `github:owner/repo#<ref>` install. */
-      readonly ref?: string;
-      readonly resolvedSha?: string;
-      readonly installedAt: string;
-      readonly updatedAt: string;
-      readonly update: UpdateStatus;
-      /** Null when drift detection failed: nothing was checked (§10.3a). */
-      readonly files: {
-        readonly counts: {
-          readonly managed: number;
-          readonly modified: number;
-          readonly volatile: number;
-          readonly missing: number;
-          readonly orphaned: number;
-        };
-        readonly modified: readonly StatusModifiedFile[];
-        readonly missing: readonly string[];
-        readonly orphaned: readonly string[];
-      } | null;
-      readonly modules: StatusModuleSummary;
-      readonly values: {
-        /** Null when the cached schema is unavailable, so nothing was validated. */
-        readonly valid: boolean | null;
-        /** Null with `valid`: without the schema the declared count is unknown. */
-        readonly total: number | null;
-        readonly invalidKeys: readonly string[];
-        readonly fileMissing: boolean;
-      };
-      /** `--verbose` only; null otherwise. */
-      readonly frontmatter: {
-        readonly valid: number;
-        readonly total: number;
-        readonly issues: StatusFrontmatterSummary['issues'];
-      } | null;
       /** `--verbose` only; null otherwise. */
       readonly environment: StatusEnvironmentReport | null;
-      readonly warnings: readonly StatusWarning[];
-    };
+      /** Every shard of the vault, the base first (#406, additive); the fields above are the base's. */
+      readonly shards: readonly StatusShardResult[];
+    });
 
 /** `report` is null when the directory has no `.shardmind/state.json`. */
 export function statusResult(report: StatusReport | null): StatusResult {
   if (report === null) return { installed: false };
+  const { warnings, ...base } = shardResult(report);
+  return {
+    installed: true,
+    ...base,
+    environment: report.environment,
+    warnings,
+    shards: report.shards.map(shardResult),
+  };
+}
+
+/** One shard's fields of the status document, in the order the document has always listed them. */
+function shardResult(report: ShardStatusReport): StatusShardResult {
   const { state, drift, manifest } = report;
   // Drift lists modified and missing files in state.json key order; the
   // document promises path order (§10.3a). Line counts carry their own path.
@@ -684,7 +703,6 @@ export function statusResult(report: StatusReport | null): StatusResult {
     })
     .sort((a, b) => byPath(a.path, b.path));
   return {
-    installed: true,
     // state.json is read without field validation, so take the identity
     // and version the human header shows: the cached manifest, or one the
     // report synthesized from state with 'unknown' for anything unusable.
@@ -724,7 +742,6 @@ export function statusResult(report: StatusReport | null): StatusResult {
           issues: [...report.frontmatter.issues].sort((a, b) => byPath(a.path, b.path)),
         }
       : null,
-    environment: report.environment,
     warnings: report.warnings,
   };
 }

@@ -18,7 +18,7 @@
  */
 
 import { Box, Text } from 'ink';
-import StatusView from './StatusView.js';
+import { ShardBlock } from './StatusView.js';
 import type {
   StatusReport,
   StatusValuesSummary,
@@ -33,15 +33,24 @@ interface VerboseViewProps {
   report: StatusReport;
 }
 
+/**
+ * Each shard's block and sections (#406), the base first; the environment,
+ * the vault's, once at the end. A vault with one shard reads as it always did.
+ */
 export default function VerboseView({ report }: VerboseViewProps) {
+  const { shards } = report;
   return (
     <Box flexDirection="column" gap={1}>
-      <StatusView report={report} />
+      {shards.map((shard, i) => (
+        <Box key={i} flexDirection="column" gap={1}>
+          <ShardBlock report={shard} />
 
-      <ValuesSection values={report.values} />
-      <ModulesSection modules={report.modules} />
-      <FilesSection drift={report.drift} />
-      {report.frontmatter && <FrontmatterSection frontmatter={report.frontmatter} />}
+          <ValuesSection values={shard.values} />
+          <ModulesSection modules={shard.modules} />
+          <FilesSection drift={shard.drift} />
+          {shard.frontmatter && <FrontmatterSection frontmatter={shard.frontmatter} />}
+        </Box>
+      ))}
       {report.environment && (
         <EnvironmentSection environment={report.environment} />
       )}

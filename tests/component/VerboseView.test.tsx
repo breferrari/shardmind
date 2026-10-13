@@ -35,7 +35,7 @@ const STATE: ShardState = {
 };
 
 function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
-  return {
+  const built: Omit<StatusReport, 'shards'> = {
     manifest: MANIFEST,
     state: STATE,
     installedAgo: '3 weeks ago',
@@ -81,6 +81,8 @@ function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
     warnings: [],
     ...overrides,
   };
+  // A vault with one shard lists itself (#406).
+  return { ...built, shards: overrides.shards ?? [built] };
 }
 
 describe('VerboseView', () => {
