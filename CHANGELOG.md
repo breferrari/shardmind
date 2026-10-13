@@ -18,6 +18,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **Hooks can read an overlay's files.** The runtime's `loadValues` and `loadSchema` take `{ shard }`, so an overlay's hook reads its own values and schema.
 - **A failed or cancelled add leaves the vault as it was**, `state.json` included.
 - New error codes: `ADD_NO_INSTALL`, `ADD_SHARD_PRESENT`, `ADD_PATH_OWNED`, `ADD_FLAG_CONFLICT` and `ADD_NON_INTERACTIVE_WITHOUT_VALUES`.
+- **An overlay ships no root `.gitignore`** (R5, #405): the base's covers `.shardmind/` for every shard. `validate`'s `LINT_LOGS_NOT_GITIGNORED` now also warns a `.gitignore` that misses overlays' log folders, and its hint tells an overlay's author to ship none.
 - **Release:** ships only with #406 and #407 (status and update across shards, #397). Until then `status` and `update` refuse a vault holding several shards (RELEASE-SMOKE).
 
 ### Added (composition, part 1: `state.json` schema 3 — #395)

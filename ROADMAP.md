@@ -295,7 +295,7 @@ Engine capability from the original plan. These were declined on 2026-10-04/05 o
 | ⬜ | Update every shard of a vault, or one | [#407](https://github.com/breferrari/shardmind/issues/407) |
 | ⬜ | List a vault's shards with shardmind list | [#398](https://github.com/breferrari/shardmind/issues/398) |
 | ⬜ | Add --json to install and add | [#403](https://github.com/breferrari/shardmind/issues/403) |
-| ⬜ | Let an overlay shard ship a .gitignore beside the base's | [#405](https://github.com/breferrari/shardmind/issues/405) |
+| ✅ | Let an overlay shard ship a .gitignore beside the base's | [#405](https://github.com/breferrari/shardmind/issues/405) |
 | ⬜ | Dependency fetching (recursive + lock file) | [#82](https://github.com/breferrari/shardmind/issues/82) |
 | ⬜ | Structural variants (modules.structure + vault_purpose) | [#80](https://github.com/breferrari/shardmind/issues/80) |
 | ⬜ | Guided file creation (guided_files schema + third install phase) | [#79](https://github.com/breferrari/shardmind/issues/79) |

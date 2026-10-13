@@ -424,7 +424,9 @@ The old single `post-install` hook (removed in 1.0) bundled three jobs with diff
 
 **If your hook crashes**, the install/update/adopt still succeeds (hooks are non-fatal). The Summary shows a dimmed, truncated head of the hook's output under a "Non-fatal; your vault is ready." warning, and writes the **full** captured stdout/stderr to `.shardmind/logs/<slot>.log` in the installed vault — point users there (or `cat` it yourself) to debug a failing hook.
 
-**Keep those logs out of the vault's git history.** A vault is often a git repository, and a log is the user's machine state, not content. A shard that declares any hook lists `.shardmind/logs/` in the `.gitignore` it installs at the vault root, as obsidian-mind does. The engine does not write a `.gitignore` for you (#201). `shardmind validate` warns (`LINT_LOGS_NOT_GITIGNORED`) when a shard with a hook installs no `.gitignore`, or one that does not ignore `.shardmind/logs/`.
+**Keep those logs out of the vault's git history.** A vault is often a git repository, and a log is the user's machine state, not content. A shard that declares any hook lists `.shardmind/logs/` in the `.gitignore` it installs at the vault root, as obsidian-mind does. The engine does not write a `.gitignore` for you (#201). `shardmind validate` warns (`LINT_LOGS_NOT_GITIGNORED`) when a shard with a hook installs no `.gitignore`, or one that does not ignore `.shardmind/logs/` and the folders below it, where overlay shards' logs land.
+
+**An overlay shard ships no root `.gitignore`** (R5, ruled 2026-10-13). An overlay, added beside a base with `shardmind add`, never ships a file the base owns, and a vault's root `.gitignore` is the base's: `add` refuses an overlay that would write it (`ADD_PATH_OWNED`). The base's `.gitignore` covers `.shardmind/` for every shard, overlays' logs (`.shardmind/logs/<namespace>/<name>/`) included. If you author an overlay, ignore the `LINT_LOGS_NOT_GITIGNORED` warning `validate` gives it.
 
 ### Per-slot context
 
