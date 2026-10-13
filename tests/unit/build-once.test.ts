@@ -107,6 +107,7 @@ describe('DIST_ARTIFACTS', () => {
         'dist/commands/install.js',
         'dist/commands/update.js',
         'dist/commands/adopt.js',
+        'dist/commands/add.js',
         'dist/internal/hook-runner.js',
       ]),
     );

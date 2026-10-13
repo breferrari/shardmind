@@ -20,6 +20,7 @@ export default defineConfig([
       'commands/install': 'source/commands/install.tsx',
       'commands/update': 'source/commands/update.tsx',
       'commands/adopt': 'source/commands/adopt.tsx',
+      'commands/add': 'source/commands/add.tsx',
       'commands/validate': 'source/commands/validate.tsx',
       'commands/_app': 'source/commands/_app.tsx',
     },

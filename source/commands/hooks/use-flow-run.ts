@@ -51,7 +51,7 @@ export interface FlowRunContext<P> {
 
 export function useFlowRun<P extends { kind: string }>(opts: {
   vaultRoot: string;
-  command: 'install' | 'update' | 'adopt';
+  command: 'install' | 'update' | 'adopt' | 'add';
   dryRun: boolean;
   initial: P;
   /** The phases that end the run: the lock is released and the app exits. */
