@@ -8,6 +8,7 @@
 import { parseCommandArgv } from '../../cli-kit/parse.js';
 import { DownloadCancelledError } from '../../core/download.js';
 import { acquireVaultLock } from '../../core/vault-lock.js';
+import { isCancelledRun } from '../../core/run-cancel.js';
 import { emitJson, jsonFailure, jsonSuccess, type JsonCommand } from '../../core/json-output.js';
 import type { HookRunUi } from '../../core/hook-orchestrator.js';
 import { ShardMindError } from '../../runtime/types.js';
@@ -44,16 +45,6 @@ export interface HeadlessFlowIO {
   onRun: (abort: AbortController, run: Promise<unknown>) => void;
   onCommitted: () => void;
   onHookAbort: (abort: AbortController | null) => void;
-}
-
-/**
- * A run stopped by Ctrl+C, rolled back fully or not. The same test as the
- * terminal machines' `isCancelledRun`, kept here so a headless run loads no
- * React (§4.29).
- */
-function isCancelledRun(err: unknown): boolean {
-  const code = (e: unknown) => (typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined);
-  return code(err) === 'CANCELLED' || code((err as { cause?: unknown } | null)?.cause) === 'CANCELLED';
 }
 
 /** The failure a Ctrl+C before the run's transaction existed answers with. */

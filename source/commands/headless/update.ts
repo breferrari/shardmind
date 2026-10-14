@@ -54,17 +54,23 @@ export async function runUpdateJson(
     if (result.kind !== 'shards') return documentOf(result, options.dryRun);
     // Several shards (#407): each one's document; the first's at the top
     // when all succeeded, else the failure with every entry in details.
-    const shards: UpdateShardEntry[] = result.runs.map((run) =>
-      'result' in run
-        ? { shard: run.shard, result: documentOf(run.result, options.dryRun) }
-        : 'error' in run
-          ? { shard: run.shard, error: toJsonError(run.error) }
-          : run,
-    );
-    const failed = result.runs.find((run) => 'error' in run);
-    if (failed && 'error' in failed) throw new ShardRunsFailed(failed, shards);
-    const first = shards[0] as { result: object };
-    return { ...first.result, shards };
+    const shards: UpdateShardEntry[] = [];
+    let first: object | undefined;
+    let failed: { shard: string; error: unknown } | undefined;
+    for (const run of result.runs) {
+      if ('result' in run) {
+        const document = documentOf(run.result, options.dryRun);
+        first ??= document;
+        shards.push({ shard: run.shard, result: document });
+      } else if ('error' in run) {
+        failed = run;
+        shards.push({ shard: run.shard, error: toJsonError(run.error) });
+      } else {
+        shards.push(run);
+      }
+    }
+    if (failed) throw new ShardRunsFailed(failed, shards);
+    return { ...first, shards };
   });
 }
 

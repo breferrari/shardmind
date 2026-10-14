@@ -36,13 +36,12 @@ import { hashValues } from './install-planner.js';
 import {
   cacheTemplates,
   cacheManifest,
-  writeState,
   writeShardEntry,
   initShardDir,
+  BASE_LAYOUT,
   type ShardLayout,
   SINGLE_SHARD_SCHEMA_VERSION,
 } from './state.js';
-import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
 import type {
   UpdatePlan,
   UpdateAction,
@@ -76,8 +75,7 @@ export interface UpdateRunnerOptions {
   adoptPreexisting?: boolean;
   /**
    * The shard of the vault being updated (#407): its index in `shards[]`,
-   * its cache folder and values file, and whether the vault holds several
-   * shards. The base shard of a one-shard vault by default.
+   * and its cache folder and values file. The base shard by default.
    */
   target?: UpdateTarget;
   onProgress?: (event: UpdateProgressEvent) => void;
@@ -87,11 +85,9 @@ export interface UpdateRunnerOptions {
 export interface UpdateTarget {
   index: number;
   layout: ShardLayout;
-  /** The vault holds several shards: `state.json` gets this shard's entry, the others kept. */
-  composed: boolean;
 }
 
-const BASE_TARGET: UpdateTarget = { index: 0, layout: { cacheDir: SHARDMIND_DIR, valuesFile: VALUES_FILE }, composed: false };
+const BASE_TARGET: UpdateTarget = { index: 0, layout: BASE_LAYOUT };
 
 export type UpdateProgressEvent =
   | { kind: 'start'; total: number }
@@ -362,9 +358,9 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
           await cacheManifest(vaultRoot, newManifest, newSchema, newTempDir, cacheDir);
           await writeValuesFile(vaultRoot, newValues, valuesFile);
         },
-        // Several shards: this one's entry, at its index, the others as on disk.
-        state: () =>
-          target.composed ? writeShardEntry(vaultRoot, nextState, { at: target.index }) : writeState(vaultRoot, nextState),
+        // This shard's entry, at its index; any other shard's as on disk. A
+        // vault with one shard is written at schema 2 as before.
+        state: () => writeShardEntry(vaultRoot, nextState, { at: target.index }),
       });
     }
 

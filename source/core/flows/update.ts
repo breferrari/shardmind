@@ -35,6 +35,7 @@ import { readVaultState, shardLayout, writeShardEntry, type ShardLayout } from '
 import { detectDrift, foreignPathsOf, type DriftOptions } from '../drift.js';
 import { ownedPaths, ownedConflicts, listOwned } from '../ownership.js';
 import { DownloadCancelledError } from '../download.js';
+import { isCancelledRun } from '../run-cancel.js';
 import { applyMigrations } from '../migrator.js';
 import { loadValuesYaml } from '../values-io.js';
 import { toPosix } from '../fs-utils.js';
@@ -49,7 +50,7 @@ import {
   type NewFilePlan,
 } from '../update-planner.js';
 import { applyRenames, renamesBetween, type AppliedRenames } from '../rename-migrations.js';
-import { runUpdate, type UpdateProgressEvent, type UpdateSummary, type UpdateTarget } from '../update-executor.js';
+import { runUpdate, type UpdateProgressEvent, type UpdateSummary } from '../update-executor.js';
 import { checkExternalToolsForRun } from '../external-tools.js';
 import { buildRenderContext } from '../renderer.js';
 import { runHooks, type HookOutcome, type HookRunPlan } from '../hook-orchestrator.js';
@@ -88,8 +89,13 @@ export interface ShardTarget {
   layout: ShardLayout;
   /** The vault's state as read for this shard: the other shards' files, for ownership and drift. */
   vault: VaultState;
-  /** `<namespace>/<name>` on a vault holding several shards, which heads its prompts; undefined on one. */
-  label: string | undefined;
+  /** The vault holds several shards: its prompts and summary are headed with `state.shard`. */
+  composed: boolean;
+}
+
+/** The name a shard's prompts are headed and keyed with: only on a vault holding several (#407). */
+export function shardLabel(target: ShardTarget): string | undefined {
+  return target.composed ? target.state.shard : undefined;
 }
 
 /** The install, the new release, and the values migrated to it. */
@@ -246,8 +252,7 @@ async function runShardUpdate(input: UpdateFlowInput, io: UpdateFlowIO, target: 
         // command: primed only when the run resolved through that policy.
         if (!state.ref && !input.release && !input.includePrerelease) {
           // Each shard keeps its own update-check cache (#406).
-          const cacheDir = target.index === 0 ? undefined : layout.cacheDir;
-          priming = primeLatestVersion(vaultRoot, state.source, resolved.version, undefined, cacheDir).catch(() => {});
+          priming = primeLatestVersion(vaultRoot, state.source, resolved.version, undefined, layout.cacheDir).catch(() => {});
         }
         return resolved;
       },
@@ -518,7 +523,7 @@ async function execute(
         newTempDir: ctx.newTempDir,
         dryRun,
         adoptPreexisting: input.adoptPreexisting,
-        target: updateTarget(ctx.target),
+        target: ctx.target,
         signal,
         onProgress: io.progress,
       }),
@@ -636,7 +641,7 @@ function targetOf(vault: VaultState, index: number): ShardTarget {
     state: shardStateOf(entry, SINGLE_SHARD_SCHEMA_VERSION),
     layout: layoutOf(vault, index),
     vault,
-    label: vault.shards.length > 1 ? entry.shard : undefined,
+    composed: vault.shards.length > 1,
   };
 }
 
@@ -654,21 +659,18 @@ function layoutOf(vault: VaultState, index: number): ShardLayout {
   return layout;
 }
 
-/** Drift for the target: its own cache, and the other shards' files never its orphans (#406). */
+/**
+ * Drift for the target: its own cache, and the other shards' files never
+ * its orphans (#406). On a vault with one shard that is `.shardmind/` and
+ * `shard-values.yaml`, which drift already reserves.
+ */
 function driftOptions(target: ShardTarget): DriftOptions {
-  if (target.label === undefined) return {};
   const states = target.vault.shards.map((entry) => shardStateOf(entry, SINGLE_SHARD_SCHEMA_VERSION));
   return { cacheDir: target.layout.cacheDir, foreign: foreignPathsOf(states, target.index) };
 }
 
-/** The executor's target: where this shard's engine files go. */
-function updateTarget(target: ShardTarget): UpdateTarget {
-  return { index: target.index, layout: target.layout, composed: target.label !== undefined };
-}
-
-/** The hooks' part on a vault with several shards: its entry written back, an overlay's logs in its folder. */
+/** The hooks' part: the shard's entry written back at its index, an overlay's logs in its folder. */
 function hookTarget(vaultRoot: string, target: ShardTarget): Pick<HookRunPlan, 'persist' | 'logShard'> {
-  if (target.label === undefined) return {};
   return {
     persist: (state) => writeShardEntry(vaultRoot, state, { at: target.index }),
     logShard: target.index > 0 ? target.state.shard : undefined,
@@ -680,21 +682,19 @@ function hookTarget(vaultRoot: string, target: ShardTarget): Pick<HookRunPlan, '
  * another shard of the vault owns (R2, #407), naming each with its owner.
  */
 function assertNotOwned(target: ShardTarget, paths: readonly string[]): void {
-  if (target.label === undefined) return;
+  if (!target.composed) return;
   const taken = ownedConflicts(ownedPaths(target.vault, { except: target.index }), paths);
   if (taken.length === 0) return;
   throw new ShardMindError(
-    `${target.label}'s new release would write ${taken.length === 1 ? 'a path' : `${taken.length} paths`} another shard or ShardMind owns: ${listOwned(taken)}`,
+    `${target.state.shard}'s new release would write ${taken.length === 1 ? 'a path' : `${taken.length} paths`} another shard or ShardMind owns: ${listOwned(taken)}`,
     'UPDATE_PATH_OWNED',
-    `Each file has one owner. Update the other shards alone (\`shardmind update <namespace>/<name>\`), and report the clash to ${target.label}'s author, who can move the file or exclude it in its .shardmindignore.`,
+    `Each file has one owner. Update the other shards alone (\`shardmind update <namespace>/<name>\`), and report the clash to ${target.state.shard}'s author, who can move the file or exclude it in its .shardmindignore.`,
   );
 }
 
 /** A cancel or a superseded run: the whole run ends, as on a vault with one shard. */
 function endsTheRun(err: unknown): boolean {
-  if (err instanceof FlowCancelled || err instanceof DownloadCancelledError) return true;
-  const code = (e: unknown) => (typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined);
-  return code(err) === 'CANCELLED' || code((err as { cause?: unknown } | null)?.cause) === 'CANCELLED';
+  return err instanceof FlowCancelled || err instanceof DownloadCancelledError || isCancelledRun(err);
 }
 
 function throwNoInstall(): never {

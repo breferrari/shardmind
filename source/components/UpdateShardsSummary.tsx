@@ -1,9 +1,7 @@
 import { Box, Text } from 'ink';
-import { StatusMessage } from './ui.js';
 import UpdateSummary from './UpdateSummary.js';
+import UpToDateSummary from './UpToDateSummary.js';
 import ErrorView from './ErrorView.js';
-import HookSummarySection from './HookSummarySection.js';
-import ExternalToolsSection from './ExternalToolsSection.js';
 import type { ShardRun, ShardUpdateResult } from '../core/flows/update.js';
 import { rollbackDetail, wasRolledBack } from '../core/rollback-report.js';
 
@@ -46,13 +44,7 @@ export default function UpdateShardsSummary({ runs, dryRun, version }: UpdateSha
 
 function ShardResult({ result, dryRun }: { result: ShardUpdateResult; dryRun: boolean }) {
   if (result.kind === 'up-to-date') {
-    return (
-      <Box flexDirection="column">
-        <StatusMessage variant="success">Already up to date at v{result.state.version}.</StatusMessage>
-        {result.hooks.length > 0 && <HookSummarySection outcomes={result.hooks} />}
-        <ExternalToolsSection lines={result.externalTools} />
-      </Box>
-    );
+    return <UpToDateSummary version={result.state.version} hooks={result.hooks} externalTools={result.externalTools} />;
   }
   // A plan comes back only under --json, which never renders this.
   if (result.kind === 'plan') return null;

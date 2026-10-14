@@ -22,7 +22,7 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { createBackupDir, removeEngineWrites, ENGINE_INSTALL_WRITES, type ShardLayout } from './state.js';
+import { createBackupDir, removeEngineWrites, ENGINE_INSTALL_WRITES, BASE_LAYOUT, type ShardLayout } from './state.js';
 import {
   missingFolders,
   recordCreatedFolders,
@@ -45,7 +45,6 @@ import {
   SHARDMIND_DIR,
   STATE_FILE,
   TEMPLATES_DIR,
-  VALUES_FILE,
 } from '../runtime/vault-paths.js';
 import { reasonOf, type RollbackFailure } from './rollback-report.js';
 
@@ -562,9 +561,6 @@ export async function carryOverBackups(oldStateDir: string, vaultRoot: string): 
     await fsp.rename(path.join(from, entry), target);
   }
 }
-
-/** The base shard's engine files: what an update snapshots without a `scope`. */
-const BASE_LAYOUT: ShardLayout = { cacheDir: SHARDMIND_DIR, valuesFile: VALUES_FILE };
 
 /**
  * The engine cache of a prior install, into `<dir>/cache/`: `state.json`,

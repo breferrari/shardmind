@@ -226,8 +226,5 @@ export async function stopRun(run: RunInFlight | null): Promise<readonly Rollbac
   return end.failures;
 }
 
-/** A run stopped by Ctrl+C, whether or not its rollback then left files behind. */
-export function isCancelledRun(err: unknown): boolean {
-  const code = (e: unknown) => (typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined);
-  return code(err) === 'CANCELLED' || code((err as { cause?: unknown } | null)?.cause) === 'CANCELLED';
-}
+/** A run stopped by Ctrl+C, whether or not its rollback then left files behind (`core/run-cancel.ts`). */
+export { isCancelledRun } from '../../core/run-cancel.js';

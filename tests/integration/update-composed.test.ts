@@ -131,7 +131,7 @@ async function updateOverlay(v2: string, opts: { failOnFirstFile?: boolean } = {
     resolved: { namespace: 'acme', name: 'research', version: manifest.version, source: 'github:acme/research', tarballUrl: 'n/a' },
     tarballSha256: 'overlay-sha-2',
     newTempDir: v2,
-    target: { index, layout, composed: true },
+    target: { index, layout },
     onProgress: opts.failOnFirstFile
       ? (ev) => {
           if (ev.kind === 'file') throw new Error('disk gave out');

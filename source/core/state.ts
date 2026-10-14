@@ -589,6 +589,9 @@ export interface ShardLayout {
   valuesFile: string;
 }
 
+/** The base shard's engine files: `.shardmind/` and `shard-values.yaml`. */
+export const BASE_LAYOUT: ShardLayout = Object.freeze({ cacheDir: SHARDMIND_DIR, valuesFile: VALUES_FILE });
+
 /**
  * Shard `index` of the vault's `shards[]` (#406): the base (index 0) keeps
  * `.shardmind/` and `shard-values.yaml`; an overlay keeps `overlayDir` and
@@ -596,7 +599,7 @@ export interface ShardLayout {
  * hand edit) has none: null, which the caller reports.
  */
 export function shardLayout(shard: string, index: number): ShardLayout | null {
-  if (index === 0) return { cacheDir: SHARDMIND_DIR, valuesFile: VALUES_FILE };
+  if (index === 0) return BASE_LAYOUT;
   try {
     return { cacheDir: overlayDir(shard), valuesFile: overlayValuesFile(shard) };
   } catch {

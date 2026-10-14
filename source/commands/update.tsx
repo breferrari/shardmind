@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import type zod from 'zod';
 
-import { Spinner, StatusMessage, Alert } from '../components/ui.js';
+import { Spinner, Alert } from '../components/ui.js';
 import { assertNever } from '../runtime/types.js';
 import ErrorView from '../components/ErrorView.js';
 import { resolveEngineVersion } from './hooks/cli-version.js';
@@ -14,12 +14,12 @@ import CommandProgress from '../components/CommandProgress.js';
 import HookProgress from '../components/HookProgress.js';
 import UpdateSummary from '../components/UpdateSummary.js';
 import UpdateShardsSummary from '../components/UpdateShardsSummary.js';
-import HookSummarySection from '../components/HookSummarySection.js';
-import ExternalToolsSection from '../components/ExternalToolsSection.js';
+import UpToDateSummary from '../components/UpToDateSummary.js';
 import CommandFrame from '../components/CommandFrame.js';
 import Header from '../components/Header.js';
 
 import { useUpdateMachine } from './hooks/use-update-machine.js';
+import { shardLabel } from '../core/flows/update.js';
 import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 
 // Ink-free, so the headless `--json` run parses with the same args and options (#302).
@@ -76,12 +76,8 @@ export default function Update({ args, options }: Props) {
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Box flexDirection="column" gap={1}>
             <Header manifest={phase.manifest} />
-            <StatusMessage variant="success">
-              Already up to date at v{phase.state.version}.
-            </StatusMessage>
-            {/* An owed bootstrap (#199) the run ran, previewed (dry run) or skipped (--skip-hooks), shown as any summary shows hooks. */}
-            {phase.hooks.length > 0 && <HookSummarySection outcomes={phase.hooks} />}
-            <ExternalToolsSection lines={phase.externalTools} />
+            {/* With an owed bootstrap (#199) the run ran, previewed (dry run) or skipped (--skip-hooks). */}
+            <UpToDateSummary version={phase.state.version} hooks={phase.hooks} externalTools={phase.externalTools} />
           </Box>
         </CommandFrame>
       );
@@ -90,7 +86,7 @@ export default function Update({ args, options }: Props) {
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Header manifest={phase.ctx.newManifest} />
           <NewValuesPrompt
-            key={phase.ctx.target.label}
+            key={shardLabel(phase.ctx.target)}
             schema={phase.ctx.newSchema}
             keys={phase.ctx.newRequiredKeys}
             existingValues={phase.ctx.migratedValues}
@@ -103,7 +99,7 @@ export default function Update({ args, options }: Props) {
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Header manifest={phase.ctx.newManifest} />
           <NewModulesReview
-            key={phase.ctx.target.label}
+            key={shardLabel(phase.ctx.target)}
             offered={phase.ctx.newOptionalModules}
             onSubmit={onNewModulesComplete}
           />
@@ -114,7 +110,7 @@ export default function Update({ args, options }: Props) {
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Header manifest={phase.ctx.newManifest} />
           <RemovedFilesReview
-            key={phase.ctx.target.label}
+            key={shardLabel(phase.ctx.target)}
             paths={phase.paths}
             onSubmit={onRemovedFilesComplete}
           />
@@ -126,9 +122,9 @@ export default function Update({ args, options }: Props) {
       return (
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           {/* Several shards (#407): whose conflict this is. */}
-          {phase.ctx.target.label !== undefined && <Text bold>{phase.ctx.target.label}</Text>}
+          {shardLabel(phase.ctx.target) !== undefined && <Text bold>{shardLabel(phase.ctx.target)}</Text>}
           <DiffView
-            key={phase.ctx.target.label}
+            key={shardLabel(phase.ctx.target)}
             path={pending.path}
             index={phase.currentIndex + 1}
             total={phase.plan.pendingConflicts.length}

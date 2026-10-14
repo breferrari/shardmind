@@ -43,6 +43,7 @@ import {
   type UpdateFlowIO,
   type UpdateQuestion,
   type ShardRun,
+  shardLabel,
 } from '../../core/flows/update.js';
 import type { DiffAction } from '../../components/DiffView.js';
 import { editInEditor, hasConflictMarkers, resolveEditorCommand, withTerminalReleased } from '../../core/editor.js';
@@ -163,7 +164,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           ...base,
           ask: <Q extends UpdateQuestion>(question: Q) =>
             ask<UpdateAnswer<Q>>(
-              { kind: questionKey(question.kind, question.ctx.target.label) },
+              { kind: questionKey(question.kind, shardLabel(question.ctx.target)) },
               question.kind === 'conflict' ? question.currentIndex : undefined,
               () => {
                 switch (question.kind) {
@@ -265,7 +266,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
   const keyOnScreen = useCallback(
     (kind: UpdateQuestion['kind']) => {
       const current = phaseRef.current;
-      return questionKey(kind, 'ctx' in current ? current.ctx.target.label : undefined);
+      return questionKey(kind, 'ctx' in current ? shardLabel(current.ctx.target) : undefined);
     },
     [phaseRef],
   );
@@ -304,7 +305,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       if (!pc) return;
       const edit = current.edit ?? { attempt: 0 };
       const resolve = (resolution: ConflictResolution) =>
-        settle(questionKey('conflict', current.ctx.target.label), { value: resolution }, current.currentIndex);
+        settle(questionKey('conflict', shardLabel(current.ctx.target)), { value: resolution }, current.currentIndex);
 
       if (action === 'use_edit') {
         // The one way conflict markers reach the vault: chosen, by name (#50).
