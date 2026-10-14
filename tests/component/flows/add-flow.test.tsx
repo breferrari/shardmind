@@ -17,6 +17,7 @@ import {
   makeVaultDir,
   cleanupVault,
   buildCustomTarball,
+  allFrames,
   SHARD_SLUG,
   SHARD_REF,
   DEFAULT_VALUES,
@@ -146,7 +147,7 @@ describe('add command — Layer 1 flow tests (#396)', () => {
     );
     const before = await vault.readFile('.shardmind/state.json');
     const r = mountAdd({ shardRef: `github:${TWIN_SLUG}`, cwd: vault.root });
-    const frame = (await waitFor(r.lastFrame, (f) => f.includes('ADD_PATH_OWNED'), 30_000)).replace(/\s+/g, ' ');
+    const frame = (await waitFor(allFrames(r), (f) => f.includes('ADD_PATH_OWNED'), 30_000)).replace(/\s+/g, ' ');
     expect(frame).toContain('Home.md (shardmind/minimal)');
     expect(frame).not.toContain('question');
     expect(await vault.readFile('.shardmind/state.json')).toBe(before);
@@ -156,7 +157,7 @@ describe('add command — Layer 1 flow tests (#396)', () => {
   it('refuses a shard the vault already holds', async () => {
     const vault = await baseVault('add-present');
     const r = mountAdd({ shardRef: SHARD_REF, cwd: vault.root, options: { yes: true } });
-    const frame = await waitFor(r.lastFrame, (f) => f.includes('ADD_SHARD_PRESENT'), 30_000);
+    const frame = await waitFor(allFrames(r), (f) => f.includes('ADD_SHARD_PRESENT'), 30_000);
     expect(frame.replace(/\s+/g, ' ')).toContain('as its base shard');
   }, 60_000);
 
@@ -164,7 +165,9 @@ describe('add command — Layer 1 flow tests (#396)', () => {
     const empty = await makeVaultDir('add-no-vault');
     try {
       const r = mountAdd({ shardRef: OVERLAY_REF, cwd: empty, options: { yes: true } });
-      await waitFor(r.lastFrame, (f) => f.includes('ADD_NO_INSTALL'), 15_000);
+      // The refusal renders, then the command exits Ink after 100 ms, clearing the
+      // frame: read every frame, so a slow first poll cannot miss it.
+      await waitFor(allFrames(r), (f) => f.includes('ADD_NO_INSTALL'), 15_000);
     } finally {
       await cleanupVault(empty);
     }
@@ -174,7 +177,7 @@ describe('add command — Layer 1 flow tests (#396)', () => {
     const empty = await makeVaultDir('add-flags');
     try {
       const r = mountAdd({ shardRef: OVERLAY_REF, cwd: empty, options: { defaults: true, values: 'v.yaml' } });
-      await waitFor(r.lastFrame, (f) => f.includes('ADD_FLAG_CONFLICT'), 15_000);
+      await waitFor(allFrames(r), (f) => f.includes('ADD_FLAG_CONFLICT'), 15_000);
     } finally {
       await cleanupVault(empty);
     }
