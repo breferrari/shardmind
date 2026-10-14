@@ -8,6 +8,21 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 
 ## [Unreleased]
 
+### Added (composition, part 4: update across shards — #407)
+
+- **`shardmind update` updates every shard of a vault that holds several**, the base first, then each overlay in install order. `shardmind update <namespace>/<name>` updates only that one.
+  - Each shard is updated from its own values file, cache (its merge base) and `state.json` entry, on its own transaction. Its hooks then run with its own context, before the next shard starts.
+  - Its questions (new values, new modules, removed files, conflicts) are headed with its name. The summary shows one block per shard.
+- **A failure stops the run.** The shards before it stay updated, the one that failed is rolled back alone, and the shards after it are reported as not reached. The run exits 1.
+- **One owner per file on update too.** A shard whose new release would write a path another shard owns is refused before any write for it (`UPDATE_PATH_OWNED`).
+- **`update --json` gains `shards`** on a vault holding several: each shard's result, its error, or `skipped: "not-reached"`. When every shard succeeded, it is in `result`, whose other fields are the first shard's. When one failed, it is in `error.details`.
+- New error codes:
+  - `UPDATE_SHARD_UNKNOWN`: a name the vault does not hold;
+  - `UPDATE_PATH_OWNED`;
+  - `UPDATE_SHARD_RENAMED`: an overlay's release under another name, since its paths carry its name.
+- **`--release` on a bare `update` of several shards** is `UPDATE_FLAG_CONFLICT`. Name the shard to pin one.
+- A vault with one shard updates and answers exactly as before.
+
 ### Added (composition, part 3: status across shards — #406)
 
 - **`shardmind` (status) reports each shard of a vault that holds several**: the base's block as before, then one per overlay, each with its version, update line, files and findings. `--verbose` adds each shard's sections, and shows the environment once.
@@ -26,7 +41,7 @@ Between releases: see `git log` for merged work and [`ROADMAP.md`](ROADMAP.md) f
 - **A failed or cancelled add leaves the vault as it was**, `state.json` included.
 - New error codes: `ADD_NO_INSTALL`, `ADD_SHARD_PRESENT`, `ADD_PATH_OWNED`, `ADD_FLAG_CONFLICT` and `ADD_NON_INTERACTIVE_WITHOUT_VALUES`.
 - **An overlay ships no root `.gitignore`** (R5, #405): the base's covers `.shardmind/` for every shard. `validate`'s `LINT_LOGS_NOT_GITIGNORED` now also warns a `.gitignore` that misses overlays' log folders, and its hint tells an overlay's author to ship none.
-- **Release:** ships only with #406 and #407 (status and update across shards, #397). Until then `status` and `update` refuse a vault holding several shards (RELEASE-SMOKE).
+- **Release:** ships only with #406 and #407 (status and update across shards, #397), both now in `[Unreleased]` (RELEASE-SMOKE).
 
 ### Added (composition, part 1: `state.json` schema 3 — #395)
 

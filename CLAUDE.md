@@ -172,6 +172,7 @@ shardmind/
 │   │   ├── SelfUpdateBanner.tsx       # One-line "newer shardmind on npm" notice, rendered above each command (#113)
 │   │   ├── Summary.tsx                # Final install report
 │   │   ├── UpdateSummary.tsx          # Final update report
+│   │   ├── UpdateShardsSummary.tsx    # Update across several shards: one block per shard (#407)
 │   │   ├── ValueInput.tsx             # Typed input widget (string/number/select…)
 │   │   ├── Header.tsx                 # Branded header
 │   │   ├── use-once-per-key.ts        # Per-iteration dedup hook for state-machine-iterated prompts (see docs/COMPONENTS.md Pattern B)
@@ -223,6 +224,7 @@ shardmind/
 │   │   ├── vault-transaction.ts       # One vault transaction: snapshot before each write, rollback, state.json last (#301)
 │   │   ├── process-control.ts         # The one owner of SIGINT (handler stack, editor hold), the exit code and cli.ts's startup order (#303)
 │   │   ├── install-destination.ts     # Where install puts the vault: shard-named folder, [folder] or `.`; refuses a non-empty one (#333)
+│   │   ├── ownership.ts               # One owner per file (R2): the paths a shard may not write, for add and update (#396, #407)
 │   │   ├── fs-utils.ts                # sha256, pathExists, toPosix, mapConcurrent
 │   │   └── flows/                     # UI-free command runs the Ink machines adapt (§4.30, #302): prepare-shard, values, run (the shared write step), install, adopt, update, add (#396)
 │   ├── internal/                      # NOT public API — runtime-spawned helpers
@@ -418,6 +420,7 @@ Each file in `source/core/` maps 1:1 to a section in `docs/IMPLEMENTATION.md`:
 | `vault-transaction.ts` | §4.28 | One vault transaction for install, update and adopt: `recordWrite` snapshots a file just before its write (install refuses one), `recordSetAside` moves a collision aside, `commitEngineMetadata` writes `state.json` last, `rollback` never throws, `commit` discards what was set aside (#301) |
 | `process-control.ts` | §4.32 | The one owner of the CLI process's SIGINT handling (a handler stack behind one listener, `withSigintHeld`), its exit code (`setExitCode` / `exitProcess`) and `cli.ts`'s startup order (`STARTUP_STEPS`); a scan test keeps every other module off them (#303) |
 | `install-destination.ts` | §4.31 | Where `install <shard> [folder]` puts the vault: a folder named after the shard, the one given, or `.`; refuses a non-empty one before any download (`INSTALL_DESTINATION_NOT_EMPTY`); the folders to make go to the transaction's `createRoot` (#333) |
+| `ownership.ts` | §4.30 steps 6.6, 10.4 | One owner per file (R2): `ownedPaths` (every shard's files, folders and values files; `adding` for add, `except` for update), `ownerOf`, `ownedConflicts` (#396, #407) |
 | `fs-utils.ts` | (shared utilities) | sha256, pathExists, toPosix, mapConcurrent |
 
 Read the spec section before implementing. It has inputs, outputs, algorithm steps, error cases, and test expectations.
