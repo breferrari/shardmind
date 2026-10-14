@@ -102,8 +102,11 @@ async function comparable(vault: Vault): Promise<Record<string, string>> {
 async function statusOf(vault: Vault): Promise<Record<string, unknown>> {
   const result = await spawnCli(['--json'], { cwd: vault.root, env: { SHARDMIND_GITHUB_API_BASE: stub.url } });
   const doc = JSON.parse(result.stdout) as { result: Record<string, unknown> };
-  delete doc.result['installedAt'];
-  delete doc.result['updatedAt'];
+  // Each run stamps its own time, at the top and in every shard's entry (#406).
+  for (const entry of [doc.result, ...((doc.result['shards'] as Array<Record<string, unknown>> | undefined) ?? [])]) {
+    delete entry['installedAt'];
+    delete entry['updatedAt'];
+  }
   return doc.result;
 }
 
