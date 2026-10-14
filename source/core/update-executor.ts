@@ -37,10 +37,12 @@ import {
   cacheTemplates,
   cacheManifest,
   writeState,
+  writeShardEntry,
   initShardDir,
+  type ShardLayout,
   SINGLE_SHARD_SCHEMA_VERSION,
 } from './state.js';
-import { VALUES_FILE } from '../runtime/vault-paths.js';
+import { SHARDMIND_DIR, VALUES_FILE } from '../runtime/vault-paths.js';
 import type {
   UpdatePlan,
   UpdateAction,
@@ -72,8 +74,24 @@ export interface UpdateRunnerOptions {
    * is tracked as their modified copy instead of being left untracked.
    */
   adoptPreexisting?: boolean;
+  /**
+   * The shard of the vault being updated (#407): its index in `shards[]`,
+   * its cache folder and values file, and whether the vault holds several
+   * shards. The base shard of a one-shard vault by default.
+   */
+  target?: UpdateTarget;
   onProgress?: (event: UpdateProgressEvent) => void;
 }
+
+/** Which shard an update writes, and where its engine files are (#407). */
+export interface UpdateTarget {
+  index: number;
+  layout: ShardLayout;
+  /** The vault holds several shards: `state.json` gets this shard's entry, the others kept. */
+  composed: boolean;
+}
+
+const BASE_TARGET: UpdateTarget = { index: 0, layout: { cacheDir: SHARDMIND_DIR, valuesFile: VALUES_FILE }, composed: false };
 
 export type UpdateProgressEvent =
   | { kind: 'start'; total: number }
@@ -162,8 +180,10 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     dryRun = false,
     signal,
     adoptPreexisting = false,
+    target = BASE_TARGET,
     onProgress,
   } = opts;
+  const { cacheDir, valuesFile } = target.layout;
 
   // Every conflict must arrive decided (#292). The machine resolves each
   // pending conflict before it writes, so a missing one is a caller bug:
@@ -193,7 +213,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // run writes, deletes or moves onto it (§4.28).
   const tx = dryRun
     ? null
-    : await beginTransaction(vaultRoot, { kind: 'update', now, signal, noPriorInstall: false });
+    : await beginTransaction(vaultRoot, { kind: 'update', now, signal, noPriorInstall: false, scope: target.layout });
   const folderMoves = folderChangesOf(touched.caseRenames);
 
   try {
@@ -337,12 +357,14 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     if (tx) {
       await tx.commitEngineMetadata({
         beforeState: async () => {
-          await initShardDir(vaultRoot);
-          await cacheTemplates(vaultRoot, newTempDir);
-          await cacheManifest(vaultRoot, newManifest, newSchema, newTempDir);
-          await writeValuesFile(vaultRoot, newValues);
+          await initShardDir(vaultRoot, cacheDir);
+          await cacheTemplates(vaultRoot, newTempDir, cacheDir);
+          await cacheManifest(vaultRoot, newManifest, newSchema, newTempDir, cacheDir);
+          await writeValuesFile(vaultRoot, newValues, valuesFile);
         },
-        state: () => writeState(vaultRoot, nextState),
+        // Several shards: this one's entry, at its index, the others as on disk.
+        state: () =>
+          target.composed ? writeShardEntry(vaultRoot, nextState, { at: target.index }) : writeState(vaultRoot, nextState),
       });
     }
 
@@ -713,7 +735,8 @@ async function writeAction(
 }
 
 /**
- * Overwrite `shard-values.yaml`. The install executor uses `wx` to
+ * Overwrite the shard's values file (`shard-values.yaml`, or an overlay's,
+ * #407). The install executor uses `wx` to
  * refuse existing files on a fresh install; update unconditionally
  * replaces the file because we're writing the post-migration shape
  * back. Not an atomic rename — if the process dies mid-write, the
@@ -722,13 +745,14 @@ async function writeAction(
 async function writeValuesFile(
   vaultRoot: string,
   values: Record<string, unknown>,
+  valuesFile: string,
 ): Promise<void> {
-  const abs = path.join(vaultRoot, VALUES_FILE);
+  const abs = path.join(vaultRoot, valuesFile);
   const serialized = stringifyYaml(values, { lineWidth: 0 }).trimEnd() + '\n';
   try {
     await fsp.writeFile(abs, serialized, 'utf-8');
   } catch (err) {
     // Any errno, not only EACCES: a full disk keeps its hint too (#225).
-    throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not write ${VALUES_FILE}`, err);
+    throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not write ${valuesFile}`, err);
   }
 }

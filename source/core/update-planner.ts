@@ -36,7 +36,7 @@ import { isCaseOnlyRename } from './rename-migrations.js';
 import { resolveModules } from './modules.js';
 import { renderFile, createRenderer, itemForTemplate } from './renderer.js';
 import { isBinaryForMerge, sha256, mapConcurrent } from './fs-utils.js';
-import { CACHED_TEMPLATES } from '../runtime/vault-paths.js';
+import { SHARDMIND_DIR, TEMPLATES_DIR } from '../runtime/vault-paths.js';
 
 /** Cap fan-out when reading templates + user files during merge planning. */
 const PLAN_IO_CONCURRENCY = 16;
@@ -186,6 +186,11 @@ export interface PlanUpdateInput {
      * (`applyRenames`), and the file is still at the old one.
      */
     movedFrom?: ReadonlyMap<string, string>;
+    /**
+     * The shard's cache folder, vault-relative (#407): its `templates/` is
+     * the merge base. `.shardmind/` (the base shard's) by default.
+     */
+    cacheDir?: string;
   };
   /**
    * Values on each side of the migration. `old` is what the renderer
@@ -477,6 +482,8 @@ export function pathsTheUpdateTouches(actions: readonly UpdateAction[]): {
 export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
   const { vault, values, newShard, removedFileDecisions } = input;
   const { root: vaultRoot, state: currentState, drift } = vault;
+  // The merge base: this shard's cached templates (#407).
+  const templatesDir = path.join(vaultRoot, vault.cacheDir ?? SHARDMIND_DIR, TEMPLATES_DIR);
   const movedFrom = vault.movedFrom ?? new Map<string, string>();
   // `state` and `drift` are keyed by a renamed file's new path while its bytes
   // are still at the old one (#178): every vault read goes through here.
@@ -554,7 +561,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
     PLAN_IO_CONCURRENCY,
     async (c) => ({
       ...c,
-      foreign: await recordedHashIsForeign(vaultRoot, currentState.files[c.entry.path]),
+      foreign: await recordedHashIsForeign(templatesDir, currentState.files[c.entry.path]),
     }),
   );
   const toMerge: DriftEntry[] = [...modifiedEntries];
@@ -629,7 +636,7 @@ export async function planUpdate(input: PlanUpdateInput): Promise<UpdatePlan> {
 
       const [actualRead, oldBytes] = await Promise.all([
         readBytesAndHash(path.join(vaultRoot, diskPathOf(entry.path))),
-        readCachedTemplate(vaultRoot, fileState.template),
+        readCachedTemplate(templatesDir, fileState.template),
       ]);
       if (actualRead === null) {
         // Drift reported this file as `modified` at scan time, so ENOENT
@@ -1009,10 +1016,10 @@ async function readBytesAndHash(
  * proof either way, and the answer is `false`: this check must never be
  * what fails an update.
  */
-async function recordedHashIsForeign(vaultRoot: string, fileState: FileState | undefined): Promise<boolean> {
+async function recordedHashIsForeign(templatesDir: string, fileState: FileState | undefined): Promise<boolean> {
   if (!fileState?.template || fileState.template.endsWith('.njk')) return false;
   try {
-    const cached = await readCachedTemplate(vaultRoot, fileState.template);
+    const cached = await readCachedTemplate(templatesDir, fileState.template);
     return cached !== null && sha256(cached) !== fileState.rendered_hash;
   } catch {
     return false;
@@ -1021,12 +1028,12 @@ async function recordedHashIsForeign(vaultRoot: string, fileState: FileState | u
 
 /** The merge-base cache's bytes for `templateKey`, or `null` when absent. */
 async function readCachedTemplate(
-  vaultRoot: string,
+  templatesDir: string,
   templateKey: string | null,
 ): Promise<Buffer | null> {
   if (!templateKey) return null;
   try {
-    return await fsp.readFile(path.join(vaultRoot, CACHED_TEMPLATES, templateKey));
+    return await fsp.readFile(path.join(templatesDir, templateKey));
   } catch (err) {
     if (isEnoent(err)) return null;
     throw err;
