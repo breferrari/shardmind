@@ -67,6 +67,7 @@ The suite fails only on real defects, on all three operating systems.
 | ✅ | Stop the self-update flow test timing out on Windows CI | [#285](https://github.com/breferrari/shardmind/issues/285) |
 | ✅ | Stop the Invariant 2 mixed-defaults contract test timing out on Windows CI | [#288](https://github.com/breferrari/shardmind/issues/288) |
 | ✅ | Make the update editor PTY test wait for the summary's editor count | [#394](https://github.com/breferrari/shardmind/issues/394) |
+| ⬜ | Drain stdout and stderr before the CLI exits | [#411](https://github.com/breferrari/shardmind/issues/411) |
 
 ## Phase 4 — close what already shipped
 
