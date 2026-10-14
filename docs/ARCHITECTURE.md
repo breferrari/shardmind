@@ -590,7 +590,7 @@ Composition (#81) puts several shards in one vault: the base shard, then each ov
 
 Each entry is a schema-2 state without `schema_version` (`ShardEntry`), with every field it has there: each shard keeps its own `files`, `modules`, `values_hash`, `bootstrap_fingerprint` and `bootstrap_pending`, as it keeps its own values file, cache and merge base. `shards[0]` is the base shard; no two entries name the same shard. The v2 → v3 rule moves every field of a schema-2 state except `schema_version` into `shards[0]`, fields this engine does not know included, so the rule loses nothing.
 
-A vault with one shard stays at schema 2, byte for byte: the engine reads every vault as a list of shards and writes one shard at schema 2 and several at schema 3, so only the first overlay rewrites the file. An engine older than composition reads up to schema 2 and refuses a composed vault (§8.2), never misreading it. Status reports each shard of such a vault (#406). Until update runs across shards (#407), a command that handles one shard refuses a vault with several with `STATE_UNSUPPORTED_VERSION`, rather than reading the base alone and dropping the overlays on its next write. The runtime's `loadState()` returns the base shard's state, and `loadState({ shard })` the named one, each as a one-shard state at schema 2; `getIncludedModules({ shard })` likewise.
+A vault with one shard stays at schema 2, byte for byte: the engine reads every vault as a list of shards and writes one shard at schema 2 and several at schema 3, so only the first overlay rewrites the file. An engine older than composition reads up to schema 2 and refuses a composed vault (§8.2), never misreading it. Status reports each shard of such a vault (#406), and update updates each (#407, §10.5). A command that still handles one shard's state alone refuses a vault with several with `STATE_UNSUPPORTED_VERSION`, rather than reading the base alone and dropping the overlays on its next write. The runtime's `loadState()` returns the base shard's state, and `loadState({ shard })` the named one, each as a one-shard state at schema 2; `getIncludedModules({ shard })` likewise.
 
 ---
 
@@ -723,7 +723,7 @@ Five commands for vault owners: four that write, one that reads. One more for sh
 | `shardmind` | Status + health | No |
 | `shardmind install <namespace/name> [folder]` | Install a shard into a new folder named after it, or `[folder]` (`.` for the current one, §10.6) | Yes |
 | `shardmind add <namespace/name>` | Add an overlay shard to the vault, beside the shard installed (§10.4a, composition #81) | Yes |
-| `shardmind update` | Upgrade to a newer version | Yes |
+| `shardmind update [namespace/name]` | Upgrade every shard to its newer version, or only the one named (§10.5) | Yes |
 | `shardmind adopt <namespace/name>` | Retrofit the engine onto a vault that was already cloned without shardmind | Yes |
 | `shardmind --verbose` | Detailed diagnostics | No |
 | `shardmind validate [dir \| shard]` | Check a shard before publishing it (author-facing, §10.5b) | No |
@@ -865,6 +865,8 @@ Lists are uncapped and sorted by path. The terminal views sample at 20 entries, 
 
 `--dry-run --json` is the plan: every file and what would happen to it, before any question. `--json` alone runs the command headless and answers with one result document: every file's outcome, the backup folder, the hooks, and an exit code that agrees with `ok` (#348). A real run never prompts: conflicts resolve as `--yes` resolves them, and any other question needs the flags its dry run needs, so a real run does exactly what its plan said. The exit codes and outcome names are 1.0 contract, listed in [`OPERATIONS.md §--json runs`](OPERATIONS.md).
 
+**Several shards** (`update --json`, #407, additive). On a vault holding several shards the document lists every shard the run covered, in order, in `shards`: `{ shard, result }` with that shard's plan or run result, shaped as above; `{ shard, error }` for the shard that failed; and `{ shard, skipped: "not-reached" }` for each shard after it. When every shard succeeded, `ok` is true and `result` is the first shard's (the base's on a bare run, the named shard's otherwise), with `shards` added to it. When one failed, `ok` is false, `error` is that shard's error, its `message` prefixed with `<namespace>/<name>: `, and `shards` is in `error.details`. A vault with one shard gets the document as before.
+
 ### 10.4 `shardmind install <shard> [folder]` — Install Flow
 
 ```
@@ -916,7 +918,7 @@ It resolves and downloads the shard as `install` does, checks it the same way (`
 - **Hooks.** The overlay's own `bootstrap` and `personalize` run, with its own context (its values, modules and name); `--skip-hooks` records its bootstrap as pending in its own entry. The base's hooks do not run. An overlay's hook logs go to `.shardmind/logs/<namespace>/<name>/`.
 - **All or nothing.** It runs on the vault transaction: a failure or Ctrl+C before `state.json` is written puts `state.json` back as it was and removes everything the add wrote.
 
-Adding a shard the vault already holds, base or overlay, is `ADD_SHARD_PRESENT`; outside a ShardMind vault it is `ADD_NO_INSTALL`. Until status and update run across shards ([#397](https://github.com/breferrari/shardmind/issues/397)), they refuse a vault holding several (§8.3).
+Adding a shard the vault already holds, base or overlay, is `ADD_SHARD_PRESENT`; outside a ShardMind vault it is `ADD_NO_INSTALL`. Status then reports each shard (§10.2, #406), and update updates each (§10.5, #407).
 
 ### 10.5 `shardmind update` — Upgrade Flow
 
@@ -990,6 +992,19 @@ Flags:
 - `--dry-run` — run the full pipeline (fetch, migrate, plan, merge) without touching the vault; the summary reports what *would* happen.
 - `--skip-hooks` (#199) — run no hook; each declared hook is reported as skipped (`reason: skip-hooks` under `--json`). A bootstrap that would have run stays pending for the next `update`; the post-update is skipped for good. An up-to-date `update` runs a pending bootstrap.
 - `--adopt-preexisting` — when the new version adds a path where you already have an untracked file of your own and you keep yours (by hand, or by `--yes`), start tracking it as your modified copy of that file, so later updates merge into it, instead of leaving it untracked to come back as the same question every update (#61). Off by default: the engine never starts managing a file you did not opt in to.
+
+**Several shards** (#407; R3 and R4, SHARD-LAYOUT §Update semantics). On a vault holding overlays (§10.4a):
+
+- **Which shards.** `shardmind update` updates every shard, the base first, then each overlay in install order. `shardmind update <namespace>/<name>` updates only that one. A name the vault does not hold is `UPDATE_SHARD_UNKNOWN`, whose hint lists the shards it holds. The name is matched exactly, as `state.json` records it. On a vault with one shard, naming that shard is a bare update.
+- **Each shard's own files.** Each shard gets the whole run above with its own values file (`shard-values.yaml`, or `shard-values.<namespace>.<name>.yaml`), cache and merge base (`.shardmind/`, or `.shardmind/shards/<namespace>/<name>/`), `state.json` entry and update-check cache. Its questions (new values, new modules, removed files, conflicts) are headed with its name; `--yes` answers every shard's.
+- **One shard at a time.** Each shard is written on its own transaction, with its own snapshot under `.shardmind/backups/`, then its hooks run with its own context (§9; SHARD-LAYOUT §Hook lifecycle), before the next shard starts. In a dry run each shard is planned against the vault as it is.
+- **A failure stops the run** (ruled 2026-10-14). The shards already updated stay updated, the one that failed is rolled back alone, and the shards after it are not tried. A Ctrl+C rolls back the shard being written, as on a vault with one shard, and ends the run. The summary has one block per shard, headed with its name: updated (its summary as above), up to date, failed (the error), or not reached. A run with a failure exits 1.
+- **One owner per file.** Before a shard is written, its planned files are checked against every other shard's, with `add`'s rule (§10.4a): a path another shard manages, a folder holding its files, a file of another shard above the path, or another shard's values file is `UPDATE_PATH_OWNED`, naming each path and its owner, before any write for that shard, dry run included. The vault's state is read again before each shard, so a file the base's new version takes counts against the overlays after it.
+- **A renamed overlay.** An overlay's paths are named after its `<namespace>/<name>`, so a new version of it under another name is `UPDATE_SHARD_RENAMED`, before any write for it. The base keeps no path under its name, and may rename itself as on a vault with one shard.
+- **Flags.** `--yes`, `--dry-run`, `--verbose`, `--skip-hooks`, `--adopt-preexisting` and `--include-prerelease` apply to each shard. A flag refused for one of the shards the run covers (`--include-prerelease` on a ref install) refuses the run before any network call. `--release` pins one tag, so on a vault with several shards a bare `update --release` is `UPDATE_FLAG_CONFLICT`; name the shard.
+- **One lock.** The run holds the vault lock (§10.5c) from the first shard to the last.
+
+On a vault with one shard nothing changes: no name heading, no `shards` in `--json`.
 
 Implementation modules: `source/core/migrator.ts` (IMPLEMENTATION §4.10), `source/core/update-planner.ts` (§4.11), `source/core/update-executor.ts` (§4.12). Orchestration lives in `source/commands/hooks/use-update-machine.ts`. The full phase diagram is in IMPLEMENTATION §3.
 

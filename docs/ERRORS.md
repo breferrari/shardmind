@@ -577,7 +577,27 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 - `--release <v>` on a ref-installed vault (`state.ref` set) — the vault tracks a moving ref by definition; pinning a tag silently abandons that policy.
 - `--include-prerelease` on a ref-installed vault — the widen flag tunes `/releases` filtering, which ref installs don't use (they re-resolve `/commits/<ref>` instead).
 
-**Remedy:** Drop the conflicting flag. To switch a ref-installed vault to a tag pin, reinstall via `shardmind install <source>@<version>` (the explicit transition).
+- `--release <v>` on a bare `update` of a vault holding several shards (#407) — a tag belongs to one shard's releases, so it cannot pin every shard.
+
+**Remedy:** Drop the conflicting flag. To switch a ref-installed vault to a tag pin, reinstall via `shardmind install <source>@<version>` (the explicit transition). To pin one shard of several, name it: `shardmind update <namespace>/<name> --release <v>`.
+
+### `UPDATE_SHARD_UNKNOWN`
+
+**Meaning:** `shardmind update <namespace>/<name>` named a shard the vault does not hold (#407). The name is matched exactly, as `.shardmind/state.json` records it; the hint lists the shards the vault holds.
+
+**Remedy:** Name one of the listed shards, or run `shardmind update` with no name to update every shard. To add a shard to the vault, run `shardmind add <shard>`.
+
+### `UPDATE_PATH_OWNED`
+
+**Meaning:** On a vault holding several shards, a shard's new version would write a path another shard manages, a folder holding another shard's files, a path under another shard's file, or another shard's values file (#407; the rule is `ADD_PATH_OWNED`'s, R2). A path that differs only in case counts as the same path. Refused before any write for that shard, dry run included; the shards updated before it stay updated. The message names every such path and its owner.
+
+**Remedy:** The two shards cannot share that file. Update the other shards alone (`shardmind update <namespace>/<name>`) and report the clash to the shard's author, who can move the file or exclude it in its `.shardmindignore`.
+
+### `UPDATE_SHARD_RENAMED`
+
+**Meaning:** An overlay's new version declares a different `<namespace>/<name>` from the one the vault records for it (#407). An overlay's cache, values file and hook logs are named after it, so the update cannot carry them to the new name. Refused before any write for that shard; the shards updated before it stay updated. The base shard keeps no path under its name and may rename itself.
+
+**Remedy:** Pin the overlay to its last release under the old name (`shardmind update <namespace>/<name> --release <v>`), or ask its author whether the rename was meant.
 
 ### `UPDATE_JSON_NEEDS_ANSWERS`
 
