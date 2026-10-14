@@ -26,14 +26,18 @@ const ORDER_HOOK =
   `export default async function (ctx: { vaultRoot: string; shard: { name: string } }): Promise<void> {\n` +
   `  await appendFile(join(ctx.vaultRoot, 'hook-order.log'), ctx.shard.name + '\\n');\n}\n`;
 
-/** Give the release a post-update hook that logs its shard's name. */
+/**
+ * Give the release a post-update hook that logs its shard's name. Under
+ * `.shardmind/hooks/`, which is never installed: at `hooks/` both shards
+ * would ship the same vault file, and update refuses that (R2).
+ */
 async function withOrderHook(work: string): Promise<void> {
   const manifestPath = path.join(work, '.shardmind', 'shard.yaml');
   const manifest = parseYaml(await fs.readFile(manifestPath, 'utf-8')) as Record<string, unknown>;
-  manifest['hooks'] = { 'post-update': 'hooks/post-update.ts' };
+  manifest['hooks'] = { 'post-update': '.shardmind/hooks/post-update.ts' };
   await fs.writeFile(manifestPath, stringifyYaml(manifest));
-  await fs.mkdir(path.join(work, 'hooks'), { recursive: true });
-  await fs.writeFile(path.join(work, 'hooks', 'post-update.ts'), ORDER_HOOK);
+  await fs.mkdir(path.join(work, '.shardmind', 'hooks'), { recursive: true });
+  await fs.writeFile(path.join(work, '.shardmind', 'hooks', 'post-update.ts'), ORDER_HOOK);
 }
 
 let stub: GitHubStub;
