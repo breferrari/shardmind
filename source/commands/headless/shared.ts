@@ -76,6 +76,9 @@ export async function runFlowJson(
   let inFlight: AbortController | undefined;
   let hookAbort: AbortController | null = null;
   let cancelled = false;
+  // A transaction of this run has committed: a Ctrl+C can no longer mean
+  // "nothing was written".
+  let committed = false;
   // Once per run: a Ctrl+C handler and the run's own catch can both reach here.
   let emitted = false;
   const emitOnce = (envelope: Parameters<typeof emitJson>[0]) => {
@@ -95,6 +98,10 @@ export async function runFlowJson(
       inFlight.abort();
       return;
     }
+    // Something was already written (an update across shards, #407, between
+    // two shards): the run ends itself at its next write, which every run
+    // abort now refuses, and its document reports what it wrote.
+    if (committed) return;
     void Promise.resolve()
       .then(() => cleanup?.())
       .catch(() => {})
@@ -127,6 +134,7 @@ export async function runFlowJson(
       },
       onCommitted: () => {
         inFlight = undefined;
+        committed = true;
       },
       onHookAbort: (abort) => {
         hookAbort = abort;

@@ -4,6 +4,14 @@ import UpToDateSummary from './UpToDateSummary.js';
 import ErrorView from './ErrorView.js';
 import type { ShardRun, ShardUpdateResult } from '../core/flows/update.js';
 import { rollbackDetail, wasRolledBack } from '../core/rollback-report.js';
+import { isCancelledRun } from '../core/run-cancel.js';
+import { describeError } from '../core/bug-report.js';
+
+/** A cancelled shard's line: what stopped and what stays. */
+function cancelLine(err: unknown): string {
+  const d = describeError(err, undefined);
+  return d.kind === 'bug' || !d.hint ? d.message : `${d.message} ${d.hint}`;
+}
 
 /**
  * The report of an update across several shards (#407, ARCHITECTURE
@@ -27,6 +35,9 @@ export default function UpdateShardsSummary({ runs, dryRun, version }: UpdateSha
           <Text bold>{run.shard}</Text>
           {'result' in run ? (
             <ShardResult result={run.result} dryRun={dryRun} />
+          ) : 'error' in run && isCancelledRun(run.error) ? (
+            // A cancel is the user's: said as such, not as a failure.
+            <Text>{cancelLine(run.error)}</Text>
           ) : 'error' in run ? (
             <ErrorView
               error={run.error}
@@ -34,7 +45,7 @@ export default function UpdateShardsSummary({ runs, dryRun, version }: UpdateSha
               detail={wasRolledBack(run.error) ? rollbackDetail(run.error, `Rolled back ${run.shard}; the shards before it stay updated.`) : undefined}
             />
           ) : (
-            <Text dimColor>Not reached: an earlier shard failed.</Text>
+            <Text dimColor>Not reached: the run stopped at an earlier shard.</Text>
           )}
         </Box>
       ))}

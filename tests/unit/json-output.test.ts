@@ -493,5 +493,9 @@ describe('a cancelled shard of several (#407)', () => {
     expect(isCancelledRun(new ShardRunsFailed({ shard: 'acme/research', error: cancelled }, []))).toBe(true);
     const failed = new ShardMindError('would write Home.md', 'UPDATE_PATH_OWNED');
     expect(isCancelledRun(new ShardRunsFailed({ shard: 'acme/research', error: failed }, []))).toBe(false);
+    // A cancel whose rollback left files behind: ROLLBACK_INCOMPLETE, the cancel its cause.
+    const { withRollbackFailures } = await import('../../source/core/rollback-report.js');
+    const incomplete = withRollbackFailures(cancelled, [{ path: 'a.md', reason: 'locked' }]);
+    expect(isCancelledRun(new ShardRunsFailed({ shard: 'acme/research', error: incomplete }, []))).toBe(true);
   });
 });

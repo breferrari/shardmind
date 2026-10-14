@@ -94,8 +94,8 @@ export interface ShardTarget {
   composed: boolean;
   /** Drift for this shard: its own cache, the other shards' files never its orphans (#406). */
   drift: DriftOptions;
-  /** What the other shards own (R2), on a vault holding several; built once per shard. */
-  owned: Map<string, string> | null;
+  /** What the other shards own (R2); empty on a vault with one shard. Built once per shard. */
+  owned: Map<string, string>;
 }
 
 /** The name a shard's prompts are headed and keyed with: only on a vault holding several (#407). */
@@ -213,37 +213,54 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
   const runs: ShardRun[] = [];
   let stopped = false;
   let current = vault;
+  // Why the next shard cannot start, when the shard before it ended the run
+  // without failing: state.json unreadable after its commit.
+  let carried: unknown;
   for (const index of indexes) {
-    const shard = current.shards[index]!.shard;
-    if (!stopped && runs.length > 0) {
-      // A superseded run goes no further; a Ctrl+C that came during the
-      // shard before (its hooks) ends the run there, its result kept.
-      if (input.stop?.aborted) throw new FlowCancelled('Superseded by a newer run.');
-      if (io.newRunAbort().signal.aborted) stopped = true;
-    }
+    const shard = current.shards[index]?.shard ?? vault.shards[index]!.shard;
     if (stopped) {
       runs.push({ shard, skipped: 'not-reached' });
       continue;
     }
+    if (runs.length > 0) {
+      // A superseded run goes no further. A Ctrl+C that came after the
+      // shard before committed (during its hooks) is this shard's cancel.
+      if (input.stop?.aborted) throw new FlowCancelled('Superseded by a newer run.');
+      if (carried === undefined && io.newRunAbort().signal.aborted) carried = cancelledHere(undefined);
+    }
+    if (carried !== undefined) {
+      runs.push({ shard, error: carried });
+      stopped = true;
+      continue;
+    }
+    let result: ShardUpdateResult;
     try {
-      const result = await runShardUpdate(input, io, targetOf(current, index));
-      // The shard wrote state.json: the next one reads its entry and the
-      // other shards' files again, and this one is named as written (a
-      // base may rename itself).
-      if (!dryRun) current = (await readVaultState(vaultRoot)) ?? throwNoInstall();
-      runs.push({ shard: current.shards[index]?.shard ?? shard, result });
+      result = await runShardUpdate(input, io, targetOf(current, index));
     } catch (err) {
       // A cancel before any shard ran ends the run as on one shard. After
       // one ran, it is this shard's: the shards before it are reported.
       if (endsTheRun(err) && runs.length === 0) throw err;
       runs.push({ shard, error: endsTheRun(err) ? cancelledHere(err) : err });
       stopped = true;
+      continue;
     }
+    // The shard wrote state.json: the next one reads its entry and the
+    // other shards' files again, and this one is named as written (a base
+    // may rename itself). A read that fails stops the run at the next
+    // shard; this one's result is kept.
+    if (!dryRun) {
+      try {
+        current = (await readVaultState(vaultRoot)) ?? throwNoInstall();
+      } catch (err) {
+        carried = err;
+      }
+    }
+    runs.push({ shard: carried === undefined ? (current.shards[index]?.shard ?? shard) : shard, result });
   }
   return { kind: 'shards', runs };
 }
 
-/** A cancel inside a later shard, as that shard's error: the run stopped there. */
+/** A cancel inside or before a later shard, as that shard's error: the run stopped there. */
 function cancelledHere(err: unknown): ShardMindError {
   if (err instanceof ShardMindError) return err;
   const reason = err instanceof FlowCancelled ? err.reason : 'The run was stopped with Ctrl+C.';
@@ -365,7 +382,7 @@ async function runShardUpdate(input: UpdateFlowInput, io: UpdateFlowIO, target: 
     // One owner per file (R2): what the release writes whatever is answered,
     // refused before any question, as add does (#396). The full set is
     // checked once the values and modules are known.
-    if (target.owned !== null) assertNotOwned(target, await pathsWrittenRegardless(ctx));
+    if (target.composed) assertNotOwned(target, await pathsWrittenRegardless(ctx));
 
     const { values, selections, pendingModules } = await valuesAndModules(input, io, ctx);
     return await planAndUpdate(input, io, ctx, values, selections, pendingModules);
@@ -661,7 +678,7 @@ function targetOf(vault: VaultState, index: number): ShardTarget {
     vault,
     composed: vault.shards.length > 1,
     drift: driftOptions(vault, index),
-    owned: vault.shards.length > 1 ? ownedPaths(vault, { except: index }) : null,
+    owned: vault.shards.length > 1 ? ownedPaths(vault, { except: index }) : new Map(),
   };
 }
 
@@ -702,7 +719,7 @@ function hookTarget(vaultRoot: string, target: ShardTarget): Pick<HookRunPlan, '
  * another shard of the vault owns (R2, #407), naming each with its owner.
  */
 function assertNotOwned(target: ShardTarget, paths: readonly string[]): void {
-  if (target.owned === null) return;
+  if (!target.composed) return;
   const taken = ownedConflicts(target.owned, paths);
   if (taken.length === 0) return;
   throw new ShardMindError(

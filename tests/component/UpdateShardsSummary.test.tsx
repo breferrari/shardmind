@@ -48,6 +48,16 @@ const done = (from: string, to: string): Extract<ShardUpdateResult, { kind: 'don
 });
 
 describe('UpdateShardsSummary (#407)', () => {
+  it('shows a cancelled shard as cancelled, not as a failure', () => {
+    const runs: ShardRun[] = [
+      { shard: 'acme/base', result: done('0.1.0', '0.2.0') },
+      { shard: 'acme/research', error: new ShardMindError('Cancelled.', 'CANCELLED', 'The shards before this one stay updated.') },
+    ];
+    const frame = render(<UpdateShardsSummary runs={runs} dryRun={false} />).lastFrame() ?? '';
+    expect(frame).toContain('Cancelled. The shards before this one stay updated.');
+    expect(frame).not.toContain('code: CANCELLED');
+  });
+
   it('heads each shard with its name, in order: updated, then up to date', () => {
     const runs: ShardRun[] = [
       { shard: 'acme/base', result: done('0.1.0', '0.2.0') },
@@ -75,7 +85,7 @@ describe('UpdateShardsSummary (#407)', () => {
     expect(frame).toContain('UPDATE_PATH_OWNED');
     expect(frame).toContain('Rolled back acme/research');
     expect(frame).toContain('acme/later');
-    expect(frame).toContain('Not reached');
+    expect(frame).toContain('Not reached: the run stopped at an earlier shard.');
     // The shard before the failure stays updated, and says so.
     expect(frame).toContain('0.1.0 → 0.2.0');
   });

@@ -48,7 +48,7 @@ import {
 import type { DiffAction } from '../../components/DiffView.js';
 import { editInEditor, hasConflictMarkers, resolveEditorCommand, withTerminalReleased } from '../../core/editor.js';
 import { withSigintHeld } from '../../core/process-control.js';
-import { isCancelledRun } from '../../core/run-cancel.js';
+import { isCancelledRun } from './shared.js';
 
 export interface UseUpdateMachineInput {
   vaultRoot: string;

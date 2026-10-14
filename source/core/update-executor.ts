@@ -199,10 +199,10 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // Checked again at write time (#163): planning may have been a while
   // ago, behind prompts. Before the snapshot or any write, dry run included.
   const touched = pathsTheUpdateTouches(plan.actions);
-  await assertSafeVaultPaths(vaultRoot, touched.writes, touched.deletes, touched.caseRenames);
   // An overlay's own engine paths are written too: never through a link or
   // a case-folded name, as add guards them (#163, #407).
-  if (target.index > 0) await assertSafeVaultPaths(vaultRoot, overlayEnginePaths(currentState.shard));
+  const engineWrites = target.index > 0 ? overlayEnginePaths(currentState.shard) : [];
+  await assertSafeVaultPaths(vaultRoot, [...touched.writes, ...engineWrites], touched.deletes, touched.caseRenames);
   // A rename's new path was free when planned; refuse before any write if
   // something arrived there during the prompts (#178).
   for (const action of plan.actions) {

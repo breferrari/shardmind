@@ -27,6 +27,7 @@ import {
 import { runInstallFlow } from '../../source/core/flows/install.js';
 import { runUpdateFlow, type UpdateFlowInput, type UpdateFlowIO, type ShardRun } from '../../source/core/flows/update.js';
 import { FlowCancelled } from '../../source/core/flows/cancelled.js';
+import { emitSigint, resetSigintForTests } from '../../source/core/process-control.js';
 import { resolveInstallDestination } from '../../source/core/install-destination.js';
 import type { VaultState } from '../../source/runtime/types.js';
 import { runUpdateJson } from '../../source/commands/headless/update.js';
@@ -363,7 +364,7 @@ describe('update on a vault with one shard (#407)', () => {
 });
 
 describe('update across shards: code review of #407', () => {
-  it('a Ctrl+C after a shard committed ends the run there: the rest not reached, the result kept', async () => {
+  it("a Ctrl+C after a shard committed ends the run there: the next shard cancelled, the result kept", async () => {
     serve(BASE, '0.2.0', tarballs['base-0.2.0']!);
     serve(OVERLAY, '2.0.0', tarballs['overlay-2.0.0']!);
     // As headless does: once Ctrl+C came (here, during the base's hooks),
@@ -376,8 +377,50 @@ describe('update across shards: code review of #407', () => {
     } };
     const result = await update({}, flowIO);
     if (result.kind !== 'shards') throw new Error(`expected shards, got ${result.kind}`);
-    expect(outcomes(result.runs)).toEqual([[BASE, 'done'], [OVERLAY, 'not-reached']]);
+    expect(outcomes(result.runs)).toEqual([[BASE, 'done'], [OVERLAY, 'CANCELLED']]);
     expect(await versions()).toEqual([[BASE, '0.2.0'], [OVERLAY, '1.0.0']]);
+  });
+
+  it("a state.json unreadable after a shard committed keeps that shard's result; the next shard reports it", async () => {
+    serve(BASE, '0.2.0', tarballs['base-0.2.0']!);
+    serve(OVERLAY, '2.0.0', tarballs['overlay-2.0.0']!);
+    // Broken right after the base's commit (as a hook could leave it).
+    const flowIO = { ...io(), onCommitted: () => void fsp.writeFile(path.join(vault, '.shardmind', 'state.json'), '{ broken') };
+    const result = await update({}, flowIO);
+    if (result.kind !== 'shards') throw new Error(`expected shards, got ${result.kind}`);
+    expect(outcomes(result.runs)).toEqual([[BASE, 'done'], [OVERLAY, 'STATE_CORRUPT']]);
+  });
+
+  it('headless: a Ctrl+C during the next shard\'s download keeps the shard before it in the document, exit 130', async () => {
+    serve(BASE, '0.2.0', tarballs['base-0.2.0']!);
+    serve(OVERLAY, '2.0.0', tarballs['overlay-2.0.0']!);
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    vi.spyOn(process, 'cwd').mockReturnValue(vault);
+    stub.setTarballDelay(300);
+    let out = '';
+    try {
+      const first = stub.waitForTarballRequest();
+      const running = runUpdateJson(['--yes', '--json'], undefined, (chunk) => {
+        out += chunk;
+      });
+      await first;
+      // The overlay's download: the base has committed by now.
+      await stub.waitForTarballRequest();
+      emitSigint();
+      const code = await running;
+      const doc = JSON.parse(out) as { ok: boolean; error: { code: string; details: { shards: Array<Record<string, unknown>> } } };
+      expect(code).toBe(130);
+      expect(exit).not.toHaveBeenCalled();
+      expect(doc.ok).toBe(false);
+      expect(doc.error.code).toBe('CANCELLED');
+      expect(doc.error.details.shards[0]).toMatchObject({ shard: BASE, result: expect.any(Object) });
+      expect(doc.error.details.shards[1]).toMatchObject({ shard: OVERLAY, error: { code: 'CANCELLED' } });
+      expect(await versions()).toEqual([[BASE, '0.2.0'], [OVERLAY, '1.0.0']]);
+    } finally {
+      stub.setTarballDelay(0);
+      resetSigintForTests();
+      vi.restoreAllMocks();
+    }
   });
 
   it("a cancel in a later shard keeps the shards before it, reported, and is that shard's CANCELLED", async () => {
