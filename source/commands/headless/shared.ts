@@ -8,6 +8,7 @@
 import { parseCommandArgv } from '../../cli-kit/parse.js';
 import { DownloadCancelledError } from '../../core/download.js';
 import { acquireVaultLock } from '../../core/vault-lock.js';
+import { isCancelledRun } from '../../core/run-cancel.js';
 import { emitJson, jsonFailure, jsonSuccess, type JsonCommand } from '../../core/json-output.js';
 import type { HookRunUi } from '../../core/hook-orchestrator.js';
 import { ShardMindError } from '../../runtime/types.js';
@@ -46,16 +47,6 @@ export interface HeadlessFlowIO {
   onHookAbort: (abort: AbortController | null) => void;
 }
 
-/**
- * A run stopped by Ctrl+C, rolled back fully or not. The same test as the
- * terminal machines' `isCancelledRun`, kept here so a headless run loads no
- * React (§4.29).
- */
-function isCancelledRun(err: unknown): boolean {
-  const code = (e: unknown) => (typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined);
-  return code(err) === 'CANCELLED' || code((err as { cause?: unknown } | null)?.cause) === 'CANCELLED';
-}
-
 /** The failure a Ctrl+C before the run's transaction existed answers with. */
 function cancelledBeforeRun(): ShardMindError {
   return new ShardMindError('Cancelled.', 'CANCELLED', 'The run was stopped with Ctrl+C before it wrote anything.');
@@ -85,6 +76,9 @@ export async function runFlowJson(
   let inFlight: AbortController | undefined;
   let hookAbort: AbortController | null = null;
   let cancelled = false;
+  // A transaction of this run has committed: a Ctrl+C can no longer mean
+  // "nothing was written".
+  let committed = false;
   // Once per run: a Ctrl+C handler and the run's own catch can both reach here.
   let emitted = false;
   const emitOnce = (envelope: Parameters<typeof emitJson>[0]) => {
@@ -104,6 +98,10 @@ export async function runFlowJson(
       inFlight.abort();
       return;
     }
+    // Something was already written (an update across shards, #407, between
+    // two shards): the run ends itself at its next write, which every run
+    // abort now refuses, and its document reports what it wrote.
+    if (committed) return;
     void Promise.resolve()
       .then(() => cleanup?.())
       .catch(() => {})
@@ -136,6 +134,7 @@ export async function runFlowJson(
       },
       onCommitted: () => {
         inFlight = undefined;
+        committed = true;
       },
       onHookAbort: (abort) => {
         hookAbort = abort;

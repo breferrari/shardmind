@@ -367,6 +367,22 @@ describe('writeShardEntry (#396)', () => {
     expect(await fsp.readFile(statePath(), 'utf-8')).toBe(original);
   });
 
+  it('with `at`, replaces the entry at that index, even under a new name (#407)', async () => {
+    await writeVaultState(vault, composed());
+    // The base's new release renamed itself: found by index, never appended.
+    await writeShardEntry(vault, { schema_version: 2, ...entry('acme/base-renamed'), version: '2.0.0' }, { at: 0 });
+    const raw = JSON.parse(await fsp.readFile(statePath(), 'utf-8')) as VaultState;
+    expect(raw.shards.map((s) => [s.shard, s.version])).toEqual([
+      ['acme/base-renamed', '2.0.0'],
+      ['acme/overlay', entry().version],
+    ]);
+  });
+
+  it('with `at` past the end, refuses rather than append (#407)', async () => {
+    await writeVaultState(vault, composed());
+    await expect(writeShardEntry(vault, { schema_version: 2, ...entry('acme/x') }, { at: 5 })).rejects.toThrow(/no shard at index 5/);
+  });
+
   it('a vault with no state yet gets the shard as its only one', async () => {
     await writeShardEntry(vault, { schema_version: 2, ...entry() });
     expect(await readState(vault)).toEqual(v2());

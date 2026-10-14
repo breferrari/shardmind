@@ -22,7 +22,7 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { createBackupDir, removeEngineWrites, ENGINE_INSTALL_WRITES } from './state.js';
+import { createBackupDir, removeEngineWrites, ENGINE_INSTALL_WRITES, BASE_LAYOUT, type ShardLayout } from './state.js';
 import {
   missingFolders,
   recordCreatedFolders,
@@ -40,12 +40,11 @@ import { ShardMindError } from '../runtime/types.js';
 import { wrapWriteError } from './bug-report.js';
 import { ENGINE_SHARDMIND_ENTRIES } from './vault-path-guard.js';
 import {
-  CACHED_MANIFEST,
-  CACHED_SCHEMA,
-  CACHED_TEMPLATES,
+  SHARD_MANIFEST_FILE,
+  SHARD_SCHEMA_FILE,
   SHARDMIND_DIR,
   STATE_FILE,
-  VALUES_FILE,
+  TEMPLATES_DIR,
 } from '../runtime/vault-paths.js';
 import { reasonOf, type RollbackFailure } from './rollback-report.js';
 
@@ -76,6 +75,13 @@ export interface TransactionOptions {
    * once empty. On commit the lock stays the caller's to release.
    */
   createRoot?: CreateRoot;
+  /**
+   * Update on a vault with several shards (#407): the shard being updated,
+   * whose cache folder and values file are snapshotted with `state.json`,
+   * so a rollback restores that shard's cache and no other's. The base's
+   * (`.shardmind/`, `shard-values.yaml`) by default.
+   */
+  scope?: ShardLayout;
 }
 
 /** A path moved out of the way under a backup name (absolute paths). */
@@ -157,7 +163,8 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
   const dir = opts.kind === 'install' ? null : await createBackupDir(vaultRoot, now, opts.kind);
   // add writes no part of the engine cache it would have to restore (#396).
   const snapshotsCache = dir !== null && !opts.noPriorInstall && opts.kind !== 'add';
-  if (snapshotsCache) await snapshotEngineCache(vaultRoot, dir);
+  const scope = opts.scope ?? BASE_LAYOUT;
+  if (snapshotsCache) await snapshotEngineCache(vaultRoot, dir, scope);
   const filesDir = dir === null ? null : path.join(dir, 'files');
   const stamp = now.toISOString().replace(/:/g, '-').replace(/\..+$/, '');
   const snapshotted = new Set<string>();
@@ -304,7 +311,7 @@ export async function beginTransaction(vaultRoot: string, opts: TransactionOptio
       }
       if (dir !== null && filesDir !== null) {
         await restoreTree(filesDir, vaultRoot, failures);
-        if (snapshotsCache) await restoreEngineCache(vaultRoot, dir, path.join(dir, 'cache'), failures);
+        if (snapshotsCache) await restoreEngineCache(vaultRoot, dir, path.join(dir, 'cache'), scope, failures);
       }
       // Before the created folders, which hold them.
       for (const rel of newTrees) {
@@ -557,21 +564,22 @@ export async function carryOverBackups(oldStateDir: string, vaultRoot: string): 
 
 /**
  * The engine cache of a prior install, into `<dir>/cache/`: `state.json`,
- * the cached manifest and schema, the values file, and the template cache
- * whole, then its marker. Every copy settles before a failure is thrown, so
- * none writes into the snapshot while a rollback reads it (#274).
+ * the shard's cached manifest and schema, its values file, and its template
+ * cache whole, then its marker. Every copy settles before a failure is
+ * thrown, so none writes into the snapshot while a rollback reads it (#274).
  */
-async function snapshotEngineCache(vaultRoot: string, dir: string): Promise<void> {
+async function snapshotEngineCache(vaultRoot: string, dir: string, scope: ShardLayout): Promise<void> {
   const cacheDir = path.join(dir, 'cache');
+  const templates = path.join(scope.cacheDir, TEMPLATES_DIR);
   await fsp.mkdir(cacheDir, { recursive: true });
   await settleAll([
-    ...[STATE_FILE, CACHED_MANIFEST, CACHED_SCHEMA, VALUES_FILE].map((rel) =>
+    ...[STATE_FILE, path.join(scope.cacheDir, SHARD_MANIFEST_FILE), path.join(scope.cacheDir, SHARD_SCHEMA_FILE), scope.valuesFile].map((rel) =>
       copyOptional(path.join(vaultRoot, rel), path.join(cacheDir, rel)),
     ),
     (async () => {
       let existed = true;
       try {
-        await fsp.cp(path.join(vaultRoot, CACHED_TEMPLATES), path.join(cacheDir, CACHED_TEMPLATES), { recursive: true });
+        await fsp.cp(path.join(vaultRoot, templates), path.join(cacheDir, templates), { recursive: true });
       } catch (err) {
         if (!isEnoent(err)) throw err;
         existed = false;
@@ -600,23 +608,30 @@ async function copyOptional(src: string, dst: string): Promise<void> {
  * copying over, which never touches templates it did not hold. A marker that
  * is there but unusable is a failure naming the cache (#294).
  */
-async function restoreEngineCache(vaultRoot: string, dir: string, cacheDir: string, failures: RollbackFailure[]): Promise<void> {
+async function restoreEngineCache(
+  vaultRoot: string,
+  dir: string,
+  cacheDir: string,
+  scope: ShardLayout,
+  failures: RollbackFailure[],
+): Promise<void> {
+  const templates = path.join(scope.cacheDir, TEMPLATES_DIR);
   const read = await readTemplatesMarker(dir);
   const marker = read === 'absent' || 'unreadable' in read ? undefined : read;
-  await restoreTree(cacheDir, vaultRoot, failures, marker === undefined ? {} : { skip: [CACHED_TEMPLATES] });
+  await restoreTree(cacheDir, vaultRoot, failures, marker === undefined ? {} : { skip: [templates] });
   if (read !== 'absent' && 'unreadable' in read) {
     failures.push({
-      path: toPosix(vaultRoot, path.join(vaultRoot, CACHED_TEMPLATES)),
+      path: toPosix(vaultRoot, path.join(vaultRoot, templates)),
       reason: `templates marker unreadable: ${read.unreadable}`,
-      backup: path.join(cacheDir, CACHED_TEMPLATES),
+      backup: path.join(cacheDir, templates),
     });
   }
   if (marker !== undefined) {
     await restoreDirExactly(
-      marker.existed ? path.join(cacheDir, CACHED_TEMPLATES) : path.join(dir, 'no-templates-cache'),
-      path.join(vaultRoot, CACHED_TEMPLATES),
+      marker.existed ? path.join(cacheDir, templates) : path.join(dir, 'no-templates-cache'),
+      path.join(vaultRoot, templates),
       failures,
-      { label: CACHED_TEMPLATES },
+      { label: templates },
     );
   }
 }

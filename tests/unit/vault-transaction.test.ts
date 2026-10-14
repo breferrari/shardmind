@@ -178,6 +178,48 @@ describe('vault transaction over a prior install (update, #301)', () => {
     expect(await exists(tx.dir)).toBe(true);
   });
 
+  describe("an overlay's update, scoped to its own cache (#407)", () => {
+    const OVERLAY = '.shardmind/shards/acme/research';
+    const overlay = (rel: string) => path.join(vault, OVERLAY, rel);
+    const scope = { cacheDir: OVERLAY, valuesFile: 'shard-values.acme.research.yaml' };
+    async function composed(): Promise<void> {
+      await installed();
+      await fsp.mkdir(overlay('templates/research'), { recursive: true });
+      await fsp.writeFile(overlay('shard.yaml'), 'version: 1.0.0\n');
+      await fsp.writeFile(overlay('shard-schema.yaml'), 'schema: overlay\n');
+      await fsp.writeFile(overlay('templates/research/Index.md'), 'old index\n');
+      await fsp.writeFile(path.join(vault, scope.valuesFile), 'topic: physics\n');
+    }
+
+    it("restores the overlay's cache exactly and its values, with state.json", async () => {
+      await composed();
+      const before = await tree(overlay('templates'));
+      const tx = await beginTransaction(vault, { kind: 'update', noPriorInstall: false, scope });
+      await fsp.writeFile(engine('state.json'), '{"v":2}');
+      await fsp.writeFile(overlay('shard.yaml'), 'version: 2.0.0\n');
+      await fsp.writeFile(overlay('templates/research/Added.md'), 'new\n');
+      await fsp.writeFile(path.join(vault, scope.valuesFile), 'topic: optics\n');
+      expect(await tx.rollback()).toEqual([]);
+      expect(await fsp.readFile(engine('state.json'), 'utf-8')).toBe('{"v":1}');
+      expect(await fsp.readFile(overlay('shard.yaml'), 'utf-8')).toBe('version: 1.0.0\n');
+      expect(await read(scope.valuesFile)).toBe('topic: physics\n');
+      expect(await tree(overlay('templates'))).toEqual(before);
+    });
+
+    it("snapshots none of the base's cache, so its rollback never touches it", async () => {
+      await composed();
+      const tx = await beginTransaction(vault, { kind: 'update', noPriorInstall: false, scope });
+      const snapshot = await tree(path.join(tx.dir, 'cache'));
+      expect(snapshot).not.toContain(path.join('.shardmind', 'shard.yaml'));
+      expect(snapshot).not.toContain('shard-values.yaml');
+      expect(snapshot).not.toContain(path.join('.shardmind', 'templates'));
+      // A change to the base's cache during the overlay's run is not the overlay's to undo.
+      await fsp.writeFile(engine('shard.yaml'), 'version: 0.2.0\n');
+      expect(await tx.rollback()).toEqual([]);
+      expect(await fsp.readFile(engine('shard.yaml'), 'utf-8')).toBe('version: 0.2.0\n');
+    });
+  });
+
   it('removes a template cache there was none of before (#264)', async () => {
     await installed();
     await fsp.rm(engine('templates'), { recursive: true });

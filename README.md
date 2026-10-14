@@ -136,9 +136,9 @@ shardmind add <shard>
   --verbose                                # Per-file rendering progress
   --skip-hooks                             # Run no hook; each is reported skipped
 
-# Upgrade the installed shard
-shardmind update
-  --release <tag>                          # Pin to a specific release tag (stable or prerelease)
+# Upgrade every shard in the vault, the base first; or only the one named
+shardmind update [namespace/name]
+  --release <tag>                          # Pin to a specific release tag (stable or prerelease); name the shard if there are several
   --include-prerelease                     # Widen latest-release resolution to prereleases
   --yes                                    # Skip every prompt; keep your version on every conflict
   --adopt-preexisting                      # Track a file you keep at a path the new version adds, as your modified copy

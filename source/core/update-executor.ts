@@ -25,6 +25,7 @@ import { rolledBackError } from './rollback-report.js';
 import { beginTransaction, type SnapshotTransaction } from './vault-transaction.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
+import { overlayEnginePaths } from './install-executor.js';
 import { throwIfCancelled } from './run-cancel.js';
 import {
   assertRenameTargetFree,
@@ -36,11 +37,12 @@ import { hashValues } from './install-planner.js';
 import {
   cacheTemplates,
   cacheManifest,
-  writeState,
+  writeShardEntry,
   initShardDir,
+  BASE_LAYOUT,
+  type ShardLayout,
   SINGLE_SHARD_SCHEMA_VERSION,
 } from './state.js';
-import { VALUES_FILE } from '../runtime/vault-paths.js';
 import type {
   UpdatePlan,
   UpdateAction,
@@ -72,8 +74,21 @@ export interface UpdateRunnerOptions {
    * is tracked as their modified copy instead of being left untracked.
    */
   adoptPreexisting?: boolean;
+  /**
+   * The shard of the vault being updated (#407): its index in `shards[]`,
+   * and its cache folder and values file. The base shard by default.
+   */
+  target?: UpdateTarget;
   onProgress?: (event: UpdateProgressEvent) => void;
 }
+
+/** Which shard an update writes, and where its engine files are (#407). */
+export interface UpdateTarget {
+  index: number;
+  layout: ShardLayout;
+}
+
+const BASE_TARGET: UpdateTarget = { index: 0, layout: BASE_LAYOUT };
 
 export type UpdateProgressEvent =
   | { kind: 'start'; total: number }
@@ -162,8 +177,10 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     dryRun = false,
     signal,
     adoptPreexisting = false,
+    target = BASE_TARGET,
     onProgress,
   } = opts;
+  const { cacheDir, valuesFile } = target.layout;
 
   // Every conflict must arrive decided (#292). The machine resolves each
   // pending conflict before it writes, so a missing one is a caller bug:
@@ -182,7 +199,10 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // Checked again at write time (#163): planning may have been a while
   // ago, behind prompts. Before the snapshot or any write, dry run included.
   const touched = pathsTheUpdateTouches(plan.actions);
-  await assertSafeVaultPaths(vaultRoot, touched.writes, touched.deletes, touched.caseRenames);
+  // An overlay's own engine paths are written too: never through a link or
+  // a case-folded name, as add guards them (#163, #407).
+  const engineWrites = target.index > 0 ? overlayEnginePaths(currentState.shard) : [];
+  await assertSafeVaultPaths(vaultRoot, [...touched.writes, ...engineWrites], touched.deletes, touched.caseRenames);
   // A rename's new path was free when planned; refuse before any write if
   // something arrived there during the prompts (#178).
   for (const action of plan.actions) {
@@ -193,7 +213,7 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // run writes, deletes or moves onto it (§4.28).
   const tx = dryRun
     ? null
-    : await beginTransaction(vaultRoot, { kind: 'update', now, signal, noPriorInstall: false });
+    : await beginTransaction(vaultRoot, { kind: 'update', now, signal, noPriorInstall: false, scope: target.layout });
   const folderMoves = folderChangesOf(touched.caseRenames);
 
   try {
@@ -337,12 +357,14 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
     if (tx) {
       await tx.commitEngineMetadata({
         beforeState: async () => {
-          await initShardDir(vaultRoot);
-          await cacheTemplates(vaultRoot, newTempDir);
-          await cacheManifest(vaultRoot, newManifest, newSchema, newTempDir);
-          await writeValuesFile(vaultRoot, newValues);
+          await initShardDir(vaultRoot, cacheDir);
+          await cacheTemplates(vaultRoot, newTempDir, cacheDir);
+          await cacheManifest(vaultRoot, newManifest, newSchema, newTempDir, cacheDir);
+          await writeValuesFile(vaultRoot, newValues, valuesFile);
         },
-        state: () => writeState(vaultRoot, nextState),
+        // This shard's entry, at its index; any other shard's as on disk. A
+        // vault with one shard is written at schema 2 as before.
+        state: () => writeShardEntry(vaultRoot, nextState, { at: target.index }),
       });
     }
 
@@ -713,7 +735,8 @@ async function writeAction(
 }
 
 /**
- * Overwrite `shard-values.yaml`. The install executor uses `wx` to
+ * Overwrite the shard's values file (`shard-values.yaml`, or an overlay's,
+ * #407). The install executor uses `wx` to
  * refuse existing files on a fresh install; update unconditionally
  * replaces the file because we're writing the post-migration shape
  * back. Not an atomic rename — if the process dies mid-write, the
@@ -722,13 +745,14 @@ async function writeAction(
 async function writeValuesFile(
   vaultRoot: string,
   values: Record<string, unknown>,
+  valuesFile: string,
 ): Promise<void> {
-  const abs = path.join(vaultRoot, VALUES_FILE);
+  const abs = path.join(vaultRoot, valuesFile);
   const serialized = stringifyYaml(values, { lineWidth: 0 }).trimEnd() + '\n';
   try {
     await fsp.writeFile(abs, serialized, 'utf-8');
   } catch (err) {
     // Any errno, not only EACCES: a full disk keeps its hint too (#225).
-    throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not write ${VALUES_FILE}`, err);
+    throw wrapWriteError('UPDATE_WRITE_FAILED', `Could not write ${valuesFile}`, err);
   }
 }

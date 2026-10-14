@@ -56,6 +56,8 @@ export function useFlowRun<P extends { kind: string }>(opts: {
   initial: P;
   /** The phases that end the run: the lock is released and the app exits. */
   isFinal: (phase: P) => boolean;
+  /** A final phase that is a failure besides `error` (exit 1): an update a shard of which failed (#407). */
+  failed?: (phase: P) => boolean;
   /** The error view's line when the run rolled the vault back. */
   rolledBackLine: string;
   /**
@@ -86,7 +88,7 @@ export function useFlowRun<P extends { kind: string }>(opts: {
       setPhase(next);
       if (opts.isFinal(next)) {
         // Non-zero on error so scripts can tell; cancelled is the user's choice.
-        if (next.kind === 'error') setExitCode(1);
+        if (next.kind === 'error' || opts.failed?.(next)) setExitCode(1);
         // The run is over: the next one may start (#253).
         releaseLock();
         setTimeout(() => exit(), 100);

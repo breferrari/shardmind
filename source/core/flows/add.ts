@@ -11,16 +11,16 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { ModuleSelections, VaultState } from '../../runtime/types.js';
+import type { ModuleSelections } from '../../runtime/types.js';
 import { ShardMindError } from '../../runtime/types.js';
-import { SHARDMIND_DIR, STATE_FILE, VALUES_FILE, overlayDir, overlayValuesFile } from '../../runtime/vault-paths.js';
+import { STATE_FILE, overlayDir, overlayValuesFile } from '../../runtime/vault-paths.js';
 import { errnoCode } from '../../runtime/errno.js';
 import { resolve as resolveRef } from '../registry.js';
 import { readVaultState, writeShardEntry } from '../state.js';
 import { assertShardInstallable } from '../lint-shard.js';
 import { checkExternalToolsForRun } from '../external-tools.js';
 import { assertSafeVaultPaths } from '../vault-path-guard.js';
-import { foldOutputPath } from '../fs-utils.js';
+import { ownedPaths, ownedConflicts, listOwned } from '../ownership.js';
 import { planOutputs, detectCollisions, defaultModuleSelections, type Collision } from '../install-planner.js';
 import { overlayEnginePaths, runAddTransaction, type BackupRecord, type ProgressEvent } from '../install-executor.js';
 import type { HookOutcome } from '../hook-orchestrator.js';
@@ -143,7 +143,7 @@ export async function runAddFlow(input: AddFlowInput, io: AddFlowIO): Promise<Ad
     }
     // A path the overlay writes whatever is answered, already owned: refused
     // before any prompt (R2). The full set is checked once answered.
-    const owned = ownedPaths(vault, name);
+    const owned = ownedPaths(vault, { adding: name });
     assertNoOwnedPaths(owned, await pathsWrittenRegardless(prepared), prepared);
     const prefill = input.valuesFile ? await loadValuesFile(input.valuesFile, prepared.schema) : {};
     io.phase({ kind: 'loading', message: 'Checking the shard…' });
@@ -198,56 +198,18 @@ async function valueAnswers(input: AddFlowInput, io: AddFlowIO, shard: AddShard)
 }
 
 /**
- * Every path an overlay may not write (R2, #396), keyed by its case-folded
- * form, with its owner: each shard's files, every values file (the one
- * `adding` will write included), and each folder holding a shard's files,
- * keyed with a trailing `/` (a file there would move them aside). Anything
- * under `.shardmind/` is the engine's, by prefix, in `ownerOf`.
- */
-export function ownedPaths(vault: VaultState, adding: string): Map<string, string> {
-  const owned = new Map<string, string>();
-  const own = (rel: string, owner: string) => owned.set(foldPath(rel), owner);
-  vault.shards.forEach((shard, i) => {
-    for (const rel of Object.keys(shard.files)) {
-      own(rel, shard.shard);
-      const parts = foldPath(rel).split('/');
-      for (let depth = 1; depth < parts.length; depth++) {
-        const folder = `${parts.slice(0, depth).join('/')}/`;
-        if (!owned.has(folder)) owned.set(folder, `${shard.shard} (a folder of its files)`);
-      }
-    }
-    // overlayValuesFile, not shardLayout: a name that is not <namespace>/<name>
-    // is refused here, never given a stand-in path (#406 review).
-    own(i === 0 ? VALUES_FILE : overlayValuesFile(shard.shard), `${shard.shard} (its values file)`);
-  });
-  // The values file the add itself writes: a shard that ships it would fail
-  // the exclusive write after its files, so it is refused up front.
-  own(overlayValuesFile(adding), `${adding} (the values file add writes)`);
-  return owned;
-}
-
-/**
  * `ADD_PATH_OWNED` when any of `paths` is owned (R2, #396), naming every
  * such path with its owner.
  */
 function assertNoOwnedPaths(owned: Map<string, string>, paths: readonly string[], shard: PreparedShard): void {
-  const taken = paths
-    .map((rel) => ({ rel, owner: ownerOf(rel, owned) }))
-    .filter((t): t is { rel: string; owner: string } => t.owner !== null);
+  const taken = ownedConflicts(owned, paths);
   if (taken.length === 0) return;
   const name = `${shard.manifest.namespace}/${shard.manifest.name}`;
   throw new ShardMindError(
-    `${name} would write ${taken.length === 1 ? 'a path' : `${taken.length} paths`} another shard or ShardMind owns: ${listed(taken.map((t) => `${t.rel} (${t.owner})`))}`,
+    `${name} would write ${taken.length === 1 ? 'a path' : `${taken.length} paths`} another shard or ShardMind owns: ${listOwned(taken)}`,
     'ADD_PATH_OWNED',
     "Each file has one owner. The overlay's author can move these files or exclude them in its .shardmindignore; or leave this shard out of the vault.",
   );
-}
-
-/** Up to `OWNED_LISTED` entries, then how many more. */
-const OWNED_LISTED = 20;
-function listed(items: readonly string[]): string {
-  const shown = items.slice(0, OWNED_LISTED).join(', ');
-  return items.length > OWNED_LISTED ? `${shown}, and ${items.length - OWNED_LISTED} more` : shown;
 }
 
 /**
@@ -260,32 +222,6 @@ async function pathsWrittenRegardless(shard: PreparedShard): Promise<string[]> {
   for (const [id, mod] of Object.entries(shard.schema.modules)) selections[id] = mod.removable ? 'excluded' : 'included';
   const { outputs } = await planOutputs(shard.schema, shard.tempDir, selections);
   return outputs.map((o) => o.outputPath);
-}
-
-/**
- * Who owns `rel`, if anyone: the engine (`.shardmind/`); a shard, when it
- * manages the path, keeps a folder of files there, or manages a file at a
- * folder above it (the file is in the way); or nobody.
- */
-export function ownerOf(rel: string, owned: Map<string, string>): string | null {
-  const folded = foldPath(rel);
-  if (folded === SHARDMIND_DIR || folded.startsWith(`${SHARDMIND_DIR}/`)) return 'ShardMind (the engine folder)';
-  const exact = owned.get(folded) ?? owned.get(`${folded}/`);
-  if (exact !== undefined) return exact;
-  const parts = folded.split('/');
-  for (let depth = 1; depth < parts.length; depth++) {
-    const above = owned.get(parts.slice(0, depth).join('/'));
-    if (above !== undefined) return `${above} (a file above this path)`;
-  }
-  return null;
-}
-
-/**
- * One spelling per path, as the vault-path guard folds it (`foldOutputPath`:
- * NFC, lower case), with forward slashes.
- */
-function foldPath(rel: string): string {
-  return foldOutputPath(rel.replaceAll('\\', '/'));
 }
 
 async function planAndAdd(

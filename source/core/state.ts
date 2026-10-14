@@ -193,11 +193,22 @@ export async function readState(vaultRoot: string, opts: ReadStateOptions = {}):
  * after the others when the vault has none of that name. Read at write time,
  * so a write never puts back a stale copy of another shard's entry. A vault
  * with no state yet gets this shard as its only one.
+ *
+ * `opts.at` (#407): the entry at that index is replaced, whatever its name,
+ * so an update whose new release renamed the shard replaces it rather than
+ * appending a second one; an index the state does not have is refused.
  */
-export async function writeShardEntry(vaultRoot: string, state: ShardState): Promise<void> {
+export async function writeShardEntry(vaultRoot: string, state: ShardState, opts: { at?: number } = {}): Promise<void> {
   const entry = withoutSchemaVersion(state);
   const shards = (await readVaultState(vaultRoot))?.shards ?? [];
-  const at = shards.findIndex((s) => s.shard === entry.shard);
+  if (opts.at !== undefined && opts.at >= shards.length) {
+    throw new ShardMindError(
+      `state.json has no shard at index ${opts.at}: it changed during this run`,
+      'STATE_CORRUPT',
+      'Another program edited .shardmind/state.json while ShardMind ran. Check it, then run the command again.',
+    );
+  }
+  const at = opts.at ?? shards.findIndex((s) => s.shard === entry.shard);
   const next = at === -1 ? [...shards, entry] : shards.map((s, i) => (i === at ? entry : s));
   await writeVaultState(vaultRoot, { schema_version: STATE_SCHEMA_VERSION, shards: next });
 }
@@ -578,6 +589,9 @@ export interface ShardLayout {
   valuesFile: string;
 }
 
+/** The base shard's engine files: `.shardmind/` and `shard-values.yaml`. */
+export const BASE_LAYOUT: ShardLayout = Object.freeze({ cacheDir: SHARDMIND_DIR, valuesFile: VALUES_FILE });
+
 /**
  * Shard `index` of the vault's `shards[]` (#406): the base (index 0) keeps
  * `.shardmind/` and `shard-values.yaml`; an overlay keeps `overlayDir` and
@@ -585,7 +599,7 @@ export interface ShardLayout {
  * hand edit) has none: null, which the caller reports.
  */
 export function shardLayout(shard: string, index: number): ShardLayout | null {
-  if (index === 0) return { cacheDir: SHARDMIND_DIR, valuesFile: VALUES_FILE };
+  if (index === 0) return BASE_LAYOUT;
   try {
     return { cacheDir: overlayDir(shard), valuesFile: overlayValuesFile(shard) };
   } catch {

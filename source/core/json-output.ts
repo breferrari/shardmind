@@ -48,8 +48,39 @@ export interface JsonErrorPayload {
   readonly hint: string | null;
   /** The stack of a bug in shardmind (#225); null for a known or environment error. */
   readonly stack: string | null;
-  /** A state.json from a newer ShardMind (#344): its schema version and the newest this one reads. Absent otherwise. */
-  readonly details?: NewerState;
+  /**
+   * A state.json from a newer ShardMind (#344): its schema version and the
+   * newest this one reads. An update of several shards one of them stopped
+   * (#407): every shard's entry. Absent otherwise.
+   */
+  readonly details?: NewerState | { readonly shards: readonly UpdateShardEntry[] };
+}
+
+/** One shard's entry in `update --json`'s `shards` (#407, ARCHITECTURE §10.3b). */
+export type UpdateShardEntry =
+  | { readonly shard: string; readonly result: unknown }
+  | { readonly shard: string; readonly error: JsonErrorPayload }
+  | { readonly shard: string; readonly skipped: 'not-reached' };
+
+/**
+ * An update of several shards that one of them stopped (#407): answered as
+ * that shard's error, its message prefixed with its name, with every
+ * shard's entry in `details`.
+ */
+export class ShardRunsFailed extends Error {
+  readonly failed: { readonly shard: string; readonly error: unknown };
+  readonly shards: readonly UpdateShardEntry[];
+
+  constructor(failed: { readonly shard: string; readonly error: unknown }, shards: readonly UpdateShardEntry[]) {
+    // The shard's error is the cause: a cancel inside a later shard is still
+    // read as a cancel (exit 130), with the shards before it reported.
+    super(`${failed.shard}: ${failed.error instanceof Error ? failed.error.message : String(failed.error)}`, {
+      cause: failed.error,
+    });
+    this.name = 'ShardRunsFailed';
+    this.failed = failed;
+    this.shards = shards;
+  }
 }
 
 export interface JsonEnvelope {
@@ -76,7 +107,11 @@ export function jsonFailure(command: JsonCommand, error: unknown): JsonEnvelope 
   };
 }
 
-function toJsonError(error: unknown): JsonErrorPayload {
+export function toJsonError(error: unknown): JsonErrorPayload {
+  if (error instanceof ShardRunsFailed) {
+    const failed = toJsonError(error.failed.error);
+    return { ...failed, message: `${error.failed.shard}: ${failed.message}`, details: { shards: error.shards } };
+  }
   // The version only reaches the report link, which --json does not carry.
   const d = describeError(error, undefined);
   // `code` stays a registry code or null: an environment error's errno code

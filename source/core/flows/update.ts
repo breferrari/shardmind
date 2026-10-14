@@ -8,6 +8,10 @@
  * the update (`runUpdate`) and runs the shard's hooks. Every question goes
  * through `io.ask`; the Ink machine answers from its prompts, and a
  * headless `--json` run never reaches one (it refuses or stops at the plan).
+ *
+ * A vault holding several shards (#407) runs that for each shard in turn,
+ * the base first, each from its own values, cache and `state.json` entry;
+ * the first failure stops the run, the shards before it kept (R3).
  */
 
 import path from 'node:path';
@@ -19,17 +23,23 @@ import type {
   ModuleSelections,
   ModuleDefinition,
   MigrationChange,
+  VaultState,
 } from '../../runtime/types.js';
 import { ShardMindError } from '../../runtime/types.js';
-import { VALUES_FILE } from '../../runtime/vault-paths.js';
+import { SHARD_SCHEMA_FILE } from '../../runtime/vault-paths.js';
+import { SINGLE_SHARD_SCHEMA_VERSION, shardStateOf } from '../../runtime/state-schema.js';
 import { resolve as resolveRef } from '../registry.js';
 import { primeLatestVersion } from '../update-check.js';
 import { parseSchema } from '../schema.js';
-import { readState } from '../state.js';
-import { detectDrift } from '../drift.js';
+import { readVaultState, shardLayout, writeShardEntry, type ShardLayout } from '../state.js';
+import { detectDrift, foreignPathsOf, type DriftOptions } from '../drift.js';
+import { ownedPaths, ownedConflicts, listOwned } from '../ownership.js';
+import { DownloadCancelledError } from '../download.js';
+import { planOutputs } from '../install-planner.js';
+import { isCancelledRun } from '../run-cancel.js';
 import { applyMigrations } from '../migrator.js';
 import { loadValuesYaml } from '../values-io.js';
-import { toPosix } from '../fs-utils.js';
+import { toPosix, posixPath } from '../fs-utils.js';
 import {
   computeSchemaAdditions,
   mergeModuleSelections,
@@ -52,6 +62,8 @@ import { runAndHooks, runHookPhase, type FlowRunIO } from './run.js';
 
 export interface UpdateFlowInput {
   vaultRoot: string;
+  /** `update <namespace>/<name>` (#407): that shard only. Every shard when absent. */
+  shard?: string;
   yes: boolean;
   dryRun: boolean;
   /** `--json`: with `--dry-run`, the run returns its plan and stops. */
@@ -69,8 +81,31 @@ export interface UpdateFlowInput {
   stop?: AbortSignal;
 }
 
+/** The shard an update runs on (#407): one of the vault's, with its own files. */
+export interface ShardTarget {
+  /** Its index in `state.json`'s `shards[]`; 0 is the base. */
+  index: number;
+  state: ShardState;
+  /** Its cache folder (merge base) and values file. */
+  layout: ShardLayout;
+  /** The vault's state as read for this shard: the other shards' files, for ownership and drift. */
+  vault: VaultState;
+  /** The vault holds several shards: its prompts and summary are headed with `state.shard`. */
+  composed: boolean;
+  /** Drift for this shard: its own cache, the other shards' files never its orphans (#406). */
+  drift: DriftOptions;
+  /** What the other shards own (R2); empty on a vault with one shard. Built once per shard. */
+  owned: Map<string, string>;
+}
+
+/** The name a shard's prompts are headed and keyed with: only on a vault holding several (#407). */
+export function shardLabel(target: ShardTarget): string | undefined {
+  return target.composed ? target.state.shard : undefined;
+}
+
 /** The install, the new release, and the values migrated to it. */
 export interface UpdateContext {
+  target: ShardTarget;
   state: ShardState;
   oldSchema: ShardSchema;
   resolved: ResolvedShard;
@@ -125,7 +160,8 @@ export interface UpdateFlowIO extends FlowRunIO {
   progress(event: UpdateProgressEvent): void;
 }
 
-export type UpdateFlowResult =
+/** One shard's update: what a vault with one shard's update returns. */
+export type ShardUpdateResult =
   /**
    * `hooks`: the bootstrap a `--skip-hooks` run owes, run (or previewed, or
    * skipped again) by the up-to-date run (#199); usually none.
@@ -153,14 +189,89 @@ export type UpdateFlowResult =
       resolutions: Record<string, ConflictResolution>;
     };
 
+/** How one shard of several ended (#407): its result, the error that stopped the run, or not reached. */
+export type ShardRun =
+  | { shard: string; result: ShardUpdateResult }
+  | { shard: string; error: unknown }
+  | { shard: string; skipped: 'not-reached' };
+
+/** A vault with one shard: its result. Several: each covered shard's run, in order (#407). */
+export type UpdateFlowResult = ShardUpdateResult | { kind: 'shards'; runs: ShardRun[] };
+
 
 export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): Promise<UpdateFlowResult> {
   const { vaultRoot, dryRun } = input;
   // Before the state is read: a plan made from a state another run is
-  // changing would be stale (#253).
+  // changing would be stale (#253). One lock for every shard.
   if (!dryRun) io.lock();
   io.phase({ kind: 'loading', message: 'Reading install state…' });
-  const { state, source } = await readUpdateTarget(vaultRoot, input);
+  const { vault, indexes } = await readUpdateTargets(vaultRoot, input);
+  if (vault.shards.length === 1) return runShardUpdate(input, io, targetOf(vault, 0));
+
+  // R3: in install order, each on its own transaction; the first failure
+  // stops the run, the shards before it kept, the ones after not tried.
+  const runs: ShardRun[] = [];
+  let stopped = false;
+  let current = vault;
+  // Why the next shard cannot start, when the shard before it ended the run
+  // without failing: state.json unreadable after its commit.
+  let carried: unknown;
+  for (const index of indexes) {
+    const shard = current.shards[index]?.shard ?? vault.shards[index]!.shard;
+    if (stopped) {
+      runs.push({ shard, skipped: 'not-reached' });
+      continue;
+    }
+    if (runs.length > 0) {
+      // A superseded run goes no further. A Ctrl+C that came after the
+      // shard before committed (during its hooks) is this shard's cancel.
+      if (input.stop?.aborted) throw new FlowCancelled('Superseded by a newer run.');
+      if (carried === undefined && io.newRunAbort().signal.aborted) carried = cancelledHere(undefined);
+    }
+    if (carried !== undefined) {
+      runs.push({ shard, error: carried });
+      stopped = true;
+      continue;
+    }
+    let result: ShardUpdateResult;
+    try {
+      result = await runShardUpdate(input, io, targetOf(current, index));
+    } catch (err) {
+      // A cancel before any shard ran ends the run as on one shard. After
+      // one ran, it is this shard's: the shards before it are reported.
+      if (endsTheRun(err) && runs.length === 0) throw err;
+      runs.push({ shard, error: endsTheRun(err) ? cancelledHere(err) : err });
+      stopped = true;
+      continue;
+    }
+    // The shard wrote state.json: the next one reads its entry and the
+    // other shards' files again, and this one is named as written (a base
+    // may rename itself). A read that fails stops the run at the next
+    // shard; this one's result is kept.
+    if (!dryRun) {
+      try {
+        current = (await readVaultState(vaultRoot)) ?? throwNoInstall();
+      } catch (err) {
+        carried = err;
+      }
+    }
+    runs.push({ shard: carried === undefined ? (current.shards[index]?.shard ?? shard) : shard, result });
+  }
+  return { kind: 'shards', runs };
+}
+
+/** A cancel inside or before a later shard, as that shard's error: the run stopped there. */
+function cancelledHere(err: unknown): ShardMindError {
+  if (err instanceof ShardMindError) return err;
+  const reason = err instanceof FlowCancelled ? err.reason : 'The run was stopped with Ctrl+C.';
+  return new ShardMindError('Cancelled.', 'CANCELLED', `${reason} The shards before this one stay updated.`);
+}
+
+/** One shard's update: steps 2-9 of §4.30 step 6, with its target's files. */
+async function runShardUpdate(input: UpdateFlowInput, io: UpdateFlowIO, target: ShardTarget): Promise<ShardUpdateResult> {
+  const { vaultRoot, dryRun } = input;
+  const { state, layout } = target;
+  const source = sourceOf(state, input.release);
 
   let cleanup: (() => Promise<void>) | undefined;
   // Waited on before the run returns: a headless run exits right after its
@@ -179,7 +290,8 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
         // The update-check cache stores "latest stable" for the status
         // command: primed only when the run resolved through that policy.
         if (!state.ref && !input.release && !input.includePrerelease) {
-          priming = primeLatestVersion(vaultRoot, state.source, resolved.version).catch(() => {});
+          // Each shard keeps its own update-check cache (#406).
+          priming = primeLatestVersion(vaultRoot, state.source, resolved.version, undefined, layout.cacheDir).catch(() => {});
         }
         return resolved;
       },
@@ -195,6 +307,7 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
         'This is a bug. Please report — the registry should always return ResolvedShard.ref for ref-shaped sources.',
       );
     }
+    assertNameKept(target, `${shard.manifest.namespace}/${shard.manifest.name}`, shard.manifest.version);
     // A ref install is up to date at the same commit; a tag install at the
     // same version and tarball (a retagged release runs through the merge).
     const upToDate = state.ref
@@ -209,7 +322,7 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
       if (state.bootstrap_pending !== true) {
         return { kind: 'up-to-date', manifest: shard.manifest, state, hooks: [], externalTools: [], durationMs: 0 };
       }
-      const current = await loadCurrentValues(vaultRoot);
+      const current = await loadCurrentValues(vaultRoot, layout.valuesFile);
       // Under --skip-hooks no hook runs, so nothing is checked for one.
       let values = current;
       let externalTools: string[] = [];
@@ -234,6 +347,7 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
         dryRun,
         skipHooks: input.skipHooks,
         upToDate: true,
+        ...hookTarget(vaultRoot, target),
       };
       // A dry run writes nothing, so there is no committed run to guard.
       const hooks = dryRun ? (await runHooks(hookPlan, io.hooks)).outcomes : await runHookPhase(io, hookPlan);
@@ -241,12 +355,13 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
     }
 
     io.phase({ kind: 'loading', message: 'Loading current values…' });
-    const oldValues = await loadCurrentValues(vaultRoot);
-    const oldSchema = await loadCachedSchema(vaultRoot, state);
+    const oldValues = await loadCurrentValues(vaultRoot, layout.valuesFile);
+    const oldSchema = await loadCachedSchema(vaultRoot, target);
     io.phase({ kind: 'loading', message: 'Applying migrations…' });
     const migration = applyMigrations(oldValues, state.version, shard.manifest.version, shard.schema.migrations);
     const additions = computeSchemaAdditions(shard.schema, state.modules, migration.values);
     const ctx: UpdateContext = {
+      target,
       state,
       oldSchema,
       resolved: shard.resolved,
@@ -264,6 +379,10 @@ export async function runUpdateFlow(input: UpdateFlowInput, io: UpdateFlowIO): P
     };
     // A run superseded while it downloaded goes no further.
     if (input.stop?.aborted) throw new FlowCancelled('Superseded by a newer run.');
+    // One owner per file (R2): what the release writes whatever is answered,
+    // refused before any question, as add does (#396). The full set is
+    // checked once the values and modules are known.
+    if (target.composed) assertNotOwned(target, await pathsWrittenRegardless(ctx));
 
     const { values, selections, pendingModules } = await valuesAndModules(input, io, ctx);
     return await planAndUpdate(input, io, ctx, values, selections, pendingModules);
@@ -283,7 +402,7 @@ async function valuesAndModules(
       throw new ShardMindError(
         `Missing required values for --yes: ${ctx.newRequiredKeys.join(', ')}`,
         'VALUES_MISSING',
-        'Drop --yes and answer interactively, or add the missing keys to shard-values.yaml first.',
+        `Drop --yes and answer interactively, or add the missing keys to ${ctx.target.layout.valuesFile} first.`,
       );
     }
     const selections = mergeModuleSelections(
@@ -299,7 +418,7 @@ async function valuesAndModules(
     if (input.json) {
       throw jsonNeedsAnswers(
         `new required values (${ctx.newRequiredKeys.join(', ')})`,
-        'Add them to shard-values.yaml; --yes cannot supply new required values either.',
+        `Add them to ${ctx.target.layout.valuesFile}; --yes cannot supply new required values either.`,
       );
     }
     given = { ...ctx.migratedValues, ...(await io.ask({ kind: 'new-values', ctx })) };
@@ -332,7 +451,7 @@ async function planAndUpdate(
   values: Record<string, unknown>,
   selections: ModuleSelections,
   pendingModules: string[],
-): Promise<UpdateFlowResult> {
+): Promise<ShardUpdateResult> {
   const { vaultRoot } = input;
   // With the values final, before the removed-files question, the render
   // and any conflict question (#138).
@@ -340,10 +459,12 @@ async function planAndUpdate(
   // The new shard rendered once, threaded through to the planner.
   const renderContext = buildRenderContext(ctx.newManifest, values, selections, undefined, vaultRoot);
   const [drift, newFilePlan] = await Promise.all([
-    detectDrift(vaultRoot, ctx.state),
+    detectDrift(vaultRoot, ctx.state, ctx.target.drift),
     renderNewShard(ctx.newSchema, ctx.newTempDir, selections, renderContext),
   ]);
   const newPaths = new Set(newFilePlan.outputs.map((o) => o.outputPath));
+  // One owner per file (R2): before any question, dry run included.
+  assertNotOwned(ctx.target, [...newPaths]);
   // A renamed file is planned at its new path, so it is not offered as
   // removed (#178).
   let renamed: AppliedRenames | undefined = await resolveRenames(vaultRoot, ctx, drift, newFilePlan);
@@ -374,9 +495,16 @@ async function planAndUpdate(
   }
 
   io.phase({ kind: 'loading', message: 'Planning update…' });
-  const applied = renamed ?? (await resolveRenames(vaultRoot, ctx, await detectDrift(vaultRoot, ctx.state), newFilePlan));
+  const applied =
+    renamed ?? (await resolveRenames(vaultRoot, ctx, await detectDrift(vaultRoot, ctx.state, ctx.target.drift), newFilePlan));
   const plan = await planUpdate({
-    vault: { root: vaultRoot, state: applied.state, drift: applied.drift, movedFrom: applied.movedFrom },
+    vault: {
+      root: vaultRoot,
+      state: applied.state,
+      drift: applied.drift,
+      movedFrom: applied.movedFrom,
+      cacheDir: ctx.target.layout.cacheDir,
+    },
     values: { old: ctx.oldValues, new: values },
     newShard: { schema: ctx.newSchema, selections, tempDir: ctx.newTempDir, renderContext, filePlan: newFilePlan },
     removedFileDecisions: removedDecisions,
@@ -408,7 +536,7 @@ async function execute(
   selections: ModuleSelections,
   resolutions: Record<string, ConflictResolution>,
   externalTools: string[],
-): Promise<UpdateFlowResult> {
+): Promise<ShardUpdateResult> {
   const { vaultRoot, dryRun } = input;
   const start = Date.now();
   io.phase({ kind: 'writing' });
@@ -429,6 +557,7 @@ async function execute(
         newTempDir: ctx.newTempDir,
         dryRun,
         adoptPreexisting: input.adoptPreexisting,
+        target: ctx.target,
         signal,
         onProgress: io.progress,
       }),
@@ -448,6 +577,7 @@ async function execute(
       removedFiles: done.summary.deletedFiles,
       dryRun,
       skipHooks: input.skipHooks,
+      ...hookTarget(vaultRoot, ctx.target),
     }),
   );
 
@@ -476,20 +606,143 @@ function resolveRenames(vaultRoot: string, ctx: UpdateContext, drift: Awaited<Re
 }
 
 /**
- * The install and the source to resolve it from: `UPDATE_NO_INSTALL`
- * without one, `UPDATE_FLAG_CONFLICT` for flags that cannot combine.
- * `state.ref` re-resolves the tracked ref; `--release` pins a tag;
- * otherwise the recorded source's latest stable release.
+ * The vault and the shards the run covers, in order (#407): every shard,
+ * or the one named (`UPDATE_SHARD_UNKNOWN`, matched exactly). Refused
+ * before any network call: no install (`UPDATE_NO_INSTALL`), an overlay
+ * name with no layout (`STATE_CORRUPT`), `--release` on a bare run of
+ * several shards, and flags that cannot combine for any covered shard
+ * (`UPDATE_FLAG_CONFLICT`).
+ */
+export async function readUpdateTargets(
+  vaultRoot: string,
+  opts: { shard?: string; release?: string; includePrerelease?: boolean } = {},
+): Promise<{ vault: VaultState; indexes: number[] }> {
+  const vault = await readVaultState(vaultRoot);
+  if (!vault) throwNoInstall();
+  const names = vault.shards.map((s) => s.shard);
+  let indexes = names.map((_, i) => i);
+  if (opts.shard !== undefined) {
+    const at = names.indexOf(opts.shard);
+    if (at === -1) {
+      throw new ShardMindError(
+        `This vault holds no shard named ${opts.shard}`,
+        'UPDATE_SHARD_UNKNOWN',
+        `It holds ${names.join(', ')}. Name one of them, or run \`shardmind update\` to update every shard.`,
+      );
+    }
+    indexes = [at];
+  } else if (names.length > 1 && opts.release) {
+    throw new ShardMindError(
+      '--release cannot pin every shard of a vault holding several',
+      'UPDATE_FLAG_CONFLICT',
+      `A tag belongs to one shard's releases. Name the shard: \`shardmind update <namespace>/<name> --release ${opts.release}\` (this vault holds ${names.join(', ')}).`,
+    );
+  }
+  // Every entry's layout, not only the covered ones': ownership reads them all.
+  names.forEach((_, i) => layoutOf(vault, i));
+  for (const i of indexes) {
+    assertFlagsCompatible({
+      stateRef: vault.shards[i]!.ref ?? null,
+      release: opts.release,
+      includePrerelease: opts.includePrerelease ?? false,
+    });
+  }
+  return { vault, indexes };
+}
+
+/**
+ * The first shard the run covers and the source to resolve it from (the
+ * base on a bare run). `state.ref` re-resolves the tracked ref; `--release`
+ * pins a tag; otherwise the recorded source's latest stable release.
  */
 export async function readUpdateTarget(
   vaultRoot: string,
-  opts: { release?: string; includePrerelease?: boolean } = {},
+  opts: { shard?: string; release?: string; includePrerelease?: boolean } = {},
 ): Promise<{ state: ShardState; source: string }> {
-  const state = await readState(vaultRoot);
-  if (!state) throwNoInstall();
-  assertFlagsCompatible({ stateRef: state.ref ?? null, release: opts.release, includePrerelease: opts.includePrerelease ?? false });
-  const source = state.ref ? `${state.source}#${state.ref}` : opts.release ? `${state.source}@${opts.release}` : state.source;
-  return { state, source };
+  const { vault, indexes } = await readUpdateTargets(vaultRoot, opts);
+  const { state } = targetOf(vault, indexes[0]!);
+  return { state, source: sourceOf(state, opts.release) };
+}
+
+function sourceOf(state: ShardState, release: string | undefined): string {
+  return state.ref ? `${state.source}#${state.ref}` : release ? `${state.source}@${release}` : state.source;
+}
+
+/** Shard `index` of `vault` as an update target. */
+function targetOf(vault: VaultState, index: number): ShardTarget {
+  const entry = vault.shards[index]!;
+  return {
+    index,
+    state: shardStateOf(entry, SINGLE_SHARD_SCHEMA_VERSION),
+    layout: layoutOf(vault, index),
+    vault,
+    composed: vault.shards.length > 1,
+    drift: driftOptions(vault, index),
+    owned: vault.shards.length > 1 ? ownedPaths(vault, { except: index }) : new Map(),
+  };
+}
+
+/** The shard's layout; an overlay name a hand edit broke has none (`STATE_CORRUPT`). */
+function layoutOf(vault: VaultState, index: number): ShardLayout {
+  const name = vault.shards[index]!.shard;
+  const layout = shardLayout(name, index);
+  if (layout === null) {
+    throw new ShardMindError(
+      `state.json names an overlay '${name}', which is not <namespace>/<name>`,
+      'STATE_CORRUPT',
+      'Its cache and values files are named after it, so it cannot be updated. Fix the name in .shardmind/state.json, or remove that entry.',
+    );
+  }
+  return layout;
+}
+
+/**
+ * Drift for shard `index`: its own cache, and the other shards' files never
+ * its orphans (#406). On a vault with one shard that is `.shardmind/` and
+ * `shard-values.yaml`, which drift already reserves.
+ */
+function driftOptions(vault: VaultState, index: number): DriftOptions {
+  const states = vault.shards.map((entry) => shardStateOf(entry, SINGLE_SHARD_SCHEMA_VERSION));
+  return { cacheDir: layoutOf(vault, index).cacheDir, foreign: foreignPathsOf(states, index) };
+}
+
+/** The hooks' part: the shard's entry written back at its index, an overlay's logs in its folder. */
+function hookTarget(vaultRoot: string, target: ShardTarget): Pick<HookRunPlan, 'persist' | 'logShard'> {
+  return {
+    persist: (state) => writeShardEntry(vaultRoot, state, { at: target.index }),
+    logShard: target.index > 0 ? target.state.shard : undefined,
+  };
+}
+
+/**
+ * `UPDATE_PATH_OWNED` when the target's new release would write a path
+ * another shard of the vault owns (R2, #407), naming each with its owner.
+ */
+function assertNotOwned(target: ShardTarget, paths: readonly string[]): void {
+  if (!target.composed) return;
+  const taken = ownedConflicts(target.owned, paths);
+  if (taken.length === 0) return;
+  throw new ShardMindError(
+    `${target.state.shard}'s new release would write ${taken.length === 1 ? 'a path' : `${taken.length} paths`} another shard or ShardMind owns: ${listOwned(taken)}`,
+    'UPDATE_PATH_OWNED',
+    `Each file has one owner. Update the other shards alone (\`shardmind update <namespace>/<name>\`), and report the clash to ${target.state.shard}'s author, who can move the file or exclude it in its .shardmindignore.`,
+  );
+}
+
+/**
+ * The paths the new release writes whatever the questions are answered:
+ * the modules kept as they are, every new optional module left out.
+ */
+async function pathsWrittenRegardless(ctx: UpdateContext): Promise<string[]> {
+  const leftOut = Object.fromEntries(ctx.newOptionalModules.map((m) => [m.id, 'excluded' as const]));
+  const selections = mergeModuleSelections(ctx.state.modules, ctx.newSchema, leftOut);
+  const { outputs } = await planOutputs(ctx.newSchema, ctx.newTempDir, selections);
+  return outputs.map((o) => o.outputPath);
+}
+
+/** A cancel or a superseded run: the whole run ends, as on a vault with one shard. */
+function endsTheRun(err: unknown): boolean {
+  return err instanceof FlowCancelled || err instanceof DownloadCancelledError || isCancelledRun(err);
 }
 
 function throwNoInstall(): never {
@@ -609,23 +862,45 @@ function assertFlagsCompatible(opts: { stateRef: string | null; release: string 
   }
 }
 
-function loadCurrentValues(vaultRoot: string): Promise<Record<string, unknown>> {
-  return loadValuesYaml(path.join(vaultRoot, VALUES_FILE), {
-    label: VALUES_FILE,
+function loadCurrentValues(vaultRoot: string, valuesFile: string): Promise<Record<string, unknown>> {
+  return loadValuesYaml(path.join(vaultRoot, valuesFile), {
+    label: valuesFile,
     errors: { readFailed: 'VALUES_READ_FAILED', invalid: 'VALUES_INVALID' },
   });
 }
 
-async function loadCachedSchema(vaultRoot: string, state: ShardState): Promise<ShardSchema> {
+async function loadCachedSchema(vaultRoot: string, target: ShardTarget): Promise<ShardSchema> {
+  const { state, layout } = target;
   try {
-    return await parseSchema(path.join(vaultRoot, '.shardmind', 'shard-schema.yaml'));
+    return await parseSchema(path.join(vaultRoot, layout.cacheDir, SHARD_SCHEMA_FILE));
   } catch (err) {
-    throw new ShardMindError(
-      'Cached schema missing or corrupt',
-      'UPDATE_CACHE_MISSING',
-      `Re-run \`shardmind install ${state.source}\` to regenerate .shardmind/. ` +
-        `Original error: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const cause = `Original error: ${err instanceof Error ? err.message : String(err)}`;
+    // An overlay's cache is its own folder; reinstalling it would make it a
+    // base vault of its own (#407).
+    const hint =
+      target.index === 0
+        ? `Re-run \`shardmind install ${state.source}\` to regenerate .shardmind/. ${cause}`
+        : `Restore ${posixPath(layout.cacheDir)}/ (from version control, or a snapshot under .shardmind/backups/). ${cause}`;
+    throw new ShardMindError('Cached schema missing or corrupt', 'UPDATE_CACHE_MISSING', hint);
   }
+}
+
+/**
+ * A shard's release keeps a name the vault can hold (#407): an overlay's
+ * own, since its paths are named after it; and never another shard's, which
+ * the vault would then list twice. The base keeps no path under its name.
+ */
+function assertNameKept(target: ShardTarget, newName: string, version: string): void {
+  const { state, vault, index } = target;
+  if (newName === state.shard) return;
+  const takenBy = vault.shards.findIndex((s, i) => i !== index && s.shard === newName);
+  if (index === 0 && takenBy === -1) return;
+  throw new ShardMindError(
+    `${state.shard}'s release ${version} is named ${newName}${takenBy === -1 ? '' : ', which this vault already holds'}`,
+    'UPDATE_SHARD_RENAMED',
+    takenBy === -1
+      ? `This vault keeps ${state.shard}'s cache, values and logs under its name. Pin its last release under that name (\`shardmind update ${state.shard} --release <v>\`), or ask its author whether the rename was meant.`
+      : `A vault holds each shard once. Pin ${state.shard}'s last release under its name (\`shardmind update ${state.shard} --release <v>\`), or ask its author whether the rename was meant.`,
+  );
 }
 

@@ -434,6 +434,57 @@ describe('planUpdate', () => {
     expect(action).toMatchObject({ content: '## Alpha\n\nNotes.\nMy line.\n' });
   });
 
+  it("merges an overlay's file against the overlay's own cached template (#407)", async () => {
+    const schema = baseSchema();
+    const selections: ModuleSelections = { brain: 'included' };
+    const values = { user_name: 'brenno' };
+    const installed = '# Research\n\nNotes.\n';
+    // The base's cache has no such template; the overlay's has the merge base.
+    const vault = await buildVault({
+      vaultFiles: { 'research/Index.md': '# Research\n\nNotes.\nMy line.\n' },
+      cachedTemplates: {},
+    });
+    const overlayCache = path.join('.shardmind', 'shards', 'acme', 'research');
+    await fsp.mkdir(path.join(vault, overlayCache, 'templates', 'research'), { recursive: true });
+    await fsp.writeFile(path.join(vault, overlayCache, 'templates', 'research', 'Index.md.njk'), '# Research\n\nNotes.\n');
+    const shardDir = await buildShardTempDir({ 'research/Index.md.njk': '## Research\n\nNotes.\n' });
+    const state = makeShardState({
+      shard: 'acme/research',
+      version: '1.0.0',
+      modules: selections,
+      files: { 'research/Index.md': makeFileState({ template: 'research/Index.md.njk', rendered_hash: sha256(installed), ownership: 'managed' }) },
+    });
+    const drift: DriftReport = {
+      managed: [],
+      modified: [{ path: 'research/Index.md', template: 'research/Index.md.njk', renderedHash: sha256(installed), actualHash: 'x', ownership: 'modified' }],
+      volatile: [],
+      missing: [],
+      orphaned: [],
+    };
+    const content = '## Research\n\nNotes.\n';
+    const plan = await planUpdate({
+      vault: { root: vault, state, drift, cacheDir: overlayCache },
+      values: { old: values, new: values },
+      newShard: {
+        schema,
+        selections,
+        tempDir: shardDir,
+        renderContext: renderCtx(values),
+        filePlan: {
+          outputs: [{
+            outputPath: 'research/Index.md',
+            entry: { sourcePath: path.join(shardDir, 'research/Index.md.njk'), outputPath: 'research/Index.md', module: null, volatile: false, iterator: null },
+            content,
+            hash: sha256(content),
+          }],
+        },
+      },
+      removedFileDecisions: {},
+    });
+    const action = plan.actions.find((a) => a.path === 'research/Index.md');
+    expect(action).toMatchObject({ kind: 'auto_merge', content: '## Research\n\nNotes.\nMy line.\n' });
+  });
+
   it("renders each side with the item it was made from when the item changed (#233)", async () => {
     const schema = baseSchema();
     const selections: ModuleSelections = { brain: 'included' };

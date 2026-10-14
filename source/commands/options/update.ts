@@ -1,11 +1,18 @@
 /**
- * The update command's options (`commands/update.tsx`), Ink-free so its
+ * The update command's args and options (`commands/update.tsx`), Ink-free so its
  * headless `--json` run can parse with them (#302).
  */
 
 import zod from 'zod';
 import { updateCheckOption } from '../hooks/update-check-option.js';
 import { skipHooksOption } from '../hooks/skip-hooks-option.js';
+
+export const args = zod.tuple([
+  zod
+    .string()
+    .optional()
+    .describe('The shard to update, as <namespace>/<name> (default: every shard in the vault, the base first)'),
+]);
 
 export const options = zod.object({
   yes: zod.boolean().default(false).describe('Accept defaults for every prompt (auto-keeps conflicts)'),

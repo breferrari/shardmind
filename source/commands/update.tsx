@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import type zod from 'zod';
 
-import { Spinner, StatusMessage, Alert } from '../components/ui.js';
+import { Spinner, Alert } from '../components/ui.js';
 import { assertNever } from '../runtime/types.js';
 import ErrorView from '../components/ErrorView.js';
 import { resolveEngineVersion } from './hooks/cli-version.js';
@@ -13,24 +13,27 @@ import RemovedFilesReview from '../components/RemovedFilesReview.js';
 import CommandProgress from '../components/CommandProgress.js';
 import HookProgress from '../components/HookProgress.js';
 import UpdateSummary from '../components/UpdateSummary.js';
-import HookSummarySection from '../components/HookSummarySection.js';
-import ExternalToolsSection from '../components/ExternalToolsSection.js';
+import UpdateShardsSummary from '../components/UpdateShardsSummary.js';
+import UpToDateSummary from '../components/UpToDateSummary.js';
 import CommandFrame from '../components/CommandFrame.js';
 import Header from '../components/Header.js';
 
 import { useUpdateMachine } from './hooks/use-update-machine.js';
+import { shardLabel } from '../core/flows/update.js';
 import { useSelfUpdateBanner } from './hooks/use-self-update-banner.js';
 
-// Ink-free, so the headless `--json` run parses with the same options (#302).
-import { options } from './options/update.js';
+// Ink-free, so the headless `--json` run parses with the same args and options (#302).
+import { args, options } from './options/update.js';
 
-export { options };
+export { args, options };
 
 type Props = {
+  args: zod.infer<typeof args>;
   options: zod.infer<typeof options>;
 };
 
-export default function Update({ options }: Props) {
+export default function Update({ args, options }: Props) {
+  const [shard] = args;
   // `--json` never reaches this component: cli.ts answers it headless (#302).
   const { yes, verbose, dryRun, release, includePrerelease, adoptPreexisting, updateCheck } = options;
 
@@ -43,6 +46,7 @@ export default function Update({ options }: Props) {
     canEdit,
   } = useUpdateMachine({
     vaultRoot: process.cwd(),
+    shard,
     yes,
     verbose,
     dryRun,
@@ -72,12 +76,8 @@ export default function Update({ options }: Props) {
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Box flexDirection="column" gap={1}>
             <Header manifest={phase.manifest} />
-            <StatusMessage variant="success">
-              Already up to date at v{phase.state.version}.
-            </StatusMessage>
-            {/* An owed bootstrap (#199) the run ran, previewed (dry run) or skipped (--skip-hooks), shown as any summary shows hooks. */}
-            {phase.hooks.length > 0 && <HookSummarySection outcomes={phase.hooks} />}
-            <ExternalToolsSection lines={phase.externalTools} />
+            {/* With an owed bootstrap (#199) the run ran, previewed (dry run) or skipped (--skip-hooks). */}
+            <UpToDateSummary version={phase.state.version} hooks={phase.hooks} externalTools={phase.externalTools} />
           </Box>
         </CommandFrame>
       );
@@ -86,6 +86,7 @@ export default function Update({ options }: Props) {
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Header manifest={phase.ctx.newManifest} />
           <NewValuesPrompt
+            key={shardLabel(phase.ctx.target)}
             schema={phase.ctx.newSchema}
             keys={phase.ctx.newRequiredKeys}
             existingValues={phase.ctx.migratedValues}
@@ -98,6 +99,7 @@ export default function Update({ options }: Props) {
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Header manifest={phase.ctx.newManifest} />
           <NewModulesReview
+            key={shardLabel(phase.ctx.target)}
             offered={phase.ctx.newOptionalModules}
             onSubmit={onNewModulesComplete}
           />
@@ -108,6 +110,7 @@ export default function Update({ options }: Props) {
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
           <Header manifest={phase.ctx.newManifest} />
           <RemovedFilesReview
+            key={shardLabel(phase.ctx.target)}
             paths={phase.paths}
             onSubmit={onRemovedFilesComplete}
           />
@@ -118,7 +121,10 @@ export default function Update({ options }: Props) {
       if (!pending) return null;
       return (
         <CommandFrame dryRun={dryRun} selfUpdateBanner={banner}>
+          {/* Several shards (#407): whose conflict this is. */}
+          {shardLabel(phase.ctx.target) !== undefined && <Text bold>{shardLabel(phase.ctx.target)}</Text>}
           <DiffView
+            key={shardLabel(phase.ctx.target)}
             path={pending.path}
             index={phase.currentIndex + 1}
             total={phase.plan.pendingConflicts.length}
@@ -172,6 +178,12 @@ export default function Update({ options }: Props) {
           />
         </CommandFrame>
       );
+    case 'shards':
+      return (
+        <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
+          <UpdateShardsSummary runs={phase.runs} dryRun={phase.dryRun} version={resolveEngineVersion()} />
+        </CommandFrame>
+      );
     case 'cancelled':
       return (
         <CommandFrame dryRun={dryRun} showLegend={false} selfUpdateBanner={banner}>
@@ -192,4 +204,4 @@ export default function Update({ options }: Props) {
   }
 }
 
-export const description = 'Update the installed shard to its latest version';
+export const description = 'Update every shard in the vault to its latest version, or the one named';

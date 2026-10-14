@@ -16,6 +16,9 @@
  *   booting → loading → (up-to-date | prompt-new-values →
  *   prompt-new-modules → prompt-removed-files → resolving-conflicts →
  *   writing → running-hook → summary)
+ * On a vault holding several shards (#407) the loading-to-hook phases run
+ * once per shard, each question keyed by its shard, and the run ends in
+ * `shards`, one block per shard.
  *
  * `--json` never reaches this hook: cli.ts answers it headless
  * (`commands/headless/update.ts`).
@@ -39,13 +42,18 @@ import {
   type UpdateContext,
   type UpdateFlowIO,
   type UpdateQuestion,
+  type ShardRun,
+  shardLabel,
 } from '../../core/flows/update.js';
 import type { DiffAction } from '../../components/DiffView.js';
 import { editInEditor, hasConflictMarkers, resolveEditorCommand, withTerminalReleased } from '../../core/editor.js';
 import { withSigintHeld } from '../../core/process-control.js';
+import { isCancelledRun } from './shared.js';
 
 export interface UseUpdateMachineInput {
   vaultRoot: string;
+  /** `update <namespace>/<name>` (#407): that shard only. */
+  shard?: string;
   yes: boolean;
   verbose: boolean;
   dryRun: boolean;
@@ -117,6 +125,8 @@ export type Phase =
       backupDir: string | null;
       externalTools: string[];
     }
+  /** A vault holding several shards (#407): each shard's run, in order. */
+  | { kind: 'shards'; runs: ShardRun[]; dryRun: boolean }
   | { kind: 'cancelled'; reason: string }
   | { kind: 'error'; error: ShardMindError | Error; detail?: string };
 
@@ -131,7 +141,7 @@ export interface UseUpdateMachineOutput {
 }
 
 export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachineOutput {
-  const { vaultRoot, yes, verbose, dryRun, skipHooks = false, release, includePrerelease, adoptPreexisting = false } = input;
+  const { vaultRoot, shard, yes, verbose, dryRun, skipHooks = false, release, includePrerelease, adoptPreexisting = false } = input;
 
   const { phase, setPhase, phaseRef, launch, settle } = useFlowRun<Phase>({
     vaultRoot,
@@ -139,7 +149,11 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     dryRun,
     initial: { kind: 'booting' },
     // cancelled, up-to-date and summary are all successful outcomes and keep exit 0.
-    isFinal: (p) => p.kind === 'summary' || p.kind === 'cancelled' || p.kind === 'error' || p.kind === 'up-to-date',
+    isFinal: (p) =>
+      p.kind === 'summary' || p.kind === 'cancelled' || p.kind === 'error' || p.kind === 'up-to-date' || p.kind === 'shards',
+    // A shard that failed fails the run, the shards before it kept (#407);
+    // one the user cancelled is their choice, as a cancel is on one shard.
+    failed: (p) => p.kind === 'shards' && p.runs.some((run) => 'error' in run && !isCancelledRun(run.error)),
     rolledBackLine: 'Rolled back partial update.',
     asPhase: (p) => p,
   });
@@ -151,37 +165,41 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         const io: UpdateFlowIO = {
           ...base,
           ask: <Q extends UpdateQuestion>(question: Q) =>
-            ask<UpdateAnswer<Q>>(question, question.kind === 'conflict' ? question.currentIndex : undefined, () => {
-              switch (question.kind) {
-                case 'new-values':
-                  show({ kind: 'prompt-new-values', ctx: question.ctx });
-                  return;
-                case 'new-modules':
-                  show({ kind: 'prompt-new-modules', ctx: question.ctx, values: question.values });
-                  return;
-                case 'removed-files':
-                  show({
-                    kind: 'prompt-removed-files',
-                    ctx: question.ctx,
-                    values: question.values,
-                    selections: question.selections,
-                    paths: question.paths,
-                    newFilePlan: question.newFilePlan,
-                  });
-                  return;
-                case 'conflict':
-                  show({
-                    kind: 'resolving-conflicts',
-                    ctx: question.ctx,
-                    plan: question.plan,
-                    values: question.values,
-                    selections: question.selections,
-                    currentIndex: question.currentIndex,
-                    resolutions: question.resolutions,
-                  });
-                  return;
-              }
-            }),
+            ask<UpdateAnswer<Q>>(
+              { kind: questionKey(question.kind, shardLabel(question.ctx.target)) },
+              question.kind === 'conflict' ? question.currentIndex : undefined,
+              () => {
+                switch (question.kind) {
+                  case 'new-values':
+                    show({ kind: 'prompt-new-values', ctx: question.ctx });
+                    return;
+                  case 'new-modules':
+                    show({ kind: 'prompt-new-modules', ctx: question.ctx, values: question.values });
+                    return;
+                  case 'removed-files':
+                    show({
+                      kind: 'prompt-removed-files',
+                      ctx: question.ctx,
+                      values: question.values,
+                      selections: question.selections,
+                      paths: question.paths,
+                      newFilePlan: question.newFilePlan,
+                    });
+                    return;
+                  case 'conflict':
+                    show({
+                      kind: 'resolving-conflicts',
+                      ctx: question.ctx,
+                      plan: question.plan,
+                      values: question.values,
+                      selections: question.selections,
+                      currentIndex: question.currentIndex,
+                      resolutions: question.resolutions,
+                    });
+                    return;
+                }
+              },
+            ),
           phase: (p) => {
             if (p.kind === 'loading') show({ kind: 'loading', message: p.message });
             else show({ kind: 'writing', total: 0, current: 0, label: 'Preparing…', history });
@@ -205,6 +223,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         const result = await runUpdateFlow(
           {
             vaultRoot,
+            shard,
             yes,
             dryRun,
             json: false,
@@ -217,6 +236,7 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
           },
           io,
         );
+        if (result.kind === 'shards') return { kind: 'shards', runs: result.runs, dryRun };
         if (result.kind === 'up-to-date') {
           return {
             kind: 'up-to-date',
@@ -240,20 +260,29 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
         };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [vaultRoot, yes, release, includePrerelease],
+    [vaultRoot, shard, yes, release, includePrerelease],
   );
 
+  // A prompt answers the question of the shard it shows (#407): the first
+  // conflict of the second shard is never taken for the first shard's.
+  const keyOnScreen = useCallback(
+    (kind: UpdateQuestion['kind']) => {
+      const current = phaseRef.current;
+      return questionKey(kind, 'ctx' in current ? shardLabel(current.ctx.target) : undefined);
+    },
+    [phaseRef],
+  );
   const onNewValuesComplete = useCallback(
-    (values: Record<string, unknown>) => settle('new-values', { value: values }),
-    [settle],
+    (values: Record<string, unknown>) => settle(keyOnScreen('new-values'), { value: values }),
+    [settle, keyOnScreen],
   );
   const onNewModulesComplete = useCallback(
-    (choices: Record<string, 'included' | 'excluded'>) => settle('new-modules', { value: choices }),
-    [settle],
+    (choices: Record<string, 'included' | 'excluded'>) => settle(keyOnScreen('new-modules'), { value: choices }),
+    [settle, keyOnScreen],
   );
   const onRemovedFilesComplete = useCallback(
-    (decisions: Record<string, 'delete' | 'keep'>) => settle('removed-files', { value: decisions }),
-    [settle],
+    (decisions: Record<string, 'delete' | 'keep'>) => settle(keyOnScreen('removed-files'), { value: decisions }),
+    [settle, keyOnScreen],
   );
 
   const { stdin, isRawModeSupported } = useStdin();
@@ -277,7 +306,8 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
       const pc = current.plan.pendingConflicts[current.currentIndex];
       if (!pc) return;
       const edit = current.edit ?? { attempt: 0 };
-      const resolve = (resolution: ConflictResolution) => settle('conflict', { value: resolution }, current.currentIndex);
+      const resolve = (resolution: ConflictResolution) =>
+        settle(questionKey('conflict', shardLabel(current.ctx.target)), { value: resolution }, current.currentIndex);
 
       if (action === 'use_edit') {
         // The one way conflict markers reach the vault: chosen, by name (#50).
@@ -325,6 +355,11 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     onRemovedFilesComplete,
     onConflictChoice,
   };
+}
+
+/** A question's key: its kind, and on a vault holding several shards its shard (#407). */
+function questionKey(kind: UpdateQuestion['kind'], label: string | undefined): string {
+  return label === undefined ? kind : `${label}:${kind}`;
 }
 
 function labelForAction(kind: string): string {
