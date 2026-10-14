@@ -15,10 +15,11 @@ import fsp from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import type { ShardState, DriftReport, DriftEntry, FileState } from '../runtime/types.js';
-import { sha256, mapConcurrent } from './fs-utils.js';
+import { sha256, mapConcurrent, posixPath } from './fs-utils.js';
+import { shardLayout } from './state.js';
 import { isEnoent } from '../runtime/errno.js';
 import { detectVolatile } from './modules.js';
-import { SHARDMIND_DIR, VALUES_FILE, LOCK_FILE, LOCK_TAKEOVER_FILE, GIT_DIR, OBSIDIAN_DIR, CACHED_TEMPLATES } from '../runtime/vault-paths.js';
+import { SHARDMIND_DIR, VALUES_FILE, LOCK_FILE, LOCK_TAKEOVER_FILE, GIT_DIR, OBSIDIAN_DIR, CACHED_TEMPLATES, TEMPLATES_DIR } from '../runtime/vault-paths.js';
 
 type Bucket = 'managed' | 'modified' | 'volatile' | 'missing';
 type Classified = { bucket: Bucket; entry: DriftEntry };
@@ -59,25 +60,35 @@ const DRIFT_READ_CONCURRENCY = 32;
  */
 const ORPHAN_SCAN_CONCURRENCY = 32;
 
+/** One shard among several (#406): where its templates are cached, and what other shards own. */
+export interface DriftOptions {
+  /** The shard's engine folder, for the volatile check: `.shardmind/`, or an overlay's. */
+  cacheDir?: string;
+  /** Posix paths other shards own (their files, every values file): never this shard's orphans. */
+  foreign?: ReadonlySet<string>;
+}
+
 export async function detectDrift(
   vaultRoot: string,
   state: ShardState,
+  opts: DriftOptions = {},
 ): Promise<DriftReport> {
+  const templatesDir = opts.cacheDir === undefined ? CACHED_TEMPLATES : path.join(opts.cacheDir, TEMPLATES_DIR);
   // Normalize to forward slashes so downstream lookups are separator-
   // independent. State-file keys are written via `toPosix()` at install
   // time, but defensive normalization guards any caller that writes state
   // with native separators.
   const trackedPaths: ReadonlySet<string> = new Set(
-    Object.keys(state.files).map(toPosix),
+    Object.keys(state.files).map(posixPath),
   );
 
   const [classified, orphaned] = await Promise.all([
     mapConcurrent(
       Object.entries(state.files),
       DRIFT_READ_CONCURRENCY,
-      ([relPath, file]) => classifyFile(vaultRoot, relPath, file),
+      ([relPath, file]) => classifyFile(vaultRoot, relPath, file, templatesDir),
     ),
-    detectOrphans(vaultRoot, trackedPaths),
+    detectOrphans(vaultRoot, trackedPaths, opts.foreign ?? new Set()),
   ]);
 
   const managed: DriftEntry[] = [];
@@ -97,12 +108,13 @@ async function classifyFile(
   vaultRoot: string,
   relPath: string,
   file: FileState,
+  templatesDir: string,
 ): Promise<Classified> {
   // Volatility is a property of the template, read from the cached copy of
   // the one the file was rendered from: install and adopt record a volatile
   // output as `managed` (#210). The update planner also checks the new
   // shard's template, so a template that turns volatile is skipped too.
-  if (file.template !== null && (await isVolatileTemplate(vaultRoot, file.template))) {
+  if (file.template !== null && (await isVolatileTemplate(vaultRoot, file.template, templatesDir))) {
     return { bucket: 'volatile', entry: volatileEntry(relPath, file) };
   }
 
@@ -149,9 +161,9 @@ function classifyByHash(relPath: string, file: FileState, content: Buffer): Clas
  * (`.njk`) template can be, as in the walk. A template not in the cache is
  * not volatile.
  */
-async function isVolatileTemplate(vaultRoot: string, templateKey: string): Promise<boolean> {
+async function isVolatileTemplate(vaultRoot: string, templateKey: string, templatesDir: string): Promise<boolean> {
   if (!templateKey.endsWith('.njk')) return false;
-  return detectVolatile(path.join(vaultRoot, CACHED_TEMPLATES, templateKey)).catch(() => false);
+  return detectVolatile(path.join(vaultRoot, templatesDir, templateKey)).catch(() => false);
 }
 
 function volatileEntry(relPath: string, file: FileState): DriftEntry {
@@ -190,6 +202,7 @@ function missingEntry(relPath: string, file: FileState): DriftEntry {
 async function detectOrphans(
   vaultRoot: string,
   trackedPaths: ReadonlySet<string>,
+  foreign: ReadonlySet<string>,
 ): Promise<string[]> {
   const trackedDirs = new Set<string>();
   for (const relPath of trackedPaths) {
@@ -205,7 +218,7 @@ async function detectOrphans(
   const perDir = await mapConcurrent(
     [...trackedDirs],
     ORPHAN_SCAN_CONCURRENCY,
-    relDir => scanDirForOrphans(vaultRoot, relDir, trackedPaths),
+    relDir => scanDirForOrphans(vaultRoot, relDir, trackedPaths, foreign),
   );
 
   return perDir.flat().sort();
@@ -215,6 +228,7 @@ async function scanDirForOrphans(
   vaultRoot: string,
   relDir: string,
   trackedPaths: ReadonlySet<string>,
+  foreign: ReadonlySet<string>,
 ): Promise<string[]> {
   const absDir = path.join(vaultRoot, relDir);
   let entries: Dirent[];
@@ -230,13 +244,26 @@ async function scanDirForOrphans(
     if (!entry.isFile()) continue;
     const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
     if (trackedPaths.has(rel)) continue;
+    // Another shard's, in a vault holding several (#406).
+    if (foreign.has(rel)) continue;
     if (ENGINE_RESERVED_FILES.has(rel)) continue;
     orphans.push(rel);
   }
   return orphans;
 }
 
-function toPosix(p: string): string {
-  return p.replace(/\\/g, '/');
+/**
+ * What shard `index` of the vault's shards must never read as its orphans
+ * (#406): every other shard's files, and every shard's values file. The
+ * `foreign` to pass `detectDrift` for that shard.
+ */
+export function foreignPathsOf(states: readonly ShardState[], index: number): Set<string> {
+  const foreign = new Set<string>();
+  states.forEach((state, i) => {
+    const layout = shardLayout(state.shard, i);
+    if (layout) foreign.add(posixPath(layout.valuesFile));
+    if (i === index || state.files === null || typeof state.files !== 'object') return;
+    for (const rel of Object.keys(state.files)) foreign.add(posixPath(rel));
+  });
+  return foreign;
 }
-

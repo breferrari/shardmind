@@ -44,24 +44,25 @@ import type {
   DriftEntry,
   ModuleSelections,
   RenderContext,
+  ShardEntry,
+  ShardStatusReport,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
-import { readState } from './state.js';
+import { shardStateOf } from '../runtime/state-schema.js';
+import { readVaultState, shardLayout, SINGLE_SHARD_SCHEMA_VERSION, type ShardLayout } from './state.js';
 import { parseManifest } from './manifest.js';
 import { parseSchema, buildValuesValidator } from './schema.js';
-import { detectDrift } from './drift.js';
+import { detectDrift, foreignPathsOf, type DriftOptions } from './drift.js';
 import { loadValuesYaml } from './values-io.js';
 import { getLatestVersion } from './update-check.js';
 import { mapConcurrent, pathExists } from './fs-utils.js';
 import { errnoCode } from '../runtime/errno.js';
 import { validateFrontmatter } from '../runtime/frontmatter.js';
 import { renderString, buildRenderContext, itemForTemplate } from './renderer.js';
-import {
-  CACHED_MANIFEST,
-  CACHED_SCHEMA,
-  CACHED_TEMPLATES,
-  VALUES_FILE,
-} from '../runtime/vault-paths.js';
+import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE, TEMPLATES_DIR } from '../runtime/vault-paths.js';
+
+/** Shards reported at once (#406): each fans its own reads out, bounded. */
+const SHARD_CONCURRENCY = 3;
 
 /**
  * Upper bound on how many paths a single drift bucket surfaces by name.
@@ -115,41 +116,142 @@ export async function buildStatusReport(
   opts: BuildStatusReportOptions,
 ): Promise<StatusReport | null> {
   const now = opts.now ?? Date.now();
-  // A display cap, or none under `uncapped`.
-  const cap = (display: number): number => (opts.uncapped ? Infinity : display);
 
   // Status is ambient: a state.json that breaks its contract (#343) is
   // reported as a warning and read as it is, each field degrading below.
-  const warnings: StatusWarning[] = [];
-  const state = await readState(vaultRoot, {
-    onContractError: (err) => warnings.push({ severity: 'error', message: err.message, hint: err.hint }),
+  const contractWarnings: StatusWarning[] = [];
+  const vault = await readVaultState(vaultRoot, {
+    onContractError: (err) => contractWarnings.push({ severity: 'error', message: err.message, hint: err.hint }),
   });
-  if (!state) return null;
+  if (!vault) return null;
 
-  // A state read past its contract check may hold anything, so state.version
-  // may arrive as an empty string from a hand-edited state.json. Normalize once
-  // here so every `UpdateStatus.current` (via this closure or `resolveUpdate`)
-  // and every equality check against `latest_version` uses the same value.
-  // Mirrors the synthesizeManifest fallback for `state.shard`.
-  const currentVersion = (typeof state.version === 'string' ? state.version.trim() : '') || 'unknown';
+  // Every shard of the vault, the base first (#406). A broken file read as
+  // it is may hold anything in `shards`: an entry that is not an object, or
+  // none, reads as an empty shard, each field degrading as before.
+  const entries: unknown[] = Array.isArray(vault.shards) && vault.shards.length > 0 ? vault.shards : [{}];
+  const states = entries.map((entry) => shardStateOf((isRecord(entry) ? entry : {}) as ShardEntry, SINGLE_SHARD_SCHEMA_VERSION));
+  const layouts = states.map((state, i) => shardLayout(state.shard, i));
+  const warningsOf = states.map((_, i) => (i === 0 ? contractWarnings : []));
+  // Every update check starts now, in parallel: each may be a network call.
+  // The disk work then runs a few shards at a time, each already fanning its
+  // own reads out. No shard reads another's files, or any values file, as
+  // its orphans. The environment is the vault's, probed once (verbose only).
+  const updates = states.map((state, i) => startUpdateCheck(vaultRoot, state, layouts[i]!, opts, now, warningsOf[i]!));
+  const [shards, environment] = await Promise.all([
+    mapConcurrent(states.map((state, i) => ({ state, i })), SHARD_CONCURRENCY, ({ state, i }) => {
+      const layout = layouts[i];
+      if (!layout) return Promise.resolve(unnamedShardReport(state, now, warningsOf[i]!));
+      return buildShardReport(vaultRoot, state, {
+        opts,
+        now,
+        ...layout,
+        foreign: foreignPathsOf(states, i),
+        warnings: warningsOf[i]!,
+        update: updates[i]!,
+      });
+    }),
+    opts.verbose ? probeEnvironment() : Promise.resolve(null),
+  ]);
+  const base = shards[0]!;
+  // An overlay's findings show at the top level too, prefixed with its name
+  // in state.json, so two entries are always told apart.
+  const overlayWarnings = shards
+    .slice(1)
+    .flatMap((shard, j) => shard.warnings.map((w) => ({ ...w, message: `${entryName(shard.state, j + 1)}: ${w.message}` })));
+  return { ...base, environment, warnings: [...base.warnings, ...overlayWarnings], shards };
+}
 
-  const manifest = await loadCachedManifest(vaultRoot, warnings);
-  const schema = await loadCachedSchema(vaultRoot, warnings);
+/** A shard's name as state.json gives it, or its place in the list when it gives none. */
+function entryName(state: ShardState, index: number): string {
+  return typeof state.shard === 'string' && state.shard !== '' ? state.shard : `shards[${index}]`;
+}
 
-  const rawValues = await loadRawValues(vaultRoot);
+/** The shard's update check, started at once (#406); `unknown` when skipped or there is no source to read. */
+function startUpdateCheck(
+  vaultRoot: string,
+  state: ShardState,
+  layout: ShardLayout | null,
+  opts: BuildStatusReportOptions,
+  now: number,
+  warnings: StatusWarning[],
+): Promise<UpdateStatus> {
+  const currentVersion = currentVersionOf(state);
+  if (opts.skipUpdateCheck || layout === null) {
+    // Not network failure: the caller skipped the lookup (CI mode,
+    // offline-first tests), or the shard has no files to keep a cache in.
+    return Promise.resolve({ kind: 'unknown', current: currentVersion, reason: 'cache-miss' });
+  }
+  return resolveUpdate(state, currentVersion, vaultRoot, now, warnings, opts.verbose, layout.cacheDir);
+}
+
+/**
+ * A state read past its contract check may hold anything, so state.version
+ * may arrive as an empty string from a hand-edited state.json. Normalized
+ * once, so every `UpdateStatus.current` and every equality check against
+ * `latest_version` uses the same value. Mirrors the synthesizeManifest
+ * fallback for `state.shard`.
+ */
+function currentVersionOf(state: ShardState): string {
+  return (typeof state.version === 'string' ? state.version.trim() : '') || 'unknown';
+}
+
+/**
+ * The block of an overlay whose name in state.json is not
+ * `<namespace>/<name>` (#406): it has no files to find, so none is read
+ * (never the base's), and one finding says why.
+ */
+function unnamedShardReport(state: ShardState, now: number, warnings: StatusWarning[]): ShardStatusReport {
+  warnings.push({
+    severity: 'error',
+    message: `state.json lists a shard named ${JSON.stringify(state.shard)}, which is not <namespace>/<name>: its files cannot be found.`,
+    hint: 'Restore .shardmind/state.json from version control.',
+  });
+  return {
+    manifest: synthesizeManifest(state),
+    state,
+    installedAgo: relativeTimeAgo(state.installed_at, now),
+    updatedAgo: null,
+    drift: summarizeDrift(EMPTY_DRIFT, 0, true),
+    update: { kind: 'unknown', current: currentVersionOf(state), reason: 'cache-miss' },
+    modules: buildModuleSummary(state),
+    values: { valid: false, total: 0, invalidKeys: [], invalidCount: 0, fileMissing: false, checked: false },
+    frontmatter: null,
+    warnings,
+    valuesFile: null,
+  };
+}
+
+interface ShardReportInput {
+  opts: BuildStatusReportOptions;
+  now: number;
+  /** The shard's engine folder: `.shardmind/`, or an overlay's (#406). */
+  cacheDir: string;
+  /** The shard's values file: `shard-values.yaml`, or an overlay's. */
+  valuesFile: string;
+  /** Posix paths other shards own, never this shard's orphans. */
+  foreign: ReadonlySet<string>;
+  /** Findings already made for this shard (the base: the contract check's). */
+  warnings: StatusWarning[];
+  /** The shard's update check, started with every other shard's. */
+  update: Promise<UpdateStatus>;
+}
+
+/** One shard's report (#406): what a one-shard vault's status has always held, from its own paths. */
+async function buildShardReport(vaultRoot: string, state: ShardState, input: ShardReportInput): Promise<ShardStatusReport> {
+  const { opts, now, cacheDir, valuesFile, foreign, warnings } = input;
+  // A display cap, or none under `uncapped`.
+  const cap = (display: number): number => (opts.uncapped ? Infinity : display);
+
+  // The three loads are independent; drift and the update check need none.
+  const [manifest, schema, rawValues] = await Promise.all([
+    loadCachedManifest(path.join(vaultRoot, cacheDir, SHARD_MANIFEST_FILE), warnings),
+    loadCachedSchema(path.join(vaultRoot, cacheDir, SHARD_SCHEMA_FILE), warnings),
+    loadRawValues(path.join(vaultRoot, valuesFile), valuesFile),
+  ]);
 
   const [detected, update, values] = await Promise.all([
-    safeDetectDrift(vaultRoot, state, warnings),
-    opts.skipUpdateCheck
-      ? Promise.resolve<UpdateStatus>({
-          kind: 'unknown',
-          current: currentVersion,
-          // Not network failure — the caller intentionally skipped the
-          // lookup (CI mode, offline-first tests). Distinct from the
-          // `'no-network'` reason we emit after a real fetch failure.
-          reason: 'cache-miss',
-        })
-      : resolveUpdate(state, currentVersion, vaultRoot, now, warnings, opts.verbose),
+    safeDetectDrift(vaultRoot, state, warnings, { cacheDir, foreign }),
+    input.update,
     schema
       ? buildValuesSummary(rawValues, schema, cap(MAX_INVALID_VALUE_KEYS))
       : Promise.resolve<StatusValuesSummary>({
@@ -173,9 +275,9 @@ export async function buildStatusReport(
   const modules: StatusModuleSummary = buildModuleSummary(state);
 
   // Verbose sections are independent — fan them out in parallel. Each has
-  // its own IO budget (frontmatter: 16, modified diff: 8, env probe: fs
-  // stat batch) so they don't contend on the same handles.
-  const [modifiedChanges, frontmatter, environment] = opts.verbose
+  // its own IO budget (frontmatter: 16, modified diff: 8) so they don't
+  // contend on the same handles. The environment is the vault's, probed once.
+  const [modifiedChanges, frontmatter] = opts.verbose
     ? await Promise.all([
         driftSummary.modified > 0
           ? computeModifiedChanges(
@@ -184,6 +286,7 @@ export async function buildStatusReport(
               effectiveManifest,
               rawValues,
               state.modules && typeof state.modules === 'object' ? state.modules : {},
+              path.join(cacheDir, TEMPLATES_DIR),
             )
           : Promise.resolve(null),
         // The lint walks drift's files; after a failed detection it would
@@ -191,9 +294,8 @@ export async function buildStatusReport(
         schema && detected
           ? lintFrontmatter(vaultRoot, detected, schema, cap(MAX_FRONTMATTER_ISSUES))
           : Promise.resolve(null),
-        probeEnvironment(),
       ])
-    : [null, null, null];
+    : [null, null];
 
   if (modifiedChanges) {
     driftSummary.modifiedChanges = modifiedChanges;
@@ -206,6 +308,7 @@ export async function buildStatusReport(
     update,
     values,
     frontmatter,
+    valuesFile,
   });
 
   return {
@@ -221,10 +324,15 @@ export async function buildStatusReport(
     modules,
     values,
     frontmatter,
-    environment,
     warnings,
+    valuesFile,
   };
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 
 // ---------------------------------------------------------------------------
 // Manifest / schema / drift loaders (isolated so a failure in one doesn't
@@ -232,10 +340,9 @@ export async function buildStatusReport(
 // ---------------------------------------------------------------------------
 
 async function loadCachedManifest(
-  vaultRoot: string,
+  filePath: string,
   warnings: StatusWarning[],
 ): Promise<ShardManifest | null> {
-  const filePath = path.join(vaultRoot, CACHED_MANIFEST);
   try {
     return await parseManifest(filePath, {
       installedCopy: true,
@@ -262,10 +369,9 @@ async function loadCachedManifest(
 }
 
 async function loadCachedSchema(
-  vaultRoot: string,
+  filePath: string,
   warnings: StatusWarning[],
 ): Promise<ShardSchema | null> {
-  const filePath = path.join(vaultRoot, CACHED_SCHEMA);
   try {
     return await parseSchema(filePath);
   } catch (err) {
@@ -285,9 +391,10 @@ async function safeDetectDrift(
   vaultRoot: string,
   state: ShardState,
   warnings: StatusWarning[],
+  driftOpts: DriftOptions,
 ): Promise<DriftReport | null> {
   try {
-    return await detectDrift(vaultRoot, state);
+    return await detectDrift(vaultRoot, state, driftOpts);
   } catch (err) {
     warnings.push({
       severity: 'error',
@@ -350,13 +457,13 @@ function buildModuleSummary(state: ShardState): StatusModuleSummary {
  * behavior rather than re-try.
  */
 async function loadRawValues(
-  vaultRoot: string,
+  filePath: string,
+  label: string,
 ): Promise<Record<string, unknown> | null> {
-  const filePath = path.join(vaultRoot, VALUES_FILE);
   try {
     return await loadValuesYaml(filePath, {
       errors: { readFailed: 'VALUES_READ_FAILED', invalid: 'VALUES_INVALID' },
-      label: 'shard-values.yaml',
+      label,
     });
   } catch {
     return null;
@@ -429,8 +536,9 @@ async function resolveUpdate(
   now: number,
   warnings: StatusWarning[],
   verbose: boolean,
+  cacheDir: string,
 ): Promise<UpdateStatus> {
-  const result = await getLatestVersion(vaultRoot, state.source, now);
+  const result = await getLatestVersion(vaultRoot, state.source, now, cacheDir);
 
   // A corrupt cache entry was self-healed on the way in. The user's next
   // run sees a clean cache; we flag it once here for verbose runs so a
@@ -566,6 +674,7 @@ async function computeModifiedChanges(
   manifest: ShardManifest,
   rawValues: Record<string, unknown> | null,
   selections: ModuleSelections,
+  templatesDir: string,
 ): Promise<StatusModifiedChanges[]> {
   if (rawValues === null) {
     // Without values we can't render; surface a skipped entry per file so
@@ -579,7 +688,7 @@ async function computeModifiedChanges(
 
   const renderCtx = buildRenderContext(manifest, rawValues, selections, undefined, vaultRoot);
   return mapConcurrent(entries, MODIFIED_DIFF_CONCURRENCY, entry =>
-    renderAndDiffEntry(vaultRoot, entry, renderCtx),
+    renderAndDiffEntry(vaultRoot, entry, renderCtx, templatesDir),
   );
 }
 
@@ -593,12 +702,13 @@ async function renderAndDiffEntry(
   vaultRoot: string,
   entry: DriftEntry,
   renderCtx: RenderContext,
+  templatesDir: string,
 ): Promise<StatusModifiedChanges> {
   if (!entry.template) {
     return { path: entry.path, skipped: true, reason: 'no-template' };
   }
 
-  const templatePath = path.join(vaultRoot, CACHED_TEMPLATES, entry.template);
+  const templatePath = path.join(vaultRoot, templatesDir, entry.template);
 
   let templateSource: string;
   try {
@@ -711,10 +821,12 @@ interface WarningInputs {
   update: UpdateStatus;
   values: StatusValuesSummary;
   frontmatter: StatusFrontmatterSummary | null;
+  /** The shard's values file, named in its findings (#406). */
+  valuesFile: string;
 }
 
 function emitSectionWarnings(input: WarningInputs): void {
-  const { warnings, driftSummary, update, values, frontmatter } = input;
+  const { warnings, driftSummary, update, values, frontmatter, valuesFile } = input;
 
   if (update.kind === 'available') {
     warnings.push({
@@ -743,13 +855,13 @@ function emitSectionWarnings(input: WarningInputs): void {
   if (values.fileMissing) {
     warnings.push({
       severity: 'error',
-      message: 'shard-values.yaml is missing or unreadable.',
-      hint: 'Reinstall the shard or restore shard-values.yaml from version control.',
+      message: `${valuesFile} is missing or unreadable.`,
+      hint: `Reinstall the shard or restore ${valuesFile} from version control.`,
     });
   } else if (!values.valid && values.invalidCount > 0) {
     warnings.push({
       severity: 'warning',
-      message: `shard-values.yaml has ${values.invalidCount} invalid key${values.invalidCount === 1 ? '' : 's'}.`,
+      message: `${valuesFile} has ${values.invalidCount} invalid key${values.invalidCount === 1 ? '' : 's'}.`,
       hint: `Check: ${values.invalidKeys.slice(0, 5).join(', ')}${values.invalidCount > 5 ? ', …' : ''}.`,
     });
   }

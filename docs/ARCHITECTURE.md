@@ -590,7 +590,7 @@ Composition (#81) puts several shards in one vault: the base shard, then each ov
 
 Each entry is a schema-2 state without `schema_version` (`ShardEntry`), with every field it has there: each shard keeps its own `files`, `modules`, `values_hash`, `bootstrap_fingerprint` and `bootstrap_pending`, as it keeps its own values file, cache and merge base. `shards[0]` is the base shard; no two entries name the same shard. The v2 → v3 rule moves every field of a schema-2 state except `schema_version` into `shards[0]`, fields this engine does not know included, so the rule loses nothing.
 
-A vault with one shard stays at schema 2, byte for byte: the engine reads every vault as a list of shards and writes one shard at schema 2 and several at schema 3, so only the first overlay rewrites the file. An engine older than composition reads up to schema 2 and refuses a composed vault (§8.2), never misreading it. Until update and status run across shards (#397), a command that handles one shard refuses a vault with several with `STATE_UNSUPPORTED_VERSION`, rather than reading the base alone and dropping the overlays on its next write. The runtime's `loadState()` returns the base shard's state, and `loadState({ shard })` the named one, each as a one-shard state at schema 2; `getIncludedModules({ shard })` likewise.
+A vault with one shard stays at schema 2, byte for byte: the engine reads every vault as a list of shards and writes one shard at schema 2 and several at schema 3, so only the first overlay rewrites the file. An engine older than composition reads up to schema 2 and refuses a composed vault (§8.2), never misreading it. Status reports each shard of such a vault (#406). Until update runs across shards (#407), a command that handles one shard refuses a vault with several with `STATE_UNSUPPORTED_VERSION`, rather than reading the base alone and dropping the overlays on its next write. The runtime's `loadState()` returns the base shard's state, and `loadState({ shard })` the named one, each as a one-shard state at schema 2; `getIncludedModules({ shard })` likewise.
 
 ---
 
@@ -770,6 +770,24 @@ Every top-level command (`status`, `install`, `update`, `adopt`) additionally hi
   ⚠  3 notes missing required frontmatter
 ```
 
+**A vault with several shards** (composition, #406): the base shard's block as above, then one block per overlay, in install order, each with its own header (name, version, and the description and persona its manifest declares, omitted here), files, update line and warnings. Each shard's drift counts only its own files, and each keeps its own update-check cache.
+
+```
+◆ shardmind
+
+  breferrari/obsidian-mind v3.5.0
+  Installed 3 weeks ago · 47 managed files · 0 modified
+
+  ✓ Up to date
+
+  acme/research v1.2.0
+  Installed 2 days ago · 6 managed files · 1 modified
+
+  ⬆  v1.3.0 available — run 'shardmind update'
+```
+
+`--verbose` shows each shard's sections the same way; the environment section, the vault's, shows once, last.
+
 **Not in a vault:**
 
 ```
@@ -837,6 +855,7 @@ Full diagnostic output. Replaces the old `doctor` command concept.
   - `modules` (`included`, `excluded`), `values` (`valid`, `total`, `invalidKeys`, `fileMissing`). `valid` and `total` are `null` when the cached schema could not be loaded, so the values were never validated. `frontmatter` is likewise `null` when drift detection failed, since the lint walks drift's files.
   - `frontmatter` and `environment`: `null` without `--verbose`, the §10.3 sections with it.
   - `warnings`: the findings the human view shows, each with `severity`, `message` and, when present, `hint`.
+  - `shards` (#406, additive): every shard of the vault, the base first, then each overlay in install order. Each entry has the per-shard fields above: `shard`, `source`, `version`, `ref` / `resolvedSha`, `installedAt`, `updatedAt`, `update`, `files`, `modules`, `values`, `frontmatter` and its own `warnings`. The fields above stay the base shard's, as on a vault with one shard, whose `shards` has one entry; `environment` is the vault's, at the top level only. An overlay's findings also appear in the top-level `warnings`, each `message` prefixed with `<namespace>/<name>: `.
 - **A `state.json` from a newer ShardMind** (#344): its `schema_version` is above what this engine reads. The human view shows a notice, not a failure: the vault was written by a newer ShardMind (both schema numbers), and upgrading lets this one manage it. Exit 0, as for any error status can show. `--json`: `ok: false`, `error.code` `STATE_UNSUPPORTED_VERSION`, and `error.details` `{ stateSchemaVersion, supportedSchemaVersion }`, the two numbers, exit 1. `details` is an optional error field present only for this code, on any `--json` failure that carries it (`update --json` and `adopt --json` too), additive under the `schemaVersion` policy. update and adopt refuse with the same error.
 - **Failure** (for example, a corrupt `state.json`): `ok: false`, `error` (`code`, `message`, `hint`, and `stack`, which is set only for an unexpected error that is not a `ShardMindError` and is otherwise `null`, #225), **exit 1**. The human status view is ambient and exits 0 on an error it can show; a document saying `ok: false` exits non-zero so `$?` and the body agree. A throw that escapes every command answers the same way: a failure document on stdout with its `stack`, and the plain-text report on stderr.
 
@@ -976,7 +995,7 @@ Implementation modules: `source/core/migrator.ts` (IMPLEMENTATION §4.10), `sour
 
 ### 10.5a `shardmind adopt <shard>` — Retrofit Flow
 
-For users who cloned a shard repo before shardmind support existed (e.g. `obsidian-mind` v5.1 clones). Adopt walks the user's existing vault, classifies each shard-output path, and writes the same `.shardmind/` metadata an install would have produced — without overwriting the user's current bytes unless they explicitly opt in per file.
+For users who cloned a shard repo before shardmind support existed (e.g. `obsidian-mind` v5.1 clones). Adopt walks the user's existing vault, classifies each shard-output path, and writes the same `.shardmind/` metadata an install would have produced — without overwriting the user's current bytes unless they explicitly opt in per file. Adopt stays single-shard: a vault already holding shards, one or several, is refused with `ADOPT_EXISTING_INSTALL` (#406); an overlay goes in with `shardmind add` (§10.4a).
 
 ```
 shardmind adopt breferrari/obsidian-mind

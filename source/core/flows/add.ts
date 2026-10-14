@@ -216,6 +216,8 @@ export function ownedPaths(vault: VaultState, adding: string): Map<string, strin
         if (!owned.has(folder)) owned.set(folder, `${shard.shard} (a folder of its files)`);
       }
     }
+    // overlayValuesFile, not shardLayout: a name that is not <namespace>/<name>
+    // is refused here, never given a stand-in path (#406 review).
     own(i === 0 ? VALUES_FILE : overlayValuesFile(shard.shard), `${shard.shard} (its values file)`);
   });
   // The values file the add itself writes: a shard that ships it would fail

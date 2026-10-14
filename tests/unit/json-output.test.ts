@@ -284,7 +284,7 @@ describe('updatePlanResult', () => {
 
 describe('statusResult (#139)', () => {
   function report(overrides: Partial<StatusReport> = {}): StatusReport {
-    return {
+    const built: Omit<StatusReport, 'shards'> = {
       manifest: { apiVersion: 'v1', name: 'minimal', namespace: 'shardmind', version: '0.1.0', dependencies: [], hooks: {} } as never,
       state: {
         schema_version: 2,
@@ -319,8 +319,11 @@ describe('statusResult (#139)', () => {
       frontmatter: null,
       environment: null,
       warnings: [{ severity: 'info', message: 'v0.2.0 available', hint: "Run 'shardmind update'." }],
+      valuesFile: 'shard-values.yaml',
       ...overrides,
     };
+    // A vault with one shard lists itself (#406).
+    return { ...built, shards: overrides.shards ?? [built] };
   }
 
   it('answers installed: false for a directory that is not a managed vault', () => {

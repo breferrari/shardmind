@@ -758,6 +758,10 @@ Module gating is **not** applied to the cache; toggling a module on at update ti
 detectDrift(
   vaultRoot: string,
   state: ShardState,
+  opts?: {
+    cacheDir?: string;              // the shard's engine folder for the volatile check; '.shardmind' by default (#406)
+    foreign?: ReadonlySet<string>;  // posix paths other shards own (their files, every values file): never this shard's orphans (#406)
+  },
 ): Promise<DriftReport>
 
 interface DriftReport {
@@ -1213,16 +1217,16 @@ buildStatusReport(
 ): Promise<StatusReport | null>
 ```
 
-Returns `null` when the vault has no `.shardmind/state.json` — the "not in a shard-managed vault" signal. Never throws on section-level failures; each sub-loader (manifest, schema, drift, values) contributes a `StatusWarning` if it can't do its job, and the aggregator keeps building.
+Returns `null` when the vault has no `.shardmind/state.json` — the "not in a shard-managed vault" signal. A vault with several shards (#406) is read with `readVaultState` (leniently, as before) and each shard gets the steps below on its own entry, with its own paths (`shardLayout(shard, index)` in `state.ts`: the base's `.shardmind/` and `shard-values.yaml`; an overlay's `overlayDir(shard)` and `overlayValuesFile(shard)`; an overlay name that is not `<namespace>/<name>` has none: its block reads no file, the base's least of all, and carries one error finding naming the bad name), and drift's `foreign` from `foreignPathsOf(states, index)` (`drift.ts`): every other shard's files and every values file. The report's fields are the base shard's; `shards: ShardStatusReport[]` lists every shard's (the base's first, its fields the same objects), each with its own `warnings`. An overlay's warnings are also added to the report's, prefixed with its name. The environment probe runs once. Never throws on section-level failures; each sub-loader (manifest, schema, drift, values) contributes a `StatusWarning` if it can't do its job, and the aggregator keeps building.
 
 **Algorithm**:
-1. `readState(vaultRoot)`. If `null` → return `null` immediately.
+1. `readVaultState(vaultRoot)`, leniently (`onContractError`). If `null` → return `null` immediately. Each shard's entry becomes a `ShardState` (`shardStateOf`, an entry that is not an object reading as an empty one), and steps 2 and 3 run for each shard with its own `shardLayout` and `foreignPathsOf`, every update check started at once, then the disk work three shards at a time (each already bounds its own reads); the environment probe of step 3 runs once, for the vault.
 2. In parallel:
-   - Load cached manifest via `parseManifest(.shardmind/shard.yaml)` (failure → synthesize a minimal manifest from `state.shard` + warning).
-   - Load cached schema via `parseSchema(.shardmind/shard-schema.yaml)` (failure → values/frontmatter sections degrade + warning).
-   - `detectDrift(vaultRoot, state)` (failure → empty drift, `drift.failed: true`, an error warning, and no frontmatter lint, so no section reports an unchecked result as clean).
-   - Resolve update availability via `core/update-check.getLatestVersion(vaultRoot, state.source, now)`, unless `skipUpdateCheck` (then report `unknown`).
-   - Validate `shard-values.yaml` via `buildValuesValidator(schema).safeParse()` (no cached schema → `values.checked: false`).
+   - Load cached manifest via `parseManifest(<cacheDir>/shard.yaml)` (failure → synthesize a minimal manifest from `state.shard` + warning).
+   - Load cached schema via `parseSchema(<cacheDir>/shard-schema.yaml)` (failure → values/frontmatter sections degrade + warning).
+   - `detectDrift(vaultRoot, state, { cacheDir, foreign })` (failure → empty drift, `drift.failed: true`, an error warning, and no frontmatter lint, so no section reports an unchecked result as clean).
+   - Resolve update availability via `core/update-check.getLatestVersion(vaultRoot, state.source, now, cacheDir)` (every shard's started at once, before the disk work, since each may be a network call), unless `skipUpdateCheck` (then report `unknown`).
+   - Validate the shard's values file (`shard-values.yaml`, or an overlay's; named so in its findings) via `buildValuesValidator(schema).safeParse()` (no cached schema → `values.checked: false`).
 3. If `verbose`, fan three independent passes out via `Promise.all`:
    - **Per-modified-file diff.** For each entry in `drift.modified` (capped at 20), read the cached template from `.shardmind/templates/<relative>`, render with current values + selections via `renderString(...)`, diff rendered base against actual disk content via `diffLines` (CRLF + UTF-8-BOM normalized first), and record `{ linesAdded, linesRemoved }`. Every failure step (missing template / render throw / unreadable file) surfaces as a `skipped` variant. Bounded by `MODIFIED_DIFF_CONCURRENCY = 8` to cap disk + heap pressure.
    - **Frontmatter lint.** Walk drift's `managed + modified` `.md` files with `mapConcurrent(16, …)`, run `validateFrontmatter()`, collect missing-key rows (capped at 20).
@@ -1246,7 +1250,7 @@ Returns `null` when the vault has no `.shardmind/state.json` — the "not in a s
 
 ### 4.15 `update-check.ts`
 
-**Purpose**: 24-hour cached "latest GitHub release tag" lookup for a given `state.source`. Shared between the status command (read path) and the update command (priming path) so status invocations don't hammer the GitHub API.
+**Purpose**: 24-hour cached "latest GitHub release tag" lookup for a given `state.source`. Shared between the status command (read path) and the update command (priming path) so status invocations don't hammer the GitHub API. Each shard of a vault keeps its own cache file, in its own engine folder (`cacheDir`, the last argument of `getLatestVersion`, `primeLatestVersion`, `readCache` and `writeCache`; `.shardmind/` by default, an overlay's own for an overlay, #406), so two shards never evict each other's answer.
 
 **Inputs**:
 ```typescript

@@ -137,3 +137,8 @@ export function isBinaryForMerge(buf: Buffer): boolean {
 export function foldOutputPath(outputPath: string): string {
   return outputPath.normalize('NFC').toLowerCase();
 }
+
+/** `p` with forward slashes: one spelling of a vault path, whatever the platform wrote. */
+export function posixPath(p: string): string {
+  return p.split('\\').join('/');
+}

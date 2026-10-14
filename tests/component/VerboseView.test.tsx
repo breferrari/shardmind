@@ -35,7 +35,7 @@ const STATE: ShardState = {
 };
 
 function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
-  return {
+  const built: Omit<StatusReport, 'shards'> = {
     manifest: MANIFEST,
     state: STATE,
     installedAgo: '3 weeks ago',
@@ -79,8 +79,11 @@ function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
     },
     environment: { nodeVersion: 'v22.1.0', obsidianCliAvailable: true },
     warnings: [],
+    valuesFile: 'shard-values.yaml',
     ...overrides,
   };
+  // A vault with one shard lists itself (#406).
+  return { ...built, shards: overrides.shards ?? [built] };
 }
 
 describe('VerboseView', () => {
@@ -267,5 +270,17 @@ describe('VerboseView', () => {
     );
     const frame = lastFrame() ?? '';
     expect(frame).not.toContain('Environment:');
+  });
+});
+
+describe('VerboseView — a vault holding several shards (#406)', () => {
+  it("names an overlay's own values file when it is missing", () => {
+    const base = baseReport();
+    const overlay = baseReport({
+      valuesFile: 'shard-values.acme.research.yaml',
+      values: { valid: false, total: 0, invalidKeys: [], invalidCount: 0, fileMissing: true, checked: false },
+    });
+    const { lastFrame } = render(<VerboseView report={{ ...base, shards: [base, overlay] }} />);
+    expect((lastFrame() ?? '').replace(/\s+/g, ' ')).toContain('shard-values.acme.research.yaml is missing or unreadable');
   });
 });

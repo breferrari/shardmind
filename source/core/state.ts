@@ -24,6 +24,9 @@ import {
   SHARD_SOURCE_DIR,
   SHARD_MANIFEST_FILE,
   SHARD_SCHEMA_FILE,
+  VALUES_FILE,
+  overlayDir,
+  overlayValuesFile,
 } from '../runtime/vault-paths.js';
 import { errnoCode, isEnoent } from '../runtime/errno.js';
 import { canMigrate, migrateState } from './state-migrator.js';
@@ -565,4 +568,28 @@ function backupDirError(kind: 'update' | 'adopt' | 'add', code: 'UPDATE_WRITE_FA
     err,
     `Check that ${SHARDMIND_DIR}/ and ${SHARDMIND_DIR}/backups/ are writable folders, then retry.`,
   );
+}
+
+/** Where one shard of a vault keeps its engine files (#406): its cache folder and its values file. */
+export interface ShardLayout {
+  /** Vault-relative: `.shardmind/`, or an overlay's own folder. */
+  cacheDir: string;
+  /** Vault-relative: `shard-values.yaml`, or an overlay's. */
+  valuesFile: string;
+}
+
+/**
+ * Shard `index` of the vault's `shards[]` (#406): the base (index 0) keeps
+ * `.shardmind/` and `shard-values.yaml`; an overlay keeps `overlayDir` and
+ * `overlayValuesFile`. An overlay name that is not `<namespace>/<name>` (a
+ * hand edit) has none: null, which the caller reports.
+ */
+export function shardLayout(shard: string, index: number): ShardLayout | null {
+  if (index === 0) return { cacheDir: SHARDMIND_DIR, valuesFile: VALUES_FILE };
+  try {
+    return { cacheDir: overlayDir(shard), valuesFile: overlayValuesFile(shard) };
+  } catch {
+    // A name a hand edit broke has no files to find: the caller says so.
+    return null;
+  }
 }

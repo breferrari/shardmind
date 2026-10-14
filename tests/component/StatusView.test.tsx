@@ -36,7 +36,7 @@ const STATE: ShardState = {
 };
 
 function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
-  return {
+  const built: Omit<StatusReport, 'shards'> = {
     manifest: MANIFEST,
     state: STATE,
     installedAgo: '3 weeks ago',
@@ -67,8 +67,11 @@ function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
     frontmatter: null,
     environment: null,
     warnings: [],
+    valuesFile: 'shard-values.yaml',
     ...overrides,
   };
+  // A vault with one shard lists itself (#406).
+  return { ...built, shards: overrides.shards ?? [built] };
 }
 
 describe('StatusView', () => {
@@ -188,5 +191,26 @@ describe('StatusView', () => {
     const frame = lastFrame() ?? '';
     expect(frame).toContain('3 managed files modified by you');
     expect(frame).toContain('three-way merge');
+  });
+});
+
+describe('StatusView — a vault holding several shards (#406)', () => {
+  it("shows the base's block, then the overlay's, each with its own warnings", () => {
+    const base = baseReport({ warnings: [] });
+    const overlay = baseReport({
+      manifest: { ...MANIFEST, namespace: 'acme', name: 'research', version: '1.2.0' },
+      warnings: [{ severity: 'warning', message: 'overlay-only finding' }],
+    });
+    const { lastFrame } = render(
+      <StatusView report={{ ...base, warnings: [{ severity: 'warning', message: 'acme/research: overlay-only finding' }], shards: [base, overlay] }} />,
+    );
+    const frame = lastFrame() ?? '';
+    const baseAt = frame.indexOf(MANIFEST.name);
+    const overlayAt = frame.indexOf('acme/research');
+    expect(baseAt).toBeGreaterThanOrEqual(0);
+    expect(overlayAt).toBeGreaterThan(baseAt);
+    // The finding shows once, in the overlay's block, not prefixed again in the base's.
+    expect(frame.split('overlay-only finding')).toHaveLength(2);
+    expect(frame.indexOf('overlay-only finding')).toBeGreaterThan(overlayAt);
   });
 });
