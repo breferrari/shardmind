@@ -48,6 +48,7 @@ import {
 import type { DiffAction } from '../../components/DiffView.js';
 import { editInEditor, hasConflictMarkers, resolveEditorCommand, withTerminalReleased } from '../../core/editor.js';
 import { withSigintHeld } from '../../core/process-control.js';
+import { isCancelledRun } from '../../core/run-cancel.js';
 
 export interface UseUpdateMachineInput {
   vaultRoot: string;
@@ -150,8 +151,9 @@ export function useUpdateMachine(input: UseUpdateMachineInput): UseUpdateMachine
     // cancelled, up-to-date and summary are all successful outcomes and keep exit 0.
     isFinal: (p) =>
       p.kind === 'summary' || p.kind === 'cancelled' || p.kind === 'error' || p.kind === 'up-to-date' || p.kind === 'shards',
-    // A shard that failed fails the run, the shards before it kept (#407).
-    failed: (p) => p.kind === 'shards' && p.runs.some((run) => 'error' in run),
+    // A shard that failed fails the run, the shards before it kept (#407);
+    // one the user cancelled is their choice, as a cancel is on one shard.
+    failed: (p) => p.kind === 'shards' && p.runs.some((run) => 'error' in run && !isCancelledRun(run.error)),
     rolledBackLine: 'Rolled back partial update.',
     asPhase: (p) => p,
   });

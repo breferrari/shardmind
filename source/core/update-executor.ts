@@ -25,6 +25,7 @@ import { rolledBackError } from './rollback-report.js';
 import { beginTransaction, type SnapshotTransaction } from './vault-transaction.js';
 import { pathsTheUpdateTouches } from './update-planner.js';
 import { assertSafeVaultPaths } from './vault-path-guard.js';
+import { overlayEnginePaths } from './install-executor.js';
 import { throwIfCancelled } from './run-cancel.js';
 import {
   assertRenameTargetFree,
@@ -199,6 +200,9 @@ export async function runUpdate(opts: UpdateRunnerOptions): Promise<UpdateResult
   // ago, behind prompts. Before the snapshot or any write, dry run included.
   const touched = pathsTheUpdateTouches(plan.actions);
   await assertSafeVaultPaths(vaultRoot, touched.writes, touched.deletes, touched.caseRenames);
+  // An overlay's own engine paths are written too: never through a link or
+  // a case-folded name, as add guards them (#163, #407).
+  if (target.index > 0) await assertSafeVaultPaths(vaultRoot, overlayEnginePaths(currentState.shard));
   // A rename's new path was free when planned; refuse before any write if
   // something arrived there during the prompts (#178).
   for (const action of plan.actions) {

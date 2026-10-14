@@ -25,7 +25,8 @@ import {
   OVERLAY_SCHEMA,
 } from '../component/flows/helpers.js';
 import { runInstallFlow } from '../../source/core/flows/install.js';
-import { runUpdateFlow, type UpdateFlowInput, type ShardRun } from '../../source/core/flows/update.js';
+import { runUpdateFlow, type UpdateFlowInput, type UpdateFlowIO, type ShardRun } from '../../source/core/flows/update.js';
+import { FlowCancelled } from '../../source/core/flows/cancelled.js';
 import { resolveInstallDestination } from '../../source/core/install-destination.js';
 import type { VaultState } from '../../source/runtime/types.js';
 import { runUpdateJson } from '../../source/commands/headless/update.js';
@@ -39,11 +40,11 @@ const tarballs: Record<string, string> = {};
 let vault: string;
 
 /** A base release: the minimal shard as acme/base, hook-free, with `extra` files. */
-const baseRelease = (version: string, extra: Record<string, string> = {}) =>
+const baseRelease = (version: string, extra: Record<string, string> = {}, name = 'base') =>
   buildCustomTarball({
     version,
-    prefix: `base-${version}-${Object.keys(extra).length}`,
-    manifestOverrides: { name: 'base', namespace: 'acme', hooks: {} },
+    prefix: `base-${name}-${version}-${Object.keys(extra).length}`,
+    manifestOverrides: { name, namespace: 'acme', hooks: {} },
     mutate: async (dir) => {
       await fsp.appendFile(path.join(dir, 'CLAUDE.md'), `\nRelease ${version}.\n`);
       for (const [rel, content] of Object.entries(extra)) {
@@ -87,6 +88,18 @@ beforeAll(async () => {
     prefix: 'overlay-research-2.0.0-claims-asks',
     outDir: tarDir,
   });
+  tarballs['base-0.2.0-as-base2'] = await baseRelease('0.2.0', {}, 'base2');
+  tarballs['base-0.2.0-as-research'] = await baseRelease('0.2.0', {}, 'research');
+  // A new optional module and nothing else: a question with nothing refused.
+  tarballs['overlay-2.0.0-asks'] = await buildOverlayTarball({
+    namespace: 'acme',
+    name: 'research',
+    version: '2.0.0',
+    files: { 'research/Papers.md.njk': '# Papers\n', 'extras/Extra.md': 'extra\n' },
+    schema: { ...OVERLAY_SCHEMA, modules: { extras: { label: 'Extras', paths: ['extras/'], removable: true } } },
+    prefix: 'overlay-research-2.0.0-asks',
+    outDir: tarDir,
+  });
   tarballs['overlay-2.0.0-renamed'] = await overlayRelease('2.0.0', { 'research/Papers.md.njk': '# Papers\n' }, 'studies');
   stub = await createGitHubStub({
     shards: {
@@ -118,7 +131,7 @@ afterEach(async () => {
   await fsp.rm(vault, { recursive: true, force: true });
 });
 
-const update = (over: Partial<UpdateFlowInput> = {}) =>
+const update = (over: Partial<UpdateFlowInput> = {}, flowIO: UpdateFlowIO = io()) =>
   runUpdateFlow(
     {
       vaultRoot: vault,
@@ -132,7 +145,7 @@ const update = (over: Partial<UpdateFlowInput> = {}) =>
       engineVersion: undefined,
       ...over,
     },
-    io(),
+    flowIO,
   );
 const read = (rel: string) => fsp.readFile(path.join(vault, rel), 'utf-8');
 const state = async () => JSON.parse(await read('.shardmind/state.json')) as VaultState;
@@ -346,5 +359,94 @@ describe('update on a vault with one shard (#407)', () => {
     } finally {
       await fsp.rm(solo, { recursive: true, force: true });
     }
+  });
+});
+
+describe('update across shards: code review of #407', () => {
+  it('a Ctrl+C after a shard committed ends the run there: the rest not reached, the result kept', async () => {
+    serve(BASE, '0.2.0', tarballs['base-0.2.0']!);
+    serve(OVERLAY, '2.0.0', tarballs['overlay-2.0.0']!);
+    // As headless does: once Ctrl+C came (here, during the base's hooks),
+    // every run abort it hands out is aborted already.
+    let cancelled = false;
+    const flowIO = { ...io(), onCommitted: () => void (cancelled = true), newRunAbort: () => {
+      const abort = new AbortController();
+      if (cancelled) abort.abort();
+      return abort;
+    } };
+    const result = await update({}, flowIO);
+    if (result.kind !== 'shards') throw new Error(`expected shards, got ${result.kind}`);
+    expect(outcomes(result.runs)).toEqual([[BASE, 'done'], [OVERLAY, 'not-reached']]);
+    expect(await versions()).toEqual([[BASE, '0.2.0'], [OVERLAY, '1.0.0']]);
+  });
+
+  it("a cancel in a later shard keeps the shards before it, reported, and is that shard's CANCELLED", async () => {
+    serve(BASE, '0.2.0', tarballs['base-0.2.0']!);
+    serve(OVERLAY, '2.0.0', tarballs['overlay-2.0.0-asks']!);
+    // The overlay's new-modules question is cancelled by the user.
+    const flowIO = { ...io(), ask: () => Promise.reject(new FlowCancelled('Cancelled at the modules question.')) };
+    const result = await update({ yes: false }, flowIO as UpdateFlowIO);
+    if (result.kind !== 'shards') throw new Error(`expected shards, got ${result.kind}`);
+    expect(outcomes(result.runs)).toEqual([[BASE, 'done'], [OVERLAY, 'CANCELLED']]);
+    expect(await versions()).toEqual([[BASE, '0.2.0'], [OVERLAY, '1.0.0']]);
+  });
+
+  it('a cancel before any shard ran ends the run as on one shard', async () => {
+    serve(OVERLAY, '2.0.0', tarballs['overlay-2.0.0-asks']!);
+    const flowIO = { ...io(), ask: () => Promise.reject(new FlowCancelled('Cancelled.')) };
+    await expect(update({ shard: OVERLAY, yes: false }, flowIO as UpdateFlowIO)).rejects.toBeInstanceOf(FlowCancelled);
+  });
+
+  it("refuses to update an overlay through a values file hard-linked out of the vault (#163)", async () => {
+    serve(OVERLAY, '2.0.0', tarballs['overlay-2.0.0']!);
+    const outside = path.join(os.tmpdir(), `shardmind-outside-${crypto.randomUUID()}.yaml`);
+    const valuesFile = path.join(vault, 'shard-values.acme.research.yaml');
+    await fsp.copyFile(valuesFile, outside);
+    await fsp.rm(valuesFile);
+    await fsp.link(outside, valuesFile);
+    try {
+      const result = await update({ shard: OVERLAY });
+      if (result.kind !== 'shards') throw new Error(`expected shards, got ${result.kind}`);
+      expect(outcomes(result.runs)).toEqual([[OVERLAY, 'VAULT_PATH_UNSAFE']]);
+      expect(await fsp.readFile(outside, 'utf-8')).toBe('topic: physics\n');
+    } finally {
+      await fsp.rm(outside, { force: true });
+    }
+  });
+
+  it("an overlay's missing cached schema names its own cache folder, never `install`", async () => {
+    serve(OVERLAY, '2.0.0', tarballs['overlay-2.0.0']!);
+    await fsp.rm(path.join(vault, '.shardmind', 'shards', 'acme', 'research', 'shard-schema.yaml'));
+    const result = await update({ shard: OVERLAY });
+    if (result.kind !== 'shards') throw new Error(`expected shards, got ${result.kind}`);
+    const error = (result.runs[0] as { error: { code: string; hint: string } }).error;
+    expect(error.code).toBe('UPDATE_CACHE_MISSING');
+    expect(error.hint).toContain('.shardmind/shards/acme/research/');
+    expect(error.hint).not.toContain('shardmind install');
+  });
+
+  it('a broken overlay name refuses a named update of another shard too, before any network call', async () => {
+    const raw = await state();
+    raw.shards[1]!.shard = 'not-a-name';
+    await fsp.writeFile(path.join(vault, '.shardmind', 'state.json'), JSON.stringify(raw, null, 2));
+    const before = stub.requestedPaths().length;
+    await expect(update({ shard: BASE })).rejects.toMatchObject({ code: 'STATE_CORRUPT' });
+    expect(stub.requestedPaths().length).toBe(before);
+  });
+
+  it("a base release that takes an overlay's name is UPDATE_SHARD_RENAMED, before any write", async () => {
+    serve(BASE, '0.2.0', tarballs['base-0.2.0-as-research']!);
+    const result = await update({ shard: BASE });
+    if (result.kind !== 'shards') throw new Error(`expected shards, got ${result.kind}`);
+    expect(outcomes(result.runs)).toEqual([[BASE, 'UPDATE_SHARD_RENAMED']]);
+    expect(await read('CLAUDE.md')).not.toContain('Release 0.2.0.');
+  });
+
+  it('a base that renames itself is reported under its new name', async () => {
+    serve(BASE, '0.2.0', tarballs['base-0.2.0-as-base2']!);
+    const result = await update({ shard: BASE });
+    if (result.kind !== 'shards') throw new Error(`expected shards, got ${result.kind}`);
+    expect(outcomes(result.runs)).toEqual([['acme/base2', 'done']]);
+    expect((await state()).shards.map((s) => s.shard)).toEqual(['acme/base2', OVERLAY]);
   });
 });

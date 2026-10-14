@@ -484,3 +484,14 @@ describe('update --json across shards (#407)', () => {
     expect(envelope).not.toHaveProperty('result');
   });
 });
+
+describe('a cancelled shard of several (#407)', () => {
+  it('is read as a cancel, so the headless run keeps the shards before it and exits 130', async () => {
+    const { ShardRunsFailed } = await import('../../source/core/json-output.js');
+    const { isCancelledRun } = await import('../../source/core/run-cancel.js');
+    const cancelled = new ShardMindError('Cancelled.', 'CANCELLED', 'The shards before this one stay updated.');
+    expect(isCancelledRun(new ShardRunsFailed({ shard: 'acme/research', error: cancelled }, []))).toBe(true);
+    const failed = new ShardMindError('would write Home.md', 'UPDATE_PATH_OWNED');
+    expect(isCancelledRun(new ShardRunsFailed({ shard: 'acme/research', error: failed }, []))).toBe(false);
+  });
+});

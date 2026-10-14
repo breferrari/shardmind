@@ -72,7 +72,11 @@ export class ShardRunsFailed extends Error {
   readonly shards: readonly UpdateShardEntry[];
 
   constructor(failed: { readonly shard: string; readonly error: unknown }, shards: readonly UpdateShardEntry[]) {
-    super(`${failed.shard}: ${failed.error instanceof Error ? failed.error.message : String(failed.error)}`);
+    // The shard's error is the cause: a cancel inside a later shard is still
+    // read as a cancel (exit 130), with the shards before it reported.
+    super(`${failed.shard}: ${failed.error instanceof Error ? failed.error.message : String(failed.error)}`, {
+      cause: failed.error,
+    });
     this.name = 'ShardRunsFailed';
     this.failed = failed;
     this.shards = shards;
