@@ -13,10 +13,10 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { ModuleSelections, VaultState } from '../../runtime/types.js';
 import { ShardMindError } from '../../runtime/types.js';
-import { SHARDMIND_DIR, STATE_FILE, overlayDir, overlayValuesFile } from '../../runtime/vault-paths.js';
+import { SHARDMIND_DIR, STATE_FILE, VALUES_FILE, overlayDir, overlayValuesFile } from '../../runtime/vault-paths.js';
 import { errnoCode } from '../../runtime/errno.js';
 import { resolve as resolveRef } from '../registry.js';
-import { readVaultState, shardLayout, writeShardEntry } from '../state.js';
+import { readVaultState, writeShardEntry } from '../state.js';
 import { assertShardInstallable } from '../lint-shard.js';
 import { checkExternalToolsForRun } from '../external-tools.js';
 import { assertSafeVaultPaths } from '../vault-path-guard.js';
@@ -216,7 +216,9 @@ export function ownedPaths(vault: VaultState, adding: string): Map<string, strin
         if (!owned.has(folder)) owned.set(folder, `${shard.shard} (a folder of its files)`);
       }
     }
-    own(shardLayout(shard.shard, i).valuesFile, `${shard.shard} (its values file)`);
+    // overlayValuesFile, not shardLayout: a name that is not <namespace>/<name>
+    // is refused here, never given a stand-in path (#406 review).
+    own(i === 0 ? VALUES_FILE : overlayValuesFile(shard.shard), `${shard.shard} (its values file)`);
   });
   // The values file the add itself writes: a shard that ships it would fail
   // the exclusive write after its files, so it is refused up front.

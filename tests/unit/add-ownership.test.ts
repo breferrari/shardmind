@@ -71,3 +71,10 @@ describe('ownerOf (#396)', () => {
     expect(ownerOf('Home.md.bak', owned)).toBeNull();
   });
 });
+
+describe('ownedPaths on a broken state (#406 review)', () => {
+  it('refuses a vault whose state lists an overlay name that is not <namespace>/<name>', () => {
+    const broken: VaultState = { schema_version: 3, shards: [entry('acme/base', []), entry('acme/research/x', [])] };
+    expect(() => ownedPaths(broken, 'acme/new')).toThrow(/namespace>\/<name>/);
+  });
+});
