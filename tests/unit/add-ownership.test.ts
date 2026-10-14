@@ -4,9 +4,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ownedPaths, ownerOf } from '../../source/core/flows/add.js';
+import { ownedPaths as ownedPathsWith, ownerOf } from '../../source/core/ownership.js';
 import type { ShardEntry, VaultState } from '../../source/runtime/types.js';
 import { makeShardState, makeFileState } from '../helpers/index.js';
+
+/** add's call: every shard, and the values file add writes. */
+const ownedPaths = (vault: VaultState, adding: string) => ownedPathsWith(vault, { adding });
 
 const entry = (shard: string, files: string[]): ShardEntry => {
   const { schema_version: _v, ...rest } = makeShardState({
