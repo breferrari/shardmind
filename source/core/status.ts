@@ -44,9 +44,11 @@ import type {
   DriftEntry,
   ModuleSelections,
   RenderContext,
+  ShardEntry,
   ShardStatusReport,
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
+import { shardStateOf } from '../runtime/state-schema.js';
 import { readVaultState, shardLayout, SINGLE_SHARD_SCHEMA_VERSION } from './state.js';
 import { parseManifest } from './manifest.js';
 import { parseSchema, buildValuesValidator } from './schema.js';
@@ -58,6 +60,9 @@ import { errnoCode } from '../runtime/errno.js';
 import { validateFrontmatter } from '../runtime/frontmatter.js';
 import { renderString, buildRenderContext, itemForTemplate } from './renderer.js';
 import { SHARD_MANIFEST_FILE, SHARD_SCHEMA_FILE, TEMPLATES_DIR } from '../runtime/vault-paths.js';
+
+/** Shards reported at once (#406): each fans its own reads out, bounded. */
+const SHARD_CONCURRENCY = 3;
 
 /**
  * Upper bound on how many paths a single drift bucket surfaces by name.
@@ -124,23 +129,20 @@ export async function buildStatusReport(
   // it is may hold anything in `shards`: an entry that is not an object, or
   // none, reads as an empty shard, each field degrading as before.
   const entries: unknown[] = Array.isArray(vault.shards) && vault.shards.length > 0 ? vault.shards : [{}];
-  const states = entries.map(
-    (entry) => ({ schema_version: SINGLE_SHARD_SCHEMA_VERSION, ...(isRecord(entry) ? entry : {}) }) as ShardState,
-  );
+  const states = entries.map((entry) => shardStateOf((isRecord(entry) ? entry : {}) as ShardEntry, SINGLE_SHARD_SCHEMA_VERSION));
   // Each shard from its own paths, in parallel: each update check may be a
   // network call. No shard reads another's files, or any values file, as
   // its orphans. The environment is the vault's, probed once (verbose only).
   const [shards, environment] = await Promise.all([
-    Promise.all(
-      states.map((state, i) =>
-        buildShardReport(vaultRoot, state, {
-          opts,
-          now,
-          ...shardLayout(state.shard, i),
-          foreign: foreignPathsOf(states, i),
-          warnings: i === 0 ? contractWarnings : [],
-        }),
-      ),
+    // A few at a time: each shard already fans its own reads out.
+    mapConcurrent(states.map((state, i) => ({ state, i })), SHARD_CONCURRENCY, ({ state, i }) =>
+      buildShardReport(vaultRoot, state, {
+        opts,
+        now,
+        ...shardLayout(state.shard, i),
+        foreign: foreignPathsOf(states, i),
+        warnings: i === 0 ? contractWarnings : [],
+      }),
     ),
     opts.verbose ? probeEnvironment() : Promise.resolve(null),
   ]);
@@ -148,7 +150,9 @@ export async function buildStatusReport(
   // An overlay's findings show at the top level too, named.
   const overlayWarnings = shards
     .slice(1)
-    .flatMap((shard) => shard.warnings.map((w) => ({ ...w, message: `${String(shard.state.shard)}: ${w.message}` })));
+    .flatMap((shard) =>
+      shard.warnings.map((w) => ({ ...w, message: `${shard.manifest.namespace}/${shard.manifest.name}: ${w.message}` })),
+    );
   return { ...base, environment, warnings: [...base.warnings, ...overlayWarnings], shards };
 }
 
@@ -251,6 +255,7 @@ async function buildShardReport(vaultRoot: string, state: ShardState, input: Sha
     update,
     values,
     frontmatter,
+    valuesFile,
   });
 
   return {
@@ -762,10 +767,12 @@ interface WarningInputs {
   update: UpdateStatus;
   values: StatusValuesSummary;
   frontmatter: StatusFrontmatterSummary | null;
+  /** The shard's values file, named in its findings (#406). */
+  valuesFile: string;
 }
 
 function emitSectionWarnings(input: WarningInputs): void {
-  const { warnings, driftSummary, update, values, frontmatter } = input;
+  const { warnings, driftSummary, update, values, frontmatter, valuesFile } = input;
 
   if (update.kind === 'available') {
     warnings.push({
@@ -794,13 +801,13 @@ function emitSectionWarnings(input: WarningInputs): void {
   if (values.fileMissing) {
     warnings.push({
       severity: 'error',
-      message: 'shard-values.yaml is missing or unreadable.',
-      hint: 'Reinstall the shard or restore shard-values.yaml from version control.',
+      message: `${valuesFile} is missing or unreadable.`,
+      hint: `Reinstall the shard or restore ${valuesFile} from version control.`,
     });
   } else if (!values.valid && values.invalidCount > 0) {
     warnings.push({
       severity: 'warning',
-      message: `shard-values.yaml has ${values.invalidCount} invalid key${values.invalidCount === 1 ? '' : 's'}.`,
+      message: `${valuesFile} has ${values.invalidCount} invalid key${values.invalidCount === 1 ? '' : 's'}.`,
       hint: `Check: ${values.invalidKeys.slice(0, 5).join(', ')}${values.invalidCount > 5 ? ', …' : ''}.`,
     });
   }

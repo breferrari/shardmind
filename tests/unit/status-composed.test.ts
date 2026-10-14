@@ -116,6 +116,30 @@ describe('status on a vault holding several shards (#406)', () => {
     expect(r.warnings.map((w) => w.message).join('\n')).toMatch(/acme\/research: Cached shard manifest/);
   });
 
+  it("names an overlay's own values file when it is missing", async () => {
+    await composedVault();
+    await fsp.rm(path.join(vault, 'shard-values.acme.research.yaml'));
+    const r = (await report())!;
+    expect(r.shards[1]!.warnings.map((w) => w.message).join('\n')).toMatch(/shard-values\.acme\.research\.yaml is missing/);
+    expect(r.shards[0]!.warnings).toEqual([]);
+  });
+
+  it("reads none of the base's files for an overlay whose name a hand edit broke", async () => {
+    await composedVault();
+    const raw = JSON.parse(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')) as {
+      shards: Array<Record<string, unknown>>;
+    };
+    raw.shards[1]!['shard'] = 'acme/research/x';
+    await fsp.writeFile(path.join(vault, '.shardmind', 'state.json'), JSON.stringify(raw));
+    const r = (await report())!;
+    const broken = r.shards[1]!;
+    // The base's cached manifest would say shardmind/minimal 0.1.0.
+    expect(broken.manifest.version).not.toBe('0.1.0');
+    expect(broken.warnings.map((w) => w.message).join('\n')).toMatch(/Cached shard manifest/);
+    // Named in the top-level list by its display name, never a raw field.
+    expect(r.warnings.map((w) => w.message).join('\n')).not.toMatch(/undefined:|object Object/);
+  });
+
   it('--json lists each shard; the top-level fields stay the base\'s', async () => {
     await composedVault();
     const doc = statusResult(await report());
