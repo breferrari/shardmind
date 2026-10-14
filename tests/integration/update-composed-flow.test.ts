@@ -304,3 +304,60 @@ describe('update --json across shards (#407)', () => {
     expect(doc['result'].shards.map((s: { shard: string }) => s.shard)).toEqual([OVERLAY]);
   });
 });
+
+describe('update across shards: naming and state (#407)', () => {
+  it('`update <base>` updates the base alone', async () => {
+    serve(BASE, '0.2.0', tarballs['base-0.2.0']!);
+    serve(OVERLAY, '2.0.0', tarballs['overlay-2.0.0']!);
+    const result = await update({ shard: BASE });
+    if (result.kind !== 'shards') throw new Error(`expected shards, got ${result.kind}`);
+    expect(outcomes(result.runs)).toEqual([[BASE, 'done']]);
+    expect(await versions()).toEqual([[BASE, '0.2.0'], [OVERLAY, '1.0.0']]);
+  });
+
+  it('an overlay name that is not <namespace>/<name> is STATE_CORRUPT, before any network call', async () => {
+    const raw = await state();
+    raw.shards[1]!.shard = 'not-a-name';
+    await fsp.writeFile(path.join(vault, '.shardmind', 'state.json'), JSON.stringify(raw, null, 2));
+    const before = stub.requestedPaths().length;
+    await expect(update()).rejects.toMatchObject({ code: 'STATE_CORRUPT', message: expect.stringContaining('not-a-name') });
+    expect(stub.requestedPaths().length).toBe(before);
+  });
+
+  it("reads an overlay's values file written with CRLF line endings", async () => {
+    await fsp.writeFile(path.join(vault, 'shard-values.acme.research.yaml'), 'topic: optics\r\n');
+    serve(OVERLAY, '2.0.0', tarballs['overlay-2.0.0']!);
+    const result = await update({ shard: OVERLAY });
+    if (result.kind !== 'shards') throw new Error(`expected shards, got ${result.kind}`);
+    expect(outcomes(result.runs)).toEqual([[OVERLAY, 'done']]);
+    expect(await read('research/Papers.md')).toBe('# Papers\n\nOn optics, v2.\n');
+  });
+});
+
+describe('update on a vault with one shard (#407)', () => {
+  it('naming its shard is a bare update, answered as before (no shards list)', async () => {
+    // A vault of the base alone.
+    const solo = path.join(os.tmpdir(), `shardmind-composed-flow-solo-${crypto.randomUUID()}`);
+    await fsp.mkdir(solo, { recursive: true });
+    try {
+      await runInstallFlow(
+        {
+          valuesFile: undefined, yes: true, defaults: true, dryRun: false, skipHooks: false, interactive: false, engineVersion: undefined,
+          shardRef: `github:${BASE}`, force: false, destination: await resolveInstallDestination(solo, `github:${BASE}`, '.'),
+        },
+        io(),
+      );
+      serve(BASE, '0.2.0', tarballs['base-0.2.0']!);
+      const run = (shard?: string) =>
+        runUpdateFlow(
+          { vaultRoot: solo, shard, yes: true, dryRun: true, json: false, release: undefined, includePrerelease: false, adoptPreexisting: false, skipHooks: false, engineVersion: undefined },
+          io(),
+        );
+      expect((await run(BASE)).kind).toBe('done');
+      expect((await run()).kind).toBe('done');
+      await expect(run(OVERLAY)).rejects.toMatchObject({ code: 'UPDATE_SHARD_UNKNOWN' });
+    } finally {
+      await fsp.rm(solo, { recursive: true, force: true });
+    }
+  });
+});
