@@ -49,7 +49,7 @@ import type {
 } from '../runtime/types.js';
 import { ShardMindError } from '../runtime/types.js';
 import { shardStateOf } from '../runtime/state-schema.js';
-import { readVaultState, shardLayout, SINGLE_SHARD_SCHEMA_VERSION } from './state.js';
+import { readVaultState, shardLayout, SINGLE_SHARD_SCHEMA_VERSION, type ShardLayout } from './state.js';
 import { parseManifest } from './manifest.js';
 import { parseSchema, buildValuesValidator } from './schema.js';
 import { detectDrift, foreignPathsOf, type DriftOptions } from './drift.js';
@@ -130,30 +130,95 @@ export async function buildStatusReport(
   // none, reads as an empty shard, each field degrading as before.
   const entries: unknown[] = Array.isArray(vault.shards) && vault.shards.length > 0 ? vault.shards : [{}];
   const states = entries.map((entry) => shardStateOf((isRecord(entry) ? entry : {}) as ShardEntry, SINGLE_SHARD_SCHEMA_VERSION));
-  // Each shard from its own paths, in parallel: each update check may be a
-  // network call. No shard reads another's files, or any values file, as
+  const layouts = states.map((state, i) => shardLayout(state.shard, i));
+  const warningsOf = states.map((_, i) => (i === 0 ? contractWarnings : []));
+  // Every update check starts now, in parallel: each may be a network call.
+  // The disk work then runs a few shards at a time, each already fanning its
+  // own reads out. No shard reads another's files, or any values file, as
   // its orphans. The environment is the vault's, probed once (verbose only).
+  const updates = states.map((state, i) => startUpdateCheck(vaultRoot, state, layouts[i]!, opts, now, warningsOf[i]!));
   const [shards, environment] = await Promise.all([
-    // A few at a time: each shard already fans its own reads out.
-    mapConcurrent(states.map((state, i) => ({ state, i })), SHARD_CONCURRENCY, ({ state, i }) =>
-      buildShardReport(vaultRoot, state, {
+    mapConcurrent(states.map((state, i) => ({ state, i })), SHARD_CONCURRENCY, ({ state, i }) => {
+      const layout = layouts[i];
+      if (!layout) return Promise.resolve(unnamedShardReport(state, now, warningsOf[i]!));
+      return buildShardReport(vaultRoot, state, {
         opts,
         now,
-        ...shardLayout(state.shard, i),
+        ...layout,
         foreign: foreignPathsOf(states, i),
-        warnings: i === 0 ? contractWarnings : [],
-      }),
-    ),
+        warnings: warningsOf[i]!,
+        update: updates[i]!,
+      });
+    }),
     opts.verbose ? probeEnvironment() : Promise.resolve(null),
   ]);
   const base = shards[0]!;
-  // An overlay's findings show at the top level too, named.
+  // An overlay's findings show at the top level too, prefixed with its name
+  // in state.json, so two entries are always told apart.
   const overlayWarnings = shards
     .slice(1)
-    .flatMap((shard) =>
-      shard.warnings.map((w) => ({ ...w, message: `${shard.manifest.namespace}/${shard.manifest.name}: ${w.message}` })),
-    );
+    .flatMap((shard, j) => shard.warnings.map((w) => ({ ...w, message: `${entryName(shard.state, j + 1)}: ${w.message}` })));
   return { ...base, environment, warnings: [...base.warnings, ...overlayWarnings], shards };
+}
+
+/** A shard's name as state.json gives it, or its place in the list when it gives none. */
+function entryName(state: ShardState, index: number): string {
+  return typeof state.shard === 'string' && state.shard !== '' ? state.shard : `shards[${index}]`;
+}
+
+/** The shard's update check, started at once (#406); `unknown` when skipped or there is no source to read. */
+function startUpdateCheck(
+  vaultRoot: string,
+  state: ShardState,
+  layout: ShardLayout | null,
+  opts: BuildStatusReportOptions,
+  now: number,
+  warnings: StatusWarning[],
+): Promise<UpdateStatus> {
+  const currentVersion = currentVersionOf(state);
+  if (opts.skipUpdateCheck || layout === null) {
+    // Not network failure: the caller skipped the lookup (CI mode,
+    // offline-first tests), or the shard has no files to keep a cache in.
+    return Promise.resolve({ kind: 'unknown', current: currentVersion, reason: 'cache-miss' });
+  }
+  return resolveUpdate(state, currentVersion, vaultRoot, now, warnings, opts.verbose, layout.cacheDir);
+}
+
+/**
+ * A state read past its contract check may hold anything, so state.version
+ * may arrive as an empty string from a hand-edited state.json. Normalized
+ * once, so every `UpdateStatus.current` and every equality check against
+ * `latest_version` uses the same value. Mirrors the synthesizeManifest
+ * fallback for `state.shard`.
+ */
+function currentVersionOf(state: ShardState): string {
+  return (typeof state.version === 'string' ? state.version.trim() : '') || 'unknown';
+}
+
+/**
+ * The block of an overlay whose name in state.json is not
+ * `<namespace>/<name>` (#406): it has no files to find, so none is read
+ * (never the base's), and one finding says why.
+ */
+function unnamedShardReport(state: ShardState, now: number, warnings: StatusWarning[]): ShardStatusReport {
+  warnings.push({
+    severity: 'error',
+    message: `state.json lists a shard named ${JSON.stringify(state.shard)}, which is not <namespace>/<name>: its files cannot be found.`,
+    hint: 'Restore .shardmind/state.json from version control.',
+  });
+  return {
+    manifest: synthesizeManifest(state),
+    state,
+    installedAgo: relativeTimeAgo(state.installed_at, now),
+    updatedAgo: null,
+    drift: summarizeDrift(EMPTY_DRIFT, 0, true),
+    update: { kind: 'unknown', current: currentVersionOf(state), reason: 'cache-miss' },
+    modules: buildModuleSummary(state),
+    values: { valid: false, total: 0, invalidKeys: [], invalidCount: 0, fileMissing: false, checked: false },
+    frontmatter: null,
+    warnings,
+    valuesFile: null,
+  };
 }
 
 interface ShardReportInput {
@@ -167,6 +232,8 @@ interface ShardReportInput {
   foreign: ReadonlySet<string>;
   /** Findings already made for this shard (the base: the contract check's). */
   warnings: StatusWarning[];
+  /** The shard's update check, started with every other shard's. */
+  update: Promise<UpdateStatus>;
 }
 
 /** One shard's report (#406): what a one-shard vault's status has always held, from its own paths. */
@@ -175,30 +242,16 @@ async function buildShardReport(vaultRoot: string, state: ShardState, input: Sha
   // A display cap, or none under `uncapped`.
   const cap = (display: number): number => (opts.uncapped ? Infinity : display);
 
-  // A state read past its contract check may hold anything, so state.version
-  // may arrive as an empty string from a hand-edited state.json. Normalize once
-  // here so every `UpdateStatus.current` (via this closure or `resolveUpdate`)
-  // and every equality check against `latest_version` uses the same value.
-  // Mirrors the synthesizeManifest fallback for `state.shard`.
-  const currentVersion = (typeof state.version === 'string' ? state.version.trim() : '') || 'unknown';
-
-  const manifest = await loadCachedManifest(path.join(vaultRoot, cacheDir, SHARD_MANIFEST_FILE), warnings);
-  const schema = await loadCachedSchema(path.join(vaultRoot, cacheDir, SHARD_SCHEMA_FILE), warnings);
-
-  const rawValues = await loadRawValues(path.join(vaultRoot, valuesFile), valuesFile);
+  // The three loads are independent; drift and the update check need none.
+  const [manifest, schema, rawValues] = await Promise.all([
+    loadCachedManifest(path.join(vaultRoot, cacheDir, SHARD_MANIFEST_FILE), warnings),
+    loadCachedSchema(path.join(vaultRoot, cacheDir, SHARD_SCHEMA_FILE), warnings),
+    loadRawValues(path.join(vaultRoot, valuesFile), valuesFile),
+  ]);
 
   const [detected, update, values] = await Promise.all([
     safeDetectDrift(vaultRoot, state, warnings, { cacheDir, foreign }),
-    opts.skipUpdateCheck
-      ? Promise.resolve<UpdateStatus>({
-          kind: 'unknown',
-          current: currentVersion,
-          // Not network failure — the caller intentionally skipped the
-          // lookup (CI mode, offline-first tests). Distinct from the
-          // `'no-network'` reason we emit after a real fetch failure.
-          reason: 'cache-miss',
-        })
-      : resolveUpdate(state, currentVersion, vaultRoot, now, warnings, opts.verbose, cacheDir),
+    input.update,
     schema
       ? buildValuesSummary(rawValues, schema, cap(MAX_INVALID_VALUE_KEYS))
       : Promise.resolve<StatusValuesSummary>({
@@ -272,6 +325,7 @@ async function buildShardReport(vaultRoot: string, state: ShardState, input: Sha
     values,
     frontmatter,
     warnings,
+    valuesFile,
   };
 }
 

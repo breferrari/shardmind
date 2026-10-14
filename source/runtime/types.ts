@@ -488,6 +488,11 @@ export interface StatusReport {
   /** Surface-worthy findings aggregated from every section. */
   warnings: StatusWarning[];
   /**
+   * The shard's values file (#406): `shard-values.yaml`, or an overlay's;
+   * null when its name in state.json is not `<namespace>/<name>`.
+   */
+  valuesFile: string | null;
+  /**
    * Every shard of the vault (#406), the base first, then each overlay in
    * install order; the fields above are the base's (`shards[0]`). Its
    * entries carry their own warnings; an overlay's are also in `warnings`

@@ -41,6 +41,15 @@ describe('update-check cache per shard (#406)', () => {
     expect(baseFile.source).toBe('github:acme/base');
   });
 
+  it("heals an overlay cache that is a folder, in the overlay's folder", async () => {
+    const now = Date.parse('2026-10-13T12:00:00Z');
+    await primeLatestVersion(vault, 'github:acme/base', '1.0.0', now);
+    await fsp.mkdir(path.join(vault, OVERLAY, 'update-check.json'));
+    expect(await getLatestVersion(vault, 'github:acme/research', now, OVERLAY)).toMatchObject({ cacheHealed: true });
+    await expect(fsp.access(path.join(vault, OVERLAY, 'update-check.json'))).rejects.toThrow();
+    expect(await getLatestVersion(vault, 'github:acme/base', now)).toMatchObject({ kind: 'fresh', latest_version: '1.0.0' });
+  });
+
   it("heals a corrupt overlay cache in the overlay's folder, never the base's", async () => {
     const now = Date.parse('2026-10-13T12:00:00Z');
     await primeLatestVersion(vault, 'github:acme/base', '1.0.0', now);

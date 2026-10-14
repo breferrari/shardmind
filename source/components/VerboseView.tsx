@@ -45,7 +45,7 @@ export default function VerboseView({ report }: VerboseViewProps) {
         <Box key={i} flexDirection="column" gap={1}>
           <ShardBlock report={shard} />
 
-          <ValuesSection values={shard.values} />
+          <ValuesSection values={shard.values} valuesFile={shard.valuesFile} />
           <ModulesSection modules={shard.modules} />
           <FilesSection drift={shard.drift} />
           {shard.frontmatter && <FrontmatterSection frontmatter={shard.frontmatter} />}
@@ -62,14 +62,14 @@ export default function VerboseView({ report }: VerboseViewProps) {
 // Values
 // ---------------------------------------------------------------------------
 
-function ValuesSection({ values }: { values: StatusValuesSummary }) {
+function ValuesSection({ values, valuesFile }: { values: StatusValuesSummary; valuesFile: string | null }) {
   const validCount = values.valid ? values.total : values.total - values.invalidCount;
   const overflow = values.invalidCount - values.invalidKeys.length;
   return (
     <Section title="Values">
       {values.fileMissing ? (
         <Row icon="✗" color="red">
-          shard-values.yaml is missing or unreadable
+          {valuesFile ?? 'The values file'} is missing or unreadable
         </Row>
       ) : values.valid ? (
         <Row icon="✓" color="green">

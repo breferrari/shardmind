@@ -67,6 +67,7 @@ function baseReport(overrides: Partial<StatusReport> = {}): StatusReport {
     frontmatter: null,
     environment: null,
     warnings: [],
+    valuesFile: 'shard-values.yaml',
     ...overrides,
   };
   // A vault with one shard lists itself (#406).

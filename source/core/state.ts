@@ -581,19 +581,15 @@ export interface ShardLayout {
 /**
  * Shard `index` of the vault's `shards[]` (#406): the base (index 0) keeps
  * `.shardmind/` and `shard-values.yaml`; an overlay keeps `overlayDir` and
- * `overlayValuesFile`. A name a hand edit broke gets paths no shard has,
- * so every read reports what is missing, never the base's files.
+ * `overlayValuesFile`. An overlay name that is not `<namespace>/<name>` (a
+ * hand edit) has none: null, which the caller reports.
  */
-export function shardLayout(shard: string, index: number): ShardLayout {
+export function shardLayout(shard: string, index: number): ShardLayout | null {
   if (index === 0) return { cacheDir: SHARDMIND_DIR, valuesFile: VALUES_FILE };
   try {
     return { cacheDir: overlayDir(shard), valuesFile: overlayValuesFile(shard) };
   } catch {
-    // Paths no shard has: every read reports what is missing, and none
-    // reads the base's files as this one's.
-    return { cacheDir: path.join(SHARDMIND_DIR, 'shards', UNNAMED_SHARD), valuesFile: `shard-values.${UNNAMED_SHARD}.yaml` };
+    // A name a hand edit broke has no files to find: the caller says so.
+    return null;
   }
 }
-
-/** Stands for an overlay name a hand edit broke, in the paths `shardLayout` gives it. */
-const UNNAMED_SHARD = '(unnamed)';

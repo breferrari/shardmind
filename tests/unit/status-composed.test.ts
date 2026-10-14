@@ -133,11 +133,32 @@ describe('status on a vault holding several shards (#406)', () => {
     await fsp.writeFile(path.join(vault, '.shardmind', 'state.json'), JSON.stringify(raw));
     const r = (await report())!;
     const broken = r.shards[1]!;
-    // The base's cached manifest would say shardmind/minimal 0.1.0.
+    // One finding names the bad name; none of its files, nor the base's, is read.
+    expect(broken.warnings.map((w) => w.message)).toEqual([
+      'state.json lists a shard named "acme/research/x", which is not <namespace>/<name>: its files cannot be found.',
+    ]);
     expect(broken.manifest.version).not.toBe('0.1.0');
-    expect(broken.warnings.map((w) => w.message).join('\n')).toMatch(/Cached shard manifest/);
-    // Named in the top-level list by its display name, never a raw field.
-    expect(r.warnings.map((w) => w.message).join('\n')).not.toMatch(/undefined:|object Object/);
+    expect(broken.valuesFile).toBeNull();
+    // At the top level, prefixed with the entry's own name, so it is told from acme/research.
+    expect(r.warnings.map((w) => w.message)).toContain(
+      'acme/research/x: state.json lists a shard named "acme/research/x", which is not <namespace>/<name>: its files cannot be found.',
+    );
+  });
+
+  it("reads an entry's stray schema_version as the one-shard schema, never its own", async () => {
+    await composedVault();
+    const raw = JSON.parse(await fsp.readFile(path.join(vault, '.shardmind', 'state.json'), 'utf-8')) as {
+      shards: Array<Record<string, unknown>>;
+    };
+    raw.shards[1]!['schema_version'] = 3;
+    await fsp.writeFile(path.join(vault, '.shardmind', 'state.json'), JSON.stringify(raw));
+    expect((await report())!.shards[1]!.state.schema_version).toBe(2);
+  });
+
+  it("names each shard's values file in its report, for the views", async () => {
+    await composedVault();
+    const r = (await report())!;
+    expect(r.shards.map((s) => s.valuesFile)).toEqual(['shard-values.yaml', 'shard-values.acme.research.yaml']);
   });
 
   it('--json lists each shard; the top-level fields stay the base\'s', async () => {

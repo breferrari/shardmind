@@ -319,6 +319,7 @@ describe('statusResult (#139)', () => {
       frontmatter: null,
       environment: null,
       warnings: [{ severity: 'info', message: 'v0.2.0 available', hint: "Run 'shardmind update'." }],
+      valuesFile: 'shard-values.yaml',
       ...overrides,
     };
     // A vault with one shard lists itself (#406).

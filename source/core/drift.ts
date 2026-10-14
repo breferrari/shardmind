@@ -260,7 +260,8 @@ async function scanDirForOrphans(
 export function foreignPathsOf(states: readonly ShardState[], index: number): Set<string> {
   const foreign = new Set<string>();
   states.forEach((state, i) => {
-    foreign.add(posixPath(shardLayout(state.shard, i).valuesFile));
+    const layout = shardLayout(state.shard, i);
+    if (layout) foreign.add(posixPath(layout.valuesFile));
     if (i === index || state.files === null || typeof state.files !== 'object') return;
     for (const rel of Object.keys(state.files)) foreign.add(posixPath(rel));
   });
