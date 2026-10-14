@@ -22,6 +22,7 @@ import {
   installComposedVault,
   serveLatest,
   silentFlowIO as io,
+  OVERLAY_SCHEMA,
 } from '../component/flows/helpers.js';
 import { runInstallFlow } from '../../source/core/flows/install.js';
 import { runUpdateFlow, type UpdateFlowInput, type ShardRun } from '../../source/core/flows/update.js';
@@ -74,6 +75,17 @@ beforeAll(async () => {
   tarballs['overlay-2.0.0-claims'] = await overlayRelease('2.0.0', {
     'research/Papers.md.njk': '# Papers\n\nOn {{ topic }}, v2.\n',
     'Home.md': 'the overlay wants this\n',
+  });
+  // Claims a base file, and offers a new optional module: a question the
+  // refusal must come before.
+  tarballs['overlay-2.0.0-claims-asks'] = await buildOverlayTarball({
+    namespace: 'acme',
+    name: 'research',
+    version: '2.0.0',
+    files: { 'research/Papers.md.njk': '# Papers\n', 'extras/Extra.md': 'extra\n', 'Home.md': 'the overlay wants this\n' },
+    schema: { ...OVERLAY_SCHEMA, modules: { extras: { label: 'Extras', paths: ['extras/'], removable: true } } },
+    prefix: 'overlay-research-2.0.0-claims-asks',
+    outDir: tarDir,
   });
   tarballs['overlay-2.0.0-renamed'] = await overlayRelease('2.0.0', { 'research/Papers.md.njk': '# Papers\n' }, 'studies');
   stub = await createGitHubStub({
@@ -195,6 +207,14 @@ describe('update across shards (#407)', () => {
     // The base's own render (dated), never the overlay's bytes.
     expect(await read('Home.md')).not.toContain('the overlay wants this');
     expect(await read('research/Papers.md')).toBe('# Papers\n\nOn physics.\n');
+  });
+
+  it("refuses a release that claims another shard's file before asking its questions", async () => {
+    serve(OVERLAY, '2.0.0', tarballs['overlay-2.0.0-claims-asks']!);
+    // No --yes: the new optional module would be asked; silentFlowIO rejects any question.
+    const result = await update({ yes: false });
+    if (result.kind !== 'shards') throw new Error(`expected shards, got ${result.kind}`);
+    expect(outcomes(result.runs)).toEqual([[BASE, 'up-to-date'], [OVERLAY, 'UPDATE_PATH_OWNED']]);
   });
 
   it('a base whose release claims an overlay file stops the run: the overlay is not reached', async () => {

@@ -560,7 +560,7 @@ export const OVERLAY_SCHEMA = {
 
 /**
  * An overlay release, hook-free: only `files` (none of the minimal shard's),
- * with `OVERLAY_SCHEMA`, as `<namespace>/<name>`.
+ * with `schema` (`OVERLAY_SCHEMA` by default), as `<namespace>/<name>`.
  */
 export function buildOverlayTarball(opts: {
   namespace: string;
@@ -569,11 +569,12 @@ export function buildOverlayTarball(opts: {
   files: Record<string, string>;
   outDir: string;
   prefix: string;
+  schema?: object;
 }): Promise<string> {
   return buildCustomTarball({
     version: opts.version,
     prefix: opts.prefix,
-    schema: OVERLAY_SCHEMA,
+    schema: opts.schema ?? OVERLAY_SCHEMA,
     manifestOverrides: { name: opts.name, namespace: opts.namespace, hooks: {} },
     mutate: async (dir) => {
       for (const entry of await fs.readdir(dir)) {

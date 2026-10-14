@@ -35,6 +35,7 @@ import { readVaultState, shardLayout, writeShardEntry, type ShardLayout } from '
 import { detectDrift, foreignPathsOf, type DriftOptions } from '../drift.js';
 import { ownedPaths, ownedConflicts, listOwned } from '../ownership.js';
 import { DownloadCancelledError } from '../download.js';
+import { planOutputs } from '../install-planner.js';
 import { isCancelledRun } from '../run-cancel.js';
 import { applyMigrations } from '../migrator.js';
 import { loadValuesYaml } from '../values-io.js';
@@ -349,6 +350,10 @@ async function runShardUpdate(input: UpdateFlowInput, io: UpdateFlowIO, target: 
     };
     // A run superseded while it downloaded goes no further.
     if (input.stop?.aborted) throw new FlowCancelled('Superseded by a newer run.');
+    // One owner per file (R2): what the release writes whatever is answered,
+    // refused before any question, as add does (#396). The full set is
+    // checked once the values and modules are known.
+    if (target.composed) assertNotOwned(target, await pathsWrittenRegardless(ctx));
 
     const { values, selections, pendingModules } = await valuesAndModules(input, io, ctx);
     return await planAndUpdate(input, io, ctx, values, selections, pendingModules);
@@ -690,6 +695,17 @@ function assertNotOwned(target: ShardTarget, paths: readonly string[]): void {
     'UPDATE_PATH_OWNED',
     `Each file has one owner. Update the other shards alone (\`shardmind update <namespace>/<name>\`), and report the clash to ${target.state.shard}'s author, who can move the file or exclude it in its .shardmindignore.`,
   );
+}
+
+/**
+ * The paths the new release writes whatever the questions are answered:
+ * the modules kept as they are, every new optional module left out.
+ */
+async function pathsWrittenRegardless(ctx: UpdateContext): Promise<string[]> {
+  const leftOut = Object.fromEntries(ctx.newOptionalModules.map((m) => [m.id, 'excluded' as const]));
+  const selections = mergeModuleSelections(ctx.state.modules, ctx.newSchema, leftOut);
+  const { outputs } = await planOutputs(ctx.newSchema, ctx.newTempDir, selections);
+  return outputs.map((o) => o.outputPath);
 }
 
 /** A cancel or a superseded run: the whole run ends, as on a vault with one shard. */
