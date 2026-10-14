@@ -595,7 +595,7 @@ Thrown by `source/core/renderer.ts` and wrapped in `source/core/install-executor
 
 ### `UPDATE_SHARD_RENAMED`
 
-**Meaning:** An overlay's new version declares a different `<namespace>/<name>` from the one the vault records for it (#407). An overlay's cache, values file and hook logs are named after it, so the update cannot carry them to the new name. Refused before any write for that shard; the shards updated before it stay updated. The base shard keeps no path under its name and may rename itself.
+**Meaning:** An overlay's new version declares a different `<namespace>/<name>` from the one the vault records for it (#407). An overlay's cache, values file and hook logs are named after it, so the update cannot carry them to the new name. A release of any shard that takes the name of another shard the vault holds is refused the same way, since a vault holds each shard once. Refused before any write for that shard; the shards updated before it stay updated. The base shard keeps no path under its name and may otherwise rename itself.
 
 **Remedy:** Pin the overlay to its last release under the old name (`shardmind update <namespace>/<name> --release <v>`), or ask its author whether the rename was meant.
 
