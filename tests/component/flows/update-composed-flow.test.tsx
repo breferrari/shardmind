@@ -14,21 +14,21 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { setupFlowSuite, mountUpdate, buildCustomTarball, allFrames } from './helpers.js';
+import {
+  setupFlowSuite,
+  mountUpdate,
+  buildCustomTarball,
+  buildOverlayTarball,
+  installComposedVault,
+  serveLatest,
+  allFrames,
+} from './helpers.js';
 import { tick, waitFor, ENTER, ARROW_DOWN } from '../helpers.js';
 import { resetSigintRollbackForTests } from '../../../source/commands/hooks/shared.js';
-import { runInstallFlow, type InstallFlowIO } from '../../../source/core/flows/install.js';
-import { runAddFlow, type AddFlowIO } from '../../../source/core/flows/add.js';
-import { resolveInstallDestination } from '../../../source/core/install-destination.js';
 import type { VaultState } from '../../../source/runtime/types.js';
 
 const BASE = 'flowcompose/base';
 const OVERLAY = 'flowcompose/research';
-const OVERLAY_SCHEMA = {
-  schema_version: 1,
-  values: { topic: { type: 'string', message: 'Topic', default: 'physics', group: 'setup' } },
-  groups: [{ id: 'setup', label: 'Setup' }],
-};
 
 describe('update across shards — Layer 1 (#407)', () => {
   const getCtx = setupFlowSuite({
@@ -57,51 +57,24 @@ describe('update across shards — Layer 1 (#407)', () => {
       });
     }
     for (const [version, line] of [['1.0.0', 'On {{ topic }}.'], ['2.0.0', 'On {{ topic }}, v2.']] as const) {
-      tarballs[`overlay-${version}`] = await buildCustomTarball({
+      tarballs[`overlay-${version}`] = await buildOverlayTarball({
+        namespace: 'flowcompose',
+        name: 'research',
         version,
+        files: { 'research/Papers.md.njk': `# Papers\n\n${line}\n` },
         prefix: `l1-overlay-${version}`,
-        schema: OVERLAY_SCHEMA,
-        manifestOverrides: { name: 'research', namespace: 'flowcompose', hooks: {} },
-        mutate: async (dir) => {
-          for (const entry of await fsp.readdir(dir)) {
-            if (entry !== '.shardmind') await fsp.rm(path.join(dir, entry), { recursive: true, force: true });
-          }
-          await fsp.mkdir(path.join(dir, 'research'));
-          await fsp.writeFile(path.join(dir, 'research', 'Papers.md.njk'), `# Papers\n\n${line}\n`);
-        },
         outDir: tarDir,
       });
     }
   }, 60_000);
 
-  const serve = (slug: string, version: string, tarball: string) => {
-    getCtx().stub.setVersion(slug, version, tarball);
-    getCtx().stub.setLatest(slug, version);
-  };
-  const io = () =>
-    ({
-      hooks: { setPhase: () => {}, onStdout: () => {}, onStderr: () => {} },
-      lock: () => ({ release: () => {} }),
-      onCleanup: () => {},
-      newRunAbort: () => new AbortController(),
-      onRun: () => {},
-      onCommitted: () => {},
-      onHookAbort: () => {},
-      phase: () => {},
-      progress: () => {},
-      ask: () => Promise.reject(new Error('the setup answers no prompt')),
-    }) as InstallFlowIO & AddFlowIO;
+  const serve = (slug: string, version: string, tarball: string) => serveLatest(getCtx().stub, slug, version, tarball);
 
   beforeEach(async () => {
     serve(BASE, '0.1.0', tarballs['base-0.1.0']!);
     serve(OVERLAY, '1.0.0', tarballs['overlay-1.0.0']!);
     vault = await fsp.mkdtemp(path.join(os.tmpdir(), 'shardmind-composed-l1-vault-'));
-    const shared = { valuesFile: undefined, yes: true, defaults: true, dryRun: false, skipHooks: false, interactive: false, engineVersion: undefined };
-    await runInstallFlow(
-      { ...shared, shardRef: `github:${BASE}`, force: false, destination: await resolveInstallDestination(vault, `github:${BASE}`, '.') },
-      io(),
-    );
-    await runAddFlow({ ...shared, shardRef: `github:${OVERLAY}`, vaultRoot: vault }, io());
+    await installComposedVault({ vault, base: BASE, overlay: OVERLAY });
   }, 60_000);
 
   afterEach(async () => {

@@ -16,22 +16,21 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 import { createGitHubStub, type GitHubStub } from '../e2e/helpers/github-stub.js';
-import { buildCustomTarball } from '../component/flows/helpers.js';
-import { runInstallFlow, type InstallFlowIO } from '../../source/core/flows/install.js';
-import { runAddFlow, type AddFlowIO } from '../../source/core/flows/add.js';
-import { runUpdateFlow, type UpdateFlowIO, type UpdateFlowInput, type ShardRun } from '../../source/core/flows/update.js';
+import {
+  buildCustomTarball,
+  buildOverlayTarball,
+  installComposedVault,
+  serveLatest,
+  silentFlowIO as io,
+} from '../component/flows/helpers.js';
+import { runInstallFlow } from '../../source/core/flows/install.js';
+import { runUpdateFlow, type UpdateFlowInput, type ShardRun } from '../../source/core/flows/update.js';
 import { resolveInstallDestination } from '../../source/core/install-destination.js';
 import type { VaultState } from '../../source/runtime/types.js';
 import { runUpdateJson } from '../../source/commands/headless/update.js';
 
 const BASE = 'acme/base';
 const OVERLAY = 'acme/research';
-
-const OVERLAY_SCHEMA = {
-  schema_version: 1,
-  values: { topic: { type: 'string', message: 'Topic', default: 'physics', group: 'setup' } },
-  groups: [{ id: 'setup', label: 'Setup' }],
-};
 
 let stub: GitHubStub;
 let tarDir: string;
@@ -56,20 +55,12 @@ const baseRelease = (version: string, extra: Record<string, string> = {}) =>
 
 /** An overlay release: only its own files (none of the minimal shard's), hook-free. */
 const overlayRelease = (version: string, files: Record<string, string>, name = 'research') =>
-  buildCustomTarball({
+  buildOverlayTarball({
+    namespace: 'acme',
+    name,
     version,
+    files,
     prefix: `overlay-${name}-${version}-${Object.keys(files).join('-').replaceAll('/', '_')}`,
-    schema: OVERLAY_SCHEMA,
-    manifestOverrides: { name, namespace: 'acme', hooks: {} },
-    mutate: async (dir) => {
-      for (const entry of await fsp.readdir(dir)) {
-        if (entry !== '.shardmind') await fsp.rm(path.join(dir, entry), { recursive: true, force: true });
-      }
-      for (const [rel, content] of Object.entries(files)) {
-        await fsp.mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
-        await fsp.writeFile(path.join(dir, rel), content);
-      }
-    },
     outDir: tarDir,
   });
 
@@ -98,27 +89,8 @@ afterAll(async () => {
   await fsp.rm(tarDir, { recursive: true, force: true });
 });
 
-const noPrompt = () => Promise.reject(new Error('this test answers no prompt'));
-function io(): UpdateFlowIO & InstallFlowIO & AddFlowIO {
-  return {
-    hooks: { setPhase: () => {}, onStdout: () => {}, onStderr: () => {} },
-    lock: () => ({ release: () => {} }),
-    onCleanup: () => {},
-    newRunAbort: () => new AbortController(),
-    onRun: () => {},
-    onCommitted: () => {},
-    onHookAbort: () => {},
-    phase: () => {},
-    progress: () => {},
-    ask: noPrompt,
-  } as UpdateFlowIO & InstallFlowIO & AddFlowIO;
-}
-
 /** Serve `version` of `slug` as its latest release. */
-function serve(slug: string, version: string, tarball: string): void {
-  stub.setVersion(slug, version, tarball);
-  stub.setLatest(slug, version);
-}
+const serve = (slug: string, version: string, tarball: string) => serveLatest(stub, slug, version, tarball);
 
 beforeEach(async () => {
   vi.stubEnv('SHARDMIND_GITHUB_API_BASE', stub.url);
@@ -126,12 +98,7 @@ beforeEach(async () => {
   serve(OVERLAY, '1.0.0', tarballs['overlay-1.0.0']!);
   vault = path.join(os.tmpdir(), `shardmind-composed-flow-${crypto.randomUUID()}`);
   await fsp.mkdir(vault, { recursive: true });
-  const shared = { valuesFile: undefined, yes: true, defaults: true, dryRun: false, skipHooks: false, interactive: false, engineVersion: undefined };
-  await runInstallFlow(
-    { ...shared, shardRef: `github:${BASE}`, force: false, destination: await resolveInstallDestination(vault, `github:${BASE}`, '.') },
-    io(),
-  );
-  await runAddFlow({ ...shared, shardRef: `github:${OVERLAY}`, vaultRoot: vault }, io());
+  await installComposedVault({ vault, base: BASE, overlay: OVERLAY });
 }, 60_000);
 
 afterEach(async () => {

@@ -48,6 +48,10 @@ import {
   type TarballFixtures,
 } from '../../e2e/helpers/tarball.js';
 import { copyDir } from '../../e2e/helpers/tarball-utils.js';
+import { runInstallFlow, type InstallFlowIO } from '../../../source/core/flows/install.js';
+import { runAddFlow, type AddFlowIO } from '../../../source/core/flows/add.js';
+import type { UpdateFlowIO } from '../../../source/core/flows/update.js';
+import { resolveInstallDestination } from '../../../source/core/install-destination.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -517,4 +521,85 @@ export async function driveDiffIteration(
  */
 export function allFrames(r: { frames: string[] }): () => string {
   return () => r.frames.join('\n');
+}
+
+// ───── Composed vaults (#407) ───────────────────────────────────────
+
+/**
+ * A flow io that shows nothing and answers no question: for a flow run in
+ * a test's setup, or an update under `--yes`. A question rejects, naming
+ * the test's assumption.
+ */
+export function silentFlowIO(): InstallFlowIO & AddFlowIO & UpdateFlowIO {
+  return {
+    hooks: { setPhase: () => {}, onStdout: () => {}, onStderr: () => {} },
+    lock: () => ({ release: () => {} }),
+    onCleanup: () => {},
+    newRunAbort: () => new AbortController(),
+    onRun: () => {},
+    onCommitted: () => {},
+    onHookAbort: () => {},
+    phase: () => {},
+    progress: () => {},
+    ask: () => Promise.reject(new Error('silentFlowIO answers no question')),
+  } as InstallFlowIO & AddFlowIO & UpdateFlowIO;
+}
+
+/** Serve `tarball` as `slug`'s release `version`, and make it the latest. */
+export function serveLatest(stub: GitHubStub, slug: string, version: string, tarball: string): void {
+  stub.setVersion(slug, version, tarball);
+  stub.setLatest(slug, version);
+}
+
+/** The overlay schema of the composed-vault tests: one value, `topic`, defaulting to physics. */
+export const OVERLAY_SCHEMA = {
+  schema_version: 1,
+  values: { topic: { type: 'string', message: 'Topic', default: 'physics', group: 'setup' } },
+  groups: [{ id: 'setup', label: 'Setup' }],
+};
+
+/**
+ * An overlay release, hook-free: only `files` (none of the minimal shard's),
+ * with `OVERLAY_SCHEMA`, as `<namespace>/<name>`.
+ */
+export function buildOverlayTarball(opts: {
+  namespace: string;
+  name: string;
+  version: string;
+  files: Record<string, string>;
+  outDir: string;
+  prefix: string;
+}): Promise<string> {
+  return buildCustomTarball({
+    version: opts.version,
+    prefix: opts.prefix,
+    schema: OVERLAY_SCHEMA,
+    manifestOverrides: { name: opts.name, namespace: opts.namespace, hooks: {} },
+    mutate: async (dir) => {
+      for (const entry of await fs.readdir(dir)) {
+        if (entry !== '.shardmind') await fs.rm(path.join(dir, entry), { recursive: true, force: true });
+      }
+      for (const [rel, content] of Object.entries(opts.files)) {
+        await fs.mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+        await fs.writeFile(path.join(dir, rel), content);
+      }
+    },
+    outDir: opts.outDir,
+  });
+}
+
+/**
+ * A vault holding two shards, built in-process: `base` installed into
+ * `vault` with its defaults, then `overlay` added beside it, each from
+ * whatever release the stub serves as latest. Spawns nothing when neither
+ * shard declares a hook.
+ */
+export async function installComposedVault(opts: { vault: string; base: string; overlay: string }): Promise<void> {
+  const shared = { valuesFile: undefined, yes: true, defaults: true, dryRun: false, skipHooks: false, interactive: false, engineVersion: undefined };
+  const base = `github:${opts.base}`;
+  await runInstallFlow(
+    { ...shared, shardRef: base, force: false, destination: await resolveInstallDestination(opts.vault, base, '.') },
+    silentFlowIO(),
+  );
+  await runAddFlow({ ...shared, shardRef: `github:${opts.overlay}`, vaultRoot: opts.vault }, silentFlowIO());
 }
