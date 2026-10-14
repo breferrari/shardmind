@@ -460,3 +460,27 @@ describe('statusResult (#139)', () => {
     expect(out).toMatchObject({ ref: 'main', resolvedSha: 'a'.repeat(40) });
   });
 });
+
+describe('update --json across shards (#407)', () => {
+  it("a failed shard's document: its error, prefixed with its name, and every shard's entry in details", async () => {
+    const { jsonFailure, ShardRunsFailed } = await import('../../source/core/json-output.js');
+    const cause = new ShardMindError('would write Home.md', 'UPDATE_PATH_OWNED', 'Each file has one owner.');
+    const shards = [
+      { shard: 'acme/base', result: { ok: 'base result' } },
+      { shard: 'acme/research', error: { code: 'UPDATE_PATH_OWNED', message: 'would write Home.md', hint: 'Each file has one owner.', stack: null } },
+      { shard: 'acme/later', skipped: 'not-reached' as const },
+    ];
+    const envelope = jsonFailure('update', new ShardRunsFailed({ shard: 'acme/research', error: cause }, shards));
+    expect(envelope).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UPDATE_PATH_OWNED',
+        message: 'acme/research: would write Home.md',
+        hint: 'Each file has one owner.',
+        stack: null,
+        details: { shards },
+      },
+    });
+    expect(envelope).not.toHaveProperty('result');
+  });
+});

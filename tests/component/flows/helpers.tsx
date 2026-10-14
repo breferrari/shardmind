@@ -249,11 +249,14 @@ export interface UpdateOptions {
 
 export function mountUpdate(opts: {
   vaultRoot: string;
+  /** `update <namespace>/<name>` (#407). */
+  shard?: string;
   options?: UpdateOptions;
 }): RenderResult {
   mockCwd(opts.vaultRoot);
   return render(
     <Update
+      args={[opts.shard]}
       options={{
         yes: false,
         verbose: false,
